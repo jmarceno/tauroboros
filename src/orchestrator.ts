@@ -127,6 +127,7 @@ export class PiOrchestrator {
     this.running = true
     this.shouldStop = false
     this.broadcast({ type: "run_created", payload: run })
+    this.broadcast({ type: "execution_started", payload: {} })
 
     void this.runInBackground(run.id, chain.map((task) => task.id))
     return run

@@ -76,29 +76,60 @@ export async function collectEvents(
   const events: unknown[] = []
   const reader = container.stdout.getReader()
   const decoder = new TextDecoder()
+  const startTime = Date.now()
 
-  const timeout = setTimeout(() => {
-    reader.cancel().catch(() => {})
-  }, timeoutMs)
+  // Buffer for incomplete lines across chunks
+  let buffer = ""
+  let done = false
 
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    while (!done) {
+      // Check if overall timeout has been reached
+      const elapsed = Date.now() - startTime
+      if (elapsed >= timeoutMs) {
+        break
+      }
 
-      const chunk = decoder.decode(value, { stream: true })
-      const lines = chunk.split("\n").filter((l) => l.trim())
-
-      for (const line of lines) {
-        try {
-          events.push(JSON.parse(line))
-        } catch {
-          // Ignore non-JSON lines
+      try {
+        const result = await reader.read()
+        if (result.done) {
+          done = true
+          break
         }
+
+        const chunk = decoder.decode(result.value, { stream: true })
+        buffer += chunk
+
+        // Process complete lines from buffer
+        const lines = buffer.split("\n")
+        // Keep the last (potentially incomplete) line in buffer
+        buffer = lines.pop() || ""
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+          try {
+            events.push(JSON.parse(trimmed))
+          } catch {
+            // Ignore non-JSON lines
+          }
+        }
+      } catch {
+        // Stream error - break out
+        break
+      }
+    }
+
+    // Process any remaining data in buffer
+    if (buffer.trim()) {
+      try {
+        events.push(JSON.parse(buffer.trim()))
+      } catch {
+        // Ignore non-JSON
       }
     }
   } finally {
-    clearTimeout(timeout)
+    reader.releaseLock()
   }
 
   return events
@@ -116,8 +147,17 @@ export async function waitForEvent(
   const decoder = new TextDecoder()
 
   return new Promise((resolve, reject) => {
+    let resolved = false
+
+    const cleanup = () => {
+      if (!resolved) {
+        resolved = true
+        reader.releaseLock()
+      }
+    }
+
     const timeout = setTimeout(() => {
-      reader.cancel().catch(() => {})
+      cleanup()
       resolve(null)
     }, timeoutMs)
 
@@ -130,7 +170,7 @@ export async function waitForEvent(
           const event = JSON.parse(line) as Record<string, unknown>
           if (event.type === eventType) {
             clearTimeout(timeout)
-            reader.cancel().catch(() => {})
+            cleanup()
             resolve(event)
             return
           }
@@ -147,8 +187,13 @@ export async function waitForEvent(
           if (done) break
           if (value) processChunk(value)
         }
+        // Stream ended naturally
+        clearTimeout(timeout)
+        cleanup()
+        resolve(null)
       } catch (error) {
         clearTimeout(timeout)
+        cleanup()
         reject(error)
       }
     }

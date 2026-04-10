@@ -60,8 +60,9 @@ describeOrSkip("Filesystem Isolation", () => {
           'Write a file at test-output.txt with the content "Hello from container"',
       })
 
-      // Collect events for a short time
-      const events = await collectEvents(container, 5000)
+      // Wait for agent response (agent_end indicates completion)
+      const { waitForEvent } = await import("./utils.ts")
+      const agentEndEvent = await waitForEvent(container, "agent_end", 20000)
 
       // Wait a moment for file operations to complete
       await new Promise((resolve) => setTimeout(resolve, 2000))
@@ -72,7 +73,7 @@ describeOrSkip("Filesystem Isolation", () => {
 
       // Note: The agent might create the file via git operations
       // The test validates that the worktree is writable
-      expect(exists || events.length > 0).toBe(true)
+      expect(exists || agentEndEvent !== null).toBe(true)
     } finally {
       await container.kill()
     }
@@ -120,5 +121,5 @@ describeOrSkip("Filesystem Isolation", () => {
     } finally {
       await container.kill()
     }
-  })
+  }, 30000)
 })

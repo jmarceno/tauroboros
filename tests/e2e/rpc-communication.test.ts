@@ -133,19 +133,21 @@ describeOrSkip("RPC Communication", () => {
     })
 
     try {
-      // Send multiple commands
+      // Send multiple commands in sequence
       await sendRpcCommand(container, { type: "get_state" })
+      const response1 = await waitForEvent(container, "response", 10000)
+
       await sendRpcCommand(container, { type: "get_messages" })
+      const response2 = await waitForEvent(container, "response", 10000)
 
-      // Collect responses for a short time
-      const { collectEvents } = await import("./utils.ts")
-      const events = await collectEvents(container, 5000)
+      // Should have received both responses
+      expect(response1).not.toBeNull()
+      expect(response1?.type).toBe("response")
+      expect(response1?.command).toBe("get_state")
 
-      // Should have received at least 2 responses
-      const responses = events.filter(
-        (e) => (e as Record<string, unknown>).type === "response",
-      )
-      expect(responses.length).toBeGreaterThanOrEqual(2)
+      expect(response2).not.toBeNull()
+      expect(response2?.type).toBe("response")
+      expect(response2?.command).toBe("get_messages")
     } finally {
       await container.kill()
     }
