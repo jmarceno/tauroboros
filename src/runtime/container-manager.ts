@@ -1,5 +1,6 @@
 import { spawn, execSync } from "child_process"
 import { randomUUID } from "crypto"
+import { existsSync } from "fs"
 
 export interface ContainerConfig {
   sessionId: string
@@ -81,8 +82,18 @@ export function createVolumeMounts(
   })
 
   // Bun binary (needed for some pi operations)
+  // Detect bun location on host system
+  let bunPath = "/usr/local/bin/bun"
+  try {
+    bunPath = execSync("which bun", { encoding: "utf-8", stdio: "pipe" }).trim()
+  } catch {
+    // Fallback to common locations
+    if (existsSync("/usr/bin/bun")) {
+      bunPath = "/usr/bin/bun"
+    }
+  }
   mounts.push({
-    Source: "/usr/local/bin/bun",
+    Source: bunPath,
     Target: "/usr/local/bin/bun",
     Type: "bind",
     ReadOnly: true,
