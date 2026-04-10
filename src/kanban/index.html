@@ -1984,46 +1984,76 @@ function renderSessionModal() {
   }
 
   timeline.innerHTML = ''
+  
+  // Aggregate streaming messages to avoid fragmented display
+  // Consecutive message_part types from the same role are grouped together
+  const aggregatedMessages = []
+  let currentGroup = null
+  
   for (const message of activeSessionMessages) {
+    const isStreamingPart = message.messageType === 'message_part'
+    const role = message.role || 'assistant'
+    
+    if (isStreamingPart && currentGroup && currentGroup.role === role) {
+      // Add to existing streaming group
+      currentGroup.messages.push(message)
+      currentGroup.text += normalizeSessionMessageText(message)
+    } else {
+      // Start a new group
+      if (currentGroup) aggregatedMessages.push(currentGroup)
+      currentGroup = {
+        role: role,
+        messageType: isStreamingPart ? 'text' : message.messageType,
+        timestamp: message.timestamp,
+        toolName: message.toolName,
+        toolArgsJson: message.toolArgsJson,
+        toolResultJson: message.toolResultJson,
+        messages: [message],
+        text: normalizeSessionMessageText(message),
+        isError: message.messageType === 'error' || message.messageType === 'session_error',
+        isThinking: message.messageType === 'thinking'
+      }
+    }
+  }
+  if (currentGroup) aggregatedMessages.push(currentGroup)
+  
+  for (const group of aggregatedMessages) {
     const entry = document.createElement('div')
-    const isError = message.messageType === 'error' || message.messageType === 'session_error'
-    const isThinking = message.messageType === 'thinking'
-    entry.className = `session-entry${isError ? ' error' : ''}${isThinking ? ' thinking' : ''}`
+    entry.className = `session-entry${group.isError ? ' error' : ''}${group.isThinking ? ' thinking' : ''}`
 
     const header = document.createElement('div')
     header.className = 'session-entry-header'
 
     const time = document.createElement('span')
     time.className = 'session-time'
-    const ts = Number(message.timestamp || 0)
+    const ts = Number(group.timestamp || 0)
     time.textContent = ts > 0 ? new Date(ts * 1000).toLocaleTimeString() : '—'
     header.appendChild(time)
 
     const role = document.createElement('span')
-    role.className = `session-role ${message.role || 'assistant'}`
-    role.textContent = message.role || 'assistant'
+    role.className = `session-role ${group.role || 'assistant'}`
+    role.textContent = group.role || 'assistant'
     header.appendChild(role)
 
     const type = document.createElement('span')
     type.className = 'session-type'
-    type.textContent = message.messageType || 'text'
+    type.textContent = group.messageType || 'text'
     header.appendChild(type)
 
-    if (message.toolName) {
+    if (group.toolName) {
       const tool = document.createElement('span')
       tool.className = 'session-tool-name'
-      tool.textContent = message.toolName
+      tool.textContent = group.toolName
       header.appendChild(tool)
     }
 
     entry.appendChild(header)
 
     const content = document.createElement('div')
-    content.className = `session-content${isThinking ? ' thinking' : ''}${isError ? ' error' : ''}`
+    content.className = `session-content${group.isThinking ? ' thinking' : ''}${group.isError ? ' error' : ''}`
 
-    const normalizedText = normalizeSessionMessageText(message)
-    const fallbackText = !normalizedText ? formatJsonForDisplay(message.contentJson) : ''
-    const fullText = normalizedText || fallbackText || '(no text content)'
+    // Use the aggregated text from the group
+    const fullText = group.text || '(no text content)'
     const truncated = fullText.length > 1400
 
     if (truncated) {
@@ -2045,20 +2075,20 @@ function renderSessionModal() {
       entry.appendChild(content)
     }
 
-    if (message.toolArgsJson || message.toolResultJson) {
+    if (group.toolArgsJson || group.toolResultJson) {
       const details = document.createElement('details')
       details.className = 'session-details'
       const summary = document.createElement('summary')
       summary.textContent = 'Tool payload'
       details.appendChild(summary)
-      if (message.toolArgsJson) {
+      if (group.toolArgsJson) {
         const args = document.createElement('pre')
-        args.textContent = `args:\n${formatJsonForDisplay(message.toolArgsJson)}`
+        args.textContent = `args:\n${formatJsonForDisplay(group.toolArgsJson)}`
         details.appendChild(args)
       }
-      if (message.toolResultJson) {
+      if (group.toolResultJson) {
         const result = document.createElement('pre')
-        result.textContent = `result:\n${formatJsonForDisplay(message.toolResultJson)}`
+        result.textContent = `result:\n${formatJsonForDisplay(group.toolResultJson)}`
         details.appendChild(result)
       }
       entry.appendChild(details)
