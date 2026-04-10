@@ -227,7 +227,7 @@ export function buildCommitVariables(baseRef: string, deleteWorktree = true): Re
   return {
     base_ref: baseRef,
     keep_worktree_note: deleteWorktree
-      ? ""
+      ? "The worktree will be automatically cleaned up by the system after this task completes."
       : "Important: do NOT delete the worktree at the end; keep it for manual follow-up.",
   }
 }

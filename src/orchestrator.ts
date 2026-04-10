@@ -499,19 +499,12 @@ export class PiOrchestrator {
 
       task = this.db.getTask(taskId) ?? task
       if (!task.autoApprovePlan) {
-        if (task.deleteWorktree !== false) {
-          await this.worktree.complete(worktreeInfo.directory, {
-            branch: worktreeInfo.branch,
-            targetBranch: worktreeInfo.baseRef,
-            shouldMerge: false,
-            shouldRemove: true,
-          })
-        }
+        // Do NOT delete worktree during plan approval - it must persist for implementation
         this.db.updateTask(taskId, {
           status: "review",
           awaitingPlanApproval: true,
           executionPhase: "plan_complete_waiting_approval",
-          worktreeDir: task.deleteWorktree !== false ? null : worktreeInfo.directory,
+          worktreeDir: worktreeInfo.directory,
         })
         this.broadcastTask(taskId)
         return false
@@ -548,19 +541,12 @@ export class PiOrchestrator {
 
       task = this.db.getTask(taskId) ?? task
       if (!task.autoApprovePlan) {
-        if (task.deleteWorktree !== false) {
-          await this.worktree.complete(worktreeInfo.directory, {
-            branch: worktreeInfo.branch,
-            targetBranch: worktreeInfo.baseRef,
-            shouldMerge: false,
-            shouldRemove: true,
-          })
-        }
+        // Do NOT delete worktree during plan approval - it must persist for implementation
         this.db.updateTask(taskId, {
           status: "review",
           awaitingPlanApproval: true,
           executionPhase: "plan_complete_waiting_approval",
-          worktreeDir: task.deleteWorktree !== false ? null : worktreeInfo.directory,
+          worktreeDir: worktreeInfo.directory,
         })
         this.broadcastTask(taskId)
         return false

@@ -184,6 +184,7 @@ export const DEFAULT_COMMIT_PROMPT = `You are in a worktree on a detached HEAD. 
 - Do not edit files outside git workflows unless required for conflict resolution.
 - **CRITICAL: Never push changes to remote repositories unless explicitly instructed to do so.**
 - Preserve any pre-existing user uncommitted changes in the base worktree.
+- **CRITICAL: Do NOT delete the worktree. The system will handle worktree cleanup after you report success.**
 
 Steps:
 1. In the current task worktree, stage and create a commit for the pending task changes.
@@ -197,8 +198,7 @@ Steps:
 6. If cherry-pick conflicts, resolve carefully, preserving both the intended task changes and existing user edits.
 7. If a stash was created, restore it with: git -C P stash pop
 8. If stash pop conflicts, resolve them while preserving pre-existing user edits.
-9. Delete the worktree
-10. Report:
+9. Report:
    - Final commit hash
    - Final commit message
    - Whether stash was used
