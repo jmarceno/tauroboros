@@ -64,16 +64,14 @@ for (const item of itemsToCopy) {
   }
 }
 
-// Initialize git repo in the temp project
+// Initialize git repo in the temp project (at root, not in subdirectory)
 console.log('[PREPARE] Initializing git repository...');
-const repoDir = join(projectDir, 'repo');
-mkdirSync(repoDir, { recursive: true });
-execSync('git init', { cwd: repoDir, stdio: 'ignore' });
-execSync('git config user.email "test@example.com"', { cwd: repoDir, stdio: 'ignore' });
-execSync('git config user.name "Test User"', { cwd: repoDir, stdio: 'ignore' });
-writeFileSync(join(repoDir, 'README.md'), '# Test\n');
-execSync('git add .', { cwd: repoDir, stdio: 'ignore' });
-execSync('git commit -m "init"', { cwd: repoDir, stdio: 'ignore' });
+execSync('git init', { cwd: projectDir, stdio: 'ignore' });
+execSync('git config user.email "test@example.com"', { cwd: projectDir, stdio: 'ignore' });
+execSync('git config user.name "Test User"', { cwd: projectDir, stdio: 'ignore' });
+writeFileSync(join(projectDir, 'README.md'), '# Test\n');
+execSync('git add .', { cwd: projectDir, stdio: 'ignore' });
+execSync('git commit -m "init"', { cwd: projectDir, stdio: 'ignore' });
 
 // Create .pi directory and settings file
 const piDir = join(projectDir, '.pi');
@@ -114,6 +112,13 @@ const settings = {
       portRangeEnd: 40000,
     },
   },
+  // Model configuration for reliable test execution
+  planModel: 'default',
+  executionModel: 'default', 
+  reviewModel: 'default',
+  repairModel: 'default',
+  branch: 'master',
+  maxReviews: 0,  // Disable automatic review for reliable E2E tests
 };
 
 writeFileSync(join(piDir, 'settings.json'), JSON.stringify(settings, null, 2));

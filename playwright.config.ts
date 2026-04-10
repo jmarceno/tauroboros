@@ -51,16 +51,23 @@ let webServerConfig = undefined;
 
 if (testProjectDir) {
   // Start server exactly like users would: cd to project and run bun run start
-  const command = `cd "${testProjectDir}" && bun run start`;
+  // We use shell: true to ensure PATH is properly inherited
+  const command = `bun run start`;
   
   webServerConfig = {
     command,
+    cwd: testProjectDir,
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
+    env: {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+    },
   };
   
   console.log(`[Playwright] Server will start from: ${testProjectDir}`);
+  console.log(`[Playwright] PATH will be: ${process.env.PATH}`);
 } else {
   console.error('[Playwright] Warning: Test environment not prepared. Run: bun run tests/e2e/prepare.ts');
 }
