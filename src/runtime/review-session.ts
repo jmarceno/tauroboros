@@ -3,6 +3,7 @@ import type { Task, ThinkingLevel, ReviewResult } from "../types.ts"
 import { buildReviewVariables } from "../prompts/index.ts"
 import { PiSessionManager } from "./session-manager.ts"
 import { parseStrictJsonObject } from "./strict-json.ts"
+import type { PiContainerManager } from "./container-manager.ts"
 
 function asReviewResult(parsed: Record<string, unknown>): ReviewResult {
   const status = parsed.status
@@ -50,8 +51,11 @@ export interface RunReviewScratchResult {
 export class PiReviewSessionRunner {
   private readonly sessions: PiSessionManager
 
-  constructor(private readonly db: PiKanbanDB) {
-    this.sessions = new PiSessionManager(db)
+  constructor(
+    private readonly db: PiKanbanDB,
+    containerManager?: PiContainerManager,
+  ) {
+    this.sessions = new PiSessionManager(db, containerManager)
   }
 
   async run(input: RunReviewScratchInput): Promise<RunReviewScratchResult> {

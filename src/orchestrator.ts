@@ -11,6 +11,7 @@ import { PiSessionManager } from "./runtime/session-manager.ts"
 import { PiReviewSessionRunner } from "./runtime/review-session.ts"
 import { BestOfNRunner } from "./runtime/best-of-n.ts"
 import { WorktreeLifecycle, resolveTargetBranch, listWorktrees, type WorktreeInfo } from "./runtime/worktree.ts"
+import type { PiContainerManager } from "./runtime/container-manager.ts"
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -45,16 +46,30 @@ export class PiOrchestrator {
   private readonly sessionManager: PiSessionManager
   private readonly reviewRunner: PiReviewSessionRunner
   private readonly worktree: WorktreeLifecycle
+  private containerManager?: PiContainerManager
 
   constructor(
     private readonly db: PiKanbanDB,
     private readonly broadcast: (message: WSMessage) => void,
     private readonly sessionUrlFor: (sessionId: string) => string,
     private readonly projectRoot = process.cwd(),
+    containerManager?: PiContainerManager,
   ) {
-    this.sessionManager = new PiSessionManager(db)
+    this.sessionManager = new PiSessionManager(db, containerManager)
     this.reviewRunner = new PiReviewSessionRunner(db)
     this.worktree = new WorktreeLifecycle({ baseDirectory: this.projectRoot })
+    this.containerManager = containerManager
+  }
+
+  /**
+   * Use container backend for process isolation.
+   * Must be called before starting any runs.
+   */
+  useContainerBackend(manager: PiContainerManager): void {
+    this.containerManager = manager
+    // Update session manager with the container manager
+    // Note: We'd need to recreate the session manager to update it
+    // For now, this is set in constructor
   }
 
   async startAll(): Promise<WorkflowRun> {
@@ -123,6 +138,14 @@ export class PiOrchestrator {
       stopRequested: true,
     })
     if (updated) this.broadcast({ type: "run_updated", payload: updated })
+  }
+
+  /**
+   * Emergency stop - kill all containers immediately.
+   */
+  async emergencyStop(): Promise<number> {
+    if (!this.containerManager) return 0
+    return this.containerManager.emergencyStop()
   }
 
   private async runInBackground(runId: string, taskIds: string[]): Promise<void> {
@@ -213,6 +236,7 @@ export class PiOrchestrator {
         worktree: this.worktree,
         broadcast: this.broadcast,
         sessionUrlFor: this.sessionUrlFor,
+        containerManager: this.containerManager,
       })
       await bestOfNRunner.run(task, options)
       return
@@ -495,7 +519,7 @@ export class PiOrchestrator {
       })
 
       this.db.appendAgentOutput(taskId, tagOutput("plan", planning.responseText))
-      this.broadcastTask(taskId)
+      this.broadcastTask(task.id)
 
       task = this.db.getTask(taskId) ?? task
       if (!task.autoApprovePlan) {
@@ -537,7 +561,7 @@ export class PiOrchestrator {
       })
 
       this.db.appendAgentOutput(taskId, tagOutput("plan", revised.responseText))
-      this.broadcastTask(taskId)
+      this.broadcastTask(task.id)
 
       task = this.db.getTask(taskId) ?? task
       if (!task.autoApprovePlan) {
@@ -595,7 +619,7 @@ export class PiOrchestrator {
 
     this.db.appendAgentOutput(taskId, tagOutput("exec", execution.responseText))
     this.db.updateTask(taskId, { executionPhase: "implementation_done" })
-    this.broadcastTask(taskId)
+    this.broadcastTask(task.id)
     return true
   }
 

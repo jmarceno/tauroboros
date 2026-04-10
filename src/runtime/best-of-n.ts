@@ -17,6 +17,7 @@ import type {
 import { parseStrictJsonObject } from "./strict-json.ts"
 import { PiSessionManager } from "./session-manager.ts"
 import { getChangedFiles, getDiffStats, resolveTargetBranch, WorktreeLifecycle } from "./worktree.ts"
+import type { PiContainerManager } from "./container-manager.ts"
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -134,8 +135,9 @@ export class BestOfNRunner {
     worktree: WorktreeLifecycle
     broadcast: (message: WSMessage) => void
     sessionUrlFor: (sessionId: string) => string
+    containerManager?: PiContainerManager
   }) {
-    this.sessions = new PiSessionManager(this.deps.db)
+    this.sessions = new PiSessionManager(this.deps.db, this.deps.containerManager)
   }
 
   async run(task: Task, options: Options): Promise<void> {

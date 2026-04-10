@@ -1,17 +1,22 @@
 {
   "name": "pi-easy-workflow",
   "version": "1.0.0",
-  "description": "Pi-based Easy Workflow scaffolding",
+  "description": "Pi-based Easy Workflow scaffolding with Podman container isolation",
   "type": "module",
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
     "build": "bun build --target=bun src/index.ts --outdir dist",
     "test": "bun test",
+    "test:e2e": "bun test tests/e2e/",
     "skills:sync": "bun run scripts/sync-skills.ts",
     "skills:install": "bun run scripts/sync-skills.ts --clean",
     "skills:verify": "bun run scripts/verify-setup.ts",
-    "setup": "bun run skills:install && bun run skills:verify"
+    "setup": "bun run skills:install && bun run skills:verify",
+    "container:setup": "./scripts/setup-e2e-tests.sh",
+    "container:verify": "bun run scripts/verify-podman.ts",
+    "container:cleanup": "./scripts/cleanup-gvisor.sh",
+    "container:build": "podman build -t pi-agent:alpine -f docker/pi-agent/Dockerfile ."
   },
   "devDependencies": {
     "@types/bun": "latest",

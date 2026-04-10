@@ -3,6 +3,8 @@ import type { PiKanbanDB } from "../db.ts"
 import type { PiSessionKind, PiWorkflowSession } from "../db/types.ts"
 import type { ThinkingLevel } from "../types.ts"
 import { PiRpcProcess } from "./pi-process.ts"
+import type { PiContainerManager } from "./container-manager.ts"
+import { createPiProcess, type PiRuntimeMode } from "./pi-process-factory.ts"
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -18,11 +20,6 @@ function parseModelSelection(model: string): { provider: string; modelId: string
 
 /**
  * Extract text content from a pi message.
- * Pi messages use structured content arrays per packages/ai/src/types.ts:
- * - UserMessage: content: string | (TextContent | ImageContent)[]
- * - AssistantMessage: content: (TextContent | ThinkingContent | ToolCall)[]
- * - TextContent: { type: "text", text: string }
- * We extract and join all text blocks from the content array.
  */
 interface PiContentBlock {
   type: string
@@ -38,12 +35,10 @@ function extractTextFromPiMessage(message: PiMessage): string {
   const content = message.content
   if (!content) return ""
 
-  // Handle string content (UserMessage simple form)
   if (typeof content === "string") {
     return content
   }
 
-  // Handle content blocks array (AssistantMessage, UserMessage with attachments)
   if (Array.isArray(content)) {
     return content
       .filter((block): block is PiContentBlock & { type: "text"; text: string } =>
@@ -69,6 +64,11 @@ export interface ExecuteSessionPromptInput {
   onOutput?: (chunk: string) => void
   onSessionMessage?: (message: import("../types.ts").SessionMessage) => void
   onSessionStart?: (session: PiWorkflowSession) => void
+  /**
+   * Force specific runtime mode for this session.
+   * If not specified, uses PI_EASY_WORKFLOW_RUNTIME environment variable.
+   */
+  forceRuntime?: PiRuntimeMode
 }
 
 export interface ExecuteSessionPromptResult {
@@ -78,14 +78,16 @@ export interface ExecuteSessionPromptResult {
 
 /**
  * PiSessionManager - Manages pi RPC sessions
- * 
- * Uses event-driven architecture:
- * - Sends prompt (returns immediately)
- * - Collects events until agent_end
- * - Extracts final response from assistant messages
+ *
+ * Supports both native and containerized execution modes.
+ * - Native mode: Spawns pi directly on the host
+ * - Container mode: Runs pi inside a gVisor container for isolation
  */
 export class PiSessionManager {
-  constructor(private readonly db: PiKanbanDB) {}
+  constructor(
+    private readonly db: PiKanbanDB,
+    private readonly containerManager?: PiContainerManager
+  ) {}
 
   async executePrompt(input: ExecuteSessionPromptInput): Promise<ExecuteSessionPromptResult> {
     const sessionId = randomUUID().slice(0, 8)
@@ -103,11 +105,14 @@ export class PiSessionManager {
       startedAt: nowUnix(),
     })
 
-    const process = new PiRpcProcess({
+    // Create process using factory (native or containerized)
+    const process = createPiProcess({
       db: this.db,
       session,
+      containerManager: this.containerManager,
       onOutput: input.onOutput,
       onSessionMessage: input.onSessionMessage,
+      forceRuntime: input.forceRuntime,
     })
 
     let responseText = ""
@@ -117,7 +122,13 @@ export class PiSessionManager {
         input.onSessionStart(session)
       }
 
-      process.start()
+      // Start the process (spawns native or creates container)
+      if ("start" in process && typeof process.start === "function") {
+        await process.start()
+      } else {
+        // Native PiRpcProcess uses synchronous start()
+        ;(process as PiRpcProcess).start()
+      }
 
       // Wait for process to be ready
       await new Promise((resolve) => setTimeout(resolve, 500))
@@ -158,7 +169,6 @@ export class PiSessionManager {
       })
 
       // Send prompt and collect all events until completion
-      // This uses the event-driven architecture - no polling
       const events = await process.promptAndWait(input.promptText, 600_000) // 10 min timeout
 
       // Extract response text from the last assistant message
@@ -167,7 +177,7 @@ export class PiSessionManager {
         if (event.type === "message_update") {
           const msgEvent = event.assistantMessageEvent as Record<string, unknown> | undefined
           if (msgEvent?.type === "text_complete" || msgEvent?.type === "text") {
-            const text = typeof msgEvent.text === "string" ? msgEvent.text : 
+            const text = typeof msgEvent.text === "string" ? msgEvent.text :
                         typeof msgEvent.delta === "string" ? msgEvent.delta : ""
             if (text) {
               responseText = text
@@ -181,13 +191,6 @@ export class PiSessionManager {
       if (!responseText) {
         const messagesResult = await process.send({ type: "get_messages" }, 30_000).catch(() => null)
         if (messagesResult && Array.isArray(messagesResult.messages)) {
-          // Pi messages use structured content blocks, not direct text/content fields
-          // See: packages/ai/src/types.ts in pi source
-          type ContentBlock = { type: string; text?: string }
-          type PiMessage = {
-            role?: string
-            content?: string | ContentBlock[]
-          }
           const messages = messagesResult.messages as PiMessage[]
           const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant")
           if (lastAssistantMsg) {
