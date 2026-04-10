@@ -66,6 +66,7 @@ export class PiRpcProcess {
   private stdoutBuffer = ""
   private stderrBuffer = ""
   private isIdle = true
+  private abortController: AbortController | null = null
 
   constructor(args: {
     db: PiKanbanDB
@@ -112,6 +113,9 @@ export class PiRpcProcess {
       },
     })
 
+    // Create abort controller for stream cleanup
+    this.abortController = new AbortController()
+    
     this.captureStdout()
     this.captureStderr()
   }
@@ -243,6 +247,12 @@ export class PiRpcProcess {
     const proc = this.proc
     this.proc = null
 
+    // Signal stream readers to stop
+    if (this.abortController) {
+      this.abortController.abort()
+      this.abortController = null
+    }
+
     for (const [id, pending] of this.pending.entries()) {
       clearTimeout(pending.timer)
       pending.reject(new Error(`Pi process closed before RPC response (${id})`))
@@ -273,21 +283,26 @@ export class PiRpcProcess {
   }
 
   private captureStdout(): void {
-    if (!this.proc) return
+    if (!this.proc || !this.abortController) return
 
     const reader = this.proc.stdout.getReader()
     const decoder = new TextDecoder()
+    const signal = this.abortController.signal
 
     const loop = async () => {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        this.stdoutBuffer += decoder.decode(value, { stream: true })
-        this.consumeStdoutLines()
-      }
-      if (this.stdoutBuffer.trim()) {
-        this.handleStdoutLine(this.stdoutBuffer.trim())
-        this.stdoutBuffer = ""
+      try {
+        while (!signal.aborted) {
+          const { done, value } = await reader.read()
+          if (done || signal.aborted) break
+          this.stdoutBuffer += decoder.decode(value, { stream: true })
+          this.consumeStdoutLines()
+        }
+        if (this.stdoutBuffer.trim() && !signal.aborted) {
+          this.handleStdoutLine(this.stdoutBuffer.trim())
+          this.stdoutBuffer = ""
+        }
+      } finally {
+        reader.releaseLock()
       }
     }
 
@@ -388,21 +403,26 @@ export class PiRpcProcess {
   }
 
   private captureStderr(): void {
-    if (!this.proc) return
+    if (!this.proc || !this.abortController) return
 
     const reader = this.proc.stderr.getReader()
     const decoder = new TextDecoder()
+    const signal = this.abortController.signal
 
     const loop = async () => {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        this.stderrBuffer += decoder.decode(value, { stream: true })
-        this.consumeStderrLines()
-      }
-      if (this.stderrBuffer.trim()) {
-        this.persistStderr(this.stderrBuffer.trim())
-        this.stderrBuffer = ""
+      try {
+        while (!signal.aborted) {
+          const { done, value } = await reader.read()
+          if (done || signal.aborted) break
+          this.stderrBuffer += decoder.decode(value, { stream: true })
+          this.consumeStderrLines()
+        }
+        if (this.stderrBuffer.trim() && !signal.aborted) {
+          this.persistStderr(this.stderrBuffer.trim())
+          this.stderrBuffer = ""
+        }
+      } finally {
+        reader.releaseLock()
       }
     }
 

@@ -248,21 +248,35 @@ export class PiContainerManager {
       stdio: ["pipe", "pipe", "pipe"],
     })
 
-    // Wait for container to start and pi to initialize (includes npm install for extensions)
-    // This can take 10-15 seconds on first run as pi installs its extensions
-    await new Promise((resolve) => setTimeout(resolve, 15000))
-    
-    // Get container ID from podman ps
+    // Wait for container to be ready by polling podman ps
+    // instead of a fixed 15-second delay
     let containerId = ""
-    try {
-      const { stdout } = await this.execPodman([
-        "ps", "-q", "-f", `name=${containerName}`,
-      ])
-      containerId = stdout.trim()
-    } catch {
-      // Container might not be visible yet, generate a fallback ID
+    const startTime = Date.now()
+    const maxWaitMs = 15000 // Max 15 seconds, but usually much faster
+    const pollIntervalMs = 500
+
+    while (Date.now() - startTime < maxWaitMs) {
+      try {
+        const { stdout } = await this.execPodman([
+          "ps", "-q", "-f", `name=${containerName}`,
+        ])
+        containerId = stdout.trim()
+        if (containerId) {
+          // Container is running, pi should be ready soon
+          break
+        }
+      } catch {
+        // Container not ready yet, continue polling
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+    }
+
+    if (!containerId) {
       containerId = `pending-${Date.now()}`
     }
+
+    // Wait a moment for pi process to be ready inside container
+    await new Promise((resolve) => setTimeout(resolve, 1000))
 
     // Create process wrapper with stdio streams
     const process: ContainerProcess = {

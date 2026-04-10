@@ -60,6 +60,7 @@ export class ContainerPiProcess {
   private stdoutBuffer = ""
   private stderrBuffer = ""
   private isIdle = true
+  private abortController: AbortController | null = null
 
   constructor(args: {
     db: PiKanbanDB
@@ -128,6 +129,9 @@ export class ContainerPiProcess {
         runtime,
       },
     })
+
+    // Create abort controller for stream cleanup
+    this.abortController = new AbortController()
 
     // Start capturing stdout/stderr
     this.captureStdout()
@@ -281,6 +285,12 @@ export class ContainerPiProcess {
     const process = this.containerProcess
     this.containerProcess = null
 
+    // Signal stream readers to stop
+    if (this.abortController) {
+      this.abortController.abort()
+      this.abortController = null
+    }
+
     // Reject all pending requests
     for (const [id, pending] of this.pending.entries()) {
       clearTimeout(pending.timer)
@@ -312,21 +322,26 @@ export class ContainerPiProcess {
   }
 
   private captureStdout(): void {
-    if (!this.containerProcess) return
+    if (!this.containerProcess || !this.abortController) return
 
     const reader = this.containerProcess.stdout.getReader()
     const decoder = new TextDecoder()
+    const signal = this.abortController.signal
 
     const loop = async () => {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        this.stdoutBuffer += decoder.decode(value, { stream: true })
-        this.consumeStdoutLines()
-      }
-      if (this.stdoutBuffer.trim()) {
-        this.handleStdoutLine(this.stdoutBuffer.trim())
-        this.stdoutBuffer = ""
+      try {
+        while (!signal.aborted) {
+          const { done, value } = await reader.read()
+          if (done || signal.aborted) break
+          this.stdoutBuffer += decoder.decode(value, { stream: true })
+          this.consumeStdoutLines()
+        }
+        if (this.stdoutBuffer.trim() && !signal.aborted) {
+          this.handleStdoutLine(this.stdoutBuffer.trim())
+          this.stdoutBuffer = ""
+        }
+      } finally {
+        reader.releaseLock()
       }
     }
 
@@ -428,21 +443,26 @@ export class ContainerPiProcess {
   }
 
   private captureStderr(): void {
-    if (!this.containerProcess) return
+    if (!this.containerProcess || !this.abortController) return
 
     const reader = this.containerProcess.stderr.getReader()
     const decoder = new TextDecoder()
+    const signal = this.abortController.signal
 
     const loop = async () => {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        this.stderrBuffer += decoder.decode(value, { stream: true })
-        this.consumeStderrLines()
-      }
-      if (this.stderrBuffer.trim()) {
-        this.persistStderr(this.stderrBuffer.trim())
-        this.stderrBuffer = ""
+      try {
+        while (!signal.aborted) {
+          const { done, value } = await reader.read()
+          if (done || signal.aborted) break
+          this.stderrBuffer += decoder.decode(value, { stream: true })
+          this.consumeStderrLines()
+        }
+        if (this.stderrBuffer.trim() && !signal.aborted) {
+          this.persistStderr(this.stderrBuffer.trim())
+          this.stderrBuffer = ""
+        }
+      } finally {
+        reader.releaseLock()
       }
     }
 
