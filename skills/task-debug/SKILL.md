@@ -1,6 +1,6 @@
 ---
 name: task-debug
-description: Diagnose and repair failed, stuck, or misbehaving Easy Workflow tasks using session logs, timelines, worktree state, and deterministic repair logic.
+description: Diagnose and repair failed, stuck, or otherwise not progressing Easy Workflow tasks using session logs, timelines, worktree state, and deterministic repair logic.
 compatibility: opencode
 metadata:
   audience: agents
@@ -9,20 +9,22 @@ metadata:
 
 ## What I do
 
-- Diagnose why a task is `failed`, `stuck`, or otherwise not progressing.
-- Reconstruct what an agent actually did by examining the session timeline.
+- Diagnose why a task is `failed`, `stuck`, `review`, or otherwise not progressing.
+- Reconstruct what an agent actually did by examining the session timeline and messages.
 - Compare task output against worktree changes to verify implementation completeness.
-- Apply the correct repair action (`reset_backlog`, `queue_implementation`, `mark_done`, `fail_task`, `restore_plan_approval`) based on evidence.
+- Apply the correct repair action (`reset_backlog`, `queue_implementation`, `mark_done`, `fail_task`, `restore_plan_approval`, `continue_with_more_reviews`, `smart`) based on evidence.
 - Identify when to escalate to human review versus auto-repair.
 
 ## When to use me
 
 - A task is `failed` or `stuck` and you need to understand why.
 - A task has `errorMessage` set and you need to investigate.
+- A task is stuck in `review` status and not progressing.
 - An agent session ended unexpectedly or produced no useful output.
 - A best-of-n task has failed worker/reviewer runs and you need to assess the damage.
 - The workflow is not progressing and you need to diagnose the bottleneck.
 - You want to verify that a completed task actually made the promised changes.
+- You need to inspect session messages, I/O, or usage statistics.
 
 ## Core Behavior
 
@@ -47,6 +49,12 @@ curl http://localhost:<port>/api/tasks/<task-id>/runs
 
 # Get task candidates (for best-of-n)
 curl http://localhost:<port>/api/tasks/<task-id>/candidates
+
+# Get best-of-n summary
+curl http://localhost:<port>/api/tasks/<task-id>/best-of-n-summary
+
+# Get review status
+curl http://localhost:<port>/api/tasks/<task-id>/review-status
 ```
 
 Key fields to examine:
@@ -56,22 +64,31 @@ Key fields to examine:
 | `status` | Current board state (`failed`, `stuck`, `review`, `executing`, etc.) |
 | `errorMessage` | If set, the workflow recorded a failure reason |
 | `agentOutput` | Accumulated tagged output (`[plan]`, `[exec]`, `[review-fix-N]`) |
-| `sessionId` / `sessionUrl` | OpenCode session link—use for timeline |
+| `sessionId` / `sessionUrl` | Workflow session link—use for timeline |
 | `worktreeDir` | Worktree path—check git status there |
 | `executionPhase` | Internal phase for plan-mode tasks |
+| `planRevisionCount` | Number of plan revision cycles |
 | `reviewCount` | How many review cycles ran |
 | `bestOfNSubstage` | For best-of-n: which phase is active |
+| `reviewActivity` | `idle` or `running`—is review currently active |
+| `isArchived` | Whether task has been archived |
 
-### Step 2: Examine Session Timeline
+### Step 2: Examine Session Timeline and Messages
 
 The session timeline gives you the full message log in chronological order:
 
 ```bash
-# Get formatted timeline with summaries
+# Get formatted timeline entries
 curl http://localhost:<port>/api/sessions/<session-id>/timeline
 
-# Get raw messages (full content)
-curl http://localhost:<port>/api/sessions/<session-id>/messages
+# Get raw messages (full content) with pagination
+curl "http://localhost:<port>/api/sessions/<session-id>/messages?limit=500&offset=0"
+
+# Get session usage rollup (tokens, cost)
+curl http://localhost:<port>/api/sessions/<session-id>/usage
+
+# Get session I/O records
+curl "http://localhost:<port>/api/sessions/<session-id>/io?limit=500"
 
 # Get all messages for a task (across all its sessions)
 curl http://localhost:<port>/api/tasks/<task-id>/messages
@@ -84,13 +101,32 @@ Timeline entry fields:
 
 | Field | What it tells you |
 | --- | --- |
+| `id` | Entry ID |
+| `timestamp` | Unix timestamp |
+| `relativeTime` | Milliseconds from session start |
 | `role` | `user`, `assistant`, `system`, `tool` |
-| `messageType` | `text`, `tool_call`, `tool_result`, `step_finish`, `error` |
+| `messageType` | `text`, `tool_call`, `tool_result`, `step_start`, `step_finish`, `error`, etc. |
 | `summary` | Short human-readable description |
 | `hasToolCalls` | Whether the message triggered tools |
 | `hasEdits` | Whether file edits occurred |
 | `modelProvider` / `modelId` | Which model was used |
-| `relativeTime` | Milliseconds from session start |
+
+Session message fields:
+
+| Field | What it tells you |
+| --- | --- |
+| `id` | Message ID |
+| `seq` | Sequence number within session |
+| `sessionId` | Session ID |
+| `taskId` / `taskRunId` | Associated task/run |
+| `role` | Message role |
+| `messageType` | Type of message |
+| `contentJson` | Content as JSON |
+| `toolName` / `toolArgsJson` / `toolResultJson` | Tool call details |
+| `toolStatus` | Tool execution status |
+| `editDiff` / `editFilePath` | File edit details |
+| `promptTokens` / `completionTokens` / `totalTokens` | Token usage |
+| `costTotal` | Cost in USD |
 
 ### Step 3: Check Worktree Git State
 
@@ -128,13 +164,18 @@ A task is truly complete only when:
 
 ### Step 5: Understand Repair Actions
 
-Use `PUT /api/tasks/<task-id>/repair-state` with an `action` field:
+Use `POST /api/tasks/<task-id>/repair-state` with an `action` field:
 
 ```bash
 # Manual repair action
 curl -X POST http://localhost:<port>/api/tasks/<task-id>/repair-state \
   -H "Content-Type: application/json" \
   -d '{"action": "reset_backlog"}'
+
+# Smart repair with optional hints
+curl -X POST http://localhost:<port>/api/tasks/<task-id>/repair-state \
+  -H "Content-Type: application/json" \
+  -d '{"action": "smart", "smartRepairHints": "Focus on the database migration issue"}'
 ```
 
 Available actions:
@@ -147,7 +188,7 @@ Available actions:
 | `fail_task` | State is invalid and should stay visible with an error. Use when task cannot be repaired. |
 | `restore_plan_approval` | Task should return to plan approval review. |
 | `continue_with_more_reviews` | Stuck in review due to limit; allow more review cycles. |
-| `smart` | Let the repair model analyze the situation and decide. Requires `repairModel` to be configured. |
+| `smart` | Let the repair model analyze the situation and decide. Requires `repairModel` to be configured in options. |
 
 ## Smart Repair
 
@@ -161,7 +202,7 @@ curl -X POST http://localhost:<port>/api/tasks/<task-id>/repair-state \
 
 Smart repair gathers:
 - Worktree git status and diff
-- OpenCode session messages (last 5)
+- Session messages (last 5)
 - Workflow session history
 - Task runs (best-of-n)
 - Latest `[plan]`, `[exec]`, and `[user-revision-request]` blocks from `agentOutput`
@@ -212,6 +253,26 @@ It then prompts the configured `repairModel` to decide the best action.
 - `continue_with_more_reviews` to allow more cycles
 - `reset_backlog` with improved instructions
 - Add `smartRepairHints` to give the agent targeted guidance
+- Override `maxReviewRunsOverride` to increase the limit
+
+### Pattern 6: Task stuck in plan approval
+
+**Symptoms:** `status: "review"`, `awaitingPlanApproval: true`, `executionPhase: "plan_complete_waiting_approval"`.
+
+**Diagnosis:** Plan-mode task completed planning but is waiting for user approval.
+
+**Repair options:**
+- User approves: `POST /api/tasks/<id>/approve-plan`
+- User requests revision: `POST /api/tasks/<id>/request-plan-revision` with `feedback`
+- Reset to re-plan: `reset_backlog`
+
+### Pattern 7: Task is archived
+
+**Symptoms:** `isArchived: true`, task not visible in UI.
+
+**Diagnosis:** Task was archived after completion or manual archival.
+
+**Repair:** Tasks cannot be unarchived via API. Create a new task if needed.
 
 ## Debugging Best-of-N Tasks
 
@@ -239,6 +300,22 @@ Best-of-n substages:
 | `blocked_for_manual_review` | Waiting for human decision |
 | `completed` | Successfully completed |
 
+Manual candidate selection:
+
+```bash
+curl -X POST http://localhost:<port>/api/tasks/<task-id>/best-of-n/select-candidate \
+  -H "Content-Type: application/json" \
+  -d '{"candidateId": "<candidate-id>"}'
+```
+
+Abort best-of-n:
+
+```bash
+curl -X POST http://localhost:<port>/api/tasks/<task-id>/best-of-n/abort \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Aborting due to incorrect approach"}'
+```
+
 ## State Transitions
 
 Understanding how tasks move between states helps you diagnose issues:
@@ -259,53 +336,136 @@ The orchestrator handles transitions automatically, but stuck/failed states indi
 
 ## Architecture Overview
 
-The debug skill operates on the **standalone server + bridge plugin** architecture:
+The debug skill operates on the **standalone server with SQLite database** architecture:
 
-1. **Standalone Server** (`.opencode/easy-workflow/standalone.ts`)
-   - HTTP API on `kanbanPort`
-   - SQLite database at `.opencode/easy-workflow/tasks.db`
+1. **Standalone Server** (`src/server/server.ts`)
+   - HTTP API on configured port (default 3789)
+   - SQLite database at `.pi/easy-workflow/tasks.db`
    - Message logger captures all session events
+   - WebSocket server broadcasts real-time updates
 
-2. **Bridge Plugin** (in OpenCode plugins directory)
-   - Forwards `message.updated`, `tool.execute.after`, `session.updated` events
-   - Session IDs link messages to tasks
+2. **Database Tables:**
 
-3. **Database Tables:**
-
-   `tasks` — Core task state
+   `tasks` — Core task state with archive support
 
    `task_runs` — Child runs for best-of-n
 
    `task_candidates` — Successful worker artifacts
 
-   `workflow_sessions` — Links OpenCode sessions to tasks
+   `workflow_runs` — Workflow run tracking with colors
 
-   `session_messages` — Every message exchanged, with tool calls, diffs, and token usage
+   `workflow_sessions` — Workflow session management
+
+   `session_messages` — Normalized message log with token/cost tracking
+
+   `session_io` — Raw I/O capture stream
+
+   `prompt_templates` / `prompt_template_versions` — Prompt management
 
 ## Persistence Layout
 
-Database location: `<workspace>/.opencode/easy-workflow/tasks.db`
+Database location: `<workspace>/.pi/easy-workflow/tasks.db`
 
-The storage layer is in `.opencode/easy-workflow/db.ts`.
+The storage layer is in `src/db.ts`.
 
 Session logs are stored in `session_messages` table and available via:
-- `GET /api/sessions/:sessionId/timeline`
-- `GET /api/sessions/:sessionId/messages`
-- `GET /api/tasks/:taskId/messages`
-- `GET /api/task-runs/:runId/messages`
+- `GET /api/sessions/:sessionId/timeline` — Timeline entries
+- `GET /api/sessions/:sessionId/messages` — Full messages with pagination
+- `GET /api/sessions/:sessionId/usage` — Token/cost rollup
+- `GET /api/sessions/:sessionId/io` — Raw I/O records
+- `GET /api/tasks/:taskId/messages` — All messages for a task
+- `GET /api/task-runs/:runId/messages` — Messages for a specific run
+
+## Workflow Run Management
+
+For debugging workflow-level issues:
+
+```bash
+# List all workflow runs
+curl http://localhost:<port>/api/runs
+
+# Pause a run
+curl -X POST http://localhost:<port>/api/runs/<run-id>/pause
+
+# Resume a run
+curl -X POST http://localhost:<port>/api/runs/<run-id>/resume
+
+# Stop a run
+curl -X POST http://localhost:<port>/api/runs/<run-id>/stop
+
+# Archive a completed/failed run
+curl -X DELETE http://localhost:<port>/api/runs/<run-id>
+```
+
+## Session Management
+
+For debugging session-level issues:
+
+```bash
+# Get workflow session details
+curl http://localhost:<port>/api/sessions/<session-id>
+
+# Get session messages with pagination
+curl "http://localhost:<port>/api/sessions/<session-id>/messages?limit=100&offset=0"
+
+# Get session timeline (condensed view)
+curl http://localhost:<port>/api/sessions/<session-id>/timeline
+
+# Get token/cost usage rollup
+curl http://localhost:<port>/api/sessions/<session-id>/usage
+
+# Get raw I/O records
+curl "http://localhost:<port>/api/sessions/<session-id>/io?limit=100"
+```
+
+## Execution Graph Inspection
+
+For understanding task execution order:
+
+```bash
+# Get execution graph with dependency resolution
+curl http://localhost:<port>/api/execution-graph
+```
+
+This returns:
+- `nodes`: All tasks that will run with execution metadata
+- `edges`: Dependency relationships
+- `batches`: Tasks grouped by execution batch (parallelizable)
+- `pendingApprovals`: Tasks waiting for plan approval
+
+## Resetting Tasks
+
+To reset a task to clean backlog state:
+
+```bash
+curl -X POST http://localhost:<port>/api/tasks/<task-id>/reset
+```
+
+This clears:
+- `status` → `backlog`
+- `reviewCount` → 0
+- `errorMessage` → null
+- `completedAt` → null
+- `sessionId` / `sessionUrl` → null
+- `worktreeDir` → null
+- `executionPhase` → `not_started`
+- `awaitingPlanApproval` → false
+- `planRevisionCount` → 0
 
 ## Diagnostic Checklist
 
 When debugging a failing task, verify:
 
 - [ ] Task `status` and `errorMessage` are set correctly
-- [ ] `sessionId` points to a real OpenCode session
+- [ ] `sessionId` points to a real workflow session
 - [ ] Session timeline shows what the agent was doing when it stopped
 - [ ] Worktree exists and has the expected changes (or lack thereof)
 - [ ] `agentOutput` contains the expected tagged blocks (`[plan]`, `[exec]`)
 - [ ] For best-of-n: task runs and candidates reflect expected progress
 - [ ] `executionPhase` and `awaitingPlanApproval` are consistent with the task type
 - [ ] Review gaps (if any) are specific and actionable
+- [ ] `isArchived` is false (archived tasks don't execute)
+- [ ] `requirements` dependencies are satisfied or will be satisfied
 
 ## What to Tell the User
 
