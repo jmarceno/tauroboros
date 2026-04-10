@@ -1,22 +1,90 @@
-# Pi Easy Workflow (MVP)
+# Pi Easy Workflow
 
-Pi-based Easy Workflow runtime and kanban server, migrated from the OpenCode execution model.
+Pi Easy Workflow is an AI-powered workflow orchestration system that helps you manage and execute complex software development tasks using AI agents. It combines a kanban-style task board with sophisticated execution strategies to deliver high-quality, automated code generation and modification.
 
-This project is intentionally isolated under `pi-easy-workflow/` and does not replace the legacy implementation in-place.
 
-## Quick start
+## Features
+
+### Task Management
+- **Kanban Board** – Visual task management with columns for templates, backlog, executing, review, done, and failed states
+- **Task Dependencies** – Define requirements between tasks to ensure proper execution order
+- **Drag-and-Drop Reordering** – Prioritize tasks with simple reordering
+- **Archiving** – Clean up completed work while preserving history
+
+### AI Execution Modes
+- **Standard Execution** – Direct AI agent execution with full access to tools and file system
+- **Plan Mode** – AI creates an implementation plan that you can review and approve before execution
+- **Review Loops** – Automatic code review with iterative fixes until quality criteria are met
+- **Best-of-N Strategy** – Run multiple AI workers in parallel, have reviewers evaluate results, and automatically select or synthesize the best implementation
+
+### Quality Assurance
+- **Automated Reviews** – AI-powered code review that checks for bugs, security issues, and completeness
+- **Configurable Review Cycles** – Set how many review iterations each task should undergo
+- **Smart Repair** – Automatic detection and recovery from failed or stuck task states
+
+### Isolation & Security
+- **Git Worktree Isolation** – Each task runs in its own git worktree for clean separation
+- **Container Isolation (Optional)** – Run AI agents inside Podman containers for filesystem and port isolation
+- **Automatic Cleanup** – Worktrees and resources are cleaned up after task completion
+
+### Monitoring & Observability
+- **Real-time WebSocket Updates** – Live task status updates in the kanban UI
+- **Session Logging** – Full capture of all AI interactions with token usage and cost tracking
+- **Execution Graph Visualization** – See task dependencies and parallelization opportunities
+- **Telegram Notifications** – Get notified when tasks complete or fail
+
+### Integration
+- **Pi RPC Integration** – Works with Pi AI agents via RPC protocol
+- **Model Discovery** – Automatic detection of available AI models
+- **Branch Management** – Flexible git branch selection per task or globally
+- **Auto-commit** – Optional automatic commit and merge of changes
+
+## Screenshots
+
+![Kanban Board Overview](images/screenhot1.png)
+
+![Task Details and Execution](images/screenhot2.png)
+
+## Quick Start
+
+### Prerequisites
+- [Bun](https://bun.sh/) runtime
+- Git repository (project must be in a git repo)
+- Pi AI agent binary (for AI execution)
+
+### Installation
 
 ```bash
+# Clone or navigate to your project
+cd your-project
+
+# Install dependencies
 bun install
+
+# Setup skills and verify installation
 bun run setup
+```
+
+### Start the Server
+
+```bash
+# Start the kanban server
 bun run src/index.ts
 ```
 
-The server starts on `PI_EASY_WORKFLOW_PORT` when set, or an automatic/default port otherwise.
+The server will start on port `3000` by default (or the port specified in `PI_EASY_WORKFLOW_PORT` environment variable). Open `http://localhost:3000` in your browser.
 
-## Quick start with container isolation (optional)
+### Basic Usage
 
-Run Pi agents inside Podman containers for filesystem and port isolation:
+1. **Create a Task** – Click "New Task" in the kanban board
+2. **Configure Options** – Set execution model, branch, and enable/disable features like plan mode, review, auto-commit
+3. **Add to Backlog** – Task appears in the backlog column
+4. **Start Execution** – Click the play button or "Start All" to execute all backlog tasks
+5. **Monitor Progress** – Watch real-time updates as the AI works through your tasks
+
+### Container Isolation (Optional)
+
+For enhanced security and isolation, run AI agents inside Podman containers:
 
 ```bash
 # 1. Install prerequisites (Podman required)
@@ -33,27 +101,13 @@ cp env.example .env
 bun run src/index.ts
 ```
 
-**Benefits:**
-- Filesystem isolation: Agents can only access their worktree
-- Port isolation: Multiple agents can use port 3000 simultaneously
-- Security: Container sandboxing without special kernel requirements
-- Fast startup: Standard containers start quickly
-- Daemonless: Podman doesn't require a running daemon
-
-**Requirements:** Podman is required for container mode. If setup fails, use native mode instead:
-```bash
-PI_EASY_WORKFLOW_RUNTIME=native  # Fallback if containers unavailable
-```
-
-See [docs/container-isolation.md](docs/container-isolation.md) for full documentation.
-
-## Main commands
+## Available Commands
 
 ```bash
 # Start server
 bun run start
 
-# Dev mode
+# Development mode with auto-reload
 bun run dev
 
 # Run tests
@@ -78,31 +132,91 @@ bun run container:build      # Build pi-agent container image
 bun run container:cleanup    # Remove container configuration
 ```
 
-## Environment variables
+## Configuration
 
-### Core
-- `PI_EASY_WORKFLOW_PORT` - HTTP server port (`0` allowed for random free port)
-- `PI_EASY_WORKFLOW_DB_PATH` - Override SQLite DB path
-- `PI_EASY_WORKFLOW_PI_BIN` - Override Pi binary path (used heavily by tests/mocks)
-- `PI_EASY_WORKFLOW_PI_ARGS` - Override Pi runtime args (default is `--rpc --no-extensions`)
+### Environment Variables
 
-### Container isolation (Podman)
-- `PI_EASY_WORKFLOW_RUNTIME` - Runtime mode: `native` (default) or `container`
-- `PI_EASY_WORKFLOW_CONTAINER_IMAGE` - Container image for agents (default: `pi-agent:alpine`)
-- `PI_EASY_WORKFLOW_CONTAINER_MEMORY_MB` - Memory limit per container (default: `512`)
-- `PI_EASY_WORKFLOW_CONTAINER_CPU_COUNT` - CPU limit per container (default: `1`)
-- `PI_EASY_WORKFLOW_PORT_RANGE_START` - Host port allocation start (default: `30000`)
-- `PI_EASY_WORKFLOW_PORT_RANGE_END` - Host port allocation end (default: `40000`)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PI_EASY_WORKFLOW_PORT` | HTTP server port | `3000` |
+| `PI_EASY_WORKFLOW_DB_PATH` | SQLite database path | `.pi/easy-workflow/db.sqlite` |
+| `PI_EASY_WORKFLOW_RUNTIME` | Runtime mode: `native` or `container` | `native` |
+| `PI_EASY_WORKFLOW_CONTAINER_IMAGE` | Container image for agents | `pi-agent:alpine` |
+| `PI_EASY_WORKFLOW_CONTAINER_MEMORY_MB` | Memory limit per container | `512` |
+| `PI_EASY_WORKFLOW_CONTAINER_CPU_COUNT` | CPU limit per container | `1` |
 
-## Runtime model (MVP)
+### Task Configuration
 
+Each task can be configured with:
+- **Plan Mode** – AI creates a plan before implementation
+- **Auto-approve Plan** – Skip manual plan approval
+- **Review** – Enable automated code review
+- **Auto-commit** – Automatically commit changes after completion
+- **Delete Worktree** – Clean up worktree after task completes
+- **Thinking Level** – Control AI reasoning depth: `low`, `medium`, `high`
+- **Execution Strategy** – `standard` or `best_of_n`
+
+---
+
+## Technical Architecture
+
+### Runtime Model
 - One Pi RPC process per workflow-owned session
-- Full raw capture to DB (`session_io`) for stdin/stdout/stderr/lifecycle/snapshots/prompts
-- Normalized projection in `session_messages`
-- Prompt templates are DB-backed (`prompt_templates`)
+- Full raw capture to database (`session_io`) for stdin/stdout/stderr/lifecycle/snapshots/prompts
+- Normalized projection in `session_messages` for structured querying
+- Prompt templates are database-backed (`prompt_templates`)
 - Skills are file-based and synced into `.pi/skills/`
 
-## Verification and migration status
+### Database Schema
+The system uses SQLite with tables for:
+- `tasks` – Task definitions and state
+- `workflow_runs` – Execution run tracking
+- `task_runs` – Individual task execution instances (for Best-of-N)
+- `task_candidates` – Candidate implementations from workers
+- `workflow_sessions` – AI session metadata
+- `session_messages` – Structured message logs
+- `session_io` – Raw I/O capture
+- `options` – Global configuration
+- `prompt_templates` – Database-backed prompt templates
 
-- MVP verification report: `./MVP_VERIFICATION.md`
-- Explicit known gaps and next steps: `./MVP_GAPS.md`
+### API Endpoints
+
+The server exposes a comprehensive REST API:
+- `GET/POST/PUT/DELETE /api/tasks` – Task CRUD operations
+- `GET/PUT /api/options` – Global configuration
+- `GET /api/branches` – Git branch listing
+- `GET /api/models` – Available AI models
+- `POST /api/start` – Start workflow execution
+- `POST /api/stop` – Stop execution
+- `GET /api/execution-graph` – Dependency visualization
+- `GET /api/sessions/:id/messages` – Session message logs
+- WebSocket at `/ws` for real-time updates
+
+### Project Structure
+
+```
+src/
+├── index.ts              # Entry point
+├── server.ts             # HTTP server setup
+├── orchestrator.ts       # Workflow execution orchestration
+├── db.ts                 # Database layer
+├── types.ts              # TypeScript type definitions
+├── execution-plan.ts     # Dependency resolution
+├── task-state.ts         # Task state machine
+├── kanban/               # Web UI (single HTML file)
+├── server/               # HTTP server implementation
+│   ├── router.ts         # URL routing
+│   ├── server.ts         # Route handlers
+│   ├── websocket.ts      # WebSocket hub
+│   └── types.ts          # Server types
+├── runtime/              # Execution runtime
+│   ├── session-manager.ts
+│   ├── pi-process.ts
+│   ├── container-manager.ts
+│   ├── worktree.ts
+│   ├── best-of-n.ts      # Best-of-N strategy
+│   └── review-session.ts
+├── prompts/              # Prompt templates
+├── db/                   # Database migrations and types
+└── recovery/             # Startup recovery logic
+```
