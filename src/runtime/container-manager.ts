@@ -1,6 +1,9 @@
 import { spawn, execSync } from "child_process"
 import { randomUUID } from "crypto"
 import { existsSync } from "fs"
+import { ContainerImageManager, type ImageStatusChangeHandler } from "./container-image-manager.ts"
+
+export { ContainerImageManager, type ImageStatusChangeHandler }
 
 export interface ContainerConfig {
   sessionId: string
@@ -119,11 +122,48 @@ export function createVolumeMounts(
 export class PiContainerManager {
   private readonly imageName: string
   private readonly containers = new Map<string, ContainerProcess>()
+  private imageManager?: ContainerImageManager
 
   constructor(
     imageName = "pi-agent:alpine",
+    imageManager?: ContainerImageManager,
   ) {
     this.imageName = imageName
+    this.imageManager = imageManager
+  }
+
+  /**
+   * Get the image manager if configured.
+   */
+  getImageManager(): ContainerImageManager | undefined {
+    return this.imageManager
+  }
+
+  /**
+   * Set the image manager after construction.
+   */
+  setImageManager(imageManager: ContainerImageManager): void {
+    this.imageManager = imageManager
+  }
+
+  /**
+   * Ensure the container image is ready before creating containers.
+   * If an image manager is configured, this will build/pull the image if needed.
+   */
+  async ensureImageReady(): Promise<void> {
+    if (this.imageManager) {
+      await this.imageManager.prepare()
+    } else {
+      // Check if image exists directly in podman
+      try {
+        await this.execPodman(["image", "exists", this.imageName])
+      } catch {
+        throw new Error(
+          `Podman image '${this.imageName}' not found. ` +
+          `Build it with: podman build -t ${this.imageName} -f docker/pi-agent/Dockerfile .`,
+        )
+      }
+    }
   }
 
   /**
@@ -144,8 +184,8 @@ export class PiContainerManager {
   async createContainer(config: ContainerConfig): Promise<ContainerProcess> {
     const imageName = config.imageName || this.imageName
 
-    // Ensure image exists
-    await this.ensureImage(imageName)
+    // Ensure image is ready (uses image manager if available)
+    await this.ensureImageReady()
 
     // Create volume mounts
     const mounts = createVolumeMounts(config.worktreeDir, config.repoRoot)
@@ -465,20 +505,6 @@ export class PiContainerManager {
     }
 
     return { podman, image, errors }
-  }
-
-  /**
-   * Ensure the image exists in podman.
-   */
-  private async ensureImage(imageName: string): Promise<void> {
-    try {
-      await this.execPodman(["image", "exists", imageName])
-    } catch {
-      throw new Error(
-        `Podman image '${imageName}' not found. Please build it first with:\n` +
-          `podman build -t ${imageName} -f docker/pi-agent/Dockerfile .`,
-      )
-    }
   }
 
   /**

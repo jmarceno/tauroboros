@@ -26,6 +26,10 @@ export interface RuntimeSettings {
 export interface ContainerSettings {
   enabled: boolean
   image: string
+  imageSource: "dockerfile" | "registry"
+  dockerfilePath: string
+  registryUrl: string | null
+  autoPrepare: boolean
   memoryMb: number
   cpuCount: number
   portRangeStart: number
@@ -67,6 +71,10 @@ export const DEFAULT_INFRASTRUCTURE_SETTINGS: InfrastructureSettings = {
     container: {
       enabled: false,
       image: "pi-agent:alpine",
+      imageSource: "dockerfile",
+      dockerfilePath: "docker/pi-agent/Dockerfile",
+      registryUrl: null,
+      autoPrepare: true,
       memoryMb: 512,
       cpuCount: 1,
       portRangeStart: 30000,
@@ -262,6 +270,10 @@ function validateAndExtractUnknown(
           const validContainerKeys = [
             "enabled",
             "image",
+            "imageSource",
+            "dockerfilePath",
+            "registryUrl",
+            "autoPrepare",
             "memoryMb",
             "cpuCount",
             "portRangeStart",
@@ -276,6 +288,26 @@ function validateAndExtractUnknown(
           }
           if (container.image !== undefined) {
             validateFieldType("workflow.container.image", container.image, "string", warnings)
+          }
+          if (container.imageSource !== undefined) {
+            if (validateFieldType("workflow.container.imageSource", container.imageSource, "string", warnings)) {
+              if (container.imageSource !== "dockerfile" && container.imageSource !== "registry") {
+                warnings.push(
+                  `Invalid value at 'workflow.container.imageSource': must be "dockerfile" or "registry", got "${container.imageSource}"`,
+                )
+              }
+            }
+          }
+          if (container.dockerfilePath !== undefined) {
+            validateFieldType("workflow.container.dockerfilePath", container.dockerfilePath, "string", warnings)
+          }
+          if (container.registryUrl !== undefined) {
+            if (container.registryUrl !== null) {
+              validateFieldType("workflow.container.registryUrl", container.registryUrl, "string", warnings)
+            }
+          }
+          if (container.autoPrepare !== undefined) {
+            validateFieldType("workflow.container.autoPrepare", container.autoPrepare, "boolean", warnings)
           }
           if (container.memoryMb !== undefined) {
             validateFieldType("workflow.container.memoryMb", container.memoryMb, "integer", warnings)

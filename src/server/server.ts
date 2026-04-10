@@ -6,9 +6,10 @@ import type { InfrastructureSettings } from "../config/settings.ts"
 import { buildExecutionGraph, getExecutableTasks, getExecutionGraphTasks, resolveDependencyChain } from "../execution-plan.ts"
 import { discoverPiModels } from "../pi/model-discovery.ts"
 import { isTaskAwaitingPlanApproval } from "../task-state.ts"
-import type { BestOfNConfig, Task, TaskRun, ThinkingLevel, WSMessage } from "../types.ts"
+import type { BestOfNConfig, ImageStatusPayload, Task, TaskRun, ThinkingLevel, WSMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
 import { runStartupRecovery } from "../recovery/startup-recovery.ts"
+import { ContainerImageManager } from "../runtime/container-image-manager.ts"
 import { SmartRepairService, type SmartRepairAction } from "../runtime/smart-repair.ts"
 import { sendTelegramNotification, type TelegramConfig } from "../telegram.ts"
 import { Router } from "./router.ts"
@@ -116,6 +117,8 @@ export class PiKanbanServer {
   private readonly onStopRun: RunControlFn | null
   private readonly defaultPort: number
   private readonly smartRepair: SmartRepairService
+  private readonly imageManager?: ContainerImageManager
+  private readonly settings?: InfrastructureSettings
 
   constructor(
     db: PiKanbanDB,
@@ -131,6 +134,7 @@ export class PiKanbanServer {
     } = {},
   ) {
     this.db = db
+    this.settings = opts.settings
     this.defaultPort = opts.port ?? this.db.getOptions().port
     this.smartRepair = new SmartRepairService(this.db, opts.settings)
     this.onStart = opts.onStart ?? (async () => null)
@@ -139,6 +143,27 @@ export class PiKanbanServer {
     this.onPauseRun = opts.onPauseRun ?? null
     this.onResumeRun = opts.onResumeRun ?? null
     this.onStopRun = opts.onStopRun ?? null
+
+    // Initialize container image manager if container mode is enabled
+    if (opts.settings?.workflow?.container?.enabled) {
+      const containerSettings = opts.settings.workflow.container
+      this.imageManager = new ContainerImageManager({
+        imageName: containerSettings.image,
+        imageSource: containerSettings.imageSource,
+        dockerfilePath: containerSettings.dockerfilePath,
+        registryUrl: containerSettings.registryUrl,
+        cacheDir: join(process.cwd(), ".pi", "easy-workflow"),
+        onStatusChange: (event) => {
+          const payload: ImageStatusPayload = {
+            status: event.status,
+            message: event.message,
+            progress: event.progress,
+            errorMessage: event.errorMessage,
+          }
+          this.broadcast({ type: "image_status", payload })
+        },
+      })
+    }
 
     // Register Telegram notification listener for task status changes
     this.db.setTaskStatusChangeListener((taskId: string, oldStatus: string, newStatus: string) => {
@@ -201,6 +226,25 @@ export class PiKanbanServer {
   async start(port = this.defaultPort): Promise<number> {
     if (this.server) return this.server.port
 
+    // Prepare container image if autoPrepare is enabled
+    if (this.imageManager && this.settings?.workflow?.container?.autoPrepare) {
+      try {
+        await this.imageManager.prepare()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error("[server] Failed to prepare container image:", message)
+        // Broadcast error but continue starting server
+        this.broadcast({
+          type: "image_status",
+          payload: {
+            status: "error",
+            message: "Failed to prepare container image",
+            errorMessage: message,
+          },
+        })
+      }
+    }
+
     await runStartupRecovery({
       db: this.db,
       broadcast: (message) => this.broadcast(message),
@@ -248,6 +292,24 @@ export class PiKanbanServer {
   private registerRoutes(): void {
     this.router.get("/", () => new Response(KANBAN_HTML, { headers: { "Content-Type": "text/html" } }))
     this.router.get("/healthz", ({ json }) => json({ ok: true, wsClients: this.wsHub.size() }))
+
+    this.router.get("/api/container/image-status", ({ json }) => {
+      if (!this.imageManager) {
+        return json({
+          enabled: false,
+          status: "not_present",
+          message: "Container mode is not enabled",
+        })
+      }
+
+      const cache = this.imageManager.getCache()
+      return json({
+        enabled: true,
+        status: this.imageManager.getStatus(),
+        imageName: this.settings?.workflow?.container?.image,
+        ...cache,
+      })
+    })
 
     this.router.get("/api/tasks", ({ json, sessionUrlFor }) => {
       const tasks = this.db.getTasks().map((task) => normalizeTaskForClient(task, sessionUrlFor))

@@ -11,19 +11,27 @@ import {
   createWorktree,
   sendRpcCommand,
   waitForEvent,
-  shouldSkipContainerTests,
+  setupContainerImage,
+  isPodmanAvailable,
 } from "./utils.ts"
 
-// Skip all tests if prerequisites are not met
-const prerequisites = shouldSkipContainerTests()
-const describeOrSkip = prerequisites.skip ? describe.skip : describe
+// Skip all tests if Podman is not available
+const skipTests = !isPodmanAvailable()
+if (skipTests) {
+  console.log("Skipping container tests: Podman is not available")
+}
+
+const describeOrSkip = skipTests ? describe.skip : describe
 
 describeOrSkip("RPC Communication", () => {
   let containerManager: PiContainerManager
   let repoDir: string
   let worktreeDir: string
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    // Ensure container image is ready (builds if needed)
+    await setupContainerImage()
+
     containerManager = new PiContainerManager()
     repoDir = createTempGitRepo()
     worktreeDir = createWorktree(repoDir, "rpc-test")

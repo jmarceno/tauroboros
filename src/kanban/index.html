@@ -2254,6 +2254,17 @@ function connectWS() {
         const t = allTasks.find(t2 => t2.id === msg.payload.taskId)
         if (t) { t.agentOutput = (t.agentOutput || '') + msg.payload.output; renderBoard() }
         break
+      case 'image_status':
+        // Show image status in event log
+        if (msg.payload.status === 'preparing') {
+          addLogEntry(`⏳ ${msg.payload.message}`, 'warning')
+        } else if (msg.payload.status === 'ready') {
+          addLogEntry(`✅ ${msg.payload.message}`, 'success')
+        } else if (msg.payload.status === 'error') {
+          addLogEntry(`❌ ${msg.payload.message}${msg.payload.errorMessage ? ': ' + msg.payload.errorMessage : ''}`, 'error')
+          showToast(`Container image error: ${msg.payload.errorMessage || msg.payload.message}`, 'error', 0)
+        }
+        break
       case 'error': showToast(msg.payload.message, 'error'); break
       case 'plan_revision_requested':
         loadTasks()

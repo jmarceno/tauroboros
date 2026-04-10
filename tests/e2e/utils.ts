@@ -10,6 +10,7 @@ import { tmpdir } from "os"
 import { join } from "path"
 import { execSync } from "child_process"
 import type { ContainerProcess } from "../../src/runtime/container-manager.ts"
+import { ensureContainerImage } from "./setup.ts"
 
 /**
  * Create a temporary directory.
@@ -235,23 +236,47 @@ export function isPiAgentImageAvailable(): boolean {
 }
 
 /**
- * Skip test helper that checks prerequisites.
+ * Setup promise for ensuring image is ready.
+ * This is shared across all tests to prevent duplicate setup work.
  */
-export function shouldSkipContainerTests(): {
+let imageSetupPromise: Promise<void> | null = null
+
+/**
+ * Ensure container image is ready for tests.
+ * This function is idempotent and safe to call from any test.
+ */
+export async function setupContainerImage(): Promise<void> {
+  if (!imageSetupPromise) {
+    imageSetupPromise = ensureContainerImage()
+  }
+  await imageSetupPromise
+}
+
+/**
+ * Skip test helper that checks prerequisites.
+ * Also triggers image setup if needed.
+ */
+export async function shouldSkipContainerTests(): Promise<{
   skip: boolean
   reason?: string
-} {
+}> {
   if (!isPodmanAvailable()) {
     return { skip: true, reason: "Podman is not available" }
   }
 
-  if (!isPiAgentImageAvailable()) {
+  // Try to ensure image is ready (may build if needed)
+  try {
+    await setupContainerImage()
+    return { skip: false }
+  } catch {
+    // If setup fails, check if image exists anyway
+    if (isPiAgentImageAvailable()) {
+      return { skip: false }
+    }
     return {
       skip: true,
       reason:
         "pi-agent:alpine image not found. Run: podman build -t pi-agent:alpine -f docker/pi-agent/Dockerfile .",
     }
   }
-
-  return { skip: false }
 }

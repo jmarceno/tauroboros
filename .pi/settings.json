@@ -21,6 +21,10 @@
     "container": {
       "enabled": false,
       "image": "pi-agent:alpine",
+      "imageSource": "dockerfile",
+      "dockerfilePath": "docker/pi-agent/Dockerfile",
+      "registryUrl": null,
+      "autoPrepare": true,
       "memoryMb": 512,
       "cpuCount": 1,
       "portRangeStart": 30000,

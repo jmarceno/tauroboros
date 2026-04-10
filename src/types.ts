@@ -229,10 +229,18 @@ export type WSMessageType =
   | "session_message_created"
   | "session_status_changed"
   | "session_completed"
+  | "image_status"
 
 export interface WSMessage {
   type: WSMessageType
   payload: any
+}
+
+export interface ImageStatusPayload {
+  status: "not_present" | "preparing" | "ready" | "error"
+  message: string
+  progress?: number
+  errorMessage?: string
 }
 
 export interface ReviewResult {

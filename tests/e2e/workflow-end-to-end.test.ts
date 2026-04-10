@@ -20,11 +20,16 @@ import { PiKanbanDB } from "../../src/db.ts"
 import { PiOrchestrator } from "../../src/orchestrator.ts"
 import { PiContainerManager } from "../../src/runtime/container-manager.ts"
 import { E2E_CONFIG, getModelConfig } from "./config.ts"
-import { shouldSkipContainerTests, createTempGitRepo, createWorktree, sleep } from "./utils.ts"
+import { setupContainerImage, isPodmanAvailable, sleep } from "./utils.ts"
 import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../../src/config/settings.ts"
 
-const prerequisites = shouldSkipContainerTests()
-const describeOrSkip = prerequisites.skip ? describe.skip : describe
+// Skip all tests if Podman is not available
+const skipTests = !isPodmanAvailable()
+if (skipTests) {
+  console.log("Skipping container tests: Podman is not available")
+}
+
+const describeOrSkip = skipTests ? describe.skip : describe
 
 describeOrSkip("Real Workflow End-to-End", () => {
   let db: PiKanbanDB
@@ -36,6 +41,9 @@ describeOrSkip("Real Workflow End-to-End", () => {
   let settings: InfrastructureSettings
 
   beforeAll(async () => {
+    // Ensure container image is ready (builds if needed)
+    await setupContainerImage()
+
     // Create a temporary project directory for the workflow
     projectDir = mkdtempSync(join(tmpdir(), "pi-e2e-workflow-"))
 
