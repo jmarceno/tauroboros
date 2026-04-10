@@ -3,7 +3,7 @@
  *
  * This test runs a REAL workflow using the orchestrator with container isolation.
  * NO MOCKS - uses actual Pi agents, actual containers, actual git operations.
- *
+ * All tasks are always set to planmode: true, autoApprovePlan: true and review: true to we can test a real life worflow and state changes
  * Prerequisites:
  * - Podman installed and running
  * - pi-agent:alpine image built
@@ -146,9 +146,9 @@ describeOrSkip("Real Workflow End-to-End", () => {
           'Create a file named "greeting.txt" in the root directory with the content "Hello from container workflow test!". Do not ask for confirmation, just create the file.',
         branch: "test-task-1",
         status: "backlog",
-        planmode: false,
+        planmode: true,
         autoApprovePlan: true,
-        review: false,
+        review: true,
         autoCommit: false,
         deleteWorktree: true,
         ...getModelConfig(),
@@ -250,9 +250,9 @@ describeOrSkip("Real Workflow End-to-End", () => {
           "Run the command 'echo $HOSTNAME' and report the result. This helps verify we're running in a container.",
         branch: "test-task-2",
         status: "backlog",
-        planmode: false,
+        planmode: true,
         autoApprovePlan: true,
-        review: false,
+        review: true,
         autoCommit: false,
         deleteWorktree: true,
         ...getModelConfig(),
@@ -295,16 +295,17 @@ describeOrSkip("Real Workflow End-to-End", () => {
       events = []
 
       // Create task 1: Create a data directory with a config file
+      // Use autoCommit: true so changes persist for dependent tasks
       const task1 = db.createTask({
         name: "Create data directory and config",
         prompt:
           'Create a directory named "data" and inside it create a file named "config.json" with the content: {"version": "1.0", "app": "test-app"}. Do not ask for confirmation.',
         branch: "test-task-setup",
         status: "backlog",
-        planmode: false,
+        planmode: true,
         autoApprovePlan: true,
-        review: false,
-        autoCommit: false,
+        review: true,
+        autoCommit: true, // Commit so changes persist
         deleteWorktree: true,
         ...getModelConfig(),
       })
@@ -318,10 +319,10 @@ describeOrSkip("Real Workflow End-to-End", () => {
         branch: "test-task-summary",
         status: "backlog",
         requirements: [task1.id], // Task 2 depends on Task 1
-        planmode: false,
+        planmode: true,
         autoApprovePlan: true,
-        review: false,
-        autoCommit: false,
+        review: true,
+        autoCommit: true, // Commit so changes persist
         deleteWorktree: true,
         ...getModelConfig(),
       })
@@ -335,10 +336,10 @@ describeOrSkip("Real Workflow End-to-End", () => {
         branch: "test-task-readme",
         status: "backlog",
         requirements: [task2.id], // Task 3 depends on Task 2
-        planmode: false,
+        planmode: true,
         autoApprovePlan: true,
-        review: false,
-        autoCommit: false,
+        review: true,
+        autoCommit: true, // Commit so changes persist
         deleteWorktree: true,
         ...getModelConfig(),
       })
