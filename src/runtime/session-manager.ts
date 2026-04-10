@@ -16,6 +16,46 @@ function parseModelSelection(model: string): { provider: string; modelId: string
   return null
 }
 
+/**
+ * Extract text content from a pi message.
+ * Pi messages use structured content arrays per packages/ai/src/types.ts:
+ * - UserMessage: content: string | (TextContent | ImageContent)[]
+ * - AssistantMessage: content: (TextContent | ThinkingContent | ToolCall)[]
+ * - TextContent: { type: "text", text: string }
+ * We extract and join all text blocks from the content array.
+ */
+interface PiContentBlock {
+  type: string
+  text?: string
+}
+
+interface PiMessage {
+  role?: string
+  content?: string | PiContentBlock[]
+}
+
+function extractTextFromPiMessage(message: PiMessage): string {
+  const content = message.content
+  if (!content) return ""
+
+  // Handle string content (UserMessage simple form)
+  if (typeof content === "string") {
+    return content
+  }
+
+  // Handle content blocks array (AssistantMessage, UserMessage with attachments)
+  if (Array.isArray(content)) {
+    return content
+      .filter((block): block is PiContentBlock & { type: "text"; text: string } =>
+        block.type === "text" && typeof block.text === "string"
+      )
+      .map((block) => block.text)
+      .join(" ")
+  }
+
+  return ""
+}
+
 export interface ExecuteSessionPromptInput {
   taskId: string
   taskRunId?: string | null
@@ -141,10 +181,17 @@ export class PiSessionManager {
       if (!responseText) {
         const messagesResult = await process.send({ type: "get_messages" }, 30_000).catch(() => null)
         if (messagesResult && Array.isArray(messagesResult.messages)) {
-          const messages = messagesResult.messages as Array<{ role?: string; text?: string; content?: string }>
+          // Pi messages use structured content blocks, not direct text/content fields
+          // See: packages/ai/src/types.ts in pi source
+          type ContentBlock = { type: string; text?: string }
+          type PiMessage = {
+            role?: string
+            content?: string | ContentBlock[]
+          }
+          const messages = messagesResult.messages as PiMessage[]
           const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant")
           if (lastAssistantMsg) {
-            responseText = lastAssistantMsg.text || lastAssistantMsg.content || ""
+            responseText = extractTextFromPiMessage(lastAssistantMsg)
           }
         }
       }
