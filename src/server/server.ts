@@ -2,6 +2,7 @@ import { randomUUID } from "crypto"
 import { readFileSync } from "fs"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
+import type { InfrastructureSettings } from "../config/settings.ts"
 import { buildExecutionGraph, getExecutableTasks, getExecutionGraphTasks, resolveDependencyChain } from "../execution-plan.ts"
 import { discoverPiModels } from "../pi/model-discovery.ts"
 import { isTaskAwaitingPlanApproval } from "../task-state.ts"
@@ -126,11 +127,12 @@ export class PiKanbanServer {
       onPauseRun?: RunControlFn
       onResumeRun?: RunControlFn
       onStopRun?: RunControlFn
+      settings?: InfrastructureSettings
     } = {},
   ) {
     this.db = db
     this.defaultPort = opts.port ?? this.db.getOptions().port
-    this.smartRepair = new SmartRepairService(this.db)
+    this.smartRepair = new SmartRepairService(this.db, opts.settings)
     this.onStart = opts.onStart ?? (async () => null)
     this.onStartSingle = opts.onStartSingle ?? (async () => null)
     this.onStop = opts.onStop ?? (async () => null)

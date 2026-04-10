@@ -1,3 +1,4 @@
+import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import {
   buildBestOfNFinalApplierVariables,
@@ -136,8 +137,9 @@ export class BestOfNRunner {
     broadcast: (message: WSMessage) => void
     sessionUrlFor: (sessionId: string) => string
     containerManager?: PiContainerManager
+    settings?: InfrastructureSettings
   }) {
-    this.sessions = new PiSessionManager(this.deps.db, this.deps.containerManager)
+    this.sessions = new PiSessionManager(this.deps.db, this.deps.containerManager, this.deps.settings)
   }
 
   async run(task: Task, options: Options): Promise<void> {

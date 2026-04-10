@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { createPiServer } from "../src/server.ts"
+import type { InfrastructureSettings } from "../src/config/settings.ts"
 
 const tempDirs: string[] = []
 
@@ -117,9 +118,40 @@ async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<vo
   throw new Error("Timed out waiting for condition")
 }
 
+function createTestSettings(mockPiPath: string): InfrastructureSettings {
+  return {
+    skills: {
+      localPath: "./skills",
+      autoLoad: true,
+      allowGlobal: false,
+    },
+    project: {
+      name: "pi-easy-workflow-test",
+      type: "workflow",
+    },
+    workflow: {
+      server: {
+        port: 3789,
+        dbPath: ".pi/easy-workflow/tasks.db",
+      },
+      runtime: {
+        mode: "native",
+        piBin: mockPiPath,
+        piArgs: "",
+      },
+      container: {
+        enabled: false,
+        image: "pi-agent:alpine",
+        memoryMb: 512,
+        cpuCount: 1,
+        portRangeStart: 30000,
+        portRangeEnd: 40000,
+      },
+    },
+  }
+}
+
 afterEach(() => {
-  delete process.env.PI_EASY_WORKFLOW_PI_BIN
-  delete process.env.PI_EASY_WORKFLOW_PI_ARGS
   for (const dir of tempDirs.splice(0, tempDirs.length)) {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -462,11 +494,10 @@ describe("PiKanbanServer API", () => {
   it("supports local session viewing for real orchestrated runs", async () => {
     const root = createTempDir("pi-easy-workflow-local-session-view-")
     initGitRepo(root)
-    process.env.PI_EASY_WORKFLOW_PI_BIN = createMockPiBinary(root)
-    process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+    const settings = createTestSettings(createMockPiBinary(root))
 
     const dbPath = join(root, "tasks.db")
-    const { db, server } = createPiServer({ dbPath, port: 0 })
+    const { db, server } = createPiServer({ dbPath, port: 0, settings })
     db.updateOptions({ branch: "master" })
     const port = await server.start(0)
     const baseUrl = `http://127.0.0.1:${port}`

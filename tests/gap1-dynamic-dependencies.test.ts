@@ -3,10 +3,25 @@ import { execFileSync } from "child_process"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../src/config/settings.ts"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
 import { getExecutionGraphTasks, getExecutableTasks, buildExecutionGraph } from "../src/execution-plan.ts"
 import type { Task } from "../src/types.ts"
+
+function createTestSettings(mockPiPath: string): InfrastructureSettings {
+  return {
+    ...DEFAULT_INFRASTRUCTURE_SETTINGS,
+    workflow: {
+      ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow,
+      runtime: {
+        ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.runtime,
+        piBin: mockPiPath,
+        piArgs: "",
+      },
+    },
+  }
+}
 
 const tempDirs: string[] = []
 
@@ -88,8 +103,6 @@ async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<vo
 }
 
 afterEach(() => {
-  delete process.env.PI_EASY_WORKFLOW_PI_BIN
-  delete process.env.PI_EASY_WORKFLOW_PI_ARGS
   for (const dir of tempDirs.splice(0, tempDirs.length)) {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -256,8 +269,7 @@ describe("GAP 1: Dynamic Dependency Scheduling", () => {
       initGitRepo(root)
       const mockPi = createMockPiBinary(root)
 
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -288,7 +300,7 @@ describe("GAP 1: Dynamic Dependency Scheduling", () => {
         planmode: false,
       })
 
-      const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root)
+      const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
 
       // Start all tasks
       const run = await orchestrator.startAll()
@@ -320,8 +332,7 @@ describe("GAP 1: Dynamic Dependency Scheduling", () => {
       initGitRepo(root)
       const mockPi = createMockPiBinary(root)
 
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -352,7 +363,7 @@ describe("GAP 1: Dynamic Dependency Scheduling", () => {
         planmode: false,
       })
 
-      const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root)
+      const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
 
       // Start all tasks
       const run = await orchestrator.startAll()
@@ -411,8 +422,7 @@ describe("GAP 1: Dynamic Dependency Scheduling", () => {
       initGitRepo(root)
       const mockPi = createMockPiBinary(root)
 
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -429,7 +439,7 @@ describe("GAP 1: Dynamic Dependency Scheduling", () => {
         planmode: false,
       })
 
-      const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root)
+      const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
 
       // Start the run with only Task A
       const run = await orchestrator.startAll()

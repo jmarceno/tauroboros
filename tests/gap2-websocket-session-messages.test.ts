@@ -8,6 +8,7 @@ import { PiOrchestrator } from "../src/orchestrator.ts"
 import { PiRpcProcess } from "../src/runtime/pi-process.ts"
 import { PiSessionManager } from "../src/runtime/session-manager.ts"
 import type { SessionMessage, WSMessage } from "../src/types.ts"
+import type { InfrastructureSettings } from "../src/config/settings.ts"
 
 const tempDirs: string[] = []
 
@@ -99,9 +100,40 @@ async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<vo
   throw new Error("Timed out waiting for condition")
 }
 
+function createTestSettings(mockPiPath: string): InfrastructureSettings {
+  return {
+    skills: {
+      localPath: "./skills",
+      autoLoad: true,
+      allowGlobal: false,
+    },
+    project: {
+      name: "test-project",
+      type: "workflow",
+    },
+    workflow: {
+      server: {
+        port: 3789,
+        dbPath: ".pi/easy-workflow/tasks.db",
+      },
+      runtime: {
+        mode: "native",
+        piBin: mockPiPath,
+        piArgs: "",
+      },
+      container: {
+        enabled: false,
+        image: "pi-agent:alpine",
+        memoryMb: 512,
+        cpuCount: 1,
+        portRangeStart: 30000,
+        portRangeEnd: 40000,
+      },
+    },
+  }
+}
+
 afterEach(() => {
-  delete process.env.PI_EASY_WORKFLOW_PI_BIN
-  delete process.env.PI_EASY_WORKFLOW_PI_ARGS
   for (const dir of tempDirs.splice(0, tempDirs.length)) {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -113,9 +145,7 @@ describe("GAP 2: WebSocket Session Message Broadcasting", () => {
       const root = createTempDir("pi-process-test-")
       initGitRepo(root)
       const mockPi = createMockPiBinary(root)
-
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -156,6 +186,7 @@ describe("GAP 2: WebSocket Session Message Broadcasting", () => {
         onSessionMessage: (message) => {
           receivedMessages.push(message)
         },
+        settings,
       })
 
       process_.start()
@@ -234,8 +265,7 @@ rl.on("line", (line) => {
       writeFileSync(mockPi, mockScript, "utf-8")
       chmodSync(mockPi, 0o755)
 
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -271,6 +301,7 @@ rl.on("line", (line) => {
         onSessionMessage: (message) => {
           receivedMessages.push(message)
         },
+        settings,
       })
 
       process_.start()
@@ -292,8 +323,7 @@ rl.on("line", (line) => {
       initGitRepo(root)
       const mockPi = createMockPiBinary(root)
 
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -310,7 +340,7 @@ rl.on("line", (line) => {
         planmode: false,
       })
 
-      const sessionManager = new PiSessionManager(db)
+      const sessionManager = new PiSessionManager(db, undefined, settings)
 
       const receivedMessages: SessionMessage[] = []
 
@@ -342,8 +372,7 @@ rl.on("line", (line) => {
       initGitRepo(root)
       const mockPi = createMockPiBinary(root)
 
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -360,7 +389,7 @@ rl.on("line", (line) => {
         planmode: false,
       })
 
-      const sessionManager = new PiSessionManager(db)
+      const sessionManager = new PiSessionManager(db, undefined, settings)
 
       // Execute without onSessionMessage callback (should not throw)
       const result = await sessionManager.executePrompt({
@@ -383,8 +412,7 @@ rl.on("line", (line) => {
       initGitRepo(root)
       const mockPi = createMockPiBinary(root)
 
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -410,6 +438,7 @@ rl.on("line", (line) => {
         },
         (sessionId) => `/#session/${sessionId}`,
         root,
+        settings,
       )
 
       // Start the task
@@ -446,8 +475,7 @@ rl.on("line", (line) => {
       initGitRepo(root)
       const mockPi = createMockPiBinary(root)
 
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -475,6 +503,7 @@ rl.on("line", (line) => {
         },
         (sessionId) => `/#session/${sessionId}`,
         root,
+        settings,
       )
 
       const run = await orchestrator.startSingle(task.id)
@@ -511,8 +540,7 @@ rl.on("line", (line) => {
       initGitRepo(root)
       const mockPi = createMockPiBinary(root)
 
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -540,6 +568,7 @@ rl.on("line", (line) => {
         },
         (sessionId) => `/#session/${sessionId}`,
         root,
+        settings,
       )
 
       const run = await orchestrator.startSingle(task.id)
@@ -571,8 +600,7 @@ rl.on("line", (line) => {
       initGitRepo(root)
       const mockPi = createMockPiBinary(root)
 
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -617,6 +645,7 @@ rl.on("line", (line) => {
         },
         (sessionId) => `/#session/${sessionId}`,
         root,
+        settings,
       )
 
       // Start both tasks
@@ -647,8 +676,7 @@ rl.on("line", (line) => {
       initGitRepo(root)
       const mockPi = createMockPiBinary(root)
 
-      process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-      process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+      const settings = createTestSettings(mockPi)
 
       const db = new PiKanbanDB(join(root, "tasks.db"))
       db.updateOptions({ branch: "master" })
@@ -676,6 +704,7 @@ rl.on("line", (line) => {
         },
         (sessionId) => `/#session/${sessionId}`,
         root,
+        settings,
       )
 
       const run = await orchestrator.startSingle(task.id)

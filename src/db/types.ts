@@ -227,7 +227,7 @@ export interface UpdateWorkflowRunInput {
 }
 
 export interface CreateTaskInput {
-  id: string
+  id?: string
   name: string
   prompt: string
   status?: TaskStatus

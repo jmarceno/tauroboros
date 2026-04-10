@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto"
+import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiSessionKind, PiWorkflowSession } from "../db/types.ts"
 import type { ThinkingLevel } from "../types.ts"
@@ -66,7 +67,7 @@ export interface ExecuteSessionPromptInput {
   onSessionStart?: (session: PiWorkflowSession) => void
   /**
    * Force specific runtime mode for this session.
-   * If not specified, uses PI_EASY_WORKFLOW_RUNTIME environment variable.
+   * If not specified, uses workflow.runtime.mode from settings.
    */
   forceRuntime?: PiRuntimeMode
 }
@@ -86,7 +87,8 @@ export interface ExecuteSessionPromptResult {
 export class PiSessionManager {
   constructor(
     private readonly db: PiKanbanDB,
-    private readonly containerManager?: PiContainerManager
+    private readonly containerManager?: PiContainerManager,
+    private readonly settings?: InfrastructureSettings,
   ) {}
 
   async executePrompt(input: ExecuteSessionPromptInput): Promise<ExecuteSessionPromptResult> {
@@ -113,6 +115,7 @@ export class PiSessionManager {
       onOutput: input.onOutput,
       onSessionMessage: input.onSessionMessage,
       forceRuntime: input.forceRuntime,
+      settings: this.settings,
     })
 
     let responseText = ""

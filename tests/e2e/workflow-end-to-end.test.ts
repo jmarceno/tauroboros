@@ -21,6 +21,7 @@ import { PiOrchestrator } from "../../src/orchestrator.ts"
 import { PiContainerManager } from "../../src/runtime/container-manager.ts"
 import { E2E_CONFIG, getModelConfig } from "./config.ts"
 import { shouldSkipContainerTests, createTempGitRepo, createWorktree, sleep } from "./utils.ts"
+import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../../src/config/settings.ts"
 
 const prerequisites = shouldSkipContainerTests()
 const describeOrSkip = prerequisites.skip ? describe.skip : describe
@@ -32,6 +33,7 @@ describeOrSkip("Real Workflow End-to-End", () => {
   let projectDir: string
   let testRepoDir: string
   let events: unknown[] = []
+  let settings: InfrastructureSettings
 
   beforeAll(async () => {
     // Create a temporary project directory for the workflow
@@ -55,7 +57,7 @@ describeOrSkip("Real Workflow End-to-End", () => {
 
     // Set required options
     db.updateOptions({
-      mainBranch: "master",
+      branch: "master",
       planModel: E2E_CONFIG.model,
       executionModel: E2E_CONFIG.model,
       reviewModel: E2E_CONFIG.model,
@@ -77,6 +79,23 @@ describeOrSkip("Real Workflow End-to-End", () => {
       return `http://localhost:3000/sessions/${sessionId}`
     }
 
+    // Create settings with container configuration
+    settings = {
+      ...DEFAULT_INFRASTRUCTURE_SETTINGS,
+      workflow: {
+        ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow,
+        runtime: {
+          ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.runtime,
+          mode: E2E_CONFIG.containerMode ? "container" : "native",
+        },
+        container: {
+          ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.container,
+          enabled: E2E_CONFIG.containerMode,
+          image: E2E_CONFIG.containerImage,
+        },
+      },
+    }
+
     // Create container manager if in container mode
     if (E2E_CONFIG.containerMode) {
       containerManager = new PiContainerManager(E2E_CONFIG.containerImage)
@@ -88,12 +107,9 @@ describeOrSkip("Real Workflow End-to-End", () => {
       broadcast,
       sessionUrlFor,
       testRepoDir,
-      containerManager
+      containerManager,
+      settings
     )
-
-    // Enable container mode via environment
-    process.env.PI_EASY_WORKFLOW_RUNTIME = "container"
-    process.env.PI_EASY_WORKFLOW_CONTAINER_IMAGE = E2E_CONFIG.containerImage
   }, 30000)
 
   afterAll(async () => {
@@ -110,10 +126,6 @@ describeOrSkip("Real Workflow End-to-End", () => {
         // Best effort cleanup
       }
     }
-
-    // Clean up environment
-    delete process.env.PI_EASY_WORKFLOW_RUNTIME
-    delete process.env.PI_EASY_WORKFLOW_CONTAINER_IMAGE
   }, 30000)
 
   test(
@@ -180,15 +192,20 @@ describeOrSkip("Real Workflow End-to-End", () => {
       expect(finalTask).toBeDefined()
       expect(finalTask?.status).toBe("done")
 
-      // Verify the file was actually created
-      const greetingFilePath = join(testRepoDir, "greeting.txt")
-      const fileExists = await Bun.file(greetingFilePath).exists()
-      expect(fileExists).toBe(true)
+      // Verify the file was actually created (in worktree directory)
+      const worktreeDir = finalTask?.worktreeDir
+      expect(worktreeDir).toBeDefined()
+      
+      if (worktreeDir) {
+        const greetingFilePath = join(worktreeDir, "greeting.txt")
+        const fileExists = await Bun.file(greetingFilePath).exists()
+        expect(fileExists).toBe(true)
 
-      if (fileExists) {
-        const content = await Bun.file(greetingFilePath).text()
-        expect(content).toContain("Hello")
-        expect(content).toContain("container")
+        if (fileExists) {
+          const content = await Bun.file(greetingFilePath).text()
+          expect(content).toContain("Hello")
+          expect(content).toContain("container")
+        }
       }
 
       // Verify events were received

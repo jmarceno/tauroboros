@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "fs"
 import { dirname, resolve } from "path"
 import { fileURLToPath } from "url"
+import type { InfrastructureSettings } from "./config/settings.ts"
 import { PiKanbanDB } from "./db.ts"
 import { PiKanbanServer } from "./server/server.ts"
 import { PiOrchestrator } from "./orchestrator.ts"
@@ -8,13 +9,14 @@ import { PiOrchestrator } from "./orchestrator.ts"
 export interface CreateServerOptions {
   dbPath?: string
   port?: number
+  settings?: InfrastructureSettings
 }
 
 /**
  * Find the project root by looking for a .git directory or .pi directory
  * starting from the script location and walking up.
  */
-function findProjectRoot(): string {
+export function findProjectRoot(): string {
   // Start from the directory of this script
   const scriptDir = dirname(fileURLToPath(import.meta.url))
   let currentDir = scriptDir
@@ -47,6 +49,7 @@ export function createPiServer(options: CreateServerOptions = {}): {
 
   const server = new PiKanbanServer(db, {
     port: options.port,
+    settings: options.settings,
     onStart: async () => {
       if (!orchestrator) throw new Error("Orchestrator unavailable")
       return await orchestrator.startAll()
@@ -66,6 +69,8 @@ export function createPiServer(options: CreateServerOptions = {}): {
     db,
     (message) => server.broadcast(message),
     (sessionId) => `/#session/${encodeURIComponent(sessionId)}`,
+    projectRoot,
+    options.settings,
   )
 
   return { db, server, orchestrator }

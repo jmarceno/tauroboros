@@ -3,9 +3,24 @@ import { execFileSync } from "child_process"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../src/config/settings.ts"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiKanbanServer } from "../src/server/server.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
+
+function createTestSettings(mockPiBin: string): InfrastructureSettings {
+  return {
+    ...DEFAULT_INFRASTRUCTURE_SETTINGS,
+    workflow: {
+      ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow,
+      runtime: {
+        ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.runtime,
+        piBin: mockPiBin,
+        piArgs: "",
+      },
+    },
+  }
+}
 
 const tempDirs: string[] = []
 
@@ -75,8 +90,6 @@ async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<vo
 }
 
 afterEach(() => {
-  delete process.env.PI_EASY_WORKFLOW_PI_BIN
-  delete process.env.PI_EASY_WORKFLOW_PI_ARGS
   for (const dir of tempDirs.splice(0, tempDirs.length)) {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -87,14 +100,14 @@ describe("Plan mode flows", () => {
     const root = createTempDir("pi-easy-workflow-plan-")
     initGitRepo(root)
     const mockPi = createMockPiBinary(root)
-    process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-    process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+    const settings = createTestSettings(mockPi)
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
     db.updateOptions({ branch: "master" })
-    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root)
+    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
     const server = new PiKanbanServer(db, {
       port: 0,
+      settings,
       onStart: async () => await orchestrator.startAll(),
       onStartSingle: async (taskId) => await orchestrator.startSingle(taskId),
       onStop: async () => {

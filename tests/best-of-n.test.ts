@@ -5,6 +5,7 @@ import { tmpdir } from "os"
 import { join } from "path"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
+import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
 
 const tempDirs: string[] = []
 
@@ -12,6 +13,20 @@ function createTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
   tempDirs.push(dir)
   return dir
+}
+
+function createTestSettings(mockPiPath: string): InfrastructureSettings {
+  return {
+    ...DEFAULT_INFRASTRUCTURE_SETTINGS,
+    workflow: {
+      ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow,
+      runtime: {
+        ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.runtime,
+        piBin: mockPiPath,
+        piArgs: "",
+      },
+    },
+  }
 }
 
 function git(cwd: string, args: string[]): string {
@@ -112,8 +127,6 @@ async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<vo
 }
 
 afterEach(() => {
-  delete process.env.PI_EASY_WORKFLOW_PI_BIN
-  delete process.env.PI_EASY_WORKFLOW_PI_ARGS
   for (const dir of tempDirs.splice(0, tempDirs.length)) {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -125,8 +138,7 @@ describe("PiOrchestrator best-of-n execution", () => {
     initGitRepo(root)
 
     const mockPi = createMockPiBinary(root)
-    process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-    process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+    const settings = createTestSettings(mockPi)
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
     db.updateOptions({ branch: "master" })
@@ -148,7 +160,7 @@ describe("PiOrchestrator best-of-n execution", () => {
       },
     })
 
-    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root)
+    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
     await orchestrator.startSingle(task.id)
 
     await waitFor(() => {
@@ -188,8 +200,7 @@ describe("PiOrchestrator best-of-n execution", () => {
     initGitRepo(root)
 
     const mockPi = createMockPiBinary(root)
-    process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-    process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+    const settings = createTestSettings(mockPi)
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
     db.updateOptions({ branch: "master" })
@@ -211,7 +222,7 @@ describe("PiOrchestrator best-of-n execution", () => {
       },
     })
 
-    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root)
+    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
     await orchestrator.startSingle(task.id)
 
     await waitFor(() => {

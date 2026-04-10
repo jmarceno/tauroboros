@@ -72,17 +72,22 @@ bun run scripts/verify-podman.ts
 
 ### 4. Enable Container Mode
 
-Edit your `.env` file:
+Edit `.pi/settings.json`:
 
-```bash
-PI_EASY_WORKFLOW_RUNTIME=container
+```json
+{
+  "workflow": {
+    "runtime": {
+      "mode": "container"
+    },
+    "container": {
+      "enabled": true
+    }
+  }
+}
 ```
 
-Or set it per-task:
-
-```typescript
-task.options.container = { enabled: true }
-```
+Or set it per-task via the web UI or API.
 
 ## Volume Mounts
 
@@ -107,16 +112,37 @@ The container mounts several directories from your host system using **same-path
 
 ## Configuration
 
-### Environment Variables
+Container settings are configured in `.pi/settings.json`:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PI_EASY_WORKFLOW_RUNTIME` | `native` | Runtime mode: `native` or `container` |
-| `PI_EASY_WORKFLOW_CONTAINER_IMAGE` | `pi-agent:alpine` | Podman image for agents |
-| `PI_EASY_WORKFLOW_CONTAINER_MEMORY_MB` | `512` | Memory limit per container (MB) |
-| `PI_EASY_WORKFLOW_CONTAINER_CPU_COUNT` | `1` | CPU limit per container |
-| `PI_EASY_WORKFLOW_PORT_RANGE_START` | `30000` | Start of host port allocation range |
-| `PI_EASY_WORKFLOW_PORT_RANGE_END` | `40000` | End of host port allocation range |
+```json
+{
+  "workflow": {
+    "runtime": {
+      "mode": "native"
+    },
+    "container": {
+      "enabled": false,
+      "image": "pi-agent:alpine",
+      "memoryMb": 512,
+      "cpuCount": 1,
+      "portRangeStart": 30000,
+      "portRangeEnd": 40000
+    }
+  }
+}
+```
+
+### Settings Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `workflow.runtime.mode` | `"native"` | Runtime mode: `"native"` or `"container"` |
+| `workflow.container.enabled` | `false` | Enable container isolation globally |
+| `workflow.container.image` | `"pi-agent:alpine"` | Podman image for agents |
+| `workflow.container.memoryMb` | `512` | Memory limit per container (MB) |
+| `workflow.container.cpuCount` | `1` | CPU limit per container |
+| `workflow.container.portRangeStart` | `30000` | Start of host port allocation range |
+| `workflow.container.portRangeEnd` | `40000` | End of host port allocation range |
 
 ### Task-Level Configuration
 
@@ -239,15 +265,21 @@ This will:
 
 If issues arise, you can quickly disable containers:
 
-1. **Global disable**:
-   ```bash
-   PI_EASY_WORKFLOW_RUNTIME=native
+1. **Global disable** – Edit `.pi/settings.json`:
+   ```json
+   {
+     "workflow": {
+       "runtime": {
+         "mode": "native"
+       },
+       "container": {
+         "enabled": false
+       }
+     }
+   }
    ```
 
-2. **Per-task disable**:
-   ```typescript
-   task.options.container = { enabled: false }
-   ```
+2. **Per-task disable** – Via web UI or API.
 
 3. **Emergency stop** command to kill all containers:
    ```typescript

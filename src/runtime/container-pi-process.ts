@@ -1,3 +1,4 @@
+import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
 import {
@@ -42,6 +43,7 @@ export class ContainerPiProcess {
   private readonly onSessionMessage?: (
     message: import("../types.ts").SessionMessage,
   ) => void
+  private readonly settings?: InfrastructureSettings
 
   private containerProcess: ContainerProcess | null = null
   private requestId = 0
@@ -65,12 +67,14 @@ export class ContainerPiProcess {
     containerManager: PiContainerManager
     onOutput?: (chunk: string) => void
     onSessionMessage?: (message: import("../types.ts").SessionMessage) => void
+    settings?: InfrastructureSettings
   }) {
     this.db = args.db
     this.session = args.session
     this.containerManager = args.containerManager
     this.onOutput = args.onOutput
     this.onSessionMessage = args.onSessionMessage
+    this.settings = args.settings
   }
 
   /**
@@ -79,19 +83,12 @@ export class ContainerPiProcess {
   async start(): Promise<void> {
     if (this.containerProcess) return
 
-    // Determine container configuration from environment
-    const imageName =
-      process.env.PI_EASY_WORKFLOW_CONTAINER_IMAGE || "pi-agent:gvisor"
-    const runtime =
-      process.env.PI_EASY_WORKFLOW_CONTAINER_RUNTIME || "runsc"
-    const memoryMb = parseInt(
-      process.env.PI_EASY_WORKFLOW_CONTAINER_MEMORY_MB || "512",
-      10,
-    )
-    const cpuCount = parseInt(
-      process.env.PI_EASY_WORKFLOW_CONTAINER_CPU_COUNT || "1",
-      10,
-    )
+    // Determine container configuration from settings
+    const containerSettings = this.settings?.workflow?.container
+    const imageName = containerSettings?.image || "pi-agent:alpine"
+    const runtime = "runc" // Always use runc now, removed gVisor dependency
+    const memoryMb = containerSettings?.memoryMb || 512
+    const cpuCount = containerSettings?.cpuCount || 1
 
     // Validate that we have a worktree directory
     const worktreeDir = this.session.worktreeDir

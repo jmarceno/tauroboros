@@ -1,3 +1,4 @@
+import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
 import type { SessionMessage } from "../types.ts"
@@ -56,6 +57,7 @@ export class PiRpcProcess {
   private readonly session: PiWorkflowSession
   private readonly onOutput?: (chunk: string) => void
   private readonly onSessionMessage?: (message: SessionMessage) => void
+  private readonly settings?: InfrastructureSettings
   private proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null
   private requestId = 0
   private readonly pending = new Map<string, Pending>()
@@ -70,21 +72,22 @@ export class PiRpcProcess {
     session: PiWorkflowSession
     onOutput?: (chunk: string) => void
     onSessionMessage?: (message: SessionMessage) => void
+    settings?: InfrastructureSettings
   }) {
     this.db = args.db
     this.session = args.session
     this.onOutput = args.onOutput
     this.onSessionMessage = args.onSessionMessage
+    this.settings = args.settings
   }
 
   start(): void {
     if (this.proc) return
 
-    const piBin = process.env.PI_EASY_WORKFLOW_PI_BIN?.trim() || "pi"
-    const defaultArgs = ["--mode", "rpc", "--no-extensions"]
-    const configuredArgs = process.env.PI_EASY_WORKFLOW_PI_ARGS
-      ? parseArgs(process.env.PI_EASY_WORKFLOW_PI_ARGS)
-      : defaultArgs
+    const piBin = this.settings?.workflow?.runtime?.piBin?.trim() || "pi"
+    const configuredArgs = this.settings?.workflow?.runtime?.piArgs
+      ? parseArgs(this.settings.workflow.runtime.piArgs)
+      : ["--mode", "rpc", "--no-extensions"]
 
     this.proc = Bun.spawn({
       cmd: [piBin, ...configuredArgs],

@@ -1,3 +1,4 @@
+import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
 import type { SessionMessage } from "../types.ts"
@@ -12,6 +13,7 @@ export interface UnifiedPiProcessOptions {
   onOutput?: (chunk: string) => void
   onSessionMessage?: (message: SessionMessage) => void
   forceRuntime?: "native" | "container"
+  settings?: InfrastructureSettings
 }
 
 /**
@@ -20,11 +22,10 @@ export interface UnifiedPiProcessOptions {
 export type PiRuntimeMode = "native" | "container"
 
 /**
- * Get the configured runtime mode from environment.
+ * Get the configured runtime mode from settings.
  */
-export function getConfiguredRuntime(): PiRuntimeMode {
-  const envRuntime = process.env.PI_EASY_WORKFLOW_RUNTIME
-  if (envRuntime === "container") return "container"
+export function getConfiguredRuntime(settings?: InfrastructureSettings): PiRuntimeMode {
+  if (settings?.workflow?.runtime?.mode === "container") return "container"
   return "native" // Default to native
 }
 
@@ -37,7 +38,7 @@ export function getConfiguredRuntime(): PiRuntimeMode {
 export function createPiProcess(
   options: UnifiedPiProcessOptions,
 ): PiRpcProcess | ContainerPiProcess {
-  const runtime = options.forceRuntime || getConfiguredRuntime()
+  const runtime = options.forceRuntime || getConfiguredRuntime(options.settings)
 
   if (runtime === "container") {
     if (!options.containerManager) {
@@ -57,6 +58,7 @@ export function createPiProcess(
         session: options.session,
         onOutput: options.onOutput,
         onSessionMessage: options.onSessionMessage,
+        settings: options.settings,
       })
     }
 
@@ -66,6 +68,7 @@ export function createPiProcess(
       containerManager: options.containerManager,
       onOutput: options.onOutput,
       onSessionMessage: options.onSessionMessage,
+      settings: options.settings,
     })
   }
 
@@ -74,6 +77,7 @@ export function createPiProcess(
     session: options.session,
     onOutput: options.onOutput,
     onSessionMessage: options.onSessionMessage,
+    settings: options.settings,
   })
 }
 
@@ -98,20 +102,21 @@ export async function isContainerRuntimeAvailable(
  */
 export async function validateContainerSetup(
   containerManager: PiContainerManager,
+  settings?: InfrastructureSettings,
 ): Promise<{
   available: boolean
   runtime: PiRuntimeMode
   issues: string[]
 }> {
   const status = await containerManager.validateSetup()
-  const configuredRuntime = getConfiguredRuntime()
+  const configuredRuntime = getConfiguredRuntime(settings)
 
   const issues: string[] = [...status.errors]
 
   if (configuredRuntime === "container" && !status.gvisor) {
     issues.push(
       "Container runtime is configured but gVisor is not available. " +
-        "Install gVisor or set PI_EASY_WORKFLOW_RUNTIME=native",
+        "Update .pi/settings.json workflow.runtime.mode to 'native' or install gVisor",
     )
   }
 

@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto"
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "fs"
 import { join } from "path"
+import type { InfrastructureSettings } from "./config/settings.ts"
 import { buildExecutionVariables, buildPlanningVariables, buildPlanRevisionVariables, buildCommitVariables, buildReviewFixVariables } from "./prompts/index.ts"
 import { getLatestTaggedOutput, getPlanExecutionEligibility } from "./task-state.ts"
 import type { PiKanbanDB } from "./db.ts"
@@ -53,10 +54,11 @@ export class PiOrchestrator {
     private readonly broadcast: (message: WSMessage) => void,
     private readonly sessionUrlFor: (sessionId: string) => string,
     private readonly projectRoot = process.cwd(),
+    private readonly settings?: InfrastructureSettings,
     containerManager?: PiContainerManager,
   ) {
-    this.sessionManager = new PiSessionManager(db, containerManager)
-    this.reviewRunner = new PiReviewSessionRunner(db)
+    this.sessionManager = new PiSessionManager(db, containerManager, settings)
+    this.reviewRunner = new PiReviewSessionRunner(db, settings)
     this.worktree = new WorktreeLifecycle({ baseDirectory: this.projectRoot })
     this.containerManager = containerManager
   }
@@ -237,6 +239,7 @@ export class PiOrchestrator {
         broadcast: this.broadcast,
         sessionUrlFor: this.sessionUrlFor,
         containerManager: this.containerManager,
+        settings: this.settings,
       })
       await bestOfNRunner.run(task, options)
       return

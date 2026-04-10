@@ -1,5 +1,6 @@
 import { existsSync } from "fs"
 import { execFileSync } from "child_process"
+import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { Task } from "../types.ts"
 import type { TaskRepairAction } from "../task-state.ts"
@@ -102,8 +103,11 @@ function parseRepairDecision(responseText: string): SmartRepairDecision {
 export class SmartRepairService {
   private readonly sessions: PiSessionManager
 
-  constructor(private readonly db: PiKanbanDB) {
-    this.sessions = new PiSessionManager(db)
+  constructor(
+    private readonly db: PiKanbanDB,
+    private readonly settings?: InfrastructureSettings,
+  ) {
+    this.sessions = new PiSessionManager(db, undefined, settings)
   }
 
   async decide(taskId: string): Promise<SmartRepairDecision> {

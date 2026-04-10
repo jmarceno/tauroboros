@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto"
 import { Database } from "bun:sqlite"
 import { mkdirSync } from "fs"
 import { dirname } from "path"
@@ -1066,10 +1067,13 @@ export class PiKanbanDB {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = new Database(dbPath, { create: true })
-    this.db.exec("PRAGMA journal_mode = DELETE")
+    // Use WAL mode for better concurrency and performance
+    this.db.exec("PRAGMA journal_mode = WAL")
     this.db.exec("PRAGMA synchronous = NORMAL")
-    this.db.exec("PRAGMA busy_timeout = 5000")
+    this.db.exec("PRAGMA busy_timeout = 30000") // 30 seconds for high-concurrency scenarios
     this.db.exec("PRAGMA foreign_keys = ON")
+    // WAL performance tuning
+    this.db.exec("PRAGMA wal_autocheckpoint = 1000") // Checkpoint every 1000 pages
 
     runMigrations(this.db, MIGRATIONS)
     this.ensureWorkflowRunArchiveColumns()
@@ -1117,6 +1121,7 @@ export class PiKanbanDB {
   createTask(input: CreateTaskInput): Task {
     const now = nowUnix()
     const idx = input.idx ?? this.getNextTaskIndex()
+    const taskId = input.id ?? randomUUID().slice(0, 8)
 
     this.db
       .prepare(`
@@ -1130,7 +1135,7 @@ export class PiKanbanDB {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)
       `)
       .run(
-        input.id,
+        taskId,
         input.name,
         idx,
         input.prompt,
@@ -1159,7 +1164,7 @@ export class PiKanbanDB {
         input.reviewActivity ?? "idle",
       )
 
-    return this.getTask(input.id) as Task
+    return this.getTask(taskId) as Task
   }
 
   updateTask(id: string, input: UpdateTaskInput): Task | null {

@@ -1,3 +1,4 @@
+import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { Task, ThinkingLevel, ReviewResult } from "../types.ts"
 import { buildReviewVariables } from "../prompts/index.ts"
@@ -53,9 +54,10 @@ export class PiReviewSessionRunner {
 
   constructor(
     private readonly db: PiKanbanDB,
+    private readonly settings?: InfrastructureSettings,
     containerManager?: PiContainerManager,
   ) {
-    this.sessions = new PiSessionManager(db, containerManager)
+    this.sessions = new PiSessionManager(db, containerManager, settings)
   }
 
   async run(input: RunReviewScratchInput): Promise<RunReviewScratchResult> {

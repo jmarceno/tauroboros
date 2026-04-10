@@ -5,8 +5,23 @@ import { tmpdir } from "os"
 import { join } from "path"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
+import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
 
 const tempDirs: string[] = []
+
+function createTestSettings(mockPiPath: string): InfrastructureSettings {
+  return {
+    ...DEFAULT_INFRASTRUCTURE_SETTINGS,
+    workflow: {
+      ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow,
+      runtime: {
+        ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.runtime,
+        piBin: mockPiPath,
+        piArgs: "",
+      },
+    },
+  }
+}
 
 function createTempDir(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix))
@@ -114,8 +129,6 @@ async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<vo
 }
 
 afterEach(() => {
-  delete process.env.PI_EASY_WORKFLOW_PI_BIN
-  delete process.env.PI_EASY_WORKFLOW_PI_ARGS
   for (const dir of tempDirs.splice(0, tempDirs.length)) {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -125,8 +138,7 @@ describe("review loop", () => {
   it("runs review scratch sessions, sends fix prompts, and completes", async () => {
     const root = createTempDir("pi-easy-workflow-review-")
     initGitRepo(root)
-    process.env.PI_EASY_WORKFLOW_PI_BIN = createMockPiBinary(root, "one_gap_then_pass")
-    process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+    const settings = createTestSettings(createMockPiBinary(root, "one_gap_then_pass"))
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
     db.updateOptions({ branch: "master" })
@@ -141,7 +153,7 @@ describe("review loop", () => {
       planmode: false,
     })
 
-    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root)
+    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
     await orchestrator.startSingle(task.id)
 
     await waitFor(() => {
@@ -165,8 +177,7 @@ describe("review loop", () => {
   it("marks task failed when review output is malformed JSON", async () => {
     const root = createTempDir("pi-easy-workflow-review-badjson-")
     initGitRepo(root)
-    process.env.PI_EASY_WORKFLOW_PI_BIN = createMockPiBinary(root, "malformed")
-    process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+    const settings = createTestSettings(createMockPiBinary(root, "malformed"))
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
     db.updateOptions({ branch: "master" })
@@ -179,7 +190,7 @@ describe("review loop", () => {
       autoCommit: false,
       planmode: false,
     })
-    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root)
+    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
     await orchestrator.startSingle(task.id)
 
     await waitFor(() => {
@@ -197,8 +208,7 @@ describe("review loop", () => {
   it("enforces review limit and marks task stuck", async () => {
     const root = createTempDir("pi-easy-workflow-review-limit-")
     initGitRepo(root)
-    process.env.PI_EASY_WORKFLOW_PI_BIN = createMockPiBinary(root, "always_gaps")
-    process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+    const settings = createTestSettings(createMockPiBinary(root, "always_gaps"))
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
     db.updateOptions({ maxReviews: 1, branch: "master" })
@@ -212,7 +222,7 @@ describe("review loop", () => {
       autoCommit: false,
       planmode: false,
     })
-    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root)
+    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
     await orchestrator.startSingle(task.id)
 
     await waitFor(() => {

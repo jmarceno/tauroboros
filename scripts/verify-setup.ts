@@ -1,5 +1,10 @@
 import { existsSync, mkdirSync, readFileSync } from "fs"
 import { join, resolve } from "path"
+import {
+  ensureInfrastructureSettings,
+  loadInfrastructureSettings,
+  type InfrastructureSettings,
+} from "../src/config/settings.ts"
 import { discoverSkills, getProjectRoot } from "./sync-skills.ts"
 
 interface PiSettings {
@@ -69,6 +74,40 @@ function validateSettings(settings: PiSettings): void {
   }
 }
 
+function validateInfrastructureSettings(settings: InfrastructureSettings): void {
+  // Validate server settings
+  if (!settings.workflow?.server?.port || typeof settings.workflow.server.port !== "number") {
+    throw new Error("Infrastructure settings workflow.server.port must be a number")
+  }
+  if (!settings.workflow?.server?.dbPath || typeof settings.workflow.server.dbPath !== "string") {
+    throw new Error("Infrastructure settings workflow.server.dbPath must be a string")
+  }
+
+  // Validate runtime settings
+  if (!settings.workflow?.runtime?.mode || !["native", "container"].includes(settings.workflow.runtime.mode)) {
+    throw new Error("Infrastructure settings workflow.runtime.mode must be 'native' or 'container'")
+  }
+  if (!settings.workflow?.runtime?.piBin || typeof settings.workflow.runtime.piBin !== "string") {
+    throw new Error("Infrastructure settings workflow.runtime.piBin must be a string")
+  }
+
+  // Validate container settings
+  if (settings.workflow?.container) {
+    if (typeof settings.workflow.container.enabled !== "boolean") {
+      throw new Error("Infrastructure settings workflow.container.enabled must be a boolean")
+    }
+    if (typeof settings.workflow.container.image !== "string") {
+      throw new Error("Infrastructure settings workflow.container.image must be a string")
+    }
+    if (typeof settings.workflow.container.memoryMb !== "number") {
+      throw new Error("Infrastructure settings workflow.container.memoryMb must be a number")
+    }
+    if (typeof settings.workflow.container.cpuCount !== "number") {
+      throw new Error("Infrastructure settings workflow.container.cpuCount must be a number")
+    }
+  }
+}
+
 export function verifySetup(projectRoot: string = getProjectRoot()): void {
   const skillsSourceDir = resolve(join(projectRoot, "skills"))
   const piDir = resolve(join(projectRoot, ".pi"))
@@ -83,9 +122,29 @@ export function verifySetup(projectRoot: string = getProjectRoot()): void {
   }
   console.log("✓ Skills have required frontmatter")
 
+  // Validate original Pi settings (skills configuration)
   const settings = parseSettings(settingsPath)
   validateSettings(settings)
-  console.log("✓ Pi settings.json is valid")
+  console.log("✓ Pi settings.json skills configuration is valid")
+
+  // Ensure infrastructure settings are initialized
+  const infraResult = ensureInfrastructureSettings(projectRoot)
+  validateInfrastructureSettings(infraResult.settings)
+
+  // Report any warnings about unknown fields
+  for (const warning of infraResult.warnings) {
+    console.warn(`⚠️  ${warning}`)
+  }
+
+  // Report unknown fields
+  if (infraResult.unknownFields.length > 0) {
+    console.warn(`⚠️  Unknown fields detected in .pi/settings.json:`)
+    for (const field of infraResult.unknownFields) {
+      console.warn(`   - ${field}`)
+    }
+  }
+
+  console.log("✓ Infrastructure settings are valid")
 
   mkdirSync(piSkillsDir, { recursive: true })
   console.log("✓ .pi/skills directory is writable")

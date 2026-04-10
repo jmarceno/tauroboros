@@ -1,15 +1,25 @@
-import { createPiServer } from "./server.ts"
+import { resolve } from "path"
+import { loadInfrastructureSettings } from "./config/settings.ts"
+import { createPiServer, findProjectRoot } from "./server.ts"
 
 export async function main(): Promise<void> {
-  const requestedPort = process.env.PI_EASY_WORKFLOW_PORT ? Number(process.env.PI_EASY_WORKFLOW_PORT) : undefined
-  const dbPath = process.env.PI_EASY_WORKFLOW_DB_PATH
+  const projectRoot = findProjectRoot()
+  const { settings, warnings } = loadInfrastructureSettings(projectRoot)
+
+  // Report any warnings about settings
+  for (const warning of warnings) {
+    console.warn(`[pi-easy-workflow] ${warning}`)
+  }
+
+  // Resolve dbPath relative to project root
+  const dbPath = resolve(projectRoot, settings.workflow.server.dbPath)
 
   const { db, server } = createPiServer({
-    ...(Number.isFinite(requestedPort) ? { port: requestedPort } : {}),
-    ...(dbPath ? { dbPath } : {}),
+    port: settings.workflow.server.port,
+    dbPath,
   })
 
-  const port = await server.start(Number.isFinite(requestedPort) ? (requestedPort as number) : undefined)
+  const port = await server.start(settings.workflow.server.port)
   console.log(`[pi-easy-workflow] server started on http://0.0.0.0:${port}`)
 
   const shutdown = () => {

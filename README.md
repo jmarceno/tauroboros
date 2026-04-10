@@ -72,7 +72,7 @@ bun run setup
 bun run src/index.ts
 ```
 
-The server will start on port `3000` by default (or the port specified in `PI_EASY_WORKFLOW_PORT` environment variable). Open `http://localhost:3000` in your browser.
+The server will start on port `3789` by default (configurable in `.pi/settings.json`). Open `http://localhost:3789` in your browser.
 
 ### Basic Usage
 
@@ -93,9 +93,9 @@ For enhanced security and isolation, run AI agents inside Podman containers:
 # 2. Verify setup
 bun run container:verify
 
-# 3. Enable container mode
-cp env.example .env
-# Edit .env and set: PI_EASY_WORKFLOW_RUNTIME=container
+# 3. Enable container mode by editing .pi/settings.json:
+# Set workflow.runtime.mode to "container"
+# Set workflow.container.enabled to true
 
 # 4. Run as normal - agents now run in isolated containers
 bun run src/index.ts
@@ -134,18 +134,68 @@ bun run container:cleanup    # Remove container configuration
 
 ## Configuration
 
-### Environment Variables
+All infrastructure-level configuration is stored in `.pi/settings.json`. This file is created automatically when you run `bun run setup` and comes pre-populated with sensible defaults.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PI_EASY_WORKFLOW_PORT` | HTTP server port | `3000` |
-| `PI_EASY_WORKFLOW_DB_PATH` | SQLite database path | `.pi/easy-workflow/db.sqlite` |
-| `PI_EASY_WORKFLOW_RUNTIME` | Runtime mode: `native` or `container` | `native` |
-| `PI_EASY_WORKFLOW_CONTAINER_IMAGE` | Container image for agents | `pi-agent:alpine` |
-| `PI_EASY_WORKFLOW_CONTAINER_MEMORY_MB` | Memory limit per container | `512` |
-| `PI_EASY_WORKFLOW_CONTAINER_CPU_COUNT` | CPU limit per container | `1` |
+### Settings.json Structure
 
-### Task Configuration
+```json
+{
+  "skills": {
+    "localPath": "./skills",
+    "autoLoad": true,
+    "allowGlobal": false
+  },
+  "project": {
+    "name": "pi-easy-workflow",
+    "type": "workflow"
+  },
+  "workflow": {
+    "server": {
+      "port": 3789,
+      "dbPath": ".pi/easy-workflow/tasks.db"
+    },
+    "runtime": {
+      "mode": "native",
+      "piBin": "pi",
+      "piArgs": "--mode rpc --no-extensions"
+    },
+    "container": {
+      "enabled": false,
+      "image": "pi-agent:alpine",
+      "memoryMb": 512,
+      "cpuCount": 1,
+      "portRangeStart": 30000,
+      "portRangeEnd": 40000
+    }
+  }
+}
+```
+
+### Configuration Sections
+
+| Section | Description |
+|---------|-------------|
+| `workflow.server.port` | HTTP server port (default: 3789) |
+| `workflow.server.dbPath` | SQLite database path relative to project root |
+| `workflow.runtime.mode` | Runtime mode: `"native"` or `"container"` |
+| `workflow.runtime.piBin` | Path to Pi binary (default: "pi") |
+| `workflow.runtime.piArgs` | Additional arguments for Pi CLI |
+| `workflow.container.enabled` | Enable container isolation |
+| `workflow.container.image` | Container image for agents |
+| `workflow.container.memoryMb` | Memory limit per container |
+| `workflow.container.cpuCount` | CPU limit per container |
+| `workflow.container.portRangeStart` | Host port allocation range start |
+| `workflow.container.portRangeEnd` | Host port allocation range end |
+
+### Task-Level Configuration
+
+Task execution settings (models, prompts, review settings, etc.) are stored in the database and can be configured via the web UI or API at `/api/options`. These include:
+- **Models** – Plan, execution, review, and repair models
+- **Telegram Notifications** – Bot token, chat ID, and enable/disable
+- **Execution Settings** – Max reviews, parallel tasks, thinking level
+- **Prompts** – Commit prompt template, extra prompt
+
+Each task can also be individually configured with:
 
 Each task can be configured with:
 - **Plan Mode** – AI creates a plan before implementation

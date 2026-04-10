@@ -7,5 +7,24 @@
   "project": {
     "name": "pi-easy-workflow",
     "type": "workflow"
+  },
+  "workflow": {
+    "server": {
+      "port": 3789,
+      "dbPath": ".pi/easy-workflow/tasks.db"
+    },
+    "runtime": {
+      "mode": "native",
+      "piBin": "pi",
+      "piArgs": "--mode rpc --no-extensions"
+    },
+    "container": {
+      "enabled": false,
+      "image": "pi-agent:alpine",
+      "memoryMb": 512,
+      "cpuCount": 1,
+      "portRangeStart": 30000,
+      "portRangeEnd": 40000
+    }
   }
 }

@@ -3,8 +3,23 @@ import { execFileSync } from "child_process"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../src/config/settings.ts"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
+
+function createTestSettings(mockPiBin: string): InfrastructureSettings {
+  return {
+    ...DEFAULT_INFRASTRUCTURE_SETTINGS,
+    workflow: {
+      ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow,
+      runtime: {
+        ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.runtime,
+        piBin: mockPiBin,
+        piArgs: "",
+      },
+    },
+  }
+}
 
 const tempDirs: string[] = []
 
@@ -79,8 +94,6 @@ async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<vo
 }
 
 afterEach(() => {
-  delete process.env.PI_EASY_WORKFLOW_PI_BIN
-  delete process.env.PI_EASY_WORKFLOW_PI_ARGS
   for (const dir of tempDirs.splice(0, tempDirs.length)) {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -91,9 +104,7 @@ describe("PiOrchestrator standard execution", () => {
     const root = createTempDir("pi-easy-workflow-exec-")
     initGitRepo(root)
     const mockPi = createMockPiBinary(root)
-
-    process.env.PI_EASY_WORKFLOW_PI_BIN = mockPi
-    process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+    const settings = createTestSettings(mockPi)
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
     db.updateOptions({ command: "echo preflight-ok", branch: "master" })
@@ -109,7 +120,7 @@ describe("PiOrchestrator standard execution", () => {
       planmode: false,
     })
 
-    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root)
+    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
     await orchestrator.startSingle(task.id)
 
     await waitFor(() => {

@@ -4,6 +4,7 @@ import { tmpdir } from "os"
 import { join } from "path"
 import { PiKanbanDB } from "../src/db.ts"
 import { SmartRepairService } from "../src/runtime/smart-repair.ts"
+import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
 
 const tempDirs: string[] = []
 
@@ -55,9 +56,21 @@ rl.on("line", (line) => {
   return filePath
 }
 
+function createTestSettings(mockPiPath: string): InfrastructureSettings {
+  return {
+    ...DEFAULT_INFRASTRUCTURE_SETTINGS,
+    workflow: {
+      ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow,
+      runtime: {
+        ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.runtime,
+        piBin: mockPiPath,
+        piArgs: "",
+      },
+    },
+  }
+}
+
 afterEach(() => {
-  delete process.env.PI_EASY_WORKFLOW_PI_BIN
-  delete process.env.PI_EASY_WORKFLOW_PI_ARGS
   for (const dir of tempDirs.splice(0, tempDirs.length)) {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -110,8 +123,7 @@ describe("smart repair", () => {
 
   it("runs Pi-backed smart repair and stores repair session IO", async () => {
     const root = createTempDir("pi-easy-workflow-smart-repair-pi-")
-    process.env.PI_EASY_WORKFLOW_PI_BIN = createRepairMockPi(root, "valid")
-    process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+    const settings = createTestSettings(createRepairMockPi(root, "valid"))
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
     db.updateOptions({ repairModel: "test-repair-model" })
@@ -132,7 +144,7 @@ describe("smart repair", () => {
       contentJson: { text: "previous attempt failed" },
     })
 
-    const service = new SmartRepairService(db)
+    const service = new SmartRepairService(db, settings)
     const result = await service.repair(task.id)
 
     expect(result.action).toBe("mark_done")
@@ -148,8 +160,7 @@ describe("smart repair", () => {
 
   it("falls back to deterministic action when smart repair JSON is malformed", async () => {
     const root = createTempDir("pi-easy-workflow-smart-repair-fallback-")
-    process.env.PI_EASY_WORKFLOW_PI_BIN = createRepairMockPi(root, "malformed")
-    process.env.PI_EASY_WORKFLOW_PI_ARGS = ""
+    const settings = createTestSettings(createRepairMockPi(root, "malformed"))
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
     const task = db.createTask({
@@ -160,7 +171,7 @@ describe("smart repair", () => {
       planmode: false,
     })
 
-    const service = new SmartRepairService(db)
+    const service = new SmartRepairService(db, settings)
     const result = await service.repair(task.id)
 
     expect(result.reason.includes("smart repair fallback")).toBe(true)

@@ -186,15 +186,13 @@ export class PiContainerManager {
     // Network
     const networkArgs = ["--network", config.networkMode || "bridge"]
 
-    // Build the podman run command
+    // Build the podman run command (without -d for proper stdin handling)
     const podmanArgs = [
       "run",
-      "-d",  // Detached mode
-      "--name", containerName,
       "--rm",  // Auto-remove after exit
+      "--name", containerName,
       "--workdir", config.worktreeDir,
       "-i",  // Interactive (keep stdin open)
-      "-t",  // Allocate TTY
       "--label", `pi-easy-workflow.session-id=${config.sessionId}`,
       "--label", `pi-easy-workflow.managed=true`,
       ...resourceArgs,
@@ -205,32 +203,42 @@ export class PiContainerManager {
       imageName,
     ]
 
-    // Execute podman run
-    const { stdout } = await this.execPodman(podmanArgs)
-    const containerId = stdout.trim()
+    // Spawn podman run directly for proper stdin/stdout handling
+    const proc = spawn("podman", podmanArgs, {
+      stdio: ["pipe", "pipe", "pipe"],
+    })
 
-    // Wait a moment for container to start
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    // Wait for container to start and pi to initialize (includes npm install for extensions)
+    // This can take 10-15 seconds on first run as pi installs its extensions
+    await new Promise((resolve) => setTimeout(resolve, 15000))
+    
+    // Get container ID from podman ps
+    let containerId = ""
+    try {
+      const { stdout } = await this.execPodman([
+        "ps", "-q", "-f", `name=${containerName}`,
+      ])
+      containerId = stdout.trim()
+    } catch {
+      // Container might not be visible yet, generate a fallback ID
+      containerId = `pending-${Date.now()}`
+    }
 
     // Create process wrapper with stdio streams
     const process: ContainerProcess = {
       sessionId: config.sessionId,
-      containerId,
+      containerId: containerId || `proc-${proc.pid}`,
 
       stdin: new WritableStream({
         write: async (chunk: Uint8Array) => {
-          const proc = spawn("podman", ["exec", "-i", containerId, "sh", "-c", "cat > /dev/stdin"], {
-            stdio: ["pipe", "pipe", "pipe"],
-          })
-          
           return new Promise((resolve, reject) => {
+            if (!proc.stdin) {
+              reject(new Error("Process stdin not available"))
+              return
+            }
             proc.stdin.write(chunk, (err) => {
               if (err) reject(err)
-              else {
-                proc.stdin.end()
-                proc.on("close", resolve)
-                proc.on("error", reject)
-              }
+              else resolve()
             })
           })
         },
@@ -238,47 +246,97 @@ export class PiContainerManager {
 
       stdout: new ReadableStream({
         start: (controller) => {
-          const proc = spawn("podman", ["logs", "-f", containerId], {
-            stdio: ["pipe", "pipe", "pipe"],
-          })
+          if (!proc.stdout) {
+            controller.close()
+            return
+          }
+
+          let isClosed = false
 
           proc.stdout.on("data", (data: Buffer) => {
-            controller.enqueue(new Uint8Array(data))
+            if (!isClosed) {
+              try {
+                controller.enqueue(new Uint8Array(data))
+              } catch {
+                // Controller might be closed
+              }
+            }
           })
 
-          proc.on("close", () => {
-            controller.close()
+          proc.stdout.on("end", () => {
+            if (!isClosed) {
+              isClosed = true
+              try {
+                controller.close()
+              } catch {
+                // Already closed
+              }
+            }
           })
 
           proc.on("error", (err) => {
-            controller.error(err)
+            if (!isClosed) {
+              isClosed = true
+              try {
+                controller.error(err)
+              } catch {
+                // Already closed
+              }
+            }
           })
         },
       }),
 
       stderr: new ReadableStream({
         start: (controller) => {
-          const proc = spawn("podman", ["logs", "-f", "--stderr", containerId], {
-            stdio: ["pipe", "pipe", "pipe"],
-          })
-
-          proc.stdout.on("data", (data: Buffer) => {
-            controller.enqueue(new Uint8Array(data))
-          })
-
-          proc.on("close", () => {
+          if (!proc.stderr) {
             controller.close()
+            return
+          }
+
+          let isClosed = false
+
+          proc.stderr.on("data", (data: Buffer) => {
+            if (!isClosed) {
+              try {
+                controller.enqueue(new Uint8Array(data))
+              } catch {
+                // Controller might be closed
+              }
+            }
+          })
+
+          proc.stderr.on("end", () => {
+            if (!isClosed) {
+              isClosed = true
+              try {
+                controller.close()
+              } catch {
+                // Already closed
+              }
+            }
           })
 
           proc.on("error", (err) => {
-            controller.error(err)
+            if (!isClosed) {
+              isClosed = true
+              try {
+                controller.error(err)
+              } catch {
+                // Already closed
+              }
+            }
           })
         },
       }),
 
       kill: async () => {
         try {
-          await this.execPodman(["kill", containerId])
+          if (containerId && !containerId.startsWith("pending") && !containerId.startsWith("proc-")) {
+            await this.execPodman(["kill", containerName])
+          } else {
+            proc.kill()
+          }
         } catch {
           // Container may already be stopped
         }
@@ -286,7 +344,10 @@ export class PiContainerManager {
       },
 
       inspect: async () => {
-        return this.inspectContainer(containerId)
+        if (containerId && !containerId.startsWith("pending") && !containerId.startsWith("proc-")) {
+          return this.inspectContainer(containerId)
+        }
+        return { State: { Status: "running", Running: true } }
       },
     }
 
