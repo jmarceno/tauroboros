@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import type { SessionMessage } from '@/types/api'
+import { useMarkdownRenderer, type RenderedBlock } from '@/composables/useMarkdownRenderer'
 
 const props = defineProps<{
   message: SessionMessage
   showTimestamp?: boolean
 }>()
+
+const { renderContent, parseContentBlocks } = useMarkdownRenderer()
 
 const isUser = computed(() => props.message.role === 'user')
 const isAssistant = computed(() => props.message.role === 'assistant')
@@ -38,6 +41,32 @@ const messageText = computed(() => {
   return JSON.stringify(content)
 })
 
+// Rendered content blocks
+const renderedBlocks = ref<RenderedBlock[]>([])
+
+// Watch for message changes and render content
+watch(() => messageText.value, async (text) => {
+  if (!text) {
+    renderedBlocks.value = []
+    return
+  }
+
+  // For HTML content from TipTap, don't re-render
+  if (text.startsWith('<')) {
+    renderedBlocks.value = [{ type: 'text', content: text }]
+    return
+  }
+
+  // For thinking messages or streaming messages, just parse blocks without async rendering
+  if (isThinking.value || isStreaming.value) {
+    renderedBlocks.value = parseContentBlocks(text)
+    return
+  }
+
+  // Render full content with mermaid and syntax highlighting
+  renderedBlocks.value = await renderContent(text)
+}, { immediate: true })
+
 const formatTimestamp = (timestamp: number) => {
   const date = new Date(timestamp * 1000)
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -55,6 +84,38 @@ const formatDate = (timestamp: number) => {
     return 'Yesterday'
   } else {
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  }
+}
+
+// Template ref for mermaid containers
+const mermaidContainerRefs = ref<Map<string, HTMLElement>>(new Map())
+
+// Render mermaid charts after DOM updates
+watch(() => renderedBlocks.value, async () => {
+  await nextTick()
+  
+  // Find all mermaid blocks and render them
+  for (const block of renderedBlocks.value) {
+    if (block.type === 'mermaid' && block.id && !block.content.startsWith('<svg')) {
+      const container = mermaidContainerRefs.value.get(block.id)
+      if (container) {
+        try {
+          const mermaid = (await import('mermaid')).default
+          const { svg } = await mermaid.render(`${block.id}-svg`, block.content)
+          container.innerHTML = svg
+        } catch (error) {
+          console.error('Failed to render mermaid chart:', error)
+          container.innerHTML = `<div class="mermaid-error text-red-400 text-xs p-2 bg-red-500/10 rounded">Failed to render chart: ${error instanceof Error ? error.message : 'Unknown error'}</div>`
+        }
+      }
+    }
+  }
+}, { flush: 'post' })
+
+// Store mermaid container ref
+const setMermaidRef = (id: string, el: HTMLElement | null) => {
+  if (el) {
+    mermaidContainerRefs.value.set(id, el)
   }
 }
 </script>
@@ -130,7 +191,7 @@ const formatDate = (timestamp: number) => {
 
       <!-- Message Content -->
       <div
-        class="max-w-[85%] rounded-lg px-3 py-2 text-sm prose prose-invert prose-sm"
+        class="max-w-[85%] rounded-lg px-3 py-2 text-sm prose prose-invert prose-sm overflow-hidden"
         :class="{
           'bg-accent text-white': isUser,
           'bg-dark-surface2 text-dark-text': isAssistant && !isThinking,
@@ -147,14 +208,61 @@ const formatDate = (timestamp: number) => {
           thinking...
         </div>
 
-        <!-- Render HTML content (from TipTap) -->
+        <!-- Render blocks -->
+        <template v-for="(block, index) in renderedBlocks" :key="index">
+          <!-- HTML content from TipTap -->
+          <div
+            v-if="block.type === 'text' && block.content.startsWith('<')"
+            v-html="block.content"
+          />
+          
+          <!-- Rendered markdown text -->
+          <div
+            v-else-if="block.type === 'text'"
+            class="message-text"
+            v-html="block.content"
+          />
+          
+          <!-- Mermaid chart -->
+          <div
+            v-else-if="block.type === 'mermaid'"
+            class="mermaid-chart my-3 bg-dark-bg rounded-lg overflow-hidden"
+          >
+            <div class="mermaid-header text-xs text-dark-dim/60 px-2 py-1 bg-dark-surface3/50 border-b border-dark-surface3 flex items-center gap-2">
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              Chart
+            </div>
+            <div
+              v-if="block.content.startsWith('<svg')"
+              class="mermaid-svg p-2"
+              v-html="block.content"
+            />
+            <div
+              v-else
+              :ref="(el) => setMermaidRef(block.id || '', el as HTMLElement)"
+              class="mermaid-container p-2"
+            >
+              <pre class="text-xs text-dark-dim/80">{{ block.content }}</pre>
+            </div>
+          </div>
+          
+          <!-- Code block with syntax highlighting -->
+          <div
+            v-else-if="block.type === 'code'"
+            class="code-block my-2 rounded-lg overflow-hidden bg-dark-bg border border-dark-surface3"
+          >
+            <div class="code-header text-xs text-dark-dim/60 px-3 py-1.5 bg-dark-surface3/50 border-b border-dark-surface3 flex items-center justify-between">
+              <span class="font-mono">{{ block.language }}</span>
+            </div>
+            <pre class="p-3 overflow-x-auto"><code class="hljs language-{{ block.language }}" v-html="block.content"></code></pre>
+          </div>
+        </template>
+
+        <!-- Fallback for plain text (when no blocks rendered yet) -->
         <div
-          v-if="messageText.startsWith('<')"
-          v-html="messageText"
-        />
-        <!-- Render plain text -->
-        <div
-          v-else
+          v-if="renderedBlocks.length === 0"
           class="whitespace-pre-wrap"
           :class="{ 'text-dark-dim/60': isThinking }"
         >{{ messageText }}</div>
@@ -216,7 +324,7 @@ const formatDate = (timestamp: number) => {
   background: rgba(0, 0, 0, 0.2);
   padding: 0.1em 0.3em;
   border-radius: 3px;
-  font-family: monospace;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', monospace;
   font-size: 0.9em;
 }
 .prose :deep(pre) {
@@ -252,5 +360,66 @@ const formatDate = (timestamp: number) => {
 /* Thinking-specific styling */
 .prose:has(.text-dark-dim\/60) :deep(*) {
   opacity: 0.85;
+}
+
+/* Message text styling */
+.message-text :deep(br) {
+  display: block;
+  content: "";
+  margin: 0.3em 0;
+}
+
+/* Mermaid chart styling */
+.mermaid-chart {
+  min-width: 200px;
+}
+
+.mermaid-chart :deep(svg) {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+.mermaid-error {
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/* Code block styling */
+.code-block pre {
+  margin: 0;
+  font-size: 0.875em;
+  line-height: 1.5;
+}
+
+.code-block code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', monospace;
+}
+
+/* Syntax highlighting adjustments for dark theme */
+.code-block :deep(.hljs) {
+  background: transparent;
+  color: #e0e0e0;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+/* Additional code block styling */
+.code-block pre {
+  background: #1a1a1a;
+}
+
+.code-block code {
+  display: block;
+  padding: 0;
+}
+
+/* Ensure proper scrolling */
+.overflow-hidden {
+  overflow: hidden;
+}
+
+.max-w-\[85\%\] {
+  max-width: 85%;
 }
 </style>
