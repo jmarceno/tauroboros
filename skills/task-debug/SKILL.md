@@ -72,6 +72,9 @@ Key fields to examine:
 | `bestOfNSubstage` | For best-of-n: which phase is active |
 | `reviewActivity` | `idle` or `running`—is review currently active |
 | `isArchived` | Whether task has been archived |
+| `thinkingLevel` | Reasoning level used (default/low/medium/high) |
+| `executionStrategy` | `standard` or `best_of_n` |
+| `smartRepairHints` | Any hints previously provided for repair |
 
 ### Step 2: Examine Session Timeline and Messages
 
@@ -122,11 +125,15 @@ Session message fields:
 | `role` | Message role |
 | `messageType` | Type of message |
 | `contentJson` | Content as JSON |
+| `eventName` | Event name (e.g., `thinking`, `tool_call`) |
 | `toolName` / `toolArgsJson` / `toolResultJson` | Tool call details |
 | `toolStatus` | Tool execution status |
+| `toolCallId` | Tool call ID for correlation |
 | `editDiff` / `editFilePath` | File edit details |
 | `promptTokens` / `completionTokens` / `totalTokens` | Token usage |
+| `cacheReadTokens` / `cacheWriteTokens` | Cache token usage |
 | `costTotal` | Cost in USD |
+| `agentName` | Agent name if provided |
 
 ### Step 3: Check Worktree Git State
 
@@ -341,10 +348,15 @@ The debug skill operates on the **standalone server with SQLite database** archi
 1. **Standalone Server** (`src/server/server.ts`)
    - HTTP API on configured port (default 3789)
    - SQLite database at `.pi/easy-workflow/tasks.db`
-   - Message logger captures all session events
+   - Message logger captures all session events with token/cost tracking
    - WebSocket server broadcasts real-time updates
 
-2. **Database Tables:**
+2. **Vue Kanban UI** (`src/kanban-vue/`)
+   - Vue 3 + Tailwind CSS + Vite
+   - Real-time updates via WebSocket
+   - 5 kanban columns (template, backlog, executing, review, done)
+
+3. **Database Tables:**
 
    `tasks` — Core task state with archive support
 
@@ -356,7 +368,7 @@ The debug skill operates on the **standalone server with SQLite database** archi
 
    `workflow_sessions` — Workflow session management
 
-   `session_messages` — Normalized message log with token/cost tracking
+   `session_messages` — Normalized message log with token/cost tracking and cache info
 
    `session_io` — Raw I/O capture stream
 
@@ -370,9 +382,9 @@ The storage layer is in `src/db.ts`.
 
 Session logs are stored in `session_messages` table and available via:
 - `GET /api/sessions/:sessionId/timeline` — Timeline entries
-- `GET /api/sessions/:sessionId/messages` — Full messages with pagination
-- `GET /api/sessions/:sessionId/usage` — Token/cost rollup
-- `GET /api/sessions/:sessionId/io` — Raw I/O records
+- `GET /api/sessions/:sessionId/messages` — Full messages with pagination (supports `limit`, `offset`)
+- `GET /api/sessions/:sessionId/usage` — Token/cost rollup with cache info
+- `GET /api/sessions/:sessionId/io` — Raw I/O records (supports `limit`, `offset`, `recordType` filter)
 - `GET /api/tasks/:taskId/messages` — All messages for a task
 - `GET /api/task-runs/:runId/messages` — Messages for a specific run
 
@@ -411,11 +423,14 @@ curl "http://localhost:<port>/api/sessions/<session-id>/messages?limit=100&offse
 # Get session timeline (condensed view)
 curl http://localhost:<port>/api/sessions/<session-id>/timeline
 
-# Get token/cost usage rollup
+# Get token/cost usage rollup (includes cache tokens)
 curl http://localhost:<port>/api/sessions/<session-id>/usage
 
 # Get raw I/O records
 curl "http://localhost:<port>/api/sessions/<session-id>/io?limit=100"
+
+# Get I/O records filtered by type
+curl "http://localhost:<port>/api/sessions/<session-id>/io?recordType=lifecycle"
 ```
 
 ## Execution Graph Inspection
@@ -428,10 +443,26 @@ curl http://localhost:<port>/api/execution-graph
 ```
 
 This returns:
-- `nodes`: All tasks that will run with execution metadata
+- `nodes`: All tasks that will run with execution metadata (including expanded worker/reviewer counts for best-of-n)
 - `edges`: Dependency relationships
 - `batches`: Tasks grouped by execution batch (parallelizable)
 - `pendingApprovals`: Tasks waiting for plan approval
+
+## Container Mode
+
+When container isolation is enabled:
+
+```bash
+# Check container image status
+curl http://localhost:<port>/api/container/image-status
+```
+
+The image status endpoint returns:
+- `enabled`: Whether container mode is enabled
+- `status`: `not_present`, `preparing`, `ready`, or `error`
+- `message`: Human-readable status message
+- `progress`: Download/build progress (0-100)
+- `errorMessage`: Error details if status is `error`
 
 ## Resetting Tasks
 
@@ -447,10 +478,11 @@ This clears:
 - `errorMessage` → null
 - `completedAt` → null
 - `sessionId` / `sessionUrl` → null
-- `worktreeDir` → null
+- `worktreeDir` → null (worktree is cleaned up)
 - `executionPhase` → `not_started`
 - `awaitingPlanApproval` → false
 - `planRevisionCount` → 0
+- `bestOfNSubstage` → `idle` (for best-of-n tasks)
 
 ## Diagnostic Checklist
 
@@ -466,6 +498,10 @@ When debugging a failing task, verify:
 - [ ] Review gaps (if any) are specific and actionable
 - [ ] `isArchived` is false (archived tasks don't execute)
 - [ ] `requirements` dependencies are satisfied or will be satisfied
+- [ ] `reviewActivity` is `idle` (if `running`, a review is currently in progress)
+- [ ] `thinkingLevel` is appropriate for the task complexity
+- [ ] Session messages contain no unhandled errors in `toolStatus`
+- [ ] Token/cost usage in session rollup seems reasonable
 
 ## What to Tell the User
 

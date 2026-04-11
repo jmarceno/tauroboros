@@ -161,7 +161,13 @@ Easy Workflow uses a **standalone server with SQLite database** architecture:
    - Runs the task orchestrator
    - Handles workflow runs, sessions, and execution
 
-2. **Configuration** (`.pi/settings.json` for PI config)
+2. **Kanban UI** (`src/kanban-vue/`) - Vue 3 + Tailwind CSS + Vite
+   - Build output: `src/kanban-vue/dist/`
+   - WebSocket live updates
+   - 5 kanban columns: template, backlog, executing, review, done
+   - 8 modals: Task, Options, Execution Graph, Approve, Revision, Start Single, Session Viewer, Best-of-N Details
+
+3. **Configuration** (`.pi/settings.json` for PI config)
    - Database location: `<workspace>/.pi/easy-workflow/tasks.db`
 
 ## Persistence Layout
@@ -247,6 +253,7 @@ Important keys:
 | `telegram_chat_id` | Telegram chat ID |
 | `telegram_notifications_enabled` | Enable Telegram notifications |
 | `max_reviews` | Maximum review cycles |
+| `column_sorts` | JSON column sort preferences |
 
 #### `task_runs`
 
@@ -323,7 +330,7 @@ Workflow session records linking to PI sessions.
 | `id` | Text primary key |
 | `task_id` | Associated task |
 | `task_run_id` | Associated task run (for best-of-n) |
-| `session_kind` | `plan`, `execution`, `review`, `best_of_n_worker`, `best_of_n_reviewer`, `best_of_n_final_applier`, `repair` |
+| `session_kind` | `task`, `task_run_worker`, `task_run_reviewer`, `task_run_final_applier`, `review_scratch`, `repair`, `plan`, `plan_revision` |
 | `status` | `starting`, `active`, `paused`, `completed`, `failed`, `aborted` |
 | `cwd` | Working directory |
 | `worktree_dir` | Worktree path |
@@ -385,8 +392,8 @@ Raw session I/O capture stream.
 | `id` | Integer primary key |
 | `session_id` | Workflow session ID |
 | `seq` | Sequence number |
-| `stream` | `stdout`, `stderr`, `server` |
-| `record_type` | Type of record |
+| `stream` | `stdin`, `stdout`, `stderr`, `server` |
+| `record_type` | `rpc_command`, `rpc_response`, `rpc_event`, `stderr_chunk`, `lifecycle`, `snapshot`, `prompt_rendered` |
 | `payload_json` | JSON payload |
 | `payload_text` | Text payload |
 | `created_at` | Unix timestamp |
@@ -478,6 +485,7 @@ The port is read from the `options` table under the `port` key (default: 3789).
 | `GET` | `/api/sessions/:id/io` | Get session I/O records |
 | `GET` | `/api/task-runs/:id/messages` | Get messages for task run |
 | `POST` | `/api/pi/sessions/:id/events` | Ingest PI session events |
+| `GET` | `/api/container/image-status` | Get container image status |
 | `GET` | `/healthz` | Health check |
 | `GET` | `/ws` | WebSocket endpoint |
 
