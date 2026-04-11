@@ -1261,7 +1261,6 @@ export class PiKanbanDB {
   }
 
   updateTask(id: string, input: UpdateTaskInput): Task | null {
-    // Get current task before update to check for status change
     const currentTask = this.getTask(id)
     const oldStatus = currentTask?.status
 
@@ -2518,8 +2517,6 @@ export class PiKanbanDB {
       }
     }
 
-    // Helper to get value - treats "default" as empty for model fields
-    // NO FALLBACKS - returns exactly what's in the database
     const getValue = (key: string, treatDefaultAsEmpty = false): string => {
       const value = values.get(key) || ""
       if (treatDefaultAsEmpty && value === "default") return ""

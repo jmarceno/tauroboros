@@ -163,7 +163,6 @@ export function useApi() {
         body: JSON.stringify({ content, contextAttachments }),
       }),
     
-    // Create tasks from planning session
     createTasksFromPlanning: (id: string, tasks?: Array<{ name: string; prompt: string; status?: string; requirements?: string[] }>) =>
       request<{ tasks?: Task[]; count?: number; message?: string }>(`/api/planning/sessions/${id}/create-tasks`, {
         method: 'POST',

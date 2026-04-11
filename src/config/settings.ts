@@ -176,11 +176,9 @@ function validateAndExtractUnknown(
 ): SettingsLoadResult {
   const unknownFields: string[] = []
 
-  // Check top-level keys
   const validTopKeys = ["skills", "project", "workflow"]
   unknownFields.push(...extractUnknownFields(parsed, validTopKeys, ""))
 
-  // Validate skills if present
   if (parsed.skills !== undefined) {
     if (typeof parsed.skills === "object" && parsed.skills !== null) {
       const skills = parsed.skills as Record<string, unknown>
@@ -199,7 +197,6 @@ function validateAndExtractUnknown(
     }
   }
 
-  // Validate project if present
   if (parsed.project !== undefined) {
     if (typeof parsed.project === "object" && parsed.project !== null) {
       const project = parsed.project as Record<string, unknown>
@@ -215,14 +212,12 @@ function validateAndExtractUnknown(
     }
   }
 
-  // Validate workflow if present
   if (parsed.workflow !== undefined) {
     if (typeof parsed.workflow === "object" && parsed.workflow !== null) {
       const workflow = parsed.workflow as Record<string, unknown>
       const validWorkflowKeys = ["server", "runtime", "container"]
       unknownFields.push(...extractUnknownFields(workflow, validWorkflowKeys, "workflow"))
 
-      // Validate server settings
       if (workflow.server !== undefined) {
         if (typeof workflow.server === "object" && workflow.server !== null) {
           const server = workflow.server as Record<string, unknown>
@@ -238,7 +233,6 @@ function validateAndExtractUnknown(
         }
       }
 
-      // Validate runtime settings
       if (workflow.runtime !== undefined) {
         if (typeof workflow.runtime === "object" && workflow.runtime !== null) {
           const runtime = workflow.runtime as Record<string, unknown>
@@ -263,7 +257,6 @@ function validateAndExtractUnknown(
         }
       }
 
-      // Validate container settings
       if (workflow.container !== undefined) {
         if (typeof workflow.container === "object" && workflow.container !== null) {
           const container = workflow.container as Record<string, unknown>

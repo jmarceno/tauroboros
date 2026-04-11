@@ -177,7 +177,6 @@ export function usePlanningChat() {
       sessions.value.splice(idx, 1)
     }
 
-    // Update active session
     if (activeSessionId.value === sessionId) {
       const visible = visibleSessions.value
       if (visible.length > 0) {
@@ -187,7 +186,6 @@ export function usePlanningChat() {
       }
     }
 
-    // Close panel if no sessions left
     if (sessions.value.length === 0) {
       closePanel()
     }
@@ -256,7 +254,6 @@ export function usePlanningChat() {
 
   // WebSocket message handlers
   const handlePlanningSessionCreated = (data: PlanningSession) => {
-    // Update existing session with server data if needed
     const session = sessions.value.find(s => s.session?.id === data.id)
     if (session) {
       session.session = data

@@ -98,20 +98,17 @@ export class PlanningSession {
    * Returns false if the ID was already in the buffer (duplicate)
    */
   private checkAndAddRecentMessageId(messageId: string): boolean {
-    // Check if already in recent list
     if (this.recentMessageIds.includes(messageId)) {
-      return false  // Duplicate - already persisted recently
+      return false
     }
     
-    // Add to front of list (most recent)
     this.recentMessageIds.unshift(messageId)
     
-    // Keep only last 3
     if (this.recentMessageIds.length > 3) {
       this.recentMessageIds.pop()
     }
     
-    return true  // New - not a duplicate
+    return true
   }
 
   async start(systemPrompt: string, model?: string, thinkingLevel?: "default" | "low" | "medium" | "high", forceRuntime?: PiRuntimeMode): Promise<void> {
@@ -120,9 +117,6 @@ export class PlanningSession {
     }
 
     try {
-      // Create process using factory (native or containerized)
-      // Pass the system prompt directly to the Pi process via --system-prompt flag
-      // Disable auto session messages - we handle message creation manually for streaming
       this.process = createPiProcess({
         db: this.db,
         session: this.session,
@@ -143,10 +137,8 @@ export class PlanningSession {
         this.process.start()
       }
 
-      // Wait for process to be ready
       await new Promise((resolve) => setTimeout(resolve, 1000))
 
-      // Set model if specified
       if (model && model !== "default") {
         const modelSelection = parseModelSelection(model)
         if (modelSelection) {
@@ -158,7 +150,6 @@ export class PlanningSession {
         }
       }
 
-      // Set thinking level if specified
       if (thinkingLevel && thinkingLevel !== "default") {
         await this.process.send({
           type: "set_thinking_level",
@@ -266,14 +257,12 @@ export class PlanningSession {
 
         const state = this.streamingState
 
-        // Handle thinking deltas
         if (msgEventType === "thinking_delta") {
           const delta = typeof msgEvent.delta === "string" ? msgEvent.delta : ""
           if (delta) {
             state.hasThinking = true
             state.thinkingBuffer += delta
             
-            // Broadcast thinking update (not persisted yet, just streaming)
             const thinkingMessage: SessionMessage = {
               id: state.seq,
               seq: state.seq,
@@ -295,14 +284,12 @@ export class PlanningSession {
           }
         }
 
-        // Handle text deltas
         if (msgEventType === "text_delta") {
           const delta = typeof msgEvent.delta === "string" ? msgEvent.delta : ""
           if (delta) {
             state.hasText = true
             state.textBuffer += delta
             
-            // Broadcast text update (not persisted yet, just streaming)
             const textMessage: SessionMessage = {
               id: state.seq + 1, // Different ID for text vs thinking
               seq: state.seq + 1,
@@ -324,8 +311,6 @@ export class PlanningSession {
           }
         }
 
-        // Handle text completion - persist both thinking and text at the end
-        // Use lock to ensure only one persistence happens even if text_complete fires multiple times
         if (msgEventType === "text_complete") {
           if (state.persistLock) {
             return
@@ -333,9 +318,8 @@ export class PlanningSession {
           if (!state.hasText || !state.textBuffer) {
             return
           }
-          state.persistLock = true  // Acquire lock immediately
+          state.persistLock = true
           
-          // First persist thinking if we have it (before the response text)
           if (state.hasThinking && state.thinkingBuffer && this.checkAndAddRecentMessageId(state.messageId)) {
             this.messageSeq++
             const thinkingMessageInput: CreateSessionMessageInput = {
@@ -358,7 +342,6 @@ export class PlanningSession {
             this.onMessage?.(persistedThinking)
           }
           
-          // Then persist the actual response text
           const textMessageId = state.messageId + "-text"
           if (this.checkAndAddRecentMessageId(textMessageId)) {
             this.messageSeq++
@@ -382,12 +365,10 @@ export class PlanningSession {
             this.onMessage?.(persistedText)
           }
           
-          // Reset streaming state
           this.streamingState = null
         }
       }
 
-      // Handle agent end - persist any remaining content (only if not already persisted via text_complete)
       if (eventType === "agent_end") {
         if (this.streamingState) {
           const state = this.streamingState
@@ -396,7 +377,6 @@ export class PlanningSession {
           if (!state.persistLock) {
             state.persistLock = true
             
-            // Persist thinking first (if not already persisted and we have content)
             if (state.hasThinking && state.thinkingBuffer && this.checkAndAddRecentMessageId(state.messageId)) {
               this.messageSeq++
               const thinkingMessageInput: CreateSessionMessageInput = {
@@ -502,7 +482,6 @@ export class PlanningSessionManager {
   }): Promise<{ session: PiWorkflowSession; planningSession: PlanningSession }> {
     const sessionId = randomUUID().slice(0, 8)
 
-    // Create the database session
     const session = this.db.createWorkflowSession({
       id: sessionId,
       sessionKind: "planning",
@@ -513,7 +492,6 @@ export class PlanningSessionManager {
       startedAt: nowUnix(),
     })
 
-    // Create the planning session wrapper
     const planningSession = new PlanningSession({
       session,
       db: this.db,
@@ -526,10 +504,8 @@ export class PlanningSessionManager {
     // Store in active sessions
     this.sessions.set(sessionId, planningSession)
 
-    // Start the Pi process with system prompt
     await planningSession.start(input.systemPrompt, input.model, input.thinkingLevel)
 
-    // Get the updated session from the database to ensure we have the latest status
     const updatedSession = this.db.getWorkflowSession(sessionId) ?? session
 
     return { session: updatedSession, planningSession }

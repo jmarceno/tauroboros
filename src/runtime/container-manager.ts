@@ -154,7 +154,6 @@ export class PiContainerManager {
     if (this.imageManager) {
       await this.imageManager.prepare()
     } else {
-      // Check if image exists directly in podman
       try {
         await this.execPodman(["image", "exists", this.imageName])
       } catch {
@@ -184,10 +183,8 @@ export class PiContainerManager {
   async createContainer(config: ContainerConfig): Promise<ContainerProcess> {
     const imageName = config.imageName || this.imageName
 
-    // Ensure image is ready (uses image manager if available)
     await this.ensureImageReady()
 
-    // Create volume mounts
     const mounts = createVolumeMounts(config.worktreeDir, config.repoRoot)
 
     // Build mount arguments for podman
@@ -496,7 +493,6 @@ export class PiContainerManager {
   }> {
     const errors: string[] = []
 
-    // Check Podman
     let podman = false
     try {
       await this.execPodman(["--version"])
@@ -505,7 +501,6 @@ export class PiContainerManager {
       errors.push("Podman is not available")
     }
 
-    // Check image
     let image = false
     if (podman) {
       try {

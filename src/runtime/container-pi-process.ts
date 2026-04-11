@@ -91,13 +91,11 @@ export class ContainerPiProcess {
     const memoryMb = containerSettings?.memoryMb || 512
     const cpuCount = containerSettings?.cpuCount || 1
 
-    // Validate that we have a worktree directory
     const worktreeDir = this.session.worktreeDir
     if (!worktreeDir) {
       throw new Error("ContainerPiProcess requires a worktree directory")
     }
 
-    // Infer repo root from worktree path (worktree is inside repo/.worktrees/)
     const repoRoot = worktreeDir.replace(/\/\.worktrees\/[^/]+$/, "")
 
     const containerConfig: ContainerConfig = {
@@ -110,7 +108,6 @@ export class ContainerPiProcess {
       cpuCount,
     }
 
-    // Create container
     this.containerProcess = await this.containerManager.createContainer(
       containerConfig,
     )
@@ -130,14 +127,11 @@ export class ContainerPiProcess {
       },
     })
 
-    // Create abort controller for stream cleanup
     this.abortController = new AbortController()
 
-    // Start capturing stdout/stderr
     this.captureStdout()
     this.captureStderr()
 
-    // Wait for pi process to be ready inside container
     await new Promise((resolve) => setTimeout(resolve, 1000))
   }
 
@@ -189,7 +183,6 @@ export class ContainerPiProcess {
     await writer.write(new TextEncoder().encode(line))
     writer.releaseLock()
 
-    // Set idle to false when we send a prompt
     if (
       command.type === "prompt" ||
       command.type === "steer" ||
@@ -383,7 +376,6 @@ export class ContainerPiProcess {
       payloadText: line,
     })
 
-    // Handle RPC responses to pending requests
     if (isResponse && id && this.pending.has(id)) {
       const pending = this.pending.get(id)!
       this.pending.delete(id)
@@ -402,7 +394,6 @@ export class ContainerPiProcess {
       return
     }
 
-    // Handle extension UI requests
     if (isExtensionUIRequest && this.extensionUIHandler) {
       try {
         const response = await this.extensionUIHandler(

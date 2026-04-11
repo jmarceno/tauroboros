@@ -20,7 +20,6 @@ export function useKeyboard(options: KeyboardOptions) {
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
     if (active.isContentEditable) return true
 
-    // Check nested inputs inside web components
     if ((active as HTMLElement).shadowRoot) {
       const inner = (active as HTMLElement).shadowRoot?.activeElement
       if (inner) {
@@ -34,7 +33,6 @@ export function useKeyboard(options: KeyboardOptions) {
   }
 
   const handleKeydown = (e: KeyboardEvent) => {
-    // Handle Escape
     if (e.key === 'Escape') {
       if (options.onEscape) {
         const closed = options.onEscape()

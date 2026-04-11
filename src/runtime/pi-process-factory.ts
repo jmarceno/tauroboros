@@ -50,7 +50,6 @@ export function createPiProcess(
       )
     }
 
-    // Check if session has a worktree directory (required for containers)
     if (!options.session.worktreeDir) {
       console.warn(
         "Container runtime requires a worktree directory. Falling back to native runtime.",

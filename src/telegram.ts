@@ -9,6 +9,13 @@ export interface TelegramSendResult {
   error?: string
 }
 
+interface TelegramApiResponse {
+  ok: boolean
+  result?: {
+    message_id?: number
+  }
+}
+
 const STATUS_EMOJI: Record<string, string> = {
   template: "📄",
   backlog: "📌",
@@ -65,10 +72,10 @@ export async function sendTelegramNotification(
 
     let messageId: number | undefined
     try {
-      const data = await response.json() as any
-      messageId = data?.result?.message_id
+      const data = await response.json() as TelegramApiResponse
+      messageId = data.result?.message_id
     } catch {
-      // Ignore JSON parse errors
+      // JSON parsing failed - notification was still sent successfully
     }
 
     logger(`[telegram] notification sent for "${taskName}" (${oldStatus} → ${newStatus})`)

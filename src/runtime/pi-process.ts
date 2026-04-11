@@ -125,7 +125,6 @@ export class PiRpcProcess {
       },
     })
 
-    // Create abort controller for stream cleanup
     this.abortController = new AbortController()
     
     this.captureStdout()
@@ -172,7 +171,6 @@ export class PiRpcProcess {
 
     await this.proc.stdin.write(line)
 
-    // Set idle to false when we send a prompt
     if (command.type === "prompt" || command.type === "steer" || command.type === "follow_up") {
       this.isIdle = false
     }
@@ -355,7 +353,6 @@ export class PiRpcProcess {
       payloadText: line,
     })
 
-    // Handle RPC responses to pending requests
     if (isResponse && id && this.pending.has(id)) {
       const pending = this.pending.get(id)!
       this.pending.delete(id)
@@ -370,7 +367,6 @@ export class PiRpcProcess {
       return
     }
 
-    // Handle extension UI requests (interactive prompts)
     if (isExtensionUIRequest && this.extensionUIHandler) {
       try {
         const response = await this.extensionUIHandler(parsed as { id: string; method: string; [key: string]: unknown })

@@ -9,7 +9,6 @@ export function useSessionUsage() {
   const error = ref<string | null>(null)
 
   const loadSessionUsage = async (sessionId: string): Promise<SessionUsageRollup | null> => {
-    // Return cached data if available
     if (usageCache.value[sessionId]) {
       return usageCache.value[sessionId]
     }

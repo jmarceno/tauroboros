@@ -107,7 +107,6 @@ export class PiSessionManager {
       startedAt: nowUnix(),
     })
 
-    // Create process using factory (native or containerized)
     const process = createPiProcess({
       db: this.db,
       session,
@@ -120,12 +119,10 @@ export class PiSessionManager {
 
     let responseText = ""
     try {
-      // Notify that session has started immediately
       if (input.onSessionStart) {
         input.onSessionStart(session)
       }
 
-      // Start the process (spawns native or creates container)
       if ("start" in process && typeof process.start === "function") {
         await process.start()
       } else {
@@ -133,10 +130,8 @@ export class PiSessionManager {
         ;(process as PiRpcProcess).start()
       }
 
-      // Wait for process to be ready
       await new Promise((resolve) => setTimeout(resolve, 500))
 
-      // Set model if specified
       if (input.model && input.model !== "default") {
         const modelSelection = parseModelSelection(input.model)
         if (modelSelection) {
@@ -148,7 +143,6 @@ export class PiSessionManager {
         }
       }
 
-      // Set thinking level if specified
       if (input.thinkingLevel && input.thinkingLevel !== "default") {
         await process.send({
           type: "set_thinking_level",

@@ -69,9 +69,6 @@ export class PiOrchestrator {
    */
   useContainerBackend(manager: PiContainerManager): void {
     this.containerManager = manager
-    // Update session manager with the container manager
-    // Note: We'd need to recreate the session manager to update it
-    // For now, this is set in constructor
   }
 
   async startAll(): Promise<WorkflowRun> {
@@ -162,7 +159,6 @@ export class PiOrchestrator {
         const task = this.db.getTask(taskId)
         if (!task) continue
 
-        // Validate dependencies are satisfied (either already done or executed in this run)
         for (const depId of task.requirements) {
           const dep = this.db.getTask(depId)
           if (dep && dep.status !== "done" && !executedTaskIds.has(depId)) {
@@ -256,11 +252,8 @@ export class PiOrchestrator {
 
     let worktreeInfo: WorktreeInfo | null = null
     try {
-      // Check if task already has an existing worktree (e.g., from smart repair or previous run)
-      // Reuse it if it exists and is still valid
       if (task.worktreeDir && existsSync(task.worktreeDir)) {
         try {
-          // Verify it's still a tracked git worktree
           const worktrees = await listWorktrees(this.projectRoot)
           const existingWorktree = worktrees.find(w => w.directory === task.worktreeDir)
           if (existingWorktree) {
@@ -271,7 +264,6 @@ export class PiOrchestrator {
         }
       }
       
-      // Create new worktree if we don't have a valid existing one
       if (!worktreeInfo) {
         // Resolve the target branch to use as base for the worktree
         const targetBranch = await resolveTargetBranch({
@@ -670,7 +662,6 @@ export class PiOrchestrator {
       thinkingLevel: input.task.thinkingLevel,
       promptText: input.promptText,
       onSessionStart: (startedSession) => {
-        // Update task with session info immediately when session starts
         const updated = this.db.updateTask(input.task.id, {
           sessionId: startedSession.id,
           sessionUrl: this.sessionUrlFor(startedSession.id),

@@ -26,7 +26,6 @@ export class PortAllocator {
    * Returns the host port number to use.
    */
   allocatePort(sessionId: string, containerPort: number): number {
-    // Check if this session already has this container port mapped
     const existing = this.portMappings.get(sessionId)
     if (existing) {
       const mapping = existing.find((m) => m.containerPort === containerPort)

@@ -8,6 +8,7 @@ import { discoverPiModels } from "../pi/model-discovery.ts"
 import { isTaskAwaitingPlanApproval } from "../task-state.ts"
 import type { BestOfNConfig, ImageStatusPayload, Task, TaskRun, ThinkingLevel, WSMessage, SessionMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
+import type { SessionIORecordType } from "../db/types.ts"
 import { runStartupRecovery } from "../recovery/startup-recovery.ts"
 import { ContainerImageManager } from "../runtime/container-image-manager.ts"
 import { SmartRepairService, type SmartRepairAction } from "../runtime/smart-repair.ts"
@@ -46,34 +47,55 @@ function isSelectionMode(value: unknown): value is "pick_best" | "synthesize" | 
   return value === "pick_best" || value === "synthesize" || value === "pick_or_synthesize"
 }
 
+interface BestOfNSlotInput {
+  model?: unknown
+  count?: unknown
+  taskSuffix?: unknown
+}
+
+interface BestOfNFinalApplierInput {
+  model?: unknown
+  taskSuffix?: unknown
+}
+
+interface BestOfNConfigInput {
+  workers?: unknown
+  reviewers?: unknown
+  finalApplier?: unknown
+  selectionMode?: unknown
+  minSuccessfulWorkers?: unknown
+  verificationCommand?: unknown
+}
+
 function validateBestOfNConfig(config: unknown): { valid: boolean; error?: string } {
   if (!config || typeof config !== "object") {
     return { valid: false, error: "bestOfNConfig must be an object" }
   }
 
-  const cfg = config as any
+  const cfg = config as BestOfNConfigInput
   if (!Array.isArray(cfg.workers) || cfg.workers.length === 0) {
     return { valid: false, error: "At least one worker slot is required" }
   }
 
   for (let i = 0; i < cfg.workers.length; i++) {
-    const slot = cfg.workers[i]
+    const slot = cfg.workers[i] as BestOfNSlotInput
     if (!slot.model || typeof slot.model !== "string") return { valid: false, error: `Worker slot ${i + 1}: model is required` }
     if (typeof slot.count !== "number" || slot.count < 1) return { valid: false, error: `Worker slot ${i + 1}: count must be at least 1` }
   }
 
   if (!Array.isArray(cfg.reviewers)) return { valid: false, error: "Reviewers must be an array" }
   for (let i = 0; i < cfg.reviewers.length; i++) {
-    const slot = cfg.reviewers[i]
+    const slot = cfg.reviewers[i] as BestOfNSlotInput
     if (!slot.model || typeof slot.model !== "string") return { valid: false, error: `Reviewer slot ${i + 1}: model is required` }
     if (typeof slot.count !== "number" || slot.count < 1) return { valid: false, error: `Reviewer slot ${i + 1}: count must be at least 1` }
   }
 
-  if (!cfg.finalApplier || typeof cfg.finalApplier !== "object" || typeof cfg.finalApplier.model !== "string") {
+  const finalApplier = cfg.finalApplier as BestOfNFinalApplierInput | undefined
+  if (!finalApplier || typeof finalApplier !== "object" || typeof finalApplier.model !== "string") {
     return { valid: false, error: "Final applier model is required" }
   }
 
-  if (cfg.selectionMode && !isSelectionMode(cfg.selectionMode)) {
+  if (cfg.selectionMode && !isSelectionMode(cfg.selectionMode as string)) {
     return { valid: false, error: "selectionMode must be pick_best, synthesize, or pick_or_synthesize" }
   }
 
@@ -149,7 +171,6 @@ export class PiKanbanServer {
     this.onResumeRun = opts.onResumeRun ?? null
     this.onStopRun = opts.onStopRun ?? null
 
-    // Initialize container image manager if container mode is enabled
     if (opts.settings?.workflow?.container?.enabled) {
       const containerSettings = opts.settings.workflow.container
       this.imageManager = new ContainerImageManager({
@@ -170,7 +191,6 @@ export class PiKanbanServer {
       })
     }
 
-    // Initialize planning session manager
     this.planningSessionManager = new PlanningSessionManager(this.db, undefined, opts.settings)
 
     // Register Telegram notification listener for task status changes
@@ -912,7 +932,7 @@ export class PiKanbanServer {
 
       const limit = Number(url.searchParams.get("limit") ?? 500)
       const offset = Number(url.searchParams.get("offset") ?? 0)
-      const recordType = url.searchParams.get("recordType") as any
+      const recordType = url.searchParams.get("recordType") as SessionIORecordType | null
       return json(this.db.getSessionIO(params.id, { limit, offset, ...(recordType ? { recordType } : {}) }))
     })
 
@@ -1012,19 +1032,16 @@ export class PiKanbanServer {
 
     // ---- Planning Chat Routes ----
 
-    // Get planning system prompt
     this.router.get("/api/planning/prompt", ({ json }) => {
       const prompt = this.db.getPlanningPrompt("default")
       if (!prompt) return json({ error: "Planning prompt not found" }, 404)
       return json(prompt)
     })
 
-    // Get all planning prompts
     this.router.get("/api/planning/prompts", ({ json }) => {
       return json(this.db.getAllPlanningPrompts())
     })
 
-    // Update planning system prompt
     this.router.put("/api/planning/prompt", async ({ req, json, broadcast }) => {
       const body = await req.json()
       const existing = this.db.getPlanningPrompt(body.key ?? "default")
@@ -1041,28 +1058,22 @@ export class PiKanbanServer {
       return json(updated)
     })
 
-    // Get planning prompt versions
     this.router.get("/api/planning/prompt/:key/versions", ({ params, json }) => {
       return json(this.db.getPlanningPromptVersions(params.key))
     })
 
-    // Get all planning sessions
     this.router.get("/api/planning/sessions", ({ json }) => {
       const sessions = this.db.getPlanningSessions()
       return json(sessions.map((s) => ({ ...s, sessionUrl: this.sessionUrlFor(s.id) })))
     })
 
-    // Get active planning sessions
     this.router.get("/api/planning/sessions/active", ({ json }) => {
       const sessions = this.db.getActivePlanningSessions()
       return json(sessions.map((s) => ({ ...s, sessionUrl: this.sessionUrlFor(s.id) })))
     })
 
-    // Create a new planning session with Pi integration
     this.router.post("/api/planning/sessions", async ({ req, json, broadcast }) => {
       const body = await req.json()
-      
-      // Get the planning system prompt
       const planningPrompt = this.db.getPlanningPrompt("default")
       if (!planningPrompt) {
         return json({ error: "Planning prompt not configured" }, 500)
@@ -1094,7 +1105,6 @@ export class PiKanbanServer {
       }
     })
 
-    // Send a message to a planning session
     this.router.post("/api/planning/sessions/:id/messages", async ({ params, req, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
@@ -1120,7 +1130,6 @@ export class PiKanbanServer {
       }
     })
 
-    // Create tasks from planning session chat
     this.router.post("/api/planning/sessions/:id/create-tasks", async ({ params, req, json, broadcast, sessionUrlFor }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
@@ -1129,10 +1138,8 @@ export class PiKanbanServer {
       const body = await req.json()
       
       try {
-        // Get all messages from the session
         const messages = this.db.getSessionMessages(params.id, { limit: 1000, offset: 0 })
         
-        // Build conversation context
         const conversationHistory = messages
           .filter(m => m.messageType === "user_prompt" || m.messageType === "assistant_response")
           .map(m => ({
@@ -1140,7 +1147,6 @@ export class PiKanbanServer {
             content: m.contentJson?.text || "",
           }))
 
-        // Create a task extraction prompt for Pi
         const taskExtractionPrompt = `Based on the following planning conversation, extract actionable implementation tasks.
 
 Conversation:
@@ -1199,7 +1205,6 @@ Respond ONLY with the JSON array, no other text.`
       }
     })
 
-    // Get a specific planning session
     this.router.get("/api/planning/sessions/:id", ({ params, json }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
@@ -1207,7 +1212,6 @@ Respond ONLY with the JSON array, no other text.`
       return json({ ...session, sessionUrl: this.sessionUrlFor(session.id) })
     })
 
-    // Update planning session status
     this.router.patch("/api/planning/sessions/:id", async ({ params, req, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
@@ -1224,13 +1228,11 @@ Respond ONLY with the JSON array, no other text.`
       return json(withUrl)
     })
 
-    // Close a planning session
     this.router.post("/api/planning/sessions/:id/close", async ({ params, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
       if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
 
-      // Close the Pi process
       await this.planningSessionManager.closeSession(params.id)
 
       const updated = this.db.updateWorkflowSession(params.id, {
@@ -1242,7 +1244,6 @@ Respond ONLY with the JSON array, no other text.`
       return json(updated)
     })
 
-    // Get planning session messages
     this.router.get("/api/planning/sessions/:id/messages", ({ params, url, json }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
@@ -1253,7 +1254,6 @@ Respond ONLY with the JSON array, no other text.`
       return json(this.db.getSessionMessages(params.id, { limit, offset }))
     })
 
-    // Get planning session timeline
     this.router.get("/api/planning/sessions/:id/timeline", ({ params, json }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)

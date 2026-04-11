@@ -142,7 +142,6 @@ export async function discoverPiModels(options: { forceRefresh?: boolean; ttlMs?
     }
   }
 
-  // Return empty catalog with warning
   const warning = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown error")
   const emptyCatalog: NormalizedModelCatalog = {
     providers: [],
