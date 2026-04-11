@@ -34,4 +34,5 @@ echo ""
 echo "   Press Ctrl+C to stop"
 echo ""
 
-bun run start
+#bun run start
+bun run kanban:dev

@@ -42,6 +42,11 @@ const ws = useWebSocket()
 const multiSelect = useMultiSelect()
 const sessionUsage = useSessionUsage()
 
+// Computed unwrappers for props (ensuring primitive values)
+const consumedSlotsValue = computed(() => runsComposable.consumedRunSlots.value ?? 0)
+const parallelTasksValue = computed(() => optionsComposable.options.parallelTasks ?? 1)
+const isConnectedValue = computed(() => ws.isConnected.value ?? false)
+
 // Modal state
 const activeModal = ref<string | null>(null)
 const modalData = ref<Record<string, unknown>>({})
@@ -349,9 +354,9 @@ window.addEventListener('hashchange', () => {
   <div class="h-screen flex flex-col overflow-hidden bg-dark-bg text-dark-text">
     <!-- Top Bar -->
     <TopBar
-      :consumed-slots="runsComposable.consumedRunSlots"
-      :parallel-tasks="optionsComposable.options.parallelTasks"
-      :is-connected="ws.isConnected.value"
+      :consumed-slots="consumedSlotsValue"
+      :parallel-tasks="parallelTasksValue"
+      :is-connected="isConnectedValue"
       @toggle-execution="() => {
         if (optionsComposable.options.showExecutionGraph) {
           openModal('executionGraph')
@@ -369,8 +374,8 @@ window.addEventListener('hashchange', () => {
     <!-- Run Panel -->
     <RunPanel
       :runs="runsComposable.runs"
-      :consumed-slots="runsComposable.consumedRunSlots"
-      :parallel-tasks="optionsComposable.options.parallelTasks"
+      :consumed-slots="consumedSlotsValue"
+      :parallel-tasks="parallelTasksValue"
       :get-task-name="tasksComposable.getTaskName"
       @pause="runsComposable.pauseRun"
       @resume="runsComposable.resumeRun"

@@ -79,5 +79,5 @@ bun run test:e2e
 bun run test:e2e:ui
 ```
 
-### Tauri Ready
-The Vue app is designed to work both in browser and as Tauri desktop app with zero code changes. Future Tauri integration will use a Rust sidecar to auto-start the Bun backend on localhost:3000.
+### CSS
+When dealing with CSS changes, always get the computed CSS with playwright and never trust visual identification.

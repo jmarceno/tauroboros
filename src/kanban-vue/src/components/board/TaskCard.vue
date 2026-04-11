@@ -161,30 +161,30 @@ const bestOfNStageMap: Record<string, string> = {
     }"
   >
     <!-- Header -->
-    <div class="flex items-center gap-2 mb-1">
+    <div class="flex items-center gap-2 mb-1 min-w-0">
       <span
         v-if="task.status === 'executing'"
-        class="spinner"
+        class="spinner flex-shrink-0"
       />
       <template v-if="task.status === 'review' && task.reviewActivity === 'running'">
-        <span class="text-xs text-accent-primary">reviewing</span>
-        <span class="spinner" />
+        <span class="text-xs text-accent-success flex-shrink-0">reviewing</span>
+        <span class="spinner flex-shrink-0" />
       </template>
 
       <span
-        class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-semibold"
-        :class="{ 'text-accent-primary cursor-pointer hover:underline': hasLocalSession }"
+        class="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-semibold block"
+        :class="{ 'text-dark-text cursor-pointer hover:underline': hasLocalSession }"
         :title="task.name"
         @click="hasLocalSession ? emit('openSession') : undefined"
       >
         {{ task.name }}
       </span>
 
-      <span class="text-xs bg-dark-surface rounded px-1.5 py-0.5 text-dark-text-muted flex-shrink-0">
+      <span class="text-xs bg-dark-surface2/80 rounded px-1.5 py-0.5 text-dark-text-muted flex-shrink-0 border border-dark-surface3">
         #{{ task.idx + 1 }}
       </span>
 
-      <span v-if="task.status === 'stuck'" class="text-red-400 text-sm">
+      <span v-if="task.status === 'stuck'" class="text-accent-danger flex-shrink-0 text-sm">
         ⚠
       </span>
     </div>

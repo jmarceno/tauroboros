@@ -555,7 +555,7 @@ const closeOnOverlay = (e: MouseEvent) => {
             <label
               v-for="t in availableRequirements"
               :key="t.id"
-              class="flex items-center gap-1.5 p-1 rounded cursor-pointer hover:bg-dark-surface2"
+              class="checkbox-item p-1 rounded hover:bg-dark-surface2"
             >
               <input
                 v-model="form.requirements"

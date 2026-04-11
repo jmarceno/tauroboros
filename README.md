@@ -58,7 +58,7 @@ Pi Easy Workflow is an AI-powered workflow orchestration system that helps you m
 # Clone or navigate to your project
 cd your-project
 
-# Install dependencies
+# Install dependencies (Bun for backend)
 bun install
 
 # Setup skills and verify installation
@@ -68,11 +68,16 @@ bun run setup
 ### Start the Server
 
 ```bash
-# Start the kanban server
-bun run src/index.ts
+# Start the server (backend + kanban UI)
+bun run start
+
+# Or run in development mode with auto-reload
+bun run dev
 ```
 
 The server will start on port `3789` by default (configurable in `.pi/settings.json`). Open `http://localhost:3789` in your browser.
+
+**Note:** The kanban frontend (Vue app in `src/kanban-vue/`) has its own package.json and uses npm. The root Bun scripts (`bun run start`, `bun run build`) automatically handle building the frontend for you.
 
 ### Basic Usage
 
@@ -103,29 +108,39 @@ bun run src/index.ts
 
 ## Available Commands
 
+All commands use **Bun** (the kanban frontend build uses npm internally, handled automatically):
+
 ```bash
-# Start server
+# Start server (production)
 bun run start
 
 # Development mode with auto-reload
 bun run dev
 
-# Run tests
+# Build everything (backend + kanban frontend)
+bun run build
+
+# Run unit tests
 bun test
 
 # Run tests with coverage
 bun test --coverage
 
-# Run E2E container tests (requires Podman)
+# Run E2E tests (requires server running)
 bun run test:e2e
+bun run test:e2e:ui       # With UI mode
+bun run test:e2e:real     # Real container workflow test
 
-# Sync project-local skills to .pi/skills
-bun run skills:install
+# Kanban frontend (uses npm internally)
+bun run kanban:dev        # Dev mode with hot reload
+bun run kanban:build      # Production build
 
-# Verify local Pi setup files
-bun run skills:verify
+# Skills management
+bun run skills:install    # Sync skills to .pi/skills
+bun run skills:verify     # Verify Pi setup
+bun run setup             # Install + verify
 
-# Container setup and verification
+# Container setup (optional Podman isolation)
 bun run container:setup      # Install Podman and build image
 bun run container:verify     # Check container runtime setup
 bun run container:build      # Build pi-agent container image
@@ -253,7 +268,13 @@ src/
 ├── types.ts              # TypeScript type definitions
 ├── execution-plan.ts     # Dependency resolution
 ├── task-state.ts         # Task state machine
-├── kanban/               # Web UI (single HTML file)
+├── kanban-vue/           # Vue 3 kanban UI (Vite + Tailwind)
+│   ├── package.json      # Frontend dependencies (npm)
+│   ├── vite.config.ts
+│   └── src/
+│       ├── App.vue
+│       ├── components/
+│       └── composables/
 ├── server/               # HTTP server implementation
 │   ├── router.ts         # URL routing
 │   ├── server.ts         # Route handlers

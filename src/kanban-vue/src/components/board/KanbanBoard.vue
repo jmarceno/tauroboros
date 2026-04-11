@@ -52,7 +52,7 @@ const columnHelpText: Record<string, string> = {
 </script>
 
 <template>
-  <div class="flex-1 grid grid-cols-5 gap-3 p-4 min-h-0 min-w-0 max-w-full overflow-x-auto overflow-y-hidden">
+  <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 p-4 min-h-0 min-w-0 max-w-full overflow-y-auto">
     <KanbanColumn
       v-for="column in columns"
       :key="column.status"

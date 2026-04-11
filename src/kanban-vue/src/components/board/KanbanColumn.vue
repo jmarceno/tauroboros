@@ -41,12 +41,12 @@ const emit = defineEmits<{
   changeSort: [sort: string]
 }>()
 
-const columnColors: Record<string, { bg: string; text: string }> = {
-  template: { bg: 'bg-indigo-500/15', text: 'text-indigo-400' },
-  backlog: { bg: 'bg-amber-500/15', text: 'text-amber-400' },
-  executing: { bg: 'bg-green-500/15', text: 'text-green-400' },
-  review: { bg: 'bg-purple-500/15', text: 'text-purple-400' },
-  done: { bg: 'bg-cyan-500/15', text: 'text-cyan-400' },
+const columnColors: Record<string, { bg: string; text: string; border: string }> = {
+  template: { bg: 'bg-[rgba(80,80,120,0.2)]', text: 'text-[#a0a0d0]', border: 'border-[rgba(100,100,150,0.4)]' },
+  backlog: { bg: 'bg-[rgba(150,120,60,0.2)]', text: 'text-[#d0b080]', border: 'border-[rgba(180,140,70,0.4)]' },
+  executing: { bg: 'bg-[rgba(60,150,80,0.2)]', text: 'text-[#80d0a0]', border: 'border-[rgba(70,180,100,0.4)]' },
+  review: { bg: 'bg-[rgba(140,80,140,0.2)]', text: 'text-[#d080d0]', border: 'border-[rgba(160,90,160,0.4)]' },
+  done: { bg: 'bg-[rgba(60,140,160,0.2)]', text: 'text-[#80d0e0]', border: 'border-[rgba(70,160,180,0.4)]' },
 }
 
 const canDrop = (status: string) => {
@@ -74,37 +74,38 @@ const handleDrop = (e: DragEvent) => {
 </script>
 
 <template>
-  <div class="column" :data-status="status">
+  <div class="column min-w-[280px] sm:min-w-0" :data-status="status">
     <div
-      class="column-header"
-      :class="[columnColors[status].bg, columnColors[status].text]"
+      class="column-header border-b flex-col sm:flex-row items-start sm:items-center gap-2"
+      :class="[columnColors[status].bg, columnColors[status].text, columnColors[status].border]"
     >
-      <div class="flex items-center gap-2 min-w-0">
-        <span>{{ title }}</span>
+      <div class="flex items-center gap-2 w-full sm:w-auto min-w-0">
+        <span class="font-bold tracking-wider truncate sm:whitespace-normal">{{ title }}</span>
         <button
-          class="help-btn"
+          class="help-btn flex-shrink-0"
           :title="helpText"
-          aria-label="{{ title }} column help"
+          :aria-label="title + ' column help'"
         >
           ?
         </button>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
         <select
           :value="currentSort"
-          class="text-xs bg-dark-surface border border-dark-surface3 rounded px-1.5 py-0.5 cursor-pointer hover:border-accent-primary focus:border-accent-primary outline-none"
+          class="text-xs bg-[#1a1a1a] border rounded px-1.5 py-0.5 cursor-pointer outline-none flex-shrink-0"
+          :class="[columnColors[status].border, columnColors[status].text]"
           @change="(e) => emit('changeSort', (e.target as HTMLSelectElement).value)"
           title="Sort tasks"
         >
-          <option value="manual">Manual</option>
-          <option value="name-asc">Name ↑</option>
-          <option value="name-desc">Name ↓</option>
-          <option value="created-asc">Created ↑</option>
-          <option value="created-desc">Created ↓</option>
-          <option value="updated-asc">Updated ↑</option>
-          <option value="updated-desc">Updated ↓</option>
+          <option value="manual" class="bg-[#1a1a1a]">Manual</option>
+          <option value="name-asc" class="bg-[#1a1a1a]">Name ↑</option>
+          <option value="name-desc" class="bg-[#1a1a1a]">Name ↓</option>
+          <option value="created-asc" class="bg-[#1a1a1a]">Created ↑</option>
+          <option value="created-desc" class="bg-[#1a1a1a]">Created ↓</option>
+          <option value="updated-asc" class="bg-[#1a1a1a]">Updated ↑</option>
+          <option value="updated-desc" class="bg-[#1a1a1a]">Updated ↓</option>
         </select>
-        <span class="bg-dark-surface rounded-full px-2 py-0.5 text-xs">
+        <span class="bg-[#1a1a1a] rounded-full px-2 py-0.5 text-xs border flex-shrink-0" :class="[columnColors[status].border, columnColors[status].text]">
           {{ tasks?.length ?? 0 }}
         </span>
       </div>

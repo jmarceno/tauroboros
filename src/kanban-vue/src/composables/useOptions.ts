@@ -43,6 +43,7 @@ export function useOptions() {
     options,
     isLoading,
     error,
+    api, // Expose api for other operations like getBranches
     loadOptions,
     saveOptions,
     updateOptions: saveOptions, // Alias for consistency

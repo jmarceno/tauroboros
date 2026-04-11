@@ -1,6 +1,9 @@
 .pi/*
 !.pi/settings.json
-.worktrees/*
+.worktrees
+
+.playwright-mcp
+.test-results
 
 temp
 .cachebro

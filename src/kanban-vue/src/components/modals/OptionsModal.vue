@@ -16,6 +16,18 @@ const toasts = inject<ReturnType<typeof useToasts>>('toasts')!
 const isLoading = ref(false)
 const availableBranches = ref<string[]>([])
 const currentBranch = ref<string | null>(null)
+const branchesError = ref<string | null>(null)
+
+const defaultCommitPrompt = `Review the changes you made and create a commit message following these rules:
+
+1. The commit message should be clear and descriptive
+2. Follow conventional commit format: <type>(<scope>): <description>
+3. Types: feat, fix, docs, style, refactor, test, chore
+4. Include the ticket/issue number if applicable
+5. Keep the first line under 50 characters
+6. Add detailed description after a blank line if needed
+
+Commit message:`
 
 const form = ref({
   branch: options.options.branch || '',
@@ -24,7 +36,7 @@ const form = ref({
   reviewModel: options.options.reviewModel || 'default',
   repairModel: options.options.repairModel || 'default',
   command: options.options.command || '',
-  commitPrompt: options.options.commitPrompt || '',
+  commitPrompt: options.options.commitPrompt || defaultCommitPrompt,
   extraPrompt: options.options.extraPrompt || '',
   parallelTasks: options.options.parallelTasks || 1,
   maxReviews: options.options.maxReviews || 2,
@@ -39,11 +51,19 @@ const form = ref({
 
 onMounted(async () => {
   try {
+    branchesError.value = null
     const branchData = await options.api.getBranches()
-    availableBranches.value = branchData.branches
+    availableBranches.value = branchData.branches || []
     currentBranch.value = branchData.current
-  } catch {
-    // Use defaults
+    
+    // If we have branches but no selected branch, select the current one
+    if (availableBranches.value.length > 0 && !form.value.branch) {
+      form.value.branch = currentBranch.value || availableBranches.value[0]
+    }
+  } catch (err) {
+    branchesError.value = err instanceof Error ? err.message : 'Failed to load branches'
+    console.error('Failed to load branches:', err)
+    // Keep any existing branch value
   }
 })
 
@@ -91,24 +111,31 @@ const closeOnOverlay = (e: MouseEvent) => {
 
 <template>
   <div class="modal-overlay" @mousedown="closeOnOverlay">
-    <div class="modal w-[min(560px,calc(100vw-40px))]">
+    <div class="modal w-[min(560px,calc(100vw-40px))]" style="max-height: calc(100vh - 40px);">
       <div class="modal-header">
         <h2>Options</h2>
         <button class="modal-close" @click="emit('close')">×</button>
       </div>
 
-      <div class="modal-body space-y-3">
+      <div class="modal-body space-y-3 overflow-y-auto" style="max-height: calc(100vh - 180px);">
         <!-- Default Branch -->
         <div class="form-group">
           <div class="label-row">
             <label>Default Branch</label>
             <span class="help-btn" title="Default git branch for new tasks when a task-specific branch is not selected.">?</span>
           </div>
-          <select v-model="form.branch" class="form-select">
+          <div v-if="branchesError" class="text-xs text-red-400 mb-1">
+            Error loading branches: {{ branchesError }}
+          </div>
+          <select v-model="form.branch" class="form-select" :disabled="availableBranches.length === 0">
+            <option value="" disabled v-if="availableBranches.length === 0">No branches available</option>
             <option v-for="branch in availableBranches" :key="branch" :value="branch">
               {{ branch }}
             </option>
           </select>
+          <div v-if="availableBranches.length === 0 && !branchesError" class="text-xs text-dark-text-muted mt-1">
+            Loading branches...
+          </div>
         </div>
 
         <!-- Models -->
@@ -181,17 +208,17 @@ const closeOnOverlay = (e: MouseEvent) => {
         <!-- Session Cleanup -->
         <div class="form-group">
           <div class="label-row">
-            <label>Session Cleanup (global)</label>
+            <label> Session Cleanup (global)</label>
             <span class="help-btn" title="Automatically delete Pi workflow sessions after task/review runs finish. Enable only if you do not need session history for debugging.">?</span>
           </div>
           <div class="checkbox-group">
             <label class="checkbox-item">
               <input v-model="form.autoDeleteNormalSessions" type="checkbox" />
-              <span>Auto-delete normal sessions</span>
+              <span> Auto-delete normal sessions</span>
             </label>
             <label class="checkbox-item">
               <input v-model="form.autoDeleteReviewSessions" type="checkbox" />
-              <span>Auto-delete review sessions</span>
+              <span> Auto-delete review sessions</span>
             </label>
           </div>
         </div>

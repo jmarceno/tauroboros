@@ -26,6 +26,8 @@ const editor = useEditor({
         levels: [1, 2, 3],
       },
       codeBlock: false,
+      // StarterKit includes bold, italic, strike, bulletList, orderedList, blockquote, code
+      // but NOT link and underline by default
     }),
     Link.configure({
       openOnClick: false,
@@ -342,9 +344,10 @@ const toggleMaximize = () => {
 
 <style>
 .markdown-editor-container {
-  border: 1px solid var(--color-surface3);
+  border: 1px solid rgba(60, 60, 60, 0.5);
   border-radius: 0.5rem;
-  background-color: var(--color-surface2);
+  background-color: rgba(20, 20, 20, 0.8);
+  backdrop-filter: blur(8px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -363,6 +366,8 @@ const toggleMaximize = () => {
   max-height: none;
   resize: none;
   border-radius: 0;
+  background-color: #000000;
+  border: 1px solid rgba(60, 60, 60, 0.5);
 }
 
 .markdown-editor-toolbar {
@@ -370,8 +375,8 @@ const toggleMaximize = () => {
   align-items: center;
   gap: 0.25rem;
   padding: 0.5rem;
-  background-color: var(--color-surface);
-  border-bottom: 1px solid var(--color-surface3);
+  background-color: rgba(30, 30, 30, 0.6);
+  border-bottom: 1px solid rgba(60, 60, 60, 0.5);
   flex-wrap: wrap;
 }
 
@@ -384,7 +389,7 @@ const toggleMaximize = () => {
 .toolbar-divider {
   width: 1px;
   height: 1.25rem;
-  background-color: var(--color-surface3);
+  background-color: rgba(60, 60, 60, 0.5);
   margin: 0 0.25rem;
 }
 
@@ -401,7 +406,7 @@ const toggleMaximize = () => {
   border-radius: 0.375rem;
   border: none;
   background: transparent;
-  color: var(--color-text-muted);
+  color: #888888;
   cursor: pointer;
   font-size: 0.75rem;
   font-weight: 600;
@@ -409,18 +414,18 @@ const toggleMaximize = () => {
 }
 
 .toolbar-btn:hover:not(:disabled) {
-  background-color: var(--color-surface2);
-  color: var(--color-text);
+  background-color: rgba(50, 50, 50, 0.6);
+  color: #e0e0e0;
 }
 
 .toolbar-btn-active {
-  background-color: var(--color-accent-primary);
-  color: white;
+  background-color: rgba(80, 80, 80, 0.7);
+  color: #e0e0e0;
 }
 
 .toolbar-btn-active:hover {
-  background-color: var(--color-accent-primary);
-  color: white;
+  background-color: rgba(100, 100, 100, 0.8);
+  color: #e0e0e0;
 }
 
 .toolbar-btn:disabled {
@@ -438,7 +443,7 @@ const toggleMaximize = () => {
 .markdown-editor-content .ProseMirror {
   outline: none;
   min-height: 100%;
-  color: var(--color-text);
+  color: #e0e0e0;
   line-height: 1.6;
 }
 
@@ -483,13 +488,13 @@ const toggleMaximize = () => {
 .markdown-editor-content .ProseMirror blockquote {
   margin: 0 0 0.75rem 0;
   padding-left: 1rem;
-  border-left: 3px solid var(--color-accent-primary);
-  color: var(--color-text-muted);
+  border-left: 3px solid rgba(100, 100, 100, 0.5);
+  color: #888888;
   font-style: italic;
 }
 
 .markdown-editor-content .ProseMirror code {
-  background-color: var(--color-surface3);
+  background-color: rgba(50, 50, 50, 0.6);
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
@@ -497,11 +502,12 @@ const toggleMaximize = () => {
 }
 
 .markdown-editor-content .ProseMirror pre {
-  background-color: var(--color-surface3);
+  background-color: rgba(40, 40, 40, 0.8);
   padding: 0.75rem;
   border-radius: 0.5rem;
   margin: 0 0 0.75rem 0;
   overflow-x: auto;
+  border: 1px solid rgba(60, 60, 60, 0.3);
 }
 
 .markdown-editor-content .ProseMirror pre code {
@@ -511,17 +517,17 @@ const toggleMaximize = () => {
 }
 
 .markdown-editor-content .ProseMirror a {
-  color: var(--color-accent-primary);
+  color: rgba(130, 170, 210, 0.9);
   text-decoration: underline;
 }
 
 .markdown-editor-content .ProseMirror .is-editor-empty::before {
   content: attr(data-placeholder);
   float: left;
-  color: var(--color-text-muted);
+  color: #555555;
   pointer-events: none;
   height: 0;
-  opacity: 0.6;
+  opacity: 0.8;
 }
 
 .markdown-editor-disabled {

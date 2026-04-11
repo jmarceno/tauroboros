@@ -76,7 +76,7 @@ const selectOption = (value: string) => {
       <!-- Dropdown -->
       <div
         v-if="showDropdown && suggestions.length > 0"
-        class="absolute top-full left-0 right-0 mt-1 bg-dark-surface border border-dark-surface3 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto"
+        class="absolute top-full left-0 right-0 mt-1 bg-[#1a1a1a] border border-dark-surface3 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto"
       >
         <div
           v-for="suggestion in suggestions"

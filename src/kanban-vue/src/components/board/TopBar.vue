@@ -16,23 +16,25 @@ const isRunning = computed(() => props.consumedSlots > 0)
 </script>
 
 <template>
-  <div class="flex items-center justify-center gap-4 px-6 py-3 bg-dark-surface border-b border-dark-surface3 sticky top-0 z-40">
+  <div class="flex items-center justify-center gap-4 px-6 py-3 bg-dark-bg/80 backdrop-blur-md border-b border-dark-surface3 sticky top-0 z-40">
     <button
       :class="[
-        'btn btn-primary font-semibold',
-        isRunning ? 'bg-accent-danger border-accent-danger hover:bg-red-600' : ''
+        'btn font-semibold',
+        isRunning 
+          ? 'bg-accent-danger/80 border-accent-danger/50 hover:bg-accent-danger text-white' 
+          : 'bg-accent-success/80 border-accent-success/50 hover:bg-accent-success text-white'
       ]"
       @click="emit('toggleExecution')"
     >
-      {{ isRunning ? 'Stop Workflow' : `Start Workflow (${consumedSlots}/${parallelTasks})` }}
+      {{ isRunning ? 'Stop Workflow' : `Start Workflow (${consumedSlots ?? 0}/${parallelTasks ?? 1})` }}
     </button>
 
     <div class="flex flex-col items-center gap-1 min-w-[240px]">
-      <h1 class="text-lg font-semibold inline-flex items-center gap-2">
+      <h1 class="text-lg font-semibold inline-flex items-center gap-2 text-dark-text">
         <span>Easy Workflow Kanban</span>
         <span
           :class="[
-            'w-2 h-2 rounded-full shadow-[0_0_0_3px_rgba(139,148,158,0.12)]',
+            'w-2 h-2 rounded-full',
             isConnected ? 'bg-accent-success' : 'bg-accent-danger'
           ]"
           :title="isConnected ? 'Connected' : 'Disconnected'"
@@ -59,7 +61,7 @@ const isRunning = computed(() => props.consumedSlots > 0)
     </div>
 
     <div class="flex items-center gap-3 flex-wrap justify-end">
-      <button class="btn bg-gray-300 border-gray-400 text-gray-900 hover:bg-gray-400" @click="emit('openOptions')">
+      <button class="btn bg-dark-surface2 border-dark-surface3 text-dark-text hover:bg-dark-surface" @click="emit('openOptions')">
         Options
       </button>
     </div>
