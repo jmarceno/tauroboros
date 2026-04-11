@@ -176,6 +176,41 @@ export class PlanningSession {
     }
   }
 
+  /**
+   * Change the model for this session mid-conversation
+   */
+  async setModel(model: string): Promise<void> {
+    if (!this.process || !this.isReady) {
+      throw new Error("Session not ready")
+    }
+
+    if (!model || model === "default") {
+      throw new Error("Invalid model selection")
+    }
+
+    const modelSelection = parseModelSelection(model)
+    if (!modelSelection) {
+      throw new Error(`Invalid model format: ${model}. Expected format: provider/modelId`)
+    }
+
+    try {
+      await this.process.send({
+        type: "set_model",
+        provider: modelSelection.provider,
+        modelId: modelSelection.modelId,
+      }, 30_000)
+
+      // Update the session in DB to reflect the new model
+      this.session = this.db.updateWorkflowSession(this.session.id, {
+        model: model,
+      }) ?? this.session
+      
+      this.onStatusChange?.(this.session)
+    } catch (error) {
+      throw new Error(`Failed to set model: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   async sendMessage(input: SendMessageInput): Promise<void> {
     if (!this.process || !this.isReady) {
       throw new Error("Session not ready")
@@ -451,6 +486,91 @@ export class PlanningSession {
     this.onStatusChange?.(this.session)
   }
 
+  /**
+   * Get the next sequence number for this session based on existing messages.
+   */
+  private getNextSeqFromDb(): number {
+    const messages = this.db.getSessionMessages(this.session.id, { limit: 1 })
+    if (messages.length === 0) {
+      return 1
+    }
+    // Get the max seq from the database
+    const allMessages = this.db.getSessionMessages(this.session.id, { limit: 10000 })
+    const maxSeq = allMessages.reduce((max, msg) => Math.max(max, Number(msg.seq) || 0), 0)
+    return maxSeq + 1
+  }
+
+  /**
+   * Reconnect to an existing session that is not currently active.
+   * This creates a new Pi process and restores the session state.
+   */
+  async reconnect(systemPrompt: string, model?: string, thinkingLevel?: "default" | "low" | "medium" | "high", forceRuntime?: PiRuntimeMode): Promise<void> {
+    if (this.process) {
+      throw new Error("Session already has an active process")
+    }
+
+    // Initialize messageSeq from existing messages to avoid UNIQUE constraint violations
+    this.messageSeq = this.getNextSeqFromDb()
+
+    try {
+      this.process = createPiProcess({
+        db: this.db,
+        session: this.session,
+        containerManager: this.containerManager,
+        onSessionMessage: (msg) => {
+          this.onMessage?.(msg)
+        },
+        forceRuntime,
+        settings: this.settings,
+        systemPrompt: systemPrompt,
+        disableAutoSessionMessages: true,
+      }) as PiRpcProcess
+
+      // Start the process
+      if ("start" in this.process && typeof this.process.start === "function") {
+        await this.process.start()
+      } else {
+        this.process.start()
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+
+      if (model && model !== "default") {
+        const modelSelection = parseModelSelection(model)
+        if (modelSelection) {
+          await this.process.send({
+            type: "set_model",
+            provider: modelSelection.provider,
+            modelId: modelSelection.modelId,
+          }, 30_000)
+        }
+      }
+
+      if (thinkingLevel && thinkingLevel !== "default") {
+        await this.process.send({
+          type: "set_thinking_level",
+          level: thinkingLevel,
+        }, 30_000)
+      }
+
+      this.session = this.db.updateWorkflowSession(this.session.id, {
+        status: "active",
+      }) ?? this.session
+
+      this.isReady = true
+      this.onStatusChange?.(this.session)
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.session = this.db.updateWorkflowSession(this.session.id, {
+        status: "failed",
+        errorMessage: message,
+      }) ?? this.session
+      this.onStatusChange?.(this.session)
+      throw error
+    }
+  }
+
   getSession(): PiWorkflowSession {
     return this.session
   }
@@ -531,5 +651,55 @@ export class PlanningSessionManager {
     const promises = Array.from(this.sessions.values()).map((s) => s.close())
     await Promise.all(promises)
     this.sessions.clear()
+  }
+
+  /**
+   * Reconnect to an existing planning session that is not currently active.
+   * Creates a new PlanningSession instance and connects it to the existing DB session.
+   */
+  async reconnectSession(
+    sessionId: string,
+    input: {
+      systemPrompt: string
+      model?: string
+      thinkingLevel?: "default" | "low" | "medium" | "high"
+      onMessage?: (message: SessionMessage) => void
+      onStatusChange?: (session: PiWorkflowSession) => void
+    },
+  ): Promise<{ session: PiWorkflowSession; planningSession: PlanningSession } | null> {
+    // Check if session already has an active planning session
+    const existingSession = this.sessions.get(sessionId)
+    if (existingSession && existingSession.isActive()) {
+      throw new Error("Session is already active")
+    }
+
+    // Get the existing session from DB
+    const dbSession = this.db.getWorkflowSession(sessionId)
+    if (!dbSession) {
+      return null
+    }
+    if (dbSession.sessionKind !== "planning") {
+      throw new Error("Not a planning session")
+    }
+
+    // Create a new PlanningSession wrapper for the existing DB session
+    const planningSession = new PlanningSession({
+      session: dbSession,
+      db: this.db,
+      settings: this.settings,
+      containerManager: this.containerManager,
+      onMessage: input.onMessage,
+      onStatusChange: input.onStatusChange,
+    })
+
+    // Store in active sessions (or replace old one)
+    this.sessions.set(sessionId, planningSession)
+
+    // Reconnect to the Pi process
+    await planningSession.reconnect(input.systemPrompt, input.model, input.thinkingLevel)
+
+    const updatedSession = this.db.getWorkflowSession(sessionId) ?? dbSession
+
+    return { session: updatedSession, planningSession }
   }
 }

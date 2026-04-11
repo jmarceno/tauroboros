@@ -15,9 +15,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  'keydown': [event: KeyboardEvent]
 }>()
-
-const isMaximized = ref(false)
 
 const editor = useEditor({
   extensions: [
@@ -44,6 +43,12 @@ const editor = useEditor({
   editable: !props.disabled,
   onUpdate: ({ editor }) => {
     emit('update:modelValue', editor.getHTML())
+  },
+  editorProps: {
+    handleKeyDown: (view, event) => {
+      emit('keydown', event)
+      return false // Don't prevent default handling
+    },
   },
 })
 
@@ -99,22 +104,10 @@ const isActive = (name: string, attributes?: Record<string, unknown>) => {
 const canUndo = computed(() => editor.value?.can().undo() ?? false)
 const canRedo = computed(() => editor.value?.can().redo() ?? false)
 
-// Toggle maximize mode
-const toggleMaximize = () => {
-  isMaximized.value = !isMaximized.value
-  setTimeout(() => {
-    editor.value?.commands.focus()
-  }, 100)
-}
 </script>
 
 <template>
-  <div 
-    :class="[
-      'markdown-editor-container',
-      isMaximized && 'markdown-editor-maximized'
-    ]"
-  >
+  <div class="markdown-editor-container">
     <!-- Toolbar -->
     <div class="markdown-editor-toolbar">
       <div class="toolbar-group">
@@ -311,23 +304,6 @@ const toggleMaximize = () => {
         </button>
       </div>
 
-      <div class="toolbar-spacer" />
-
-      <!-- Maximize button -->
-      <button
-        type="button"
-        class="toolbar-btn"
-        :class="{ 'toolbar-btn-active': isMaximized }"
-        :title="isMaximized ? 'Restore (Esc)' : 'Maximize'"
-        @click="toggleMaximize"
-      >
-        <svg v-if="!isMaximized" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-        </svg>
-        <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
     </div>
 
     <!-- Editor Content -->
@@ -354,20 +330,6 @@ const toggleMaximize = () => {
   min-height: 200px;
   max-height: 500px;
   resize: vertical;
-}
-
-.markdown-editor-maximized {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 100;
-  max-height: none;
-  resize: none;
-  border-radius: 0;
-  background-color: #000000;
-  border: 1px solid rgba(60, 60, 60, 0.5);
 }
 
 .markdown-editor-toolbar {

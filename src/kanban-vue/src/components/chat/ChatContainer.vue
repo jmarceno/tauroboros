@@ -2,7 +2,10 @@
 import { ref, watch, onMounted, onUnmounted, inject, computed } from 'vue'
 import type { ChatSession, usePlanningChat } from '@/composables/usePlanningChat'
 import type { PlanningSession } from '@/types/api'
+import type { useOptions } from '@/composables/useOptions'
+import type { useModelSearch } from '@/composables/useModelSearch'
 import { useApi } from '@/composables/useApi'
+import ModelPicker from '@/components/common/ModelPicker.vue'
 import ChatPanel from './ChatPanel.vue'
 
 type PlanningChatType = ReturnType<typeof usePlanningChat>
@@ -11,6 +14,9 @@ const planningChat = inject<PlanningChatType>('planningChat')
 if (!planningChat) {
   throw new Error('ChatContainer must be used within an app that provides planningChat')
 }
+
+const options = inject<ReturnType<typeof useOptions>>('options')!
+const modelSearch = inject<ReturnType<typeof useModelSearch>>('modelSearch')!
 
 const openModal = inject<(name: string, data?: Record<string, unknown>) => void>('openModal', () => {
   console.warn('openModal not provided, planning prompt editor will not work')
@@ -79,9 +85,15 @@ const loadAllSessions = async () => {
 }
 
 // Session management
-const createNewChat = () => {
-  planningChat.createNewSession()
-  activeTab.value = 'chat'
+const createNewChat = async () => {
+  // Load options if not loaded
+  if (!options.options.value) {
+    await options.loadOptions()
+  }
+
+  // Always show model selector, pre-filled with default if available
+  showModelSelector.value = true
+  selectedModel.value = defaultModel.value || ''
 }
 
 const minimizeSession = (session: ChatSession) => {
@@ -183,6 +195,39 @@ onMounted(() => {
   // Load sessions initially
   loadAllSessions()
 })
+
+// Model selection for new sessions
+const showModelSelector = ref(false)
+const selectedModel = ref('')
+
+// Get default model from options
+const defaultModel = computed(() => {
+  const planModel = options.options.value?.planModel
+  if (planModel && planModel.trim()) {
+    return planModel
+  }
+  return ''
+})
+
+const confirmModelAndCreate = async () => {
+  if (!selectedModel.value) {
+    // Try to normalize the value
+    const normalized = modelSearch.normalizeValue(selectedModel.value)
+    if (!normalized) {
+      return
+    }
+    selectedModel.value = normalized
+  }
+
+  showModelSelector.value = false
+  await planningChat.createNewSession(selectedModel.value)
+  activeTab.value = 'chat'
+}
+
+const cancelModelSelection = () => {
+  showModelSelector.value = false
+  selectedModel.value = ''
+}
 </script>
 
 <template>
@@ -454,6 +499,42 @@ onMounted(() => {
               </svg>
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Model Selector Modal -->
+    <div
+      v-if="showModelSelector"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      @click.self="cancelModelSelection"
+    >
+      <div class="bg-dark-surface border border-dark-surface3 rounded-lg shadow-xl w-[400px] max-w-[90vw] p-4">
+        <h3 class="text-lg font-medium text-dark-text mb-2">New Planning Chat</h3>
+        <p class="text-sm text-dark-dim mb-4">
+          Select the AI model for this planning session. The default is based on your Options settings.
+        </p>
+
+        <ModelPicker
+          v-model="selectedModel"
+          label="Model"
+          help="The AI model to use for this planning session"
+        />
+
+        <div class="flex items-center justify-end gap-2 mt-4">
+          <button
+            class="btn btn-sm"
+            @click="cancelModelSelection"
+          >
+            Cancel
+          </button>
+          <button
+            class="btn btn-primary btn-sm"
+            :disabled="!selectedModel"
+            @click="confirmModelAndCreate"
+          >
+            Start Chat
+          </button>
         </div>
       </div>
     </div>

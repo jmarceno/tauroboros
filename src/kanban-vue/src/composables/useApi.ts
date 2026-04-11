@@ -150,6 +150,16 @@ export function useApi() {
         method: 'PATCH',
         body: JSON.stringify(data),
       }),
+    reconnectPlanningSession: (id: string, data?: { model?: string; thinkingLevel?: string }) =>
+      request<PlanningSession>(`/api/planning/sessions/${id}/reconnect`, {
+        method: 'POST',
+        body: JSON.stringify(data ?? {}),
+      }),
+    setPlanningSessionModel: (id: string, model: string) =>
+      request<{ ok: boolean; model: string }>(`/api/planning/sessions/${id}/model`, {
+        method: 'POST',
+        body: JSON.stringify({ model }),
+      }),
     closePlanningSession: (id: string) => request<PlanningSession>(`/api/planning/sessions/${id}/close`, {
       method: 'POST',
     }),

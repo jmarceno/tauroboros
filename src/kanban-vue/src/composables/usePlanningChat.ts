@@ -77,7 +77,7 @@ export function usePlanningChat() {
     width.value = Math.max(320, Math.min(600, newWidth))
   }
 
-  const createNewSession = async () => {
+  const createNewSession = async (model?: string, thinkingLevel?: string) => {
     const sessionId = `chat-${Date.now()}`
     const newSession: ChatSession = {
       id: sessionId,
@@ -86,7 +86,6 @@ export function usePlanningChat() {
       messages: [],
       isMinimized: false,
       isLoading: true,
-      isSending: false,
       error: null,
     }
 
@@ -96,6 +95,8 @@ export function usePlanningChat() {
     try {
       const planningSession = await api.createPlanningSession({
         cwd: window.location.pathname,
+        model,
+        thinkingLevel: thinkingLevel as any,
       })
 
       const idx = sessions.value.findIndex(s => s.id === sessionId)
@@ -129,10 +130,59 @@ export function usePlanningChat() {
       // The message will appear via WebSocket when the server broadcasts it
       await api.sendPlanningMessage(session.session.id, content, attachments)
     } catch (e) {
-      session.error = e instanceof Error ? e.message : 'Failed to send message'
+      const errorMsg = e instanceof Error ? e.message : 'Failed to send message'
+      // Check if the error indicates session is not active
+      if (errorMsg.includes('Planning session not active')) {
+        session.error = 'Session not active. Click "Reconnect" to resume the session.'
+      } else {
+        session.error = errorMsg
+      }
       throw e
     } finally {
       session.isSending = false
+    }
+  }
+
+  const setSessionModel = async (sessionId: string, model: string) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session || !session.session?.id) {
+      throw new Error('No active session')
+    }
+
+    try {
+      await api.setPlanningSessionModel(session.session.id, model)
+      // Update the session model locally
+      if (session.session) {
+        session.session = { ...session.session, model }
+      }
+      return { ok: true, model }
+    } catch (e) {
+      console.error('Failed to change model:', e)
+      throw e
+    }
+  }
+
+  const reconnectSession = async (sessionId: string, model?: string, thinkingLevel?: string) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session || !session.session?.id) {
+      throw new Error('No session to reconnect')
+    }
+
+    session.isLoading = true
+    session.error = null
+
+    try {
+      const reconnectedSession = await api.reconnectPlanningSession(session.session.id, {
+        model,
+        thinkingLevel,
+      })
+      session.session = reconnectedSession as PlanningSession
+      session.isLoading = false
+      return reconnectedSession
+    } catch (e) {
+      session.error = e instanceof Error ? e.message : 'Failed to reconnect session'
+      session.isLoading = false
+      throw e
     }
   }
 
@@ -320,5 +370,7 @@ export function usePlanningChat() {
     // Chat actions
     sendMessage,
     createTasksFromChat,
+    reconnectSession,
+    setSessionModel,
   }
 }

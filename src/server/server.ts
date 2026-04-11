@@ -1130,6 +1130,77 @@ export class PiKanbanServer {
       }
     })
 
+    this.router.post("/api/planning/sessions/:id/reconnect", async ({ params, req, json, broadcast }) => {
+      const session = this.db.getWorkflowSession(params.id)
+      if (!session) return json({ error: "Session not found" }, 404)
+      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+
+      // Check if already active
+      const existingSession = this.planningSessionManager.getSession(params.id)
+      if (existingSession?.isActive()) {
+        return json({ ...session, sessionUrl: this.sessionUrlFor(session.id) })
+      }
+
+      const body = await req.json()
+      const planningPrompt = this.db.getPlanningPrompt("default")
+      if (!planningPrompt) {
+        return json({ error: "Planning prompt not configured" }, 500)
+      }
+
+      try {
+        const result = await this.planningSessionManager.reconnectSession(params.id, {
+          systemPrompt: planningPrompt.promptText,
+          model: body.model ?? session.model ?? "default",
+          thinkingLevel: body.thinkingLevel ?? session.thinkingLevel ?? "default",
+          onMessage: (message: SessionMessage) => {
+            broadcast({ type: "planning_session_message", payload: { sessionId: session.id, message } })
+          },
+          onStatusChange: (updatedSession) => {
+            const withUrl = { ...updatedSession, sessionUrl: this.sessionUrlFor(updatedSession.id) }
+            broadcast({ type: "planning_session_updated", payload: withUrl })
+          },
+        })
+
+        if (!result) {
+          return json({ error: "Failed to reconnect to session" }, 500)
+        }
+
+        const withUrl = { ...result.session, sessionUrl: this.sessionUrlFor(result.session.id) }
+        broadcast({ type: "planning_session_updated", payload: withUrl })
+        return json(withUrl)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to reconnect to session: ${message}` }, 500)
+      }
+    })
+
+    this.router.post("/api/planning/sessions/:id/model", async ({ params, req, json, broadcast }) => {
+      const session = this.db.getWorkflowSession(params.id)
+      if (!session) return json({ error: "Session not found" }, 404)
+      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+
+      const body = await req.json()
+      const planningSession = this.planningSessionManager.getSession(params.id)
+      
+      if (!planningSession || !planningSession.isActive()) {
+        return json({ error: "Planning session not active" }, 400)
+      }
+
+      try {
+        await planningSession.setModel(body.model)
+
+        const updated = this.db.getWorkflowSession(params.id)
+        const withUrl = updated ? { ...updated, sessionUrl: this.sessionUrlFor(updated.id) } : null
+        if (withUrl) {
+          broadcast({ type: "planning_session_updated", payload: withUrl })
+        }
+        return json({ ok: true, model: body.model })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to change model: ${message}` }, 500)
+      }
+    })
+
     this.router.post("/api/planning/sessions/:id/create-tasks", async ({ params, req, json, broadcast, sessionUrlFor }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)

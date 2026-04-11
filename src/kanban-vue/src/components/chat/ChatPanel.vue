@@ -2,8 +2,11 @@
 import { ref, watch, nextTick, onMounted, computed, inject } from 'vue'
 import type { ChatSession, ContextAttachment } from '@/composables/usePlanningChat'
 import type { SessionMessage } from '@/types/api'
+import type { useOptions } from '@/composables/useOptions'
+import type { useModelSearch } from '@/composables/useModelSearch'
 import ChatMessage from './ChatMessage.vue'
 import MarkdownEditor from '@/components/common/MarkdownEditor.vue'
+import ModelPicker from '@/components/common/ModelPicker.vue'
 import { useApi } from '@/composables/useApi'
 
 const props = defineProps<{
@@ -15,10 +18,13 @@ const emit = defineEmits<{
   close: []
   rename: [name: string]
   createTasks: []
+  reconnect: []
 }>()
 
 const api = useApi()
 const planningChat = inject<any>('planningChat')
+const options = inject<ReturnType<typeof useOptions>>('options')!
+const modelSearch = inject<ReturnType<typeof useModelSearch>>('modelSearch')!
 const messageInput = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const isEditingName = ref(false)
@@ -26,6 +32,27 @@ const editedName = ref('')
 const nameInput = ref<HTMLInputElement | null>(null)
 const showAttachMenu = ref(false)
 const attachedContext = ref<ContextAttachment[]>([])
+
+// Model selector state
+const showModelMenu = ref(false)
+const pendingModel = ref('')
+const isChangingModel = ref(false)
+
+// Initialize pendingModel when menu opens
+watch(showModelMenu, (isOpen) => {
+  if (isOpen) {
+    pendingModel.value = props.session.session?.model || ''
+  }
+})
+
+const currentModel = computed(() => props.session.session?.model)
+const currentModelLabel = computed(() => {
+  const model = currentModel.value
+  if (!model || model === 'default') return ''
+  // Extract model name from provider/model format
+  const parts = model.split('/')
+  return parts.length > 1 ? parts[1] : model
+})
 
 // Auto-scroll to bottom on new messages
 watch(() => props.session.messages.length, async () => {
@@ -92,12 +119,6 @@ const attachFile = async () => {
   input.click()
 }
 
-const attachScreenshot = () => {
-  // Placeholder for screenshot functionality
-  alert('Screenshot capture not yet implemented')
-  showAttachMenu.value = false
-}
-
 const attachCurrentTask = () => {
   // Attach context from the currently selected task if any
   attachedContext.value.push({
@@ -121,7 +142,7 @@ const sendMessage = async () => {
 
   const content = messageInput.value.trim()
   const attachments = [...attachedContext.value]
-  
+
   messageInput.value = ''
   attachedContext.value = [] // Clear after sending
 
@@ -133,6 +154,49 @@ const sendMessage = async () => {
     scrollToBottom()
   }
 }
+
+const handleKeydown = (event: KeyboardEvent) => {
+  // Shift+Enter to send message
+  if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault()
+    if (messageInput.value.trim() && !props.session.isSending && props.session.session?.id && props.session.session?.status === 'active') {
+      sendMessage()
+    }
+  }
+}
+
+const handleReconnect = async () => {
+  try {
+    await planningChat.reconnectSession(props.session.id)
+  } catch (e) {
+    console.error('Failed to reconnect:', e)
+  }
+}
+
+const changeModel = async () => {
+  if (!pendingModel.value || !props.session.session?.id) return
+
+  isChangingModel.value = true
+  try {
+    await planningChat.setSessionModel(props.session.id, pendingModel.value)
+    showModelMenu.value = false
+  } catch (e) {
+    console.error('Failed to change model:', e)
+  } finally {
+    isChangingModel.value = false
+  }
+}
+
+const canReconnect = computed(() => {
+  const session = props.session.session
+  // Allow reconnect if session exists but is not in active status or has error
+  return session && (session.status !== 'active' || props.session.error?.includes('not active'))
+})
+
+const needsModelSelection = computed(() => {
+  // Show model selector when creating a new session that hasn't loaded yet
+  return props.session.isLoading && !props.session.session?.id
+})
 
 const createTasksFromChat = async () => {
   try {
@@ -290,9 +354,43 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
         <span>{{ session.isLoading ? 'Starting session...' : 'Waiting for response...' }}</span>
       </div>
 
+      <!-- Reconnect Button (for inactive sessions) -->
+      <div
+        v-if="canReconnect"
+        class="p-3 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm"
+      >
+        <div class="flex items-start gap-2">
+          <svg class="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          </svg>
+          <div class="flex-1">
+            <p class="mb-2">This session is not currently active. Reconnect to continue chatting.</p>
+            <button
+              class="btn btn-primary btn-xs"
+              :disabled="session.isLoading"
+              @click="handleReconnect"
+            >
+              <span v-if="session.isLoading" class="flex items-center gap-1">
+                <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                Reconnecting...
+              </span>
+              <span v-else class="flex items-center gap-1">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Reconnect
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Error -->
       <div
-        v-if="session.error"
+        v-if="session.error && !canReconnect"
         class="p-3 rounded bg-red-500/10 border border-red-500/30 text-red-400 text-sm"
       >
         <div class="flex items-start gap-2">
@@ -351,15 +449,6 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
             </button>
             <button
               class="w-full px-3 py-2 text-left text-sm text-dark-text hover:bg-dark-surface2 flex items-center gap-2"
-              @click="attachScreenshot"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              Add Screenshot
-            </button>
-            <button
-              class="w-full px-3 py-2 text-left text-sm text-dark-text hover:bg-dark-surface2 flex items-center gap-2"
               @click="attachCurrentTask"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -367,6 +456,56 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
               </svg>
               Current Task
             </button>
+          </div>
+        </div>
+
+        <!-- Model Selector Dropdown -->
+        <div class="relative">
+          <button
+            class="btn btn-xs flex items-center gap-1"
+            :disabled="!session.session || session.session.status !== 'active'"
+            @click="showModelMenu = !showModelMenu"
+          >
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+            Model
+            <span v-if="currentModel" class="ml-1 text-accent">
+              {{ currentModelLabel }}
+            </span>
+          </button>
+
+          <!-- Model Menu -->
+          <div
+            v-if="showModelMenu"
+            class="absolute bottom-full left-0 mb-1 w-64 bg-dark-surface border border-dark-surface3 rounded-lg shadow-xl z-50 py-2"
+          >
+            <div class="px-3 py-1 text-xs text-dark-dim border-b border-dark-surface3 mb-2">
+              Change Model
+            </div>
+            <div class="px-2 pb-2">
+              <ModelPicker
+                v-model="pendingModel"
+                label=""
+                placeholder="Type model name..."
+              />
+            </div>
+            <div class="px-3 py-2 border-t border-dark-surface3 flex justify-end">
+              <button
+                class="btn btn-primary btn-xs"
+                :disabled="!pendingModel || pendingModel === session.session?.model || isChangingModel"
+                @click="changeModel"
+              >
+                <span v-if="isChangingModel" class="flex items-center gap-1">
+                  <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  Changing...
+                </span>
+                <span v-else>Apply</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -405,13 +544,18 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
           :disabled="session.isLoading || !session.session?.id"
           placeholder="Type your message... (Markdown supported)"
           class="min-h-[80px] max-h-[200px]"
+          @keydown="handleKeydown"
         />
 
         <div class="flex items-center justify-between">
           <div class="text-xs text-dark-dim">
             <span v-if="session.isSending">Sending...</span>
             <span v-else-if="session.session?.status === 'starting'">Session starting...</span>
-            <span v-else-if="session.session?.status === 'active'">Ready</span>
+            <span v-else-if="session.session?.status === 'active'" class="flex items-center gap-2">
+              <span>Ready</span>
+              <span class="text-dark-dim/50">|</span>
+              <span class="text-dark-dim/60">Shift+Enter to send</span>
+            </span>
             <span v-else-if="session.session?.status === 'failed'">Session failed</span>
             <span v-else>Connect Pi to start chatting</span>
           </div>
@@ -448,11 +592,11 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
       </div>
     </div>
 
-    <!-- Click outside to close attach menu -->
+    <!-- Click outside to close menus -->
     <div
-      v-if="showAttachMenu"
+      v-if="showAttachMenu || showModelMenu"
       class="fixed inset-0 z-40"
-      @click="showAttachMenu = false"
+      @click="showAttachMenu = false; showModelMenu = false"
     />
   </div>
 </template>
