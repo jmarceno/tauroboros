@@ -128,6 +128,16 @@ export interface WorkflowRun {
   updatedAt: number
 }
 
+export type ColumnSortOption = 'manual' | 'name-asc' | 'name-desc' | 'created-asc' | 'created-desc' | 'updated-asc' | 'updated-desc'
+
+export interface ColumnSortPreferences {
+  template?: ColumnSortOption
+  backlog?: ColumnSortOption
+  executing?: ColumnSortOption
+  review?: ColumnSortOption
+  done?: ColumnSortOption
+}
+
 export interface Options {
   branch: string
   planModel?: string
@@ -146,6 +156,7 @@ export interface Options {
   telegramNotificationsEnabled?: boolean
   telegramBotToken?: string
   telegramChatId?: string
+  columnSorts?: ColumnSortPreferences
 }
 
 export interface BranchList {
@@ -243,6 +254,21 @@ export interface SessionMessage {
   toolResultJson?: unknown
   timestamp: number
   createdAt: number
+}
+
+export interface SessionUsageRollup {
+  sessionId: string
+  messageCount: number
+  tokenizedMessageCount: number
+  costedMessageCount: number
+  firstTimestamp: number | null
+  lastTimestamp: number | null
+  promptTokens: number
+  completionTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  totalTokens: number
+  totalCost: number
 }
 
 export interface ReviewStatus {

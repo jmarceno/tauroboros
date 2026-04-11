@@ -12,8 +12,13 @@ const props = withDefaults(defineProps<{
   getTaskRunColor: (taskId: string) => string | null
   isTaskMutationLocked: (taskId: string) => boolean
   dragDrop: ReturnType<typeof useDragDrop>
+  isMultiSelecting?: boolean
+  getIsSelected?: (taskId: string) => boolean
+  currentSort?: string
 }>(), {
-  tasks: () => []
+  tasks: () => [],
+  isMultiSelecting: false,
+  currentSort: 'manual'
 })
 
 const emit = defineEmits<{
@@ -33,6 +38,7 @@ const emit = defineEmits<{
   archiveAllDone: []
   viewRuns: [id: string]
   continueReviews: [id: string]
+  changeSort: [sort: string]
 }>()
 
 const columnColors: Record<string, { bg: string; text: string }> = {
@@ -43,7 +49,11 @@ const columnColors: Record<string, { bg: string; text: string }> = {
   done: { bg: 'bg-cyan-500/15', text: 'text-cyan-400' },
 }
 
-const canDrop = (status: string) => status === 'backlog' || status === 'review' || status === 'done'
+const canDrop = (status: string) => {
+  // Only allow drop in manual sort mode
+  if (status === 'backlog' && props.currentSort !== 'manual') return false
+  return status === 'backlog' || status === 'review' || status === 'done'
+}
 
 const handleDragOver = (e: DragEvent) => {
   if (!canDrop(props.status)) return
@@ -79,9 +89,25 @@ const handleDrop = (e: DragEvent) => {
           ?
         </button>
       </div>
-      <span class="bg-dark-surface rounded-full px-2 py-0.5 text-xs">
-        {{ tasks?.length ?? 0 }}
-      </span>
+      <div class="flex items-center gap-2">
+        <select
+          :value="currentSort"
+          class="text-xs bg-dark-surface border border-dark-surface3 rounded px-1.5 py-0.5 cursor-pointer hover:border-accent-primary focus:border-accent-primary outline-none"
+          @change="(e) => emit('changeSort', (e.target as HTMLSelectElement).value)"
+          title="Sort tasks"
+        >
+          <option value="manual">Manual</option>
+          <option value="name-asc">Name ↑</option>
+          <option value="name-desc">Name ↓</option>
+          <option value="created-asc">Created ↑</option>
+          <option value="created-desc">Created ↓</option>
+          <option value="updated-asc">Updated ↑</option>
+          <option value="updated-desc">Updated ↓</option>
+        </select>
+        <span class="bg-dark-surface rounded-full px-2 py-0.5 text-xs">
+          {{ tasks?.length ?? 0 }}
+        </span>
+      </div>
     </div>
     <div
       class="column-body"
@@ -97,8 +123,10 @@ const handleDrop = (e: DragEvent) => {
         :bon-summary="bonSummaries[task.id]"
         :run-color="getTaskRunColor(task.id)"
         :is-locked="isTaskMutationLocked(task.id)"
-        :can-drag="status === 'backlog' && !isTaskMutationLocked(task.id)"
+        :can-drag="status === 'backlog' && !isTaskMutationLocked(task.id) && currentSort === 'manual'"
         :drag-drop="dragDrop"
+        :is-selected="getIsSelected?.(task.id)"
+        :is-multi-selecting="isMultiSelecting"
         @open="() => emit('openTask', task.id)"
         @deploy="() => emit('deployTemplate', task.id)"
         @open-session="() => emit('openSession', task.sessionId!)"

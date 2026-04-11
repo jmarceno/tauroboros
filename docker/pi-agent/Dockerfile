@@ -1,6 +1,5 @@
 # Alpine-based Pi Agent Container
 # Uses Alpine Linux with Bun and Pi pre-installed
-# Works with standard Podman (no gVisor required)
 
 FROM docker.io/alpine:3.19
 

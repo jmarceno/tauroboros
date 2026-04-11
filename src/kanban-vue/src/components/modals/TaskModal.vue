@@ -6,6 +6,7 @@ import type { useModelSearch } from '@/composables/useModelSearch'
 import type { useToasts } from '@/composables/useToasts'
 import type { useOptions } from '@/composables/useOptions'
 import ModelPicker from '../common/ModelPicker.vue'
+import MarkdownEditor from '../common/MarkdownEditor.vue'
 
 const props = defineProps<{
   mode: 'create' | 'edit' | 'view' | 'deploy'
@@ -287,11 +288,10 @@ const closeOnOverlay = (e: MouseEvent) => {
             <label>Prompt</label>
             <span class="help-btn" title="The main instructions for the agent. Describe the change, bug, or outcome you want it to produce.">?</span>
           </div>
-          <textarea
+          <MarkdownEditor
             v-model="form.prompt"
-            class="form-textarea"
-            placeholder="What should this task do?"
             :disabled="isViewOnly"
+            placeholder="What should this task do?"
           />
         </div>
 

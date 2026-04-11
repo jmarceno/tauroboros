@@ -4,6 +4,7 @@ import type { Task, BestOfNSummary } from '@/types/api'
 import type { useDragDrop } from '@/composables/useDragDrop'
 import type { useOptions } from '@/composables/useOptions'
 import type { useTasks } from '@/composables/useTasks'
+import type { useSessionUsage } from '@/composables/useSessionUsage'
 
 const props = defineProps<{
   task: Task
@@ -12,7 +13,11 @@ const props = defineProps<{
   isLocked: boolean
   canDrag: boolean
   dragDrop: ReturnType<typeof useDragDrop>
+  isSelected?: boolean
+  isMultiSelecting?: boolean
 }>()
+
+const multiSelect = inject<ReturnType<typeof import('@/composables/useMultiSelect').useMultiSelect>>('multiSelect')
 
 const emit = defineEmits<{
   open: []
@@ -28,9 +33,11 @@ const emit = defineEmits<{
   archive: []
   viewRuns: []
   continueReviews: []
+  toggleSelection: [event: MouseEvent]
 }>()
 
 const options = inject<ReturnType<typeof useOptions>>('options')!
+const sessionUsage = inject<ReturnType<typeof useSessionUsage>>('sessionUsage')
 
 const showOutput = ref(false)
 
@@ -102,6 +109,19 @@ const bonTotalReviewers = computed(() =>
   props.task.bestOfNConfig?.reviewers?.reduce((sum, r) => sum + r.count, 0) ?? 0
 )
 
+// Get cost for this task's session if available
+const taskCost = computed(() => {
+  if (!props.task.sessionId || !sessionUsage) return null
+  const usage = sessionUsage.getCachedUsage(props.task.sessionId)
+  if (!usage || usage.totalCost === 0) return null
+  return {
+    cost: usage.totalCost,
+    tokens: usage.totalTokens,
+    formattedCost: sessionUsage.formatCost(usage.totalCost),
+    formattedTokens: sessionUsage.formatTokenCount(usage.totalTokens),
+  }
+})
+
 const handleDragStart = (e: DragEvent) => {
   if (!props.canDrag) return
   props.dragDrop.handleDragStart(props.task.id)
@@ -126,10 +146,19 @@ const bestOfNStageMap: Record<string, string> = {
 <template>
   <div
     class="card"
+    :class="{
+      'ring-2 ring-accent-primary ring-offset-1 ring-offset-dark-surface': isSelected,
+      'opacity-80': isMultiSelecting && !isSelected
+    }"
     :style="runColor ? { borderLeft: `3px solid ${runColor}`, paddingLeft: '9px' } : undefined"
-    :draggable="canDrag"
+    :draggable="canDrag && !isMultiSelecting"
     @dragstart="handleDragStart"
     @dragend="handleDragEnd"
+    @click="(e) => {
+      if (multiSelect?.toggleSelection(task.id, e)) {
+        e.stopPropagation()
+      }
+    }"
   >
     <!-- Header -->
     <div class="flex items-center gap-2 mb-1">
@@ -427,9 +456,38 @@ const bestOfNStageMap: Record<string, string> = {
       </div>
     </div>
 
+    <!-- Cost badge -->
+    <div v-if="taskCost" class="flex items-center gap-2 mt-1 text-xs">
+      <span 
+        class="cost-badge" 
+        :title="`${taskCost.formattedTokens} tokens`"
+      >
+        💰 {{ taskCost.formattedCost }}
+      </span>
+    </div>
+
     <!-- Completed date -->
     <div v-if="task.completedAt" class="text-xs text-dark-text-muted mt-1">
       Completed: {{ new Date(task.completedAt * 1000).toLocaleString() }}
     </div>
   </div>
 </template>
+
+<style scoped>
+.cost-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  background-color: var(--color-surface2);
+  border: 1px solid var(--color-surface3);
+  border-radius: 9999px;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.cost-badge:hover {
+  background-color: var(--color-surface3);
+  color: var(--color-text);
+}
+</style>

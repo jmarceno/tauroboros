@@ -3,6 +3,7 @@ import { ref, computed, inject, onMounted, watch, nextTick } from 'vue'
 import type { Session, SessionMessage } from '@/types/api'
 import type { useSession } from '@/composables/useSession'
 import type { useTasks } from '@/composables/useTasks'
+import { useSessionUsage } from '@/composables/useSessionUsage'
 
 const props = defineProps<{
   sessionId: string
@@ -14,11 +15,14 @@ const emit = defineEmits<{
 
 const session = inject<ReturnType<typeof useSession>>('session')!
 const tasks = inject<ReturnType<typeof useTasks>>('tasks')!
+const sessionUsage = useSessionUsage()
 
 const timelineRef = ref<HTMLElement | null>(null)
+const showUsageDetails = ref(false)
 
 onMounted(() => {
   session.loadSession(props.sessionId)
+  sessionUsage.loadSessionUsage(props.sessionId)
 })
 
 watch(() => session.messages.value, async () => {
@@ -26,6 +30,8 @@ watch(() => session.messages.value, async () => {
   if (timelineRef.value) {
     timelineRef.value.scrollTop = timelineRef.value.scrollHeight
   }
+  // Refresh usage data when messages update
+  sessionUsage.loadSessionUsage(props.sessionId)
 }, { deep: true })
 
 const sessionLabel = computed(() => {
@@ -125,6 +131,55 @@ const closeOnOverlay = (e: MouseEvent) => {
       </div>
 
       <div class="modal-body">
+        <!-- Usage info -->
+        <div v-if="sessionUsage.getCachedUsage(props.sessionId)" class="mb-3 p-2 bg-dark-surface rounded-lg">
+          <div 
+            class="flex items-center gap-3 cursor-pointer hover:bg-dark-surface2 rounded p-1 transition-colors"
+            @click="showUsageDetails = !showUsageDetails"
+          >
+            <div class="flex items-center gap-1.5">
+              <span class="text-lg">💰</span>
+              <span class="font-medium">{{ sessionUsage.formatCost(sessionUsage.getCachedUsage(props.sessionId)!.totalCost) }}</span>
+            </div>
+            <div class="w-px h-4 bg-dark-surface3" />
+            <div class="flex items-center gap-1.5">
+              <span class="text-lg">🪙</span>
+              <span class="font-medium">{{ sessionUsage.formatTokenCount(sessionUsage.getCachedUsage(props.sessionId)!.totalTokens) }} tokens</span>
+            </div>
+            <div class="ml-auto text-xs text-dark-text-muted">
+              {{ showUsageDetails ? '▼' : '▶' }} Details
+            </div>
+          </div>
+          
+          <!-- Expanded usage details -->
+          <div v-if="showUsageDetails" class="mt-2 pt-2 border-t border-dark-surface3 text-xs space-y-1">
+            <div class="flex justify-between">
+              <span class="text-dark-text-muted">Prompt:</span>
+              <span>{{ sessionUsage.formatTokenCount(sessionUsage.getCachedUsage(props.sessionId)!.promptTokens) }} tokens</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-dark-text-muted">Completion:</span>
+              <span>{{ sessionUsage.formatTokenCount(sessionUsage.getCachedUsage(props.sessionId)!.completionTokens) }} tokens</span>
+            </div>
+            <div v-if="sessionUsage.getCachedUsage(props.sessionId)!.cacheReadTokens > 0" class="flex justify-between">
+              <span class="text-dark-text-muted">Cache (read):</span>
+              <span>{{ sessionUsage.formatTokenCount(sessionUsage.getCachedUsage(props.sessionId)!.cacheReadTokens) }} tokens</span>
+            </div>
+            <div v-if="sessionUsage.getCachedUsage(props.sessionId)!.cacheWriteTokens > 0" class="flex justify-between">
+              <span class="text-dark-text-muted">Cache (write):</span>
+              <span>{{ sessionUsage.formatTokenCount(sessionUsage.getCachedUsage(props.sessionId)!.cacheWriteTokens) }} tokens</span>
+            </div>
+            <div class="flex justify-between pt-1 border-t border-dark-surface3">
+              <span class="text-dark-text-muted">Total Tokens:</span>
+              <span class="font-medium">{{ sessionUsage.formatTokenCount(sessionUsage.getCachedUsage(props.sessionId)!.totalTokens) }}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-dark-text-muted">Total Cost:</span>
+              <span class="font-medium text-accent-primary">{{ sessionUsage.formatCost(sessionUsage.getCachedUsage(props.sessionId)!.totalCost) }}</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Meta info -->
         <div v-if="session.session.value" class="flex flex-wrap gap-2 mb-3">
           <span class="badge">id: {{ session.session.value.id }}</span>

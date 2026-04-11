@@ -9,6 +9,9 @@ const props = defineProps<{
   getTaskRunColor: (taskId: string) => string | null
   isTaskMutationLocked: (taskId: string) => boolean
   dragDrop: ReturnType<typeof useDragDrop>
+  isMultiSelecting?: boolean
+  getIsSelected?: (taskId: string) => boolean
+  columnSorts?: Record<string, string>
 }>()
 
 const emit = defineEmits<{
@@ -28,6 +31,7 @@ const emit = defineEmits<{
   archiveAllDone: []
   viewRuns: [id: string]
   continueReviews: [id: string]
+  changeColumnSort: [status: string, sort: string]
 }>()
 
 const columns: { status: TaskStatus; title: string }[] = [
@@ -60,7 +64,11 @@ const columnHelpText: Record<string, string> = {
       :get-task-run-color="getTaskRunColor"
       :is-task-mutation-locked="isTaskMutationLocked"
       :drag-drop="dragDrop"
+      :is-multi-selecting="isMultiSelecting"
+      :get-is-selected="getIsSelected"
+      :current-sort="columnSorts?.[column.status] || 'manual'"
       @open-task="(id) => emit('openTask', id)"
+      @change-sort="(sort) => emit('changeColumnSort', column.status, sort)"
       @open-template-modal="emit('openTemplateModal')"
       @open-task-modal="emit('openTaskModal')"
       @deploy-template="(id) => emit('deployTemplate', id)"

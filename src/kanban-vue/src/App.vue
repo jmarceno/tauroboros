@@ -10,6 +10,8 @@ import { useKeyboard } from '@/composables/useKeyboard'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { useSession } from '@/composables/useSession'
 import { useDragDrop } from '@/composables/useDragDrop'
+import { useMultiSelect } from '@/composables/useMultiSelect'
+import { useSessionUsage } from '@/composables/useSessionUsage'
 
 // Components
 import TopBar from '@/components/board/TopBar.vue'
@@ -27,15 +29,18 @@ import RevisionModal from '@/components/modals/RevisionModal.vue'
 import StartSingleModal from '@/components/modals/StartSingleModal.vue'
 import SessionModal from '@/components/modals/SessionModal.vue'
 import BestOfNDetailModal from '@/components/modals/BestOfNDetailModal.vue'
+import BatchEditModal from '@/components/modals/BatchEditModal.vue'
 
 // State
-const tasksComposable = useTasks()
-const runsComposable = useRuns()
 const optionsComposable = useOptions()
+const tasksComposable = useTasks(optionsComposable.options)
+const runsComposable = useRuns()
 const modelSearch = useModelSearch()
 const toasts = useToasts()
 const session = useSession()
 const ws = useWebSocket()
+const multiSelect = useMultiSelect()
+const sessionUsage = useSessionUsage()
 
 // Modal state
 const activeModal = ref<string | null>(null)
@@ -55,6 +60,8 @@ provide('options', optionsComposable)
 provide('modelSearch', modelSearch)
 provide('toasts', toasts)
 provide('session', session)
+provide('multiSelect', multiSelect)
+provide('sessionUsage', sessionUsage)
 
 // Modal helpers
 const openModal = (name: string, data?: Record<string, unknown>) => {
@@ -73,6 +80,11 @@ const closeTopmostModal = () => {
     return true
   }
   return false
+}
+
+const clearSelectionAndCloseModal = () => {
+  multiSelect.clearSelection()
+  return closeTopmostModal()
 }
 
 // Drag and drop
@@ -151,7 +163,14 @@ useKeyboard({
       toasts.showToast('Archive failed: ' + (e instanceof Error ? e.message : String(e)), 'error')
     }
   },
-  onEscape: closeTopmostModal,
+  onEscape: () => {
+    // First clear selection if active, then close modals
+    if (multiSelect.isSelecting.value) {
+      multiSelect.clearSelection()
+      return true
+    }
+    return closeTopmostModal()
+  },
   isModalOpen: () => isAnyModalOpen.value,
 })
 
@@ -366,6 +385,9 @@ window.addEventListener('hashchange', () => {
       :get-task-run-color="runsComposable.getTaskRunColor"
       :is-task-mutation-locked="runsComposable.isTaskMutationLocked"
       :drag-drop="dragDrop"
+      :is-multi-selecting="multiSelect.isSelecting.value"
+      :get-is-selected="multiSelect.isSelected"
+      :column-sorts="optionsComposable.options.columnSorts"
       @open-task="(id: string) => openModal('task', { taskId: id })"
       @open-template-modal="openModal('task', { mode: 'create', createStatus: 'template' })"
       @open-task-modal="openModal('task', { mode: 'create', createStatus: 'backlog' })"
@@ -386,6 +408,10 @@ window.addEventListener('hashchange', () => {
       }"
       @view-runs="(id: string) => openModal('bestOfNDetail', { taskId: id })"
       @continue-reviews="(id: string) => openModal('continueReviews', { taskId: id })"
+      @change-column-sort="(status: string, sort: string) => {
+        const newSorts = { ...(optionsComposable.options.columnSorts || {}), [status]: sort }
+        optionsComposable.updateOptions({ columnSorts: newSorts })
+      }"
     />
 
     <!-- Log Panel -->
@@ -401,6 +427,30 @@ window.addEventListener('hashchange', () => {
       :bottom-offset="logPanelCollapsed ? 16 : 200"
       @remove="toasts.removeToast"
     />
+
+    <!-- Multi-Select Floating Action Bar -->
+    <div
+      v-if="multiSelect.isSelecting.value"
+      class="fixed bottom-20 left-1/2 -translate-x-1/2 bg-dark-surface border border-dark-surface3 rounded-lg shadow-lg px-4 py-3 flex items-center gap-4 z-50"
+    >
+      <span class="text-sm font-medium">
+        {{ multiSelect.selectedCount.value }} task{{ multiSelect.selectedCount.value === 1 ? '' : 's' }} selected
+      </span>
+      <div class="flex items-center gap-2">
+        <button
+          class="btn btn-primary btn-sm"
+          @click="openModal('batchEdit', { taskIds: multiSelect.getSelectedIds() })"
+        >
+          Edit
+        </button>
+        <button
+          class="btn btn-sm"
+          @click="multiSelect.clearSelection()"
+        >
+          Clear
+        </button>
+      </div>
+    </div>
 
     <!-- Modals -->
     <TaskModal
@@ -454,6 +504,12 @@ window.addEventListener('hashchange', () => {
     <BestOfNDetailModal
       v-if="activeModal === 'bestOfNDetail'"
       :task-id="modalData.taskId as string"
+      @close="closeModal"
+    />
+
+    <BatchEditModal
+      v-if="activeModal === 'batchEdit'"
+      :task-ids="(modalData.taskIds as string[]) || []"
       @close="closeModal"
     />
   </div>

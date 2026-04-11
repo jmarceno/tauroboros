@@ -163,7 +163,8 @@ describe("review loop", () => {
 
     const current = db.getTask(task.id)
     expect(current?.status).toBe("done")
-    expect(current?.reviewCount).toBe(1)
+    // reviewCount is 2 because: first review found gaps (count=1), fix applied, second review passed (count=2)
+    expect(current?.reviewCount).toBe(2)
     expect(current?.reviewActivity).toBe("idle")
     expect(current?.agentOutput.includes("[review-fix-1]")).toBe(true)
     const sessions = db.getWorkflowSessionsByTask(task.id)

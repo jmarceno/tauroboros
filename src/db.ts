@@ -4,6 +4,7 @@ import { mkdirSync } from "fs"
 import { dirname } from "path"
 import {
   DEFAULT_COMMIT_PROMPT,
+  type ColumnSortPreferences,
   type CreateSessionMessageInput,
   type ExecutionPhase,
   type ExecutionStrategy,
@@ -94,6 +95,7 @@ const DEFAULT_OPTIONS: Options = {
   telegramChatId: "",
   telegramNotificationsEnabled: true,
   maxReviews: 2,
+  columnSorts: undefined,
 }
 
 type PromptSeed = {
@@ -2414,6 +2416,17 @@ export class PiKanbanDB {
     const values = new Map<string, string>()
     for (const row of rows) values.set(row.key, row.value)
 
+    // Parse columnSorts from JSON if present
+    let columnSorts: ColumnSortPreferences | undefined
+    const columnSortsJson = values.get("column_sorts")
+    if (columnSortsJson) {
+      try {
+        columnSorts = JSON.parse(columnSortsJson) as ColumnSortPreferences
+      } catch {
+        columnSorts = undefined
+      }
+    }
+
     return {
       commitPrompt: values.get("commit_prompt") ?? DEFAULT_OPTIONS.commitPrompt,
       extraPrompt: values.get("extra_prompt") ?? DEFAULT_OPTIONS.extraPrompt,
@@ -2433,6 +2446,7 @@ export class PiKanbanDB {
       telegramChatId: values.get("telegram_chat_id") ?? DEFAULT_OPTIONS.telegramChatId,
       telegramNotificationsEnabled: normalizeBoolean(values.get("telegram_notifications_enabled"), DEFAULT_OPTIONS.telegramNotificationsEnabled),
       maxReviews: Number(values.get("max_reviews") ?? DEFAULT_OPTIONS.maxReviews),
+      columnSorts,
     }
   }
 
@@ -2459,6 +2473,7 @@ export class PiKanbanDB {
     if (partial.telegramChatId !== undefined) upsert.run("telegram_chat_id", partial.telegramChatId)
     if (partial.telegramNotificationsEnabled !== undefined) upsert.run("telegram_notifications_enabled", String(partial.telegramNotificationsEnabled))
     if (partial.maxReviews !== undefined) upsert.run("max_reviews", String(partial.maxReviews))
+    if (partial.columnSorts !== undefined) upsert.run("column_sorts", JSON.stringify(partial.columnSorts))
 
     return this.getOptions()
   }

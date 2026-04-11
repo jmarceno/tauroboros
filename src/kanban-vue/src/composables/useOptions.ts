@@ -45,6 +45,7 @@ export function useOptions() {
     error,
     loadOptions,
     saveOptions,
+    updateOptions: saveOptions, // Alias for consistency
     startExecution,
     stopExecution,
   }

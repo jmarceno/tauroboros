@@ -157,6 +157,16 @@ export interface AggregatedReviewResult {
   usableResults: ReviewerOutput[]
 }
 
+export type ColumnSortOption = 'manual' | 'name-asc' | 'name-desc' | 'created-asc' | 'created-desc' | 'updated-asc' | 'updated-desc'
+
+export interface ColumnSortPreferences {
+  template?: ColumnSortOption
+  backlog?: ColumnSortOption
+  executing?: ColumnSortOption
+  review?: ColumnSortOption
+  done?: ColumnSortOption
+}
+
 export interface Options {
   commitPrompt: string
   extraPrompt: string
@@ -176,6 +186,7 @@ export interface Options {
   telegramChatId: string
   telegramNotificationsEnabled: boolean
   maxReviews: number
+  columnSorts?: ColumnSortPreferences
 }
 
 export const DEFAULT_COMMIT_PROMPT = `You are in a worktree on a detached HEAD. When you are finished with the task, commit the working changes onto {{base_ref}}.

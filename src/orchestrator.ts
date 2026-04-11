@@ -402,6 +402,11 @@ export class PiOrchestrator {
         })
         this.broadcastTask(taskId)
 
+        // Increment reviewCount after every review attempt (pass or fail)
+        reviewCount += 1
+        this.db.updateTask(taskId, { reviewCount, reviewActivity: "idle" })
+        this.broadcastTask(taskId)
+
         if (reviewRun.reviewResult.status === "pass") {
           this.db.updateTask(taskId, { status: "executing", reviewActivity: "idle" })
           this.broadcastTask(taskId)
@@ -418,10 +423,6 @@ export class PiOrchestrator {
           this.broadcastTask(taskId)
           return false
         }
-
-        reviewCount += 1
-        this.db.updateTask(taskId, { reviewCount, reviewActivity: "idle" })
-        this.broadcastTask(taskId)
 
         if (reviewCount >= maxRuns) {
           this.db.updateTask(taskId, {

@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import type {
   Task, CreateTaskDTO, UpdateTaskDTO, WorkflowRun, Options, BranchList,
   ModelCatalog, ExecutionGraph, Session, SessionMessage, TaskRun,
-  Candidate, BestOfNSummary, ReviewStatus,
+  Candidate, BestOfNSummary, ReviewStatus, SessionUsageRollup,
 } from '@/types/api'
 
 const API_BASE = import.meta.env.VITE_API_URL || location.origin
@@ -121,6 +121,7 @@ export function useApi() {
     // Sessions
     getSession: (id: string) => request<Session>(`/api/sessions/${id}`),
     getSessionMessages: (id: string, limit = 1000) => request<SessionMessage[]>(`/api/sessions/${id}/messages?limit=${limit}`),
+    getSessionUsage: (id: string) => request<SessionUsageRollup>(`/api/sessions/${id}/usage`),
 
     // Container
     getContainerImageStatus: () => request('/api/container/image-status'),

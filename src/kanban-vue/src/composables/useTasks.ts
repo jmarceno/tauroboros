@@ -1,13 +1,29 @@
 import { ref, computed } from 'vue'
-import type { Task, TaskStatus, BestOfNSummary } from '@/types/api'
+import type { Task, TaskStatus, BestOfNSummary, ColumnSortOption, ColumnSortPreferences } from '@/types/api'
 import { useApi } from './useApi'
 
-export function useTasks() {
+export function useTasks(columnSorts?: { value: ColumnSortPreferences | undefined }) {
   const api = useApi()
   const tasks = ref<Task[]>([])
   const bonSummaries = ref<Record<string, BestOfNSummary>>({})
   const isLoading = ref(false)
   const error = ref<string | null>(null)
+
+  const sortFns: Record<ColumnSortOption, (a: Task, b: Task) => number> = {
+    'manual': (a, b) => a.idx - b.idx,
+    'name-asc': (a, b) => a.name.localeCompare(b.name),
+    'name-desc': (a, b) => b.name.localeCompare(a.name),
+    'created-asc': (a, b) => a.createdAt - b.createdAt,
+    'created-desc': (a, b) => b.createdAt - a.createdAt,
+    'updated-asc': (a, b) => (a.updatedAt || 0) - (b.updatedAt || 0),
+    'updated-desc': (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0),
+  }
+
+  const getSortForColumn = (status: TaskStatus): ColumnSortOption => {
+    const sorts = columnSorts?.value
+    if (!sorts) return 'manual'
+    return sorts[status] || 'manual'
+  }
 
   const groupedTasks = computed(() => {
     const groups: Record<TaskStatus | 'failed' | 'stuck', Task[]> = {
@@ -28,20 +44,18 @@ export function useTasks() {
       }
     }
 
-    // Sort backlog and template by idx
-    groups.backlog.sort((a, b) => a.idx - b.idx)
-    groups.template.sort((a, b) => a.idx - b.idx)
+    // Sort each group according to its sort preference
+    const sortGroup = (status: TaskStatus) => {
+      const sortOption = getSortForColumn(status)
+      const sortFn = sortFns[sortOption]
+      groups[status].sort(sortFn)
+    }
 
-    // Sort done by completedAt descending
-    groups.done.sort((a, b) => {
-      const aCompleted = a.completedAt ?? 0
-      const bCompleted = b.completedAt ?? 0
-      if (bCompleted !== aCompleted) return bCompleted - aCompleted
-      const aUpdated = a.updatedAt ?? 0
-      const bUpdated = b.updatedAt ?? 0
-      if (bUpdated !== aUpdated) return bUpdated - aUpdated
-      return a.idx - b.idx
-    })
+    sortGroup('template')
+    sortGroup('backlog')
+    sortGroup('executing')
+    sortGroup('review')
+    sortGroup('done')
 
     return groups
   })
