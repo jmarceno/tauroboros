@@ -1004,5 +1004,134 @@ export class PiKanbanServer {
 
       return json({ error: "Unsupported event type" }, 400)
     })
+
+    // ---- Planning Chat Routes ----
+
+    // Get planning system prompt
+    this.router.get("/api/planning/prompt", ({ json }) => {
+      const prompt = this.db.getPlanningPrompt("default")
+      if (!prompt) return json({ error: "Planning prompt not found" }, 404)
+      return json(prompt)
+    })
+
+    // Get all planning prompts
+    this.router.get("/api/planning/prompts", ({ json }) => {
+      return json(this.db.getAllPlanningPrompts())
+    })
+
+    // Update planning system prompt
+    this.router.put("/api/planning/prompt", async ({ req, json, broadcast }) => {
+      const body = await req.json()
+      const existing = this.db.getPlanningPrompt(body.key ?? "default")
+      if (!existing) return json({ error: "Planning prompt not found" }, 404)
+
+      const updated = this.db.updatePlanningPrompt(existing.id, {
+        name: body.name,
+        description: body.description,
+        promptText: body.promptText,
+        isActive: body.isActive,
+      })
+
+      broadcast({ type: "planning_prompt_updated", payload: updated })
+      return json(updated)
+    })
+
+    // Get planning prompt versions
+    this.router.get("/api/planning/prompt/:key/versions", ({ params, json }) => {
+      return json(this.db.getPlanningPromptVersions(params.key))
+    })
+
+    // Get all planning sessions
+    this.router.get("/api/planning/sessions", ({ json }) => {
+      const sessions = this.db.getPlanningSessions()
+      return json(sessions.map((s) => ({ ...s, sessionUrl: this.sessionUrlFor(s.id) })))
+    })
+
+    // Get active planning sessions
+    this.router.get("/api/planning/sessions/active", ({ json }) => {
+      const sessions = this.db.getActivePlanningSessions()
+      return json(sessions.map((s) => ({ ...s, sessionUrl: this.sessionUrlFor(s.id) })))
+    })
+
+    // Create a new planning session
+    this.router.post("/api/planning/sessions", async ({ req, json, broadcast }) => {
+      const body = await req.json()
+      const id = randomUUID().slice(0, 8)
+
+      const session = this.db.createWorkflowSession({
+        id,
+        sessionKind: "planning",
+        status: "starting",
+        cwd: body.cwd ?? process.cwd(),
+        model: body.model ?? "default",
+        thinkingLevel: body.thinkingLevel ?? "default",
+      })
+
+      const withUrl = { ...session, sessionUrl: this.sessionUrlFor(session.id) }
+      broadcast({ type: "planning_session_created", payload: withUrl })
+      return json(withUrl, 201)
+    })
+
+    // Get a specific planning session
+    this.router.get("/api/planning/sessions/:id", ({ params, json }) => {
+      const session = this.db.getWorkflowSession(params.id)
+      if (!session) return json({ error: "Session not found" }, 404)
+      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+      return json({ ...session, sessionUrl: this.sessionUrlFor(session.id) })
+    })
+
+    // Update planning session status
+    this.router.patch("/api/planning/sessions/:id", async ({ params, req, json, broadcast }) => {
+      const session = this.db.getWorkflowSession(params.id)
+      if (!session) return json({ error: "Session not found" }, 404)
+      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+
+      const body = await req.json()
+      const updated = this.db.updateWorkflowSession(params.id, {
+        status: body.status,
+        errorMessage: body.errorMessage,
+      })
+
+      const withUrl = { ...updated, sessionUrl: this.sessionUrlFor(updated.id) }
+      broadcast({ type: "planning_session_updated", payload: withUrl })
+      return json(withUrl)
+    })
+
+    // Close a planning session
+    this.router.post("/api/planning/sessions/:id/close", async ({ params, json, broadcast }) => {
+      const session = this.db.getWorkflowSession(params.id)
+      if (!session) return json({ error: "Session not found" }, 404)
+      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+
+      const updated = this.db.updateWorkflowSession(params.id, {
+        status: "completed",
+        finishedAt: Math.floor(Date.now() / 1000),
+      })
+
+      broadcast({ type: "planning_session_closed", payload: { id: params.id } })
+      return json(updated)
+    })
+
+    // Get planning session messages
+    this.router.get("/api/planning/sessions/:id/messages", ({ params, url, json }) => {
+      const session = this.db.getWorkflowSession(params.id)
+      if (!session) return json({ error: "Session not found" }, 404)
+      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+
+      const limit = Number(url.searchParams.get("limit") ?? 500)
+      const offset = Number(url.searchParams.get("offset") ?? 0)
+      return json(this.db.getSessionMessages(params.id, { limit, offset }))
+    })
+
+    // Get planning session timeline
+    this.router.get("/api/planning/sessions/:id/timeline", ({ params, json }) => {
+      const session = this.db.getWorkflowSession(params.id)
+      if (!session) return json({ error: "Session not found" }, 404)
+      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+
+      return json(this.db.getSessionTimelineEntries(params.id))
+    })
+
+    // ---- End Planning Chat Routes ----
   }
 }

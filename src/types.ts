@@ -241,6 +241,12 @@ export type WSMessageType =
   | "session_status_changed"
   | "session_completed"
   | "image_status"
+  // Planning chat events
+  | "planning_prompt_updated"
+  | "planning_session_created"
+  | "planning_session_updated"
+  | "planning_session_message"
+  | "planning_session_closed"
 
 export interface WSMessage {
   type: WSMessageType

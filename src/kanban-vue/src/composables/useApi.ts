@@ -3,6 +3,7 @@ import type {
   Task, CreateTaskDTO, UpdateTaskDTO, WorkflowRun, Options, BranchList,
   ModelCatalog, ExecutionGraph, Session, SessionMessage, TaskRun,
   Candidate, BestOfNSummary, ReviewStatus, SessionUsageRollup,
+  PlanningPrompt, PlanningPromptVersion, PlanningSession, CreatePlanningSessionDTO,
 } from '@/types/api'
 
 const API_BASE = import.meta.env.VITE_API_URL || location.origin
@@ -125,5 +126,34 @@ export function useApi() {
 
     // Container
     getContainerImageStatus: () => request('/api/container/image-status'),
+
+    // Planning Chat
+    getPlanningPrompt: () => request<PlanningPrompt>('/api/planning/prompt'),
+    getAllPlanningPrompts: () => request<PlanningPrompt[]>('/api/planning/prompts'),
+    updatePlanningPrompt: (data: { key?: string; name?: string; description?: string; promptText?: string; isActive?: boolean }) =>
+      request<PlanningPrompt>('/api/planning/prompt', {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    getPlanningPromptVersions: (key: string) => request<PlanningPromptVersion[]>(`/api/planning/prompt/${key}/versions`),
+
+    // Planning Sessions
+    getPlanningSessions: () => request<PlanningSession[]>('/api/planning/sessions'),
+    getActivePlanningSessions: () => request<PlanningSession[]>('/api/planning/sessions/active'),
+    createPlanningSession: (data: CreatePlanningSessionDTO) => request<PlanningSession>('/api/planning/sessions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+    getPlanningSession: (id: string) => request<PlanningSession>(`/api/planning/sessions/${id}`),
+    updatePlanningSession: (id: string, data: { status?: string; errorMessage?: string }) =>
+      request<PlanningSession>(`/api/planning/sessions/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
+    closePlanningSession: (id: string) => request<PlanningSession>(`/api/planning/sessions/${id}/close`, {
+      method: 'POST',
+    }),
+    getPlanningSessionMessages: (id: string, limit = 500) => request<SessionMessage[]>(`/api/planning/sessions/${id}/messages?limit=${limit}`),
+    getPlanningSessionTimeline: (id: string) => request(`/api/planning/sessions/${id}/timeline`),
   }
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, provide, onMounted } from 'vue'
-import type { Task, WorkflowRun, Session } from '@/types/api'
+import type { Task, WorkflowRun, Session, SessionMessage } from '@/types/api'
 import { useTasks } from '@/composables/useTasks'
 import { useRuns } from '@/composables/useRuns'
 import { useOptions } from '@/composables/useOptions'
@@ -12,6 +12,7 @@ import { useSession } from '@/composables/useSession'
 import { useDragDrop } from '@/composables/useDragDrop'
 import { useMultiSelect } from '@/composables/useMultiSelect'
 import { useSessionUsage } from '@/composables/useSessionUsage'
+import { usePlanningChat } from '@/composables/usePlanningChat'
 
 // Components
 import TopBar from '@/components/board/TopBar.vue'
@@ -19,6 +20,7 @@ import RunPanel from '@/components/runs/RunPanel.vue'
 import KanbanBoard from '@/components/board/KanbanBoard.vue'
 import LogPanel from '@/components/common/LogPanel.vue'
 import ToastContainer from '@/components/common/ToastContainer.vue'
+import ChatContainer from '@/components/chat/ChatContainer.vue'
 
 // Modals
 import TaskModal from '@/components/modals/TaskModal.vue'
@@ -30,6 +32,7 @@ import StartSingleModal from '@/components/modals/StartSingleModal.vue'
 import SessionModal from '@/components/modals/SessionModal.vue'
 import BestOfNDetailModal from '@/components/modals/BestOfNDetailModal.vue'
 import BatchEditModal from '@/components/modals/BatchEditModal.vue'
+import PlanningPromptModal from '@/components/modals/PlanningPromptModal.vue'
 
 // State
 const optionsComposable = useOptions()
@@ -41,22 +44,33 @@ const session = useSession()
 const ws = useWebSocket()
 const multiSelect = useMultiSelect()
 const sessionUsage = useSessionUsage()
-
-// Computed unwrappers for props (ensuring primitive values)
-const consumedSlotsValue = computed(() => runsComposable.consumedRunSlots.value ?? 0)
-const parallelTasksValue = computed(() => optionsComposable.options?.parallelTasks ?? 1)
-const isConnectedValue = computed(() => ws.isConnected.value ?? false)
+const planningChat = usePlanningChat()
 
 // Modal state
 const activeModal = ref<string | null>(null)
 const modalData = ref<Record<string, unknown>>({})
-
-// Log panel state
-const logPanelCollapsed = ref(true)
+const logPanelCollapsed = ref(false)
 
 // Computed
-const isAnyModalOpen = computed(() => activeModal.value !== null)
-const openModalIds = computed(() => activeModal.value ? [activeModal.value] : [])
+const isAnyModalOpen = computed(() => {
+  if (activeModal.value) return true
+  return false
+})
+
+const consumedSlotsValue = computed(() => runsComposable.consumedRunSlots.value)
+const parallelTasksValue = computed(() => optionsComposable.options.parallelTasks ?? 1)
+const isConnectedValue = computed(() => true) // WebSocket is connected by default
+
+// Modal helpers implementation (must be defined before providing)
+const openModal = (name: string, data?: Record<string, unknown>) => {
+  activeModal.value = name
+  modalData.value = data || {}
+}
+
+const closeModal = () => {
+  activeModal.value = null
+  modalData.value = {}
+}
 
 // Provide state to child components
 provide('tasks', tasksComposable)
@@ -67,17 +81,11 @@ provide('toasts', toasts)
 provide('session', session)
 provide('multiSelect', multiSelect)
 provide('sessionUsage', sessionUsage)
+provide('planningChat', planningChat)  // Provide planningChat for shared state
 
-// Modal helpers
-const openModal = (name: string, data?: Record<string, unknown>) => {
-  activeModal.value = name
-  modalData.value = data || {}
-}
-
-const closeModal = () => {
-  activeModal.value = null
-  modalData.value = {}
-}
+// Modal helpers (also provided for child components)
+provide('openModal', openModal)
+provide('closeModal', closeModal)
 
 const closeTopmostModal = () => {
   if (activeModal.value) {
@@ -140,6 +148,7 @@ const dragDrop = useDragDrop(async (taskId, targetStatus) => {
 useKeyboard({
   onCreateTemplate: () => openModal('task', { mode: 'create', createStatus: 'template' }),
   onCreateBacklog: () => openModal('task', { mode: 'create', createStatus: 'backlog' }),
+  onTogglePlanningChat: () => planningChat.togglePanel(),
   onStartWorkflow: async () => {
     if (optionsComposable.options.showExecutionGraph) {
       openModal('executionGraph')
@@ -319,6 +328,30 @@ ws.on('error', (payload) => {
   toasts.showToast(data.message, 'error')
 })
 
+// Planning chat WebSocket handlers
+ws.on('planning_prompt_updated', (payload) => {
+  planningChat.planningPrompt.value = payload as typeof planningChat.planningPrompt.value
+  toasts.addLog('Planning prompt updated', 'info')
+})
+
+ws.on('planning_session_created', (payload) => {
+  planningChat.handlePlanningSessionCreated(payload as Session)
+  toasts.addLog('Planning session created', 'info')
+})
+
+ws.on('planning_session_updated', (payload) => {
+  planningChat.handlePlanningSessionUpdated(payload as Session)
+})
+
+ws.on('planning_session_closed', (payload) => {
+  planningChat.handlePlanningSessionClosed(payload as { id: string })
+  toasts.addLog('Planning session closed', 'info')
+})
+
+ws.on('planning_session_message', (payload) => {
+  planningChat.handlePlanningSessionMessage(payload as SessionMessage)
+})
+
 // Initialize
 onMounted(async () => {
   await optionsComposable.loadOptions()
@@ -433,6 +466,22 @@ window.addEventListener('hashchange', () => {
       @remove="toasts.removeToast"
     />
 
+    <!-- Planning Chat Toggle Button - Positioned above the Event Log panel -->
+    <button
+      v-if="!planningChat.isOpen.value"
+      class="fixed bottom-16 right-6 z-40 flex items-center gap-2 btn btn-primary shadow-lg"
+      @click="planningChat.togglePanel()"
+    >
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+      </svg>
+      <span class="text-sm font-medium">Planning Chat</span>
+      <span class="text-xs opacity-70">(P)</span>
+    </button>
+
+    <!-- Planning Chat Container -->
+    <ChatContainer />
+
     <!-- Multi-Select Floating Action Bar -->
     <div
       v-if="multiSelect.isSelecting.value"
@@ -515,6 +564,11 @@ window.addEventListener('hashchange', () => {
     <BatchEditModal
       v-if="activeModal === 'batchEdit'"
       :task-ids="(modalData.taskIds as string[]) || []"
+      @close="closeModal"
+    />
+
+    <PlanningPromptModal
+      v-if="activeModal === 'planningPrompt'"
       @close="closeModal"
     />
   </div>

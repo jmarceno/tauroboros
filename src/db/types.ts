@@ -51,6 +51,7 @@ export type PiSessionKind =
   | "repair"
   | "plan"
   | "plan_revision"
+  | "planning"
 
 export type PiSessionStatus = "starting" | "active" | "paused" | "completed" | "failed" | "aborted"
 
@@ -360,4 +361,39 @@ export interface SessionMessageQueryOptions {
   offset?: number
   limit?: number
   messageType?: MessageType
+}
+
+// Planning Prompt Types
+export interface PlanningPrompt {
+  id: number
+  key: string
+  name: string
+  description: string
+  promptText: string
+  isActive: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export interface PlanningPromptVersion {
+  id: number
+  planningPromptId: number
+  version: number
+  promptText: string
+  createdAt: number
+}
+
+export interface UpsertPlanningPromptInput {
+  key?: string
+  name: string
+  description?: string
+  promptText: string
+  isActive?: boolean
+}
+
+export interface UpdatePlanningPromptInput {
+  name?: string
+  description?: string
+  promptText?: string
+  isActive?: boolean
 }

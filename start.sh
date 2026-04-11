@@ -3,7 +3,6 @@
 
 echo "Pi Easy Workflow - Quick Start"
 echo "================================"
-echo ""
 
 # Check if bun is installed
 if ! command -v bun &> /dev/null; then
@@ -13,7 +12,6 @@ if ! command -v bun &> /dev/null; then
 fi
 
 echo "✓ Bun detected: $(bun --version)"
-echo ""
 
 # Check if dependencies are installed
 if [ ! -d "node_modules" ]; then
@@ -27,12 +25,17 @@ if [ ! -d ".pi/skills" ]; then
     bun run setup
 fi
 
-echo ""
+echo "Killing existing processes on ports 5173 and 3789"
+
+TARGET_PORTONE=5173
+lsof -t -i:"$TARGET_PORTONE" | xargs -r kill -9
+TARGET_PORTTWO=3789
+lsof -t -i:"$TARGET_PORTTWO" | xargs -r kill -9
+
 echo "🚀 Starting server..."
 echo "   Server will start on http://localhost:3789"
-echo ""
 echo "   Press Ctrl+C to stop"
-echo ""
+
 
 #bun run start
 bun run kanban:dev

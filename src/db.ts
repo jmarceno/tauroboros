@@ -35,13 +35,14 @@ import type {
   GetSessionIOOptions,
   PiSessionStatus,
   PiWorkflowSession,
+  PlanningPrompt,
+  PlanningPromptVersion,
   PromptRenderAndCaptureInput,
   PromptRenderResult,
   PromptTemplate,
   PromptTemplateKey,
   PromptTemplateVersion,
   SessionIORecord,
-  SessionIORecordType,
   SessionIOStream,
   SessionMessageQueryOptions,
   UpdateTaskCandidateInput,
@@ -50,6 +51,8 @@ import type {
   UpdateTaskInput,
   UpdateWorkflowRunInput,
   UpsertPromptTemplateInput,
+  UpsertPlanningPromptInput,
+  UpdatePlanningPromptInput,
 } from "./db/types.ts"
 import { renderTemplate } from "./prompts/renderer.ts"
 import { projectPiEventToSessionMessage } from "./runtime/message-projection.ts"
@@ -706,6 +709,61 @@ function rowToPromptTemplateVersion(row: Record<string, unknown>): PromptTemplat
   }
 }
 
+function rowToPlanningPrompt(row: Record<string, unknown>): PlanningPrompt {
+  return {
+    id: Number(row.id),
+    key: String(row.key),
+    name: String(row.name),
+    description: String(row.description ?? ""),
+    promptText: String(row.prompt_text),
+    isActive: Number(row.is_active ?? 1) === 1,
+    createdAt: Number(row.created_at ?? 0),
+    updatedAt: Number(row.updated_at ?? 0),
+  }
+}
+
+function rowToPlanningPromptVersion(row: Record<string, unknown>): PlanningPromptVersion {
+  return {
+    id: Number(row.id),
+    planningPromptId: Number(row.planning_prompt_id),
+    version: Number(row.version),
+    promptText: String(row.prompt_text),
+    createdAt: Number(row.created_at ?? 0),
+  }
+}
+
+// Default planning system prompt - can be customized by user via UI
+const DEFAULT_PLANNING_SYSTEM_PROMPT = `You are a specialized Planning Assistant for software development task management.
+
+Your role is to help users create well-structured implementation plans before they become kanban tasks.
+
+## Core Capabilities
+
+1. **Task Planning**: Break down complex requirements into actionable, well-defined tasks
+2. **Architecture Design**: Suggest component structures, APIs, and data models
+3. **Dependency Analysis**: Identify task dependencies and execution order
+4. **Estimation Guidance**: Provide complexity assessments and implementation hints
+
+## Interaction Guidelines
+
+- Ask clarifying questions when requirements are ambiguous
+- Suggest concrete next steps and validation approaches
+- Reference existing codebase patterns when relevant
+- Keep responses focused on planning and design
+- Do NOT write actual implementation code unless specifically requested for prototyping
+
+## Output Format for Task Creation
+
+When the user is ready to create tasks, help them structure:
+- Clear task names
+- Detailed prompts with context
+- Suggested task dependencies
+- Recommended execution order
+
+## Tool Access
+
+You have access to file exploration tools to understand the codebase structure when needed. Use them to provide context-aware planning suggestions.`
+
 const MIGRATIONS: Migration[] = [
   {
     version: 1,
@@ -1060,6 +1118,38 @@ const MIGRATIONS: Migration[] = [
       `CREATE INDEX idx_session_messages_tool_call_id ON session_messages(tool_call_id);`,
     ],
   },
+  {
+    version: 4,
+    description: "Add planning_prompts table for customizable planning agent system prompt",
+    statements: [
+      `
+      CREATE TABLE IF NOT EXISTS planning_prompts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT UNIQUE NOT NULL DEFAULT 'default',
+        name TEXT NOT NULL DEFAULT 'Default Planning Prompt',
+        description TEXT NOT NULL DEFAULT 'System prompt for the planning assistant agent',
+        prompt_text TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      `,
+      `CREATE INDEX IF NOT EXISTS idx_planning_prompts_key ON planning_prompts(key);`,
+      `CREATE INDEX IF NOT EXISTS idx_planning_prompts_active ON planning_prompts(is_active);`,
+      `
+      CREATE TABLE IF NOT EXISTS planning_prompt_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        planning_prompt_id INTEGER NOT NULL,
+        version INTEGER NOT NULL,
+        prompt_text TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        FOREIGN KEY(planning_prompt_id) REFERENCES planning_prompts(id) ON DELETE CASCADE,
+        UNIQUE(planning_prompt_id, version)
+      );
+      `,
+      `CREATE INDEX IF NOT EXISTS idx_planning_prompt_versions_prompt_id ON planning_prompt_versions(planning_prompt_id);`,
+    ],
+  },
 ]
 
 export class PiKanbanDB {
@@ -1082,6 +1172,7 @@ export class PiKanbanDB {
     this.normalizeSessionMessages()
     this.seedDefaultOptions()
     this.seedPromptTemplates()
+    this.seedPlanningPrompts()
   }
 
   private ensureWorkflowRunArchiveColumns(): void {
@@ -2673,6 +2764,191 @@ export class PiKanbanDB {
         `,
       )
       .run(templateId, nextVersion, templateText, variablesJsonText)
+  }
+
+  // ---- planning prompts ----
+
+  private seedPlanningPrompts(): void {
+    const existing = this.db.prepare("SELECT 1 FROM planning_prompts WHERE key = 'default'").get()
+    if (existing) return
+
+    this.db
+      .prepare(
+        `
+        INSERT INTO planning_prompts (key, name, description, prompt_text, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, unixepoch(), unixepoch())
+        `,
+      )
+      .run(
+        "default",
+        "Default Planning Prompt",
+        "System prompt for the planning assistant agent",
+        DEFAULT_PLANNING_SYSTEM_PROMPT,
+      )
+  }
+
+  getPlanningPrompt(key: string = "default"): PlanningPrompt | null {
+    const row = this.db
+      .prepare("SELECT * FROM planning_prompts WHERE key = ? AND is_active = 1")
+      .get(key) as Record<string, unknown> | null
+    return row ? rowToPlanningPrompt(row) : null
+  }
+
+  getAllPlanningPrompts(): PlanningPrompt[] {
+    const rows = this.db
+      .prepare("SELECT * FROM planning_prompts ORDER BY key ASC")
+      .all() as Record<string, unknown>[]
+    return rows.map(rowToPlanningPrompt)
+  }
+
+  getPlanningPromptVersions(key: string): PlanningPromptVersion[] {
+    const rows = this.db
+      .prepare(
+        `
+        SELECT v.*
+        FROM planning_prompt_versions v
+        INNER JOIN planning_prompts p ON p.id = v.planning_prompt_id
+        WHERE p.key = ?
+        ORDER BY v.version ASC
+        `,
+      )
+      .all(key) as Record<string, unknown>[]
+    return rows.map(rowToPlanningPromptVersion)
+  }
+
+  upsertPlanningPrompt(input: UpsertPlanningPromptInput): PlanningPrompt {
+    const key = input.key ?? "default"
+    const existing = this.db.prepare("SELECT * FROM planning_prompts WHERE key = ?").get(key) as Record<string, unknown> | null
+
+    if (!existing) {
+      const result = this.db
+        .prepare(
+          `
+          INSERT INTO planning_prompts (key, name, description, prompt_text, is_active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch())
+          `,
+        )
+        .run(
+          key,
+          input.name,
+          input.description ?? "",
+          input.promptText,
+          input.isActive === false ? 0 : 1,
+        )
+
+      const createdRow = this.db.prepare("SELECT * FROM planning_prompts WHERE id = ?").get(result.lastInsertRowid) as Record<string, unknown>
+      this.insertPlanningPromptVersion(Number(createdRow.id), input.promptText)
+      return rowToPlanningPrompt(createdRow)
+    }
+
+    const existingPrompt = rowToPlanningPrompt(existing)
+    const promptChanged = existingPrompt.promptText !== input.promptText
+
+    this.db
+      .prepare(
+        `
+        UPDATE planning_prompts
+        SET name = ?, description = ?, prompt_text = ?, is_active = ?, updated_at = unixepoch()
+        WHERE key = ?
+        `,
+      )
+      .run(
+        input.name,
+        input.description ?? existingPrompt.description,
+        input.promptText,
+        input.isActive === undefined ? (existingPrompt.isActive ? 1 : 0) : input.isActive ? 1 : 0,
+        key,
+      )
+
+    if (promptChanged) {
+      this.insertPlanningPromptVersion(existingPrompt.id, input.promptText)
+    }
+
+    const updatedRow = this.db.prepare("SELECT * FROM planning_prompts WHERE key = ?").get(key) as Record<string, unknown>
+    return rowToPlanningPrompt(updatedRow)
+  }
+
+  updatePlanningPrompt(id: number, input: UpdatePlanningPromptInput): PlanningPrompt | null {
+    const existing = this.db.prepare("SELECT * FROM planning_prompts WHERE id = ?").get(id) as Record<string, unknown> | null
+    if (!existing) return null
+
+    const sets: string[] = []
+    const values: any[] = []
+
+    if (input.name !== undefined) {
+      sets.push("name = ?")
+      values.push(input.name)
+    }
+    if (input.description !== undefined) {
+      sets.push("description = ?")
+      values.push(input.description)
+    }
+    if (input.promptText !== undefined) {
+      sets.push("prompt_text = ?")
+      values.push(input.promptText)
+    }
+    if (input.isActive !== undefined) {
+      sets.push("is_active = ?")
+      values.push(input.isActive ? 1 : 0)
+    }
+
+    if (sets.length === 0) return this.getPlanningPromptById(id)
+
+    sets.push("updated_at = unixepoch()")
+    values.push(id)
+
+    this.db.prepare(`UPDATE planning_prompts SET ${sets.join(", ")} WHERE id = ?`).run(...values)
+
+    if (input.promptText !== undefined) {
+      const existingPrompt = rowToPlanningPrompt(existing)
+      this.insertPlanningPromptVersion(id, input.promptText)
+    }
+
+    return this.getPlanningPromptById(id)
+  }
+
+  getPlanningPromptById(id: number): PlanningPrompt | null {
+    const row = this.db.prepare("SELECT * FROM planning_prompts WHERE id = ?").get(id) as Record<string, unknown> | null
+    return row ? rowToPlanningPrompt(row) : null
+  }
+
+  deletePlanningPrompt(id: number): boolean {
+    const result = this.db.prepare("DELETE FROM planning_prompts WHERE id = ?").run(id)
+    return result.changes > 0
+  }
+
+  private insertPlanningPromptVersion(planningPromptId: number, promptText: string): void {
+    const row = this.db
+      .prepare("SELECT COALESCE(MAX(version), 0) AS max_version FROM planning_prompt_versions WHERE planning_prompt_id = ?")
+      .get(planningPromptId) as { max_version: number }
+    const nextVersion = Number(row.max_version ?? 0) + 1
+
+    this.db
+      .prepare(
+        `
+        INSERT INTO planning_prompt_versions (planning_prompt_id, version, prompt_text, created_at)
+        VALUES (?, ?, ?, unixepoch())
+        `,
+      )
+      .run(planningPromptId, nextVersion, promptText)
+  }
+
+  // ---- planning sessions (chat) ----
+
+  getPlanningSessions(): PiWorkflowSession[] {
+    const rows = this.db
+      .prepare("SELECT * FROM workflow_sessions WHERE session_kind = 'planning' ORDER BY started_at DESC")
+      .all() as Record<string, unknown>[]
+    return rows.map(rowToWorkflowSession)
+  }
+
+  getActivePlanningSessions(): PiWorkflowSession[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM workflow_sessions WHERE session_kind = 'planning' AND status IN ('starting', 'active', 'paused') ORDER BY started_at DESC"
+      )
+      .all() as Record<string, unknown>[]
+    return rows.map(rowToWorkflowSession)
   }
 
 }

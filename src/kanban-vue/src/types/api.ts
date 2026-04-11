@@ -303,6 +303,12 @@ export type WSMessageType =
   | 'execution_started'
   | 'execution_stopped'
   | 'execution_complete'
+  // Planning chat events
+  | 'planning_prompt_updated'
+  | 'planning_session_created'
+  | 'planning_session_updated'
+  | 'planning_session_message'
+  | 'planning_session_closed'
 
 export interface WSMessage {
   type: WSMessageType
@@ -364,4 +370,34 @@ export interface UpdateTaskDTO {
   executionPhase?: string
   awaitingPlanApproval?: boolean
   maxReviewRunsOverride?: number
+}
+
+// Planning Chat Types
+export interface PlanningPrompt {
+  id: number
+  key: string
+  name: string
+  description: string
+  promptText: string
+  isActive: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export interface PlanningPromptVersion {
+  id: number
+  planningPromptId: number
+  version: number
+  promptText: string
+  createdAt: number
+}
+
+export interface PlanningSession extends Session {
+  sessionKind: 'planning'
+}
+
+export interface CreatePlanningSessionDTO {
+  cwd?: string
+  model?: string
+  thinkingLevel?: ThinkingLevel
 }

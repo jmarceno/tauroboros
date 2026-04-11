@@ -5,6 +5,7 @@ interface KeyboardOptions {
   onCreateBacklog?: () => void
   onStartWorkflow?: () => void
   onArchiveDone?: () => void
+  onTogglePlanningChat?: () => void
   onEscape?: () => boolean
   isModalOpen?: () => boolean
   isEditableFocused?: () => boolean
@@ -68,6 +69,10 @@ export function useKeyboard(options: KeyboardOptions) {
       case 'D':
         e.preventDefault()
         options.onArchiveDone?.()
+        break
+      case 'P':
+        e.preventDefault()
+        options.onTogglePlanningChat?.()
         break
     }
   }
