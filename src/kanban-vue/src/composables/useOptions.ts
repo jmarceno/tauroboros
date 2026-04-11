@@ -4,12 +4,7 @@ import { useApi } from './useApi'
 
 export function useOptions() {
   const api = useApi()
-  const options = ref<Options>({
-    branch: 'main',
-    parallelTasks: 1,
-    maxReviews: 2,
-    thinkingLevel: 'default',
-  })
+  const options = ref<Options | null>(null)
   const isLoading = ref(false)
   const error = ref<string | null>(null)
 

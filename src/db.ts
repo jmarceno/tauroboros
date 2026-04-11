@@ -80,10 +80,10 @@ const DEFAULT_OPTIONS: Options = {
   commitPrompt: DEFAULT_COMMIT_PROMPT,
   extraPrompt: "",
   branch: "",
-  planModel: "default",
-  executionModel: "default",
-  reviewModel: "default",
-  repairModel: "default",
+  planModel: "",
+  executionModel: "",
+  reviewModel: "",
+  repairModel: "",
   command: "",
   parallelTasks: 1,
   autoDeleteNormalSessions: false,
@@ -1142,8 +1142,8 @@ export class PiKanbanDB {
         idx,
         input.prompt,
         input.branch ?? "",
-        input.planModel ?? DEFAULT_OPTIONS.planModel,
-        input.executionModel ?? DEFAULT_OPTIONS.executionModel,
+        input.planModel ?? "",
+        input.executionModel ?? "",
         input.planmode ? 1 : 0,
         input.autoApprovePlan ? 1 : 0,
         input.review !== false ? 1 : 0,
@@ -2427,25 +2427,43 @@ export class PiKanbanDB {
       }
     }
 
+    // Helper to get value - treats "default" as empty for model fields
+    // NO FALLBACKS - returns exactly what's in the database
+    const getValue = (key: string, treatDefaultAsEmpty = false): string => {
+      const value = values.get(key) || ""
+      if (treatDefaultAsEmpty && value === "default") return ""
+      return value
+    }
+
+    const getNumber = (key: string): number => {
+      const value = values.get(key)
+      return value ? Number(value) : 0
+    }
+
+    const getBoolean = (key: string): boolean => {
+      const value = values.get(key)
+      return value === "true" || value === "1"
+    }
+
     return {
-      commitPrompt: values.get("commit_prompt") ?? DEFAULT_OPTIONS.commitPrompt,
-      extraPrompt: values.get("extra_prompt") ?? DEFAULT_OPTIONS.extraPrompt,
-      branch: values.get("branch") ?? DEFAULT_OPTIONS.branch,
-      planModel: values.get("plan_model") ?? DEFAULT_OPTIONS.planModel,
-      executionModel: values.get("execution_model") ?? DEFAULT_OPTIONS.executionModel,
-      reviewModel: values.get("review_model") ?? DEFAULT_OPTIONS.reviewModel,
-      repairModel: values.get("repair_model") ?? DEFAULT_OPTIONS.repairModel,
-      command: values.get("command") ?? DEFAULT_OPTIONS.command,
-      parallelTasks: Number(values.get("parallel_tasks") ?? DEFAULT_OPTIONS.parallelTasks),
-      autoDeleteNormalSessions: normalizeBoolean(values.get("auto_delete_normal_sessions"), DEFAULT_OPTIONS.autoDeleteNormalSessions),
-      autoDeleteReviewSessions: normalizeBoolean(values.get("auto_delete_review_sessions"), DEFAULT_OPTIONS.autoDeleteReviewSessions),
-      showExecutionGraph: normalizeBoolean(values.get("show_execution_graph"), DEFAULT_OPTIONS.showExecutionGraph),
-      port: Number(values.get("port") ?? DEFAULT_OPTIONS.port),
+      commitPrompt: getValue("commit_prompt"),
+      extraPrompt: getValue("extra_prompt"),
+      branch: getValue("branch"),
+      planModel: getValue("plan_model", true),
+      executionModel: getValue("execution_model", true),
+      reviewModel: getValue("review_model", true),
+      repairModel: getValue("repair_model", true),
+      command: getValue("command"),
+      parallelTasks: getNumber("parallel_tasks"),
+      autoDeleteNormalSessions: getBoolean("auto_delete_normal_sessions"),
+      autoDeleteReviewSessions: getBoolean("auto_delete_review_sessions"),
+      showExecutionGraph: getBoolean("show_execution_graph"),
+      port: getNumber("port"),
       thinkingLevel: asThinkingLevel(values.get("thinking_level")),
-      telegramBotToken: values.get("telegram_bot_token") ?? DEFAULT_OPTIONS.telegramBotToken,
-      telegramChatId: values.get("telegram_chat_id") ?? DEFAULT_OPTIONS.telegramChatId,
-      telegramNotificationsEnabled: normalizeBoolean(values.get("telegram_notifications_enabled"), DEFAULT_OPTIONS.telegramNotificationsEnabled),
-      maxReviews: Number(values.get("max_reviews") ?? DEFAULT_OPTIONS.maxReviews),
+      telegramBotToken: getValue("telegram_bot_token"),
+      telegramChatId: getValue("telegram_chat_id"),
+      telegramNotificationsEnabled: getBoolean("telegram_notifications_enabled"),
+      maxReviews: getNumber("max_reviews"),
       columnSorts,
     }
   }

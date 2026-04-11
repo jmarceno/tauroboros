@@ -24,11 +24,11 @@ const config: UserConfig = {
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: 'http://localhost:3789',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:3000',
+        target: 'ws://localhost:3789',
         ws: true,
       },
     },

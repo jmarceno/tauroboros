@@ -1,10 +1,13 @@
 import { resolve } from "path"
-import { loadInfrastructureSettings } from "./config/settings.ts"
+import { ensureInfrastructureSettings } from "./config/settings.ts"
 import { createPiServer, findProjectRoot } from "./server.ts"
 
 export async function main(): Promise<void> {
   const projectRoot = findProjectRoot()
-  const { settings, warnings } = loadInfrastructureSettings(projectRoot)
+  
+  // Ensure settings.json exists (creates with defaults if missing)
+  // NO FALLBACKS - server ONLY reads from settings.json
+  const { settings, warnings } = ensureInfrastructureSettings(projectRoot)
 
   // Report any warnings about settings
   for (const warning of warnings) {

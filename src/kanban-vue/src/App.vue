@@ -44,7 +44,7 @@ const sessionUsage = useSessionUsage()
 
 // Computed unwrappers for props (ensuring primitive values)
 const consumedSlotsValue = computed(() => runsComposable.consumedRunSlots.value ?? 0)
-const parallelTasksValue = computed(() => optionsComposable.options.parallelTasks ?? 1)
+const parallelTasksValue = computed(() => optionsComposable.options?.parallelTasks ?? 1)
 const isConnectedValue = computed(() => ws.isConnected.value ?? false)
 
 // Modal state
@@ -373,7 +373,7 @@ window.addEventListener('hashchange', () => {
 
     <!-- Run Panel -->
     <RunPanel
-      :runs="runsComposable.runs"
+      :runs="runsComposable.runs.value"
       :consumed-slots="consumedSlotsValue"
       :parallel-tasks="parallelTasksValue"
       :get-task-name="tasksComposable.getTaskName"

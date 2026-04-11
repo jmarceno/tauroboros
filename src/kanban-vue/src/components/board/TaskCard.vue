@@ -82,7 +82,7 @@ const showInlineActionBar = computed(() =>
 )
 
 const effectiveMaxReviews = computed(() =>
-  props.task.maxReviewRunsOverride ?? options.options.maxReviews ?? 2
+  props.task.maxReviewRunsOverride ?? options.options?.maxReviews ?? 2
 )
 
 const isNearReviewLimit = computed(() =>

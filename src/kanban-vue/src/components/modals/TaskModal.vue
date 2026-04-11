@@ -24,13 +24,13 @@ const modelSearch = inject<ReturnType<typeof useModelSearch>>('modelSearch')!
 const toasts = inject<ReturnType<typeof useToasts>>('toasts')!
 const options = inject<ReturnType<typeof useOptions>>('options')!
 
-// Form state
+// Form state - starts empty, will be populated from backend data ONLY
 const form = ref({
   name: '',
   prompt: '',
   branch: '',
-  planModel: 'default',
-  executionModel: 'default',
+  planModel: '',
+  executionModel: '',
   planmode: false,
   autoApprovePlan: false,
   review: true,
@@ -42,7 +42,7 @@ const form = ref({
   executionStrategy: 'standard' as const,
   bonWorkers: [] as BestOfNSlot[],
   bonReviewers: [] as BestOfNSlot[],
-  bonFinalApplierModel: 'default',
+  bonFinalApplierModel: '',
   bonFinalApplierSuffix: '',
   bonSelectionMode: 'pick_best' as const,
   bonMinSuccessful: 1,
@@ -51,62 +51,37 @@ const form = ref({
 
 const bonValidationErrors = ref<string[]>([])
 const isLoading = ref(false)
+const isInitializing = ref(true)
 
 // Computed
 const isViewOnly = computed(() => props.mode === 'view')
 const isDeploy = computed(() => props.mode === 'deploy')
+const isCreate = computed(() => props.mode === 'create')
+const isEdit = computed(() => props.mode === 'edit')
+
 const title = computed(() => {
   if (isViewOnly.value) return 'View Task'
   if (isDeploy.value) return 'Deploy Template'
-  if (props.mode === 'edit') return props.createStatus === 'template' ? 'Edit Template' : 'Edit Task'
+  if (isEdit.value) return props.createStatus === 'template' ? 'Edit Template' : 'Edit Task'
   return props.createStatus === 'template' ? 'Add Template' : 'Add Task'
 })
 
 const saveButtonText = computed(() => {
   if (isDeploy.value) return 'Send to Backlog'
-  if (props.mode === 'create' && props.createStatus === 'template') return 'Save Template'
+  if (isCreate.value && props.createStatus === 'template') return 'Save Template'
   return 'Save'
 })
 
 const availableBranches = ref<string[]>([])
 const currentBranch = ref<string | null>(null)
 
-// Get branches on mount
-onMounted(async () => {
-  try {
-    const branchData = await tasks.api.getBranches()
-    availableBranches.value = branchData.branches
-    currentBranch.value = branchData.current
-  } catch {
-    // Use default empty branches
-  }
-
-  if (props.taskId) {
-    // Edit/view existing task
-    const task = tasks.getTaskById(props.taskId)
-    if (task) {
-      populateFormFromTask(task)
-    }
-  } else if (props.seedTaskId) {
-    // Deploy from template
-    const seedTask = tasks.getTaskById(props.seedTaskId)
-    if (seedTask) {
-      populateFormFromTask(seedTask)
-    }
-  } else {
-    // New task - set defaults
-    form.value.branch = currentBranch.value || availableBranches.value[0] || ''
-    form.value.planModel = options.options.planModel || 'default'
-    form.value.executionModel = options.options.executionModel || 'default'
-  }
-})
-
+// Populate form from existing task data
 const populateFormFromTask = (task: Task) => {
   form.value.name = task.name
   form.value.prompt = task.prompt
   form.value.branch = task.branch || currentBranch.value || availableBranches.value[0] || ''
-  form.value.planModel = task.planModel || 'default'
-  form.value.executionModel = task.executionModel || 'default'
+  form.value.planModel = task.planModel || ''
+  form.value.executionModel = task.executionModel || ''
   form.value.planmode = task.planmode
   form.value.autoApprovePlan = task.autoApprovePlan
   form.value.review = task.review
@@ -128,8 +103,64 @@ const populateFormFromTask = (task: Task) => {
   }
 }
 
+// Populate form for new task from backend options
+const populateFormForNewTask = () => {
+  const opts = options.options.value
+  if (!opts) return false
+  
+  form.value.branch = currentBranch.value || availableBranches.value[0] || ''
+  form.value.planModel = opts.planModel || ''
+  form.value.executionModel = opts.executionModel || ''
+  return true
+}
+
+// Initialize the form based on mode
+const initializeForm = async () => {
+  isInitializing.value = true
+  
+  try {
+    // Load branches first
+    const branchData = await tasks.api.getBranches()
+    availableBranches.value = branchData.branches
+    currentBranch.value = branchData.current
+  } catch {
+    // Use default empty branches
+  }
+  
+  if (props.taskId && (isEdit.value || isViewOnly.value)) {
+    // Edit/view existing task - load from task data
+    const task = tasks.getTaskById(props.taskId)
+    if (task) {
+      populateFormFromTask(task)
+    }
+    isInitializing.value = false
+  } else if (props.seedTaskId && isDeploy.value) {
+    // Deploy from template - load from template data
+    const seedTask = tasks.getTaskById(props.seedTaskId)
+    if (seedTask) {
+      populateFormFromTask(seedTask)
+    }
+    isInitializing.value = false
+  } else if (isCreate.value) {
+    // New task - must wait for options to load from backend
+    if (!options.options.value) {
+      await options.loadOptions()
+    }
+    populateFormForNewTask()
+    isInitializing.value = false
+  } else {
+    isInitializing.value = false
+  }
+}
+
+onMounted(() => {
+  initializeForm()
+})
+
 const getFallbackBranch = () => {
-  if (availableBranches.value.includes(options.options.branch)) return options.options.branch
+  if (options.options?.value?.branch && availableBranches.value.includes(options.options.value.branch)) {
+    return options.options.value.branch
+  }
   if (currentBranch.value && availableBranches.value.includes(currentBranch.value)) return currentBranch.value
   return availableBranches.value[0] || ''
 }
@@ -159,7 +190,7 @@ const validateBonConfig = (): string[] => {
 }
 
 const addBonWorker = () => {
-  form.value.bonWorkers.push({ model: 'default', count: 1, suffix: '' })
+  form.value.bonWorkers.push({ model: '', count: 1, suffix: '' })
 }
 
 const removeBonWorker = (index: number) => {
@@ -167,7 +198,7 @@ const removeBonWorker = (index: number) => {
 }
 
 const addBonReviewer = () => {
-  form.value.bonReviewers.push({ model: 'default', count: 1, suffix: '' })
+  form.value.bonReviewers.push({ model: '', count: 1, suffix: '' })
 }
 
 const removeBonReviewer = (index: number) => {
@@ -234,7 +265,7 @@ const save = async () => {
       }
     }
 
-    if (props.taskId && props.mode === 'edit') {
+    if (props.taskId && isEdit.value) {
       await tasks.updateTask(props.taskId, data)
     } else {
       await tasks.createTask({ ...data, status: props.createStatus })
@@ -266,323 +297,330 @@ const closeOnOverlay = (e: MouseEvent) => {
         <button class="modal-close" @click="emit('close')">×</button>
       </div>
 
-      <div class="modal-body space-y-3">
-        <!-- Name -->
-        <div class="form-group">
-          <div class="label-row">
-            <label>Name</label>
-            <span class="help-btn" title="Short task title shown on the card. Make it specific enough to identify the work at a glance.">?</span>
-          </div>
-          <input
-            v-model="form.name"
-            type="text"
-            class="form-input"
-            placeholder="Task name"
-            :disabled="isViewOnly"
-          />
-        </div>
+      <!-- Loading State -->
+      <div v-if="isInitializing" class="modal-body p-8 text-center">
+        <div class="text-dark-text-muted">Loading...</div>
+      </div>
 
-        <!-- Prompt -->
-        <div class="form-group">
-          <div class="label-row">
-            <label>Prompt</label>
-            <span class="help-btn" title="The main instructions for the agent. Describe the change, bug, or outcome you want it to produce.">?</span>
-          </div>
-          <MarkdownEditor
-            v-model="form.prompt"
-            :disabled="isViewOnly"
-            placeholder="What should this task do?"
-          />
-        </div>
-
-        <!-- Models -->
-        <div class="grid grid-cols-2 gap-3">
-          <ModelPicker
-            v-model="form.planModel"
-            label="Plan Model"
-            help="Model used for planning steps before implementation. Use this when you want a specific model to reason about the approach first."
-            :disabled="isViewOnly"
-          />
-          <ModelPicker
-            v-model="form.executionModel"
-            label="Execution Model"
-            help="Model used for the actual implementation work. Set this when execution should run on a different model than planning."
-            :disabled="isViewOnly"
-          />
-        </div>
-
-        <!-- Thinking Level -->
-        <div class="form-group">
-          <div class="label-row">
-            <label>Thinking Level</label>
-            <span class="help-btn" title="Controls how much reasoning effort the agent should spend. Higher levels can improve harder tasks but usually take longer.">?</span>
-          </div>
-          <select v-model="form.thinkingLevel" class="form-select" :disabled="isViewOnly">
-            <option value="default">Default</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-        </div>
-
-        <!-- Execution Strategy -->
-        <div class="form-group">
-          <div class="label-row">
-            <label>Execution Strategy</label>
-            <span class="help-btn" title="Standard runs a single execution. Best of N runs multiple candidates in parallel and picks or synthesizes the best result.">?</span>
-          </div>
-          <select v-model="form.executionStrategy" class="form-select" :disabled="isViewOnly">
-            <option value="standard">Standard</option>
-            <option value="best_of_n">Best of N</option>
-          </select>
-        </div>
-
-        <!-- Best-of-N Config -->
-        <div v-if="showBonConfig" class="border border-dark-surface3 rounded-lg p-3 bg-dark-bg">
-          <h4 class="text-sm font-semibold mb-2">Best of N Configuration</h4>
-
-          <div v-if="bonValidationErrors.length > 0" class="mb-2 space-y-1">
-            <div v-for="err in bonValidationErrors" :key="err" class="text-xs text-red-400">
-              {{ err }}
-            </div>
-          </div>
-
-          <!-- Workers -->
+      <template v-else>
+        <div class="modal-body space-y-3">
+          <!-- Name -->
           <div class="form-group">
-            <label>Workers</label>
-            <div class="space-y-2">
-              <div
-                v-for="(slot, i) in form.bonWorkers"
-                :key="i"
-                class="flex gap-2 items-center"
-              >
-                <input
-                  v-model.number="slot.count"
-                  type="number"
-                  min="1"
-                  max="4"
-                  class="form-input w-16"
-                  :disabled="isViewOnly"
-                />
-                <select v-model="slot.model" class="form-select flex-1" :disabled="isViewOnly">
-                  <option
-                    v-for="opt in modelSearch.getModelOptions(slot.model)"
-                    :key="opt.value"
-                    :value="opt.value"
-                    :selected="opt.selected"
-                  >
-                    {{ opt.label }}
-                  </option>
-                </select>
-                <input
-                  v-model="slot.suffix"
-                  type="text"
-                  placeholder="Suffix (optional)"
-                  class="form-input flex-1"
-                  :disabled="isViewOnly"
-                />
-                <button
-                  v-if="!isViewOnly"
-                  class="text-red-400 hover:text-red-300 px-2"
-                  @click="removeBonWorker(i)"
-                >
-                  ✕
-                </button>
-              </div>
+            <div class="label-row">
+              <label>Name</label>
+              <span class="help-btn" title="Short task title shown on the card. Make it specific enough to identify the work at a glance.">?</span>
             </div>
-            <button
-              v-if="!isViewOnly"
-              class="add-task-btn mt-2"
-              @click="addBonWorker"
-            >
-              + Add Worker Slot
-            </button>
-          </div>
-
-          <!-- Reviewers -->
-          <div class="form-group">
-            <label>Reviewers</label>
-            <div class="space-y-2">
-              <div
-                v-for="(slot, i) in form.bonReviewers"
-                :key="i"
-                class="flex gap-2 items-center"
-              >
-                <input
-                  v-model.number="slot.count"
-                  type="number"
-                  min="1"
-                  max="4"
-                  class="form-input w-16"
-                  :disabled="isViewOnly"
-                />
-                <select v-model="slot.model" class="form-select flex-1" :disabled="isViewOnly">
-                  <option
-                    v-for="opt in modelSearch.getModelOptions(slot.model)"
-                    :key="opt.value"
-                    :value="opt.value"
-                    :selected="opt.selected"
-                  >
-                    {{ opt.label }}
-                  </option>
-                </select>
-                <input
-                  v-model="slot.suffix"
-                  type="text"
-                  placeholder="Suffix (optional)"
-                  class="form-input flex-1"
-                  :disabled="isViewOnly"
-                />
-                <button
-                  v-if="!isViewOnly"
-                  class="text-red-400 hover:text-red-300 px-2"
-                  @click="removeBonReviewer(i)"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-            <button
-              v-if="!isViewOnly"
-              class="add-task-btn mt-2"
-              @click="addBonReviewer"
-            >
-              + Add Reviewer Slot
-            </button>
-          </div>
-
-          <!-- Final Applier -->
-          <ModelPicker
-            v-model="form.bonFinalApplierModel"
-            label="Final Applier Model"
-            :disabled="isViewOnly"
-          />
-
-          <div class="form-group">
-            <label>Final Applier Suffix (optional)</label>
-            <textarea
-              v-model="form.bonFinalApplierSuffix"
-              class="form-textarea"
-              placeholder="Additional instructions for the final applier..."
-              :disabled="isViewOnly"
-            />
-          </div>
-
-          <!-- Selection Mode & Min Successful -->
-          <div class="grid grid-cols-2 gap-3">
-            <div class="form-group">
-              <label>Selection Mode</label>
-              <select v-model="form.bonSelectionMode" class="form-select" :disabled="isViewOnly">
-                <option value="pick_best">Pick Best</option>
-                <option value="synthesize">Synthesize</option>
-                <option value="pick_or_synthesize">Pick or Synthesize</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Min Successful Workers</label>
-              <input
-                v-model.number="form.bonMinSuccessful"
-                type="number"
-                min="1"
-                max="8"
-                class="form-input"
-                :disabled="isViewOnly"
-              />
-            </div>
-          </div>
-
-          <!-- Verification Command -->
-          <div class="form-group">
-            <label>Verification Command (optional)</label>
             <input
-              v-model="form.bonVerificationCmd"
+              v-model="form.name"
               type="text"
               class="form-input"
-              placeholder="e.g. npm test"
+              placeholder="Task name"
               :disabled="isViewOnly"
             />
           </div>
-        </div>
 
-        <!-- Branch -->
-        <div class="form-group">
-          <div class="label-row">
-            <label>Branch</label>
-            <span class="help-btn" title="Git branch the task should run against. Pick the branch where changes should be created or reviewed.">?</span>
+          <!-- Prompt -->
+          <div class="form-group">
+            <div class="label-row">
+              <label>Prompt</label>
+              <span class="help-btn" title="The main instructions for the agent. Describe the change, bug, or outcome you want it to produce.">?</span>
+            </div>
+            <MarkdownEditor
+              v-model="form.prompt"
+              :disabled="isViewOnly"
+              placeholder="What should this task do?"
+            />
           </div>
-          <select v-model="form.branch" class="form-select" :disabled="isViewOnly">
-            <option v-for="branch in availableBranches" :key="branch" :value="branch">
-              {{ branch }}
-            </option>
-          </select>
-        </div>
 
-        <!-- Checkboxes -->
-        <div class="checkbox-group" v-if="!isViewOnly">
-          <label class="checkbox-item">
-            <input v-model="form.planmode" type="checkbox" />
-            <span>Plan Mode</span>
-          </label>
-          <label class="checkbox-item">
-            <input v-model="form.autoApprovePlan" type="checkbox" />
-            <span>Auto-approve plan</span>
-          </label>
-          <label class="checkbox-item">
-            <input v-model="form.review" type="checkbox" />
-            <span>Review</span>
-          </label>
-          <label class="checkbox-item">
-            <input v-model="form.autoCommit" type="checkbox" />
-            <span>Auto-commit</span>
-          </label>
-          <label class="checkbox-item">
-            <input v-model="form.deleteWorktree" type="checkbox" />
-            <span>Delete Worktree</span>
-          </label>
-          <label class="checkbox-item">
-            <input v-model="form.skipPermissionAsking" type="checkbox" />
-            <span>Skip Permission Asking</span>
-          </label>
-        </div>
-
-        <!-- Requirements -->
-        <div class="form-group">
-          <div class="label-row">
-            <label>Requirements (dependencies)</label>
-            <span class="help-btn" title="Tasks that must be completed before this one should run. Use dependencies to enforce execution order.">?</span>
+          <!-- Models -->
+          <div class="grid grid-cols-2 gap-3">
+            <ModelPicker
+              v-model="form.planModel"
+              label="Plan Model"
+              help="Model used for planning steps before implementation. Use this when you want a specific model to reason about the approach first."
+              :disabled="isViewOnly"
+            />
+            <ModelPicker
+              v-model="form.executionModel"
+              label="Execution Model"
+              help="Model used for the actual implementation work. Set this when execution should run on a different model than planning."
+              :disabled="isViewOnly"
+            />
           </div>
-          <div class="border border-dark-surface3 rounded-lg p-1.5 max-h-36 overflow-y-auto">
-            <label
-              v-for="t in availableRequirements"
-              :key="t.id"
-              class="checkbox-item p-1 rounded hover:bg-dark-surface2"
-            >
-              <input
-                v-model="form.requirements"
-                type="checkbox"
-                :value="t.id"
+
+          <!-- Thinking Level -->
+          <div class="form-group">
+            <div class="label-row">
+              <label>Thinking Level</label>
+              <span class="help-btn" title="Controls how much reasoning effort the agent should spend. Higher levels can improve harder tasks but usually take longer.">?</span>
+            </div>
+            <select v-model="form.thinkingLevel" class="form-select" :disabled="isViewOnly">
+              <option value="default">Default</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+
+          <!-- Execution Strategy -->
+          <div class="form-group">
+            <div class="label-row">
+              <label>Execution Strategy</label>
+              <span class="help-btn" title="Standard runs a single execution. Best of N runs multiple candidates in parallel and picks or synthesizes the best result.">?</span>
+            </div>
+            <select v-model="form.executionStrategy" class="form-select" :disabled="isViewOnly">
+              <option value="standard">Standard</option>
+              <option value="best_of_n">Best of N</option>
+            </select>
+          </div>
+
+          <!-- Best-of-N Config -->
+          <div v-if="showBonConfig" class="border border-dark-surface3 rounded-lg p-3 bg-dark-bg">
+            <h4 class="text-sm font-semibold mb-2">Best of N Configuration</h4>
+
+            <div v-if="bonValidationErrors.length > 0" class="mb-2 space-y-1">
+              <div v-for="err in bonValidationErrors" :key="err" class="text-xs text-red-400">
+                {{ err }}
+              </div>
+            </div>
+
+            <!-- Workers -->
+            <div class="form-group">
+              <label>Workers</label>
+              <div class="space-y-2">
+                <div
+                  v-for="(slot, i) in form.bonWorkers"
+                  :key="i"
+                  class="flex gap-2 items-center"
+                >
+                  <input
+                    v-model.number="slot.count"
+                    type="number"
+                    min="1"
+                    max="4"
+                    class="form-input w-16"
+                    :disabled="isViewOnly"
+                  />
+                  <select v-model="slot.model" class="form-select flex-1" :disabled="isViewOnly">
+                    <option
+                      v-for="opt in modelSearch.getModelOptions(slot.model)"
+                      :key="opt.value"
+                      :value="opt.value"
+                      :selected="opt.selected"
+                    >
+                      {{ opt.label }}
+                    </option>
+                  </select>
+                  <input
+                    v-model="slot.suffix"
+                    type="text"
+                    placeholder="Suffix (optional)"
+                    class="form-input flex-1"
+                    :disabled="isViewOnly"
+                  />
+                  <button
+                    v-if="!isViewOnly"
+                    class="text-red-400 hover:text-red-300 px-2"
+                    @click="removeBonWorker(i)"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <button
+                v-if="!isViewOnly"
+                class="add-task-btn mt-2"
+                @click="addBonWorker"
+              >
+                + Add Worker Slot
+              </button>
+            </div>
+
+            <!-- Reviewers -->
+            <div class="form-group">
+              <label>Reviewers</label>
+              <div class="space-y-2">
+                <div
+                  v-for="(slot, i) in form.bonReviewers"
+                  :key="i"
+                  class="flex gap-2 items-center"
+                >
+                  <input
+                    v-model.number="slot.count"
+                    type="number"
+                    min="1"
+                    max="4"
+                    class="form-input w-16"
+                    :disabled="isViewOnly"
+                  />
+                  <select v-model="slot.model" class="form-select flex-1" :disabled="isViewOnly">
+                    <option
+                      v-for="opt in modelSearch.getModelOptions(slot.model)"
+                      :key="opt.value"
+                      :value="opt.value"
+                      :selected="opt.selected"
+                    >
+                      {{ opt.label }}
+                    </option>
+                  </select>
+                  <input
+                    v-model="slot.suffix"
+                    type="text"
+                    placeholder="Suffix (optional)"
+                    class="form-input flex-1"
+                    :disabled="isViewOnly"
+                  />
+                  <button
+                    v-if="!isViewOnly"
+                    class="text-red-400 hover:text-red-300 px-2"
+                    @click="removeBonReviewer(i)"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+              <button
+                v-if="!isViewOnly"
+                class="add-task-btn mt-2"
+                @click="addBonReviewer"
+              >
+                + Add Reviewer Slot
+              </button>
+            </div>
+
+            <!-- Final Applier -->
+            <ModelPicker
+              v-model="form.bonFinalApplierModel"
+              label="Final Applier Model"
+              :disabled="isViewOnly"
+            />
+
+            <div class="form-group">
+              <label>Final Applier Suffix (optional)</label>
+              <textarea
+                v-model="form.bonFinalApplierSuffix"
+                class="form-textarea"
+                placeholder="Additional instructions for the final applier..."
                 :disabled="isViewOnly"
               />
-              <span class="text-sm">{{ t.name }} (#{{ t.idx + 1 }})</span>
+            </div>
+
+            <!-- Selection Mode & Min Successful -->
+            <div class="grid grid-cols-2 gap-3">
+              <div class="form-group">
+                <label>Selection Mode</label>
+                <select v-model="form.bonSelectionMode" class="form-select" :disabled="isViewOnly">
+                  <option value="pick_best">Pick Best</option>
+                  <option value="synthesize">Synthesize</option>
+                  <option value="pick_or_synthesize">Pick or Synthesize</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Min Successful Workers</label>
+                <input
+                  v-model.number="form.bonMinSuccessful"
+                  type="number"
+                  min="1"
+                  max="8"
+                  class="form-input"
+                  :disabled="isViewOnly"
+                />
+              </div>
+            </div>
+
+            <!-- Verification Command -->
+            <div class="form-group">
+              <label>Verification Command (optional)</label>
+              <input
+                v-model="form.bonVerificationCmd"
+                type="text"
+                class="form-input"
+                placeholder="e.g. npm test"
+                :disabled="isViewOnly"
+              />
+            </div>
+          </div>
+
+          <!-- Branch -->
+          <div class="form-group">
+            <div class="label-row">
+              <label>Branch</label>
+              <span class="help-btn" title="Git branch the task should run against. Pick the branch where changes should be created or reviewed.">?</span>
+            </div>
+            <select v-model="form.branch" class="form-select" :disabled="isViewOnly">
+              <option v-for="branch in availableBranches" :key="branch" :value="branch">
+                {{ branch }}
+              </option>
+            </select>
+          </div>
+
+          <!-- Checkboxes -->
+          <div class="checkbox-group" v-if="!isViewOnly">
+            <label class="checkbox-item">
+              <input v-model="form.planmode" type="checkbox" />
+              <span>Plan Mode</span>
             </label>
-            <div v-if="availableRequirements.length === 0" class="text-xs text-dark-text-muted p-1">
-              No other tasks
+            <label class="checkbox-item">
+              <input v-model="form.autoApprovePlan" type="checkbox" />
+              <span>Auto-approve plan</span>
+            </label>
+            <label class="checkbox-item">
+              <input v-model="form.review" type="checkbox" />
+              <span>Review</span>
+            </label>
+            <label class="checkbox-item">
+              <input v-model="form.autoCommit" type="checkbox" />
+              <span>Auto-commit</span>
+            </label>
+            <label class="checkbox-item">
+              <input v-model="form.deleteWorktree" type="checkbox" />
+              <span>Delete Worktree</span>
+            </label>
+            <label class="checkbox-item">
+              <input v-model="form.skipPermissionAsking" type="checkbox" />
+              <span>Skip Permission Asking</span>
+            </label>
+          </div>
+
+          <!-- Requirements -->
+          <div class="form-group">
+            <div class="label-row">
+              <label>Requirements (dependencies)</label>
+              <span class="help-btn" title="Tasks that must be completed before this one should run. Use dependencies to enforce execution order.">?</span>
+            </div>
+            <div class="border border-dark-surface3 rounded-lg p-1.5 max-h-36 overflow-y-auto">
+              <label
+                v-for="t in availableRequirements"
+                :key="t.id"
+                class="checkbox-item p-1 rounded hover:bg-dark-surface2"
+              >
+                <input
+                  v-model="form.requirements"
+                  type="checkbox"
+                  :value="t.id"
+                  :disabled="isViewOnly"
+                />
+                <span class="text-sm">{{ t.name }} (#{{ t.idx + 1 }})</span>
+              </label>
+              <div v-if="availableRequirements.length === 0" class="text-xs text-dark-text-muted p-1">
+                No other tasks
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <div class="modal-footer">
-        <button class="btn" @click="emit('close')">Cancel</button>
-        <button
-          v-if="!isViewOnly"
-          class="btn btn-primary"
-          :disabled="isLoading"
-          @click="save"
-        >
-          {{ isLoading ? 'Saving...' : saveButtonText }}
-        </button>
-      </div>
+        <div class="modal-footer">
+          <button class="btn" @click="emit('close')">Cancel</button>
+          <button
+            v-if="!isViewOnly"
+            class="btn btn-primary"
+            :disabled="isLoading"
+            @click="save"
+          >
+            {{ isLoading ? 'Saving...' : saveButtonText }}
+          </button>
+        </div>
+      </template>
     </div>
   </div>
 </template>
