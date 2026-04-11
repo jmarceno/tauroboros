@@ -26,4 +26,13 @@ export type {
   UpdateTaskInput,
   UpdateWorkflowRunInput,
   UpsertPromptTemplateInput,
+  ContainerPackage,
+  ContainerBuild,
+  ContainerConfig,
+  PackageDefinition,
+  ContainerProfile,
+  PackageValidationResult,
+  ContainerBuildResult,
+  CreateContainerPackageInput,
+  ContainerBuildStatus,
 } from "./types.ts"

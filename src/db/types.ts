@@ -52,6 +52,7 @@ export type PiSessionKind =
   | "plan"
   | "plan_revision"
   | "planning"
+  | "container_config"
 
 export type PiSessionStatus = "starting" | "active" | "paused" | "completed" | "failed" | "aborted"
 
@@ -396,4 +397,85 @@ export interface UpdatePlanningPromptInput {
   description?: string
   promptText?: string
   isActive?: boolean
+}
+
+// Container Configuration Types
+
+export interface ContainerPackage {
+  id: number
+  name: string
+  category: string
+  versionConstraint?: string
+  installOrder: number
+  addedAt: number
+  source: string
+}
+
+export interface ContainerBuild {
+  id: number
+  status: "pending" | "running" | "success" | "failed" | "cancelled"
+  startedAt: number | null
+  completedAt: number | null
+  packagesHash: string | null
+  errorMessage: string | null
+  imageTag: string | null
+}
+
+export interface ContainerConfig {
+  version: number
+  baseImage: string
+  customDockerfilePath: string
+  generatedDockerfilePath: string
+  packages: PackageDefinition[]
+  lastBuild: {
+    timestamp: string
+    imageTag: string
+    success: boolean
+  } | null
+}
+
+export interface PackageDefinition {
+  name: string
+  category: string
+  versionConstraint?: string
+  installOrder: number
+}
+
+export interface ContainerProfile {
+  id: string
+  name: string
+  description: string
+  packages: Array<{
+    name: string
+    category: string
+  }>
+  extends?: string
+}
+
+export interface PackageValidationResult {
+  valid: string[]
+  invalid: string[]
+  suggestions: Record<string, string[]>
+}
+
+export interface ContainerBuildResult {
+  success: boolean
+  imageTag: string
+  logs: string[]
+}
+
+export interface CreateContainerPackageInput {
+  name: string
+  category: string
+  versionConstraint?: string
+  installOrder?: number
+  source?: string
+}
+
+export interface ContainerBuildStatus {
+  status: "pending" | "running" | "success" | "failed" | "cancelled"
+  progress?: number
+  message: string
+  logs: string[]
+  canCancel: boolean
 }

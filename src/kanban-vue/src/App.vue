@@ -23,16 +23,7 @@ import ToastContainer from '@/components/common/ToastContainer.vue'
 import ChatContainer from '@/components/chat/ChatContainer.vue'
 
 // Modals
-import TaskModal from '@/components/modals/TaskModal.vue'
-import OptionsModal from '@/components/modals/OptionsModal.vue'
-import ExecutionGraphModal from '@/components/modals/ExecutionGraphModal.vue'
-import ApproveModal from '@/components/modals/ApproveModal.vue'
-import RevisionModal from '@/components/modals/RevisionModal.vue'
-import StartSingleModal from '@/components/modals/StartSingleModal.vue'
-import SessionModal from '@/components/modals/SessionModal.vue'
-import BestOfNDetailModal from '@/components/modals/BestOfNDetailModal.vue'
-import BatchEditModal from '@/components/modals/BatchEditModal.vue'
-import PlanningPromptModal from '@/components/modals/PlanningPromptModal.vue'
+import ContainerConfigModal from '@/components/modals/ContainerConfigModal.vue'
 
 // State
 const optionsComposable = useOptions()
@@ -49,6 +40,9 @@ const planningChat = usePlanningChat()
 // Modal state
 const activeModal = ref<string | null>(null)
 const modalData = ref<Record<string, unknown>>({})
+
+// Container config modal state
+const showContainerConfigModal = ref(false)
 const logPanelCollapsed = ref(false)
 
 // Computed
@@ -352,6 +346,50 @@ ws.on('planning_session_message', (payload: { sessionId: string; message: Sessio
   planningChat.handlePlanningSessionMessage(payload)
 })
 
+// Container configuration WebSocket handlers
+ws.on('container_config_updated', (payload) => {
+  toasts.addLog('Container configuration updated', 'info')
+})
+
+ws.on('container_package_added', (payload) => {
+  toasts.addLog(`Package '${payload.name}' added to container config`, 'info')
+})
+
+ws.on('container_package_removed', (payload) => {
+  toasts.addLog(`Package removed from container config`, 'info')
+})
+
+ws.on('container_build_started', (payload) => {
+  toasts.showToast('Container build started', 'info')
+  toasts.addLog(`Container build #${payload.buildId} started (${payload.imageTag})`, 'info')
+})
+
+ws.on('container_build_progress', (payload) => {
+  // Progress updates are handled within the modal
+})
+
+ws.on('container_build_completed', (payload) => {
+  if (payload.status === 'success') {
+    toasts.showToast('Container build completed successfully!', 'success')
+    toasts.addLog(`Container build #${payload.buildId} completed successfully`, 'success')
+  } else if (payload.status === 'failed') {
+    toasts.showToast('Container build failed', 'error')
+    toasts.addLog(`Container build #${payload.buildId} failed`, 'error')
+  }
+})
+
+ws.on('container_build_cancelled', (payload) => {
+  toasts.addLog(`Container build #${payload.buildId} cancelled`, 'info')
+})
+
+ws.on('container_profile_applied', (payload) => {
+  toasts.showToast(`Profile applied: ${payload.packagesAdded} packages added`, 'success')
+})
+
+ws.on('container_dockerfile_custom_updated', () => {
+  toasts.addLog('Custom Dockerfile updated', 'info')
+})
+
 // Initialize
 onMounted(async () => {
   await optionsComposable.loadOptions()
@@ -402,6 +440,7 @@ window.addEventListener('hashchange', () => {
         }
       }"
       @open-options="openModal('options')"
+      @open-container-config="showContainerConfigModal = true"
     />
 
     <!-- Run Panel -->
@@ -570,6 +609,11 @@ window.addEventListener('hashchange', () => {
     <PlanningPromptModal
       v-if="activeModal === 'planningPrompt'"
       @close="closeModal"
+    />
+
+    <ContainerConfigModal
+      v-if="showContainerConfigModal"
+      @close="showContainerConfigModal = false"
     />
   </div>
 </template>

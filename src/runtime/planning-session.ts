@@ -592,12 +592,14 @@ export class PlanningSessionManager {
     thinkingLevel?: "default" | "low" | "medium" | "high"
     onMessage?: (message: SessionMessage) => void
     onStatusChange?: (session: PiWorkflowSession) => void
+    sessionKind?: "planning" | "container_config"
   }): Promise<{ session: PiWorkflowSession; planningSession: PlanningSession }> {
     const sessionId = randomUUID().slice(0, 8)
+    const sessionKind = input.sessionKind ?? "planning"
 
     const session = this.db.createWorkflowSession({
       id: sessionId,
-      sessionKind: "planning",
+      sessionKind,
       status: "starting",
       cwd: input.cwd,
       model: input.model ?? "default",
@@ -671,8 +673,8 @@ export class PlanningSessionManager {
     if (!dbSession) {
       return null
     }
-    if (dbSession.sessionKind !== "planning") {
-      throw new Error("Not a planning session")
+    if (dbSession.sessionKind !== "planning" && dbSession.sessionKind !== "container_config") {
+      throw new Error("Not a planning or container_config session")
     }
 
     // Create a new PlanningSession wrapper for the existing DB session

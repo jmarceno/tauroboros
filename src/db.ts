@@ -53,6 +53,9 @@ import type {
   UpsertPromptTemplateInput,
   UpsertPlanningPromptInput,
   UpdatePlanningPromptInput,
+  ContainerPackage,
+  ContainerBuild,
+  CreateContainerPackageInput,
 } from "./db/types.ts"
 import { renderTemplate } from "./prompts/renderer.ts"
 import { projectPiEventToSessionMessage } from "./runtime/message-projection.ts"
@@ -812,6 +815,78 @@ When the user is ready to create tasks, help them structure:
 
 You have access to file exploration tools to understand the codebase structure when needed. Use them to provide context-aware planning suggestions.`
 
+// Container Configuration Assistant system prompt
+const CONTAINER_CONFIG_SYSTEM_PROMPT = `You are a Container Configuration Assistant helping users customize their Pi Agent container image.
+
+Your goal is to understand what tools the user needs and help them configure the container image accordingly.
+
+## Available Profiles
+
+- **web-dev**: Chrome, Playwright, web testing tools
+  - Packages: chromium, chromium-chromedriver, nss, freetype, harfbuzz, ttf-freefont
+
+- **rust-dev**: Rust compiler, Cargo, build tools
+  - Packages: rust, cargo, build-base, openssl-dev, pkgconfig
+
+- **python-dev**: Python 3, pip, development headers
+  - Packages: python3, py3-pip, python3-dev, gcc, musl-dev
+
+- **data-science**: Python with NumPy/SciPy/pandas support
+  - Extends python-dev, adds: lapack-dev, openblas-dev, libffi-dev
+
+- **go-dev**: Go compiler and standard tools
+  - Packages: go, git, make
+
+- **node-dev**: Additional Node.js development tools
+  - Packages: yarn, npm, nodejs
+
+- **docker-tools**: Tools for working with Docker/Podman
+  - Packages: docker-cli, buildah, skopeo
+
+- **cloud-cli**: AWS, Azure, and GCP CLI tools
+  - Packages: aws-cli, azure-cli, google-cloud-sdk
+
+- **database-tools**: Database clients and tools
+  - Packages: postgresql-client, mysql-client, redis, sqlite
+
+## Capabilities
+
+1. **Recommend profiles** based on user needs and development work
+2. **Suggest specific Alpine packages** for common tools and libraries
+3. **Explain what each package does** and why it's needed
+4. **Validate package names** against Alpine repositories
+5. **Guide users through the build process** and explain what to expect
+
+## Interaction Flow
+
+1. Ask what kind of development work they do
+2. Suggest appropriate profile(s) based on their needs
+3. Ask about specific tools they need
+4. Build package list with explanations
+5. Confirm before they trigger the rebuild
+
+## Package Categories
+
+When suggesting packages, categorize them appropriately:
+- **browser**: Chrome, Chromium, and related browser tools
+- **language**: Programming language runtimes and compilers (Rust, Python, Go, etc.)
+- **tool**: CLI tools, utilities, and general purpose software
+- **build**: Build tools, compilers, dev headers, libraries
+- **system**: System libraries, fonts, security tools
+- **math**: Math and science libraries (lapack, openblas, etc.)
+
+## Tips
+
+- Alpine packages are typically lowercase
+- Common prefixes: lib*, py3-*, nodejs-*, *-dev, *-doc
+- When a user mentions a tool, try to suggest the Alpine package name
+- Warn about package availability - some packages may not be in Alpine repos
+- Building can take several minutes - set expectations appropriately
+
+## Response Style
+
+Be conversational but focused. Don't overwhelm with technical details unless asked. Use clear, concise explanations.`
+
 const MIGRATIONS: Migration[] = [
   {
     version: 1,
@@ -1196,6 +1271,37 @@ const MIGRATIONS: Migration[] = [
       );
       `,
       `CREATE INDEX IF NOT EXISTS idx_planning_prompt_versions_prompt_id ON planning_prompt_versions(planning_prompt_id);`,
+    ],
+  },
+  {
+    version: 5,
+    description: "Add container_packages and container_builds tables for customizable container image system",
+    statements: [
+      `
+      CREATE TABLE IF NOT EXISTS container_packages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        category TEXT NOT NULL,
+        version_constraint TEXT,
+        install_order INTEGER DEFAULT 0,
+        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        source TEXT DEFAULT 'manual'
+      );
+      `,
+      `CREATE INDEX IF NOT EXISTS idx_container_packages_category ON container_packages(category);`,
+      `CREATE INDEX IF NOT EXISTS idx_container_packages_order ON container_packages(install_order);`,
+      `
+      CREATE TABLE IF NOT EXISTS container_builds (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        status TEXT NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        packages_hash TEXT,
+        error_message TEXT,
+        image_tag TEXT
+      );
+      `,
+      `CREATE INDEX IF NOT EXISTS idx_container_builds_status ON container_builds(status);`,
     ],
   },
 ]
@@ -2814,22 +2920,41 @@ export class PiKanbanDB {
   // ---- planning prompts ----
 
   private seedPlanningPrompts(): void {
-    const existing = this.db.prepare("SELECT 1 FROM planning_prompts WHERE key = 'default'").get()
-    if (existing) return
+    // Seed default planning prompt
+    const existingDefault = this.db.prepare("SELECT 1 FROM planning_prompts WHERE key = 'default'").get()
+    if (!existingDefault) {
+      this.db
+        .prepare(
+          `
+          INSERT INTO planning_prompts (key, name, description, prompt_text, is_active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 1, unixepoch(), unixepoch())
+          `,
+        )
+        .run(
+          "default",
+          "Default Planning Prompt",
+          "System prompt for the planning assistant agent",
+          DEFAULT_PLANNING_SYSTEM_PROMPT,
+        )
+    }
 
-    this.db
-      .prepare(
-        `
-        INSERT INTO planning_prompts (key, name, description, prompt_text, is_active, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 1, unixepoch(), unixepoch())
-        `,
-      )
-      .run(
-        "default",
-        "Default Planning Prompt",
-        "System prompt for the planning assistant agent",
-        DEFAULT_PLANNING_SYSTEM_PROMPT,
-      )
+    // Seed container config prompt
+    const existingContainer = this.db.prepare("SELECT 1 FROM planning_prompts WHERE key = 'container_config'").get()
+    if (!existingContainer) {
+      this.db
+        .prepare(
+          `
+          INSERT INTO planning_prompts (key, name, description, prompt_text, is_active, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 1, unixepoch(), unixepoch())
+          `,
+        )
+        .run(
+          "container_config",
+          "Container Configuration Prompt",
+          "System prompt for the container configuration assistant agent",
+          CONTAINER_CONFIG_SYSTEM_PROMPT,
+        )
+    }
   }
 
   getPlanningPrompt(key: string = "default"): PlanningPrompt | null {
@@ -2982,7 +3107,7 @@ export class PiKanbanDB {
 
   getPlanningSessions(): PiWorkflowSession[] {
     const rows = this.db
-      .prepare("SELECT * FROM workflow_sessions WHERE session_kind = 'planning' ORDER BY started_at DESC")
+      .prepare("SELECT * FROM workflow_sessions WHERE session_kind IN ('planning', 'container_config') ORDER BY started_at DESC")
       .all() as Record<string, unknown>[]
     return rows.map(rowToWorkflowSession)
   }
@@ -2990,10 +3115,155 @@ export class PiKanbanDB {
   getActivePlanningSessions(): PiWorkflowSession[] {
     const rows = this.db
       .prepare(
-        "SELECT * FROM workflow_sessions WHERE session_kind = 'planning' AND status IN ('starting', 'active', 'paused') ORDER BY started_at DESC"
+        "SELECT * FROM workflow_sessions WHERE session_kind IN ('planning', 'container_config') AND status IN ('starting', 'active', 'paused') ORDER BY started_at DESC"
       )
       .all() as Record<string, unknown>[]
     return rows.map(rowToWorkflowSession)
   }
 
+  getContainerConfigSessions(): PiWorkflowSession[] {
+    const rows = this.db
+      .prepare("SELECT * FROM workflow_sessions WHERE session_kind = 'container_config' ORDER BY started_at DESC")
+      .all() as Record<string, unknown>[]
+    return rows.map(rowToWorkflowSession)
+  }
+
+  getActiveContainerConfigSessions(): PiWorkflowSession[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM workflow_sessions WHERE session_kind = 'container_config' AND status IN ('starting', 'active', 'paused') ORDER BY started_at DESC"
+      )
+      .all() as Record<string, unknown>[]
+    return rows.map(rowToWorkflowSession)
+  }
+
+  // ---- Container Configuration ----
+
+  getContainerPackages(): ContainerPackage[] {
+    const rows = this.db
+      .prepare("SELECT * FROM container_packages ORDER BY install_order ASC, added_at ASC")
+      .all() as Record<string, unknown>[]
+    return rows.map(rowToContainerPackage)
+  }
+
+  addContainerPackage(input: CreateContainerPackageInput): ContainerPackage {
+    const result = this.db
+      .prepare(
+        `
+        INSERT INTO container_packages (name, category, version_constraint, install_order, source, added_at)
+        VALUES (?, ?, ?, ?, ?, unixepoch())
+        ON CONFLICT(name) DO UPDATE SET
+          category = excluded.category,
+          version_constraint = excluded.version_constraint,
+          install_order = excluded.install_order,
+          source = excluded.source,
+          added_at = unixepoch()
+        `
+      )
+      .run(
+        input.name,
+        input.category,
+        input.versionConstraint ?? null,
+        input.installOrder ?? 0,
+        input.source ?? "manual",
+      )
+
+    const row = this.db
+      .prepare("SELECT * FROM container_packages WHERE id = ?")
+      .get(result.lastInsertRowid) as Record<string, unknown>
+    return rowToContainerPackage(row)
+  }
+
+  removeContainerPackage(name: string): boolean {
+    const result = this.db.prepare("DELETE FROM container_packages WHERE name = ?").run(name)
+    return result.changes > 0
+  }
+
+  clearContainerPackages(): void {
+    this.db.exec("DELETE FROM container_packages")
+  }
+
+  // ---- Container Builds ----
+
+  createContainerBuild(input: { status: ContainerBuild["status"]; startedAt: number; packagesHash?: string; imageTag?: string }): number {
+    const result = this.db
+      .prepare(
+        `
+        INSERT INTO container_builds (status, started_at, packages_hash, image_tag)
+        VALUES (?, ?, ?, ?)
+        `
+      )
+      .run(input.status, input.startedAt, input.packagesHash ?? null, input.imageTag ?? null)
+    return Number(result.lastInsertRowid)
+  }
+
+  updateContainerBuild(id: number, input: { status?: ContainerBuild["status"]; completedAt?: number; errorMessage?: string }): ContainerBuild | null {
+    const sets: string[] = []
+    const values: any[] = []
+
+    if (input.status !== undefined) {
+      sets.push("status = ?")
+      values.push(input.status)
+    }
+    if (input.completedAt !== undefined) {
+      sets.push("completed_at = ?")
+      values.push(input.completedAt)
+    }
+    if (input.errorMessage !== undefined) {
+      sets.push("error_message = ?")
+      values.push(input.errorMessage)
+    }
+
+    if (sets.length === 0) return this.getContainerBuild(id)
+
+    values.push(id)
+    this.db.prepare(`UPDATE container_builds SET ${sets.join(", ")} WHERE id = ?`).run(...values)
+
+    return this.getContainerBuild(id)
+  }
+
+  getContainerBuild(id: number): ContainerBuild | null {
+    const row = this.db.prepare("SELECT * FROM container_builds WHERE id = ?").get(id) as Record<string, unknown> | null
+    return row ? rowToContainerBuild(row) : null
+  }
+
+  getContainerBuilds(limit: number = 10): ContainerBuild[] {
+    const rows = this.db
+      .prepare("SELECT * FROM container_builds ORDER BY started_at DESC LIMIT ?")
+      .all(limit) as Record<string, unknown>[]
+    return rows.map(rowToContainerBuild)
+  }
+
+  getLatestContainerBuild(): ContainerBuild | null {
+    const row = this.db
+      .prepare("SELECT * FROM container_builds ORDER BY started_at DESC LIMIT 1")
+      .get() as Record<string, unknown> | null
+    return row ? rowToContainerBuild(row) : null
+  }
+
+}
+
+// Row converters for container types
+function rowToContainerPackage(row: Record<string, unknown>): ContainerPackage {
+  return {
+    id: Number(row.id),
+    name: String(row.name),
+    category: String(row.category),
+    versionConstraint: row.version_constraint ? String(row.version_constraint) : undefined,
+    installOrder: Number(row.install_order ?? 0),
+    addedAt: Number(row.added_at ?? 0),
+    source: String(row.source ?? "manual"),
+  }
+}
+
+function rowToContainerBuild(row: Record<string, unknown>): ContainerBuild {
+  return {
+    id: Number(row.id),
+    status: String(row.status) as ContainerBuild["status"],
+    startedAt: row.started_at ? Number(row.started_at) : null,
+    completedAt: row.completed_at ? Number(row.completed_at) : null,
+    packagesHash: row.packages_hash ? String(row.packages_hash) : null,
+    errorMessage: row.error_message ? String(row.error_message) : null,
+    imageTag: row.image_tag ? String(row.image_tag) : null,
+  }
 }

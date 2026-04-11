@@ -1074,7 +1074,9 @@ export class PiKanbanServer {
 
     this.router.post("/api/planning/sessions", async ({ req, json, broadcast }) => {
       const body = await req.json()
-      const planningPrompt = this.db.getPlanningPrompt("default")
+      const sessionKind = body.sessionKind ?? "planning"
+      const promptKey = sessionKind === "container_config" ? "container_config" : "default"
+      const planningPrompt = this.db.getPlanningPrompt(promptKey)
       if (!planningPrompt) {
         return json({ error: "Planning prompt not configured" }, 500)
       }
@@ -1085,6 +1087,7 @@ export class PiKanbanServer {
           systemPrompt: planningPrompt.promptText,
           model: body.model ?? "default",
           thinkingLevel: body.thinkingLevel ?? "default",
+          sessionKind,
           onMessage: (message: SessionMessage) => {
             // Broadcast the message to all WebSocket clients
             broadcast({ type: "planning_session_message", payload: { sessionId: session.id, message } })
@@ -1108,7 +1111,7 @@ export class PiKanbanServer {
     this.router.post("/api/planning/sessions/:id/messages", async ({ params, req, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
 
       const body = await req.json()
       const planningSession = this.planningSessionManager.getSession(params.id)
@@ -1133,7 +1136,7 @@ export class PiKanbanServer {
     this.router.post("/api/planning/sessions/:id/reconnect", async ({ params, req, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
 
       // Check if already active
       const existingSession = this.planningSessionManager.getSession(params.id)
@@ -1177,7 +1180,7 @@ export class PiKanbanServer {
     this.router.post("/api/planning/sessions/:id/model", async ({ params, req, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
 
       const body = await req.json()
       const planningSession = this.planningSessionManager.getSession(params.id)
@@ -1204,7 +1207,7 @@ export class PiKanbanServer {
     this.router.post("/api/planning/sessions/:id/create-tasks", async ({ params, req, json, broadcast, sessionUrlFor }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
 
       const body = await req.json()
       
@@ -1279,14 +1282,14 @@ Respond ONLY with the JSON array, no other text.`
     this.router.get("/api/planning/sessions/:id", ({ params, json }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
       return json({ ...session, sessionUrl: this.sessionUrlFor(session.id) })
     })
 
     this.router.patch("/api/planning/sessions/:id", async ({ params, req, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
 
       const body = await req.json()
       const updated = this.db.updateWorkflowSession(params.id, {
@@ -1302,7 +1305,7 @@ Respond ONLY with the JSON array, no other text.`
     this.router.post("/api/planning/sessions/:id/close", async ({ params, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
 
       await this.planningSessionManager.closeSession(params.id)
 
@@ -1318,7 +1321,7 @@ Respond ONLY with the JSON array, no other text.`
     this.router.get("/api/planning/sessions/:id/messages", ({ params, url, json }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
 
       const limit = Number(url.searchParams.get("limit") ?? 500)
       const offset = Number(url.searchParams.get("offset") ?? 0)
@@ -1328,11 +1331,419 @@ Respond ONLY with the JSON array, no other text.`
     this.router.get("/api/planning/sessions/:id/timeline", ({ params, json }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
 
       return json(this.db.getSessionTimelineEntries(params.id))
     })
 
     // ---- End Planning Chat Routes ----
+
+    // ---- Container Configuration Routes ----
+
+    // Get all container profiles (preset configurations)
+    this.router.get("/api/container/profiles", ({ json }) => {
+      try {
+        const profilesPath = join(__dirname, "..", "config", "container-profiles.json")
+        if (!existsSync(profilesPath)) {
+          return json({ profiles: [] })
+        }
+        const raw = readFileSync(profilesPath, "utf-8")
+        const data = JSON.parse(raw)
+        return json({ profiles: data.profiles || [] })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to load profiles: ${message}` }, 500)
+      }
+    })
+
+    // Get current container configuration
+    this.router.get("/api/container/config", ({ json }) => {
+      try {
+        const config = this.imageManager?.loadContainerConfig(process.cwd()) ?? {
+          version: 1,
+          baseImage: "docker.io/alpine:3.19",
+          customDockerfilePath: ".pi/easy-workflow/Dockerfile.custom",
+          generatedDockerfilePath: ".pi/easy-workflow/Dockerfile.generated",
+          packages: [],
+          lastBuild: null,
+        }
+        return json(config)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to load config: ${message}` }, 500)
+      }
+    })
+
+    // Save container configuration
+    this.router.put("/api/container/config", async ({ req, json, broadcast }) => {
+      try {
+        const body = await req.json()
+        const config = {
+          version: body.version ?? 1,
+          baseImage: body.baseImage ?? "docker.io/alpine:3.19",
+          customDockerfilePath: body.customDockerfilePath ?? ".pi/easy-workflow/Dockerfile.custom",
+          generatedDockerfilePath: body.generatedDockerfilePath ?? ".pi/easy-workflow/Dockerfile.generated",
+          packages: body.packages ?? [],
+          lastBuild: body.lastBuild ?? null,
+        }
+
+        if (this.imageManager) {
+          this.imageManager.saveContainerConfig(process.cwd(), config)
+        }
+
+        broadcast({ type: "container_config_updated", payload: config })
+        return json(config)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to save config: ${message}` }, 500)
+      }
+    })
+
+    // Get installed packages from database
+    this.router.get("/api/container/packages", ({ json }) => {
+      try {
+        const packages = this.db.getContainerPackages()
+        return json({ packages })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to get packages: ${message}` }, 500)
+      }
+    })
+
+    // Add a package
+    this.router.post("/api/container/packages", async ({ req, json, broadcast }) => {
+      try {
+        const body = await req.json()
+        const pkg = {
+          name: String(body.name ?? "").trim(),
+          category: String(body.category ?? "tool"),
+          versionConstraint: body.versionConstraint ? String(body.versionConstraint) : undefined,
+          installOrder: Number(body.installOrder ?? 0),
+          source: String(body.source ?? "manual"),
+        }
+
+        if (!pkg.name) {
+          return json({ error: "Package name is required" }, 400)
+        }
+
+        const added = this.db.addContainerPackage(pkg)
+        broadcast({ type: "container_package_added", payload: added })
+        return json(added, 201)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to add package: ${message}` }, 500)
+      }
+    })
+
+    // Remove a package
+    this.router.delete("/api/container/packages/:name", ({ params, json, broadcast }) => {
+      try {
+        const name = decodeURIComponent(params.name)
+        this.db.removeContainerPackage(name)
+        broadcast({ type: "container_package_removed", payload: { name } })
+        return json({ ok: true })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to remove package: ${message}` }, 500)
+      }
+    })
+
+    // Validate packages (check if they exist in Alpine repos)
+    this.router.post("/api/container/validate", async ({ req, json }) => {
+      try {
+        if (!this.imageManager) {
+          return json({ error: "Container image manager not available" }, 503)
+        }
+
+        const body = await req.json()
+        const packages = Array.isArray(body.packages) ? body.packages : []
+
+        if (packages.length === 0) {
+          return json({ valid: [], invalid: [], suggestions: {} })
+        }
+
+        const result = await this.imageManager.validatePackages(packages)
+        return json(result)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Validation failed: ${message}` }, 500)
+      }
+    })
+
+    // Get generated Dockerfile preview
+    this.router.get("/api/container/dockerfile", ({ json }) => {
+      try {
+        // Create a temporary image manager to generate Dockerfile even when container mode is disabled
+        const tempManager = this.imageManager ?? new ContainerImageManager({
+          imageName: "pi-agent:custom",
+          imageSource: "dockerfile",
+          dockerfilePath: "docker/pi-agent/Dockerfile",
+          cacheDir: join(process.cwd(), ".pi", "easy-workflow"),
+        })
+
+        const config = tempManager.loadContainerConfig(process.cwd())
+        const dockerfile = tempManager.generateDockerfile(config)
+        return json({ dockerfile, config })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to generate Dockerfile: ${message}` }, 500)
+      }
+    })
+
+    // Get custom Dockerfile content
+    this.router.get("/api/container/dockerfile/custom", ({ json }) => {
+      try {
+        const customPath = join(process.cwd(), ".pi", "easy-workflow", "Dockerfile.custom")
+        if (!existsSync(customPath)) {
+          // Return empty content with template
+          return json({
+            content: `# Custom Dockerfile - User Editable\n# Add your custom RUN commands here\n# These will be appended to the generated Dockerfile\n\n# Example:\n# RUN echo "Custom configuration" >> /etc/motd\n`,
+            exists: false,
+          })
+        }
+        const content = readFileSync(customPath, "utf-8")
+        return json({ content, exists: true })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to read custom Dockerfile: ${message}` }, 500)
+      }
+    })
+
+    // Save custom Dockerfile content
+    this.router.put("/api/container/dockerfile/custom", async ({ req, json, broadcast }) => {
+      try {
+        const body = await req.json()
+        const content = String(body.content ?? "")
+
+        const customDir = join(process.cwd(), ".pi", "easy-workflow")
+        const customPath = join(customDir, "Dockerfile.custom")
+
+        if (!existsSync(customDir)) {
+          mkdirSync(customDir, { recursive: true })
+        }
+
+        writeFileSync(customPath, content, "utf-8")
+
+        broadcast({ type: "container_dockerfile_custom_updated", payload: { path: customPath } })
+        return json({ ok: true, path: customPath })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to save custom Dockerfile: ${message}` }, 500)
+      }
+    })
+
+    // Trigger container image build
+    this.router.post("/api/container/build", async ({ req, json, broadcast }) => {
+      try {
+        if (!this.imageManager) {
+          return json({ error: "Container image manager not available" }, 503)
+        }
+
+        const body = await req.json()
+        const config = this.imageManager.loadContainerConfig(process.cwd())
+
+        // Override packages if provided
+        if (body.packages) {
+          config.packages = body.packages
+        }
+
+        const imageTag = body.imageTag ?? `pi-agent:custom-${Date.now()}`
+
+        // Create build record
+        const buildId = this.db.createContainerBuild({
+          status: "running",
+          startedAt: Math.floor(Date.now() / 1000),
+          packagesHash: this.hashPackages(config.packages),
+          imageTag,
+        })
+
+        broadcast({ type: "container_build_started", payload: { buildId, imageTag, status: "running" } })
+
+        // Start build in background
+        const logs: string[] = []
+
+        this.imageManager.buildCustomImage(
+          config,
+          imageTag,
+          {
+            onLog: (line) => {
+              logs.push(line)
+              // Send periodic updates
+              if (logs.length % 10 === 0) {
+                broadcast({
+                  type: "container_build_progress",
+                  payload: { buildId, logs: logs.slice(-10), status: "running" },
+                })
+              }
+            },
+            onStatus: (status) => {
+              const finalStatus = status.status === "success" ? "success" : status.status === "failed" ? "failed" : "running"
+              this.db.updateContainerBuild(buildId, {
+                status: finalStatus,
+                completedAt: Math.floor(Date.now() / 1000),
+              })
+
+              if (status.status === "success") {
+                // Update config with last build info
+                config.lastBuild = {
+                  timestamp: new Date().toISOString(),
+                  imageTag,
+                  success: true,
+                }
+                this.imageManager.saveContainerConfig(process.cwd(), config)
+              }
+
+              broadcast({
+                type: "container_build_completed",
+                payload: { buildId, status: finalStatus, logs, imageTag },
+              })
+            },
+            isCancelled: () => false,
+          }
+        ).then((result) => {
+          // Final update will be handled by onStatus callback
+        }).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error)
+          this.db.updateContainerBuild(buildId, {
+            status: "failed",
+            completedAt: Math.floor(Date.now() / 1000),
+            errorMessage: message,
+          })
+          broadcast({
+            type: "container_build_completed",
+            payload: { buildId, status: "failed", logs, imageTag, error: message },
+          })
+        })
+
+        return json({ buildId, status: "running", imageTag })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to start build: ${message}` }, 500)
+      }
+    })
+
+    // Get build status
+    this.router.get("/api/container/build-status", ({ url, json }) => {
+      try {
+        const limit = Number(url.searchParams.get("limit") ?? 10)
+        const builds = this.db.getContainerBuilds(limit)
+        return json({ builds })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to get builds: ${message}` }, 500)
+      }
+    })
+
+    // Cancel running build
+    this.router.post("/api/container/build/cancel", async ({ req, json, broadcast }) => {
+      try {
+        const body = await req.json()
+        const buildId = body.buildId
+
+        if (!buildId) {
+          return json({ error: "buildId is required" }, 400)
+        }
+
+        this.db.updateContainerBuild(buildId, {
+          status: "cancelled",
+          completedAt: Math.floor(Date.now() / 1000),
+        })
+
+        broadcast({ type: "container_build_cancelled", payload: { buildId } })
+        return json({ ok: true, buildId })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to cancel build: ${message}` }, 500)
+      }
+    })
+
+    // Apply a preset profile
+    this.router.post("/api/container/profiles/:id/apply", async ({ params, req, json, broadcast }) => {
+      try {
+        if (!this.imageManager) {
+          return json({ error: "Container image manager not available" }, 503)
+        }
+
+        const profileId = params.id
+        const profilesPath = join(__dirname, "..", "config", "container-profiles.json")
+
+        if (!existsSync(profilesPath)) {
+          return json({ error: "Profiles not found" }, 404)
+        }
+
+        const raw = readFileSync(profilesPath, "utf-8")
+        const data = JSON.parse(raw)
+        const profile = data.profiles.find((p: { id: string }) => p.id === profileId)
+
+        if (!profile) {
+          return json({ error: `Profile '${profileId}' not found` }, 404)
+        }
+
+        const config = this.imageManager.loadContainerConfig(process.cwd())
+
+        // Handle profile extension
+        let packagesToAdd = [...profile.packages]
+        if (profile.extends) {
+          const parentProfile = data.profiles.find((p: { id: string }) => p.id === profile.extends)
+          if (parentProfile) {
+            packagesToAdd = [...parentProfile.packages, ...packagesToAdd]
+          }
+        }
+
+        // Convert to PackageDefinition format
+        const packageDefs = packagesToAdd.map((pkg: { name: string; category: string }, idx: number) => ({
+          name: pkg.name,
+          category: pkg.category,
+          installOrder: config.packages.length + idx,
+        }))
+
+        // Merge with existing packages
+        const existingNames = new Set(config.packages.map(p => p.name))
+        const newPackages = packageDefs.filter((p: { name: string }) => !existingNames.has(p.name))
+        config.packages = [...config.packages, ...newPackages]
+
+        // Save updated config
+        this.imageManager.saveContainerConfig(process.cwd(), config)
+
+        // Save to database
+        for (const pkg of newPackages) {
+          this.db.addContainerPackage({
+            name: pkg.name,
+            category: pkg.category,
+            installOrder: pkg.installOrder,
+            source: `profile:${profileId}`,
+          })
+        }
+
+        broadcast({
+          type: "container_profile_applied",
+          payload: { profileId, packagesAdded: newPackages.length, config },
+        })
+
+        return json({
+          ok: true,
+          profileId,
+          packagesAdded: newPackages.length,
+          packages: config.packages,
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to apply profile: ${message}` }, 500)
+      }
+    })
+
+    // ---- End Container Configuration Routes ----
+  }
+
+  private hashPackages(packages: PackageDefinition[]): string {
+    const names = packages.map(p => p.name).sort().join(",")
+    // Simple hash for packages
+    let hash = 0
+    for (let i = 0; i < names.length; i++) {
+      const char = names.charCodeAt(i)
+      hash = ((hash << 5) - hash) + char
+      hash = hash & hash
+    }
+    return Math.abs(hash).toString(16).slice(0, 8)
   }
 }

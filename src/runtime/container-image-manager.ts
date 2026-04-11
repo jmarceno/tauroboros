@@ -1,8 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { dirname, join } from "path"
 import { spawn } from "child_process"
+import type { PackageDefinition, ContainerConfig, ContainerProfile, PackageValidationResult, ContainerBuildResult, ContainerBuildStatus } from "../db/types.ts"
 
 export type ImageStatus = "not_present" | "preparing" | "ready" | "error"
+export type BuildStatus = "pending" | "running" | "success" | "failed" | "cancelled"
 
 export interface ImageCache {
   imageName: string
@@ -22,6 +24,12 @@ export interface ImageStatusChangeEvent {
 
 export type ImageStatusChangeHandler = (event: ImageStatusChangeEvent) => void
 
+export interface ContainerBuildProgressHandler {
+  onLog: (line: string) => void
+  onStatus: (status: ContainerBuildStatus) => void
+  isCancelled: () => boolean
+}
+
 export interface ContainerImageManagerOptions {
   imageName: string
   imageSource: "dockerfile" | "registry"
@@ -30,6 +38,33 @@ export interface ContainerImageManagerOptions {
   cacheDir: string
   onStatusChange?: ImageStatusChangeHandler
 }
+
+// Dockerfile template for Alpine-based custom images
+const DOCKERFILE_TEMPLATE = `# Generated Dockerfile - Custom Pi Agent Image
+# Base: docker.io/alpine:3.19
+
+FROM docker.io/alpine:3.19
+
+# Install base dependencies
+RUN apk add --no-cache \\
+    curl \\
+    git \\
+    bash \\
+    nodejs \\
+    npm
+
+# Install user-selected packages (sorted by install order)
+{{PACKAGES}}
+
+# Set working directory
+WORKDIR /workspace
+
+# Custom user Dockerfile content (preserved)
+{{CUSTOM_DOCKERFILE}}
+
+# Default command
+CMD ["sh"]
+`
 
 /**
  * ContainerImageManager handles the lifecycle of the container image.
@@ -373,5 +408,267 @@ export class ContainerImageManager {
         reject(err)
       })
     })
+  }
+
+  // ===== Custom Container Image Configuration =====
+
+  /**
+   * Generate a Dockerfile from template + packages + custom content
+   */
+  generateDockerfile(config: ContainerConfig): string {
+    const baseImage = config.baseImage || "docker.io/alpine:3.19"
+    const packages = config.packages || []
+
+    // Sort packages by install order
+    const sortedPackages = [...packages].sort((a, b) => (a.installOrder || 0) - (b.installOrder || 0))
+
+    // Generate package installation commands
+    const packageLines = sortedPackages.map(pkg => {
+      if (pkg.versionConstraint) {
+        return `    ${pkg.name}=${pkg.versionConstraint} \\\n`
+      }
+      return `    ${pkg.name} \\\n`
+    }).join("")
+
+    // Read custom Dockerfile if exists
+    let customContent = ""
+    if (config.customDockerfilePath && existsSync(config.customDockerfilePath)) {
+      try {
+        customContent = readFileSync(config.customDockerfilePath, "utf-8")
+        // Add comment if not already present
+        if (!customContent.includes("# User custom Dockerfile")) {
+          customContent = `# User custom Dockerfile\n${customContent}`
+        }
+      } catch {
+        // Ignore read errors
+      }
+    }
+
+    // Build package install block
+    const packageBlock = packages.length > 0
+      ? `RUN apk add --no-cache \\\n${packageLines}`
+      : "# No additional packages selected"
+
+    return DOCKERFILE_TEMPLATE
+      .replace("docker.io/alpine:3.19", baseImage)
+      .replace("{{PACKAGES}}", packageBlock)
+      .replace("{{CUSTOM_DOCKERFILE}}", customContent || "# No custom Dockerfile content")
+  }
+
+  /**
+   * Validate packages exist in Alpine repos using apk search
+   */
+  async validatePackages(packages: string[]): Promise<PackageValidationResult> {
+    const valid: string[] = []
+    const invalid: string[] = []
+    const suggestions: Record<string, string[]> = {}
+
+    for (const pkg of packages) {
+      try {
+        // Use apk search to check if package exists
+        const result = await this.execPodman([
+          "run", "--rm", "docker.io/alpine:3.19",
+          "sh", "-c", `apk search --exact "${pkg}" 2>/dev/null | head -1`
+        ])
+
+        const found = result.stdout.trim()
+        if (found && (found === pkg || found.startsWith(pkg + "-"))) {
+          valid.push(pkg)
+        } else {
+          invalid.push(pkg)
+          // Try to find suggestions
+          try {
+            const suggestResult = await this.execPodman([
+              "run", "--rm", "docker.io/alpine:3.19",
+              "sh", "-c", `apk search "${pkg}*" 2>/dev/null | head -5`
+            ])
+            const suggestionsList = suggestResult.stdout.trim().split("\n").filter(Boolean)
+            if (suggestionsList.length > 0) {
+              suggestions[pkg] = suggestionsList.slice(0, 5)
+            }
+          } catch {
+            // Ignore suggestion errors
+          }
+        }
+      } catch {
+        invalid.push(pkg)
+      }
+    }
+
+    return { valid, invalid, suggestions }
+  }
+
+  /**
+   * Build a custom image with the generated Dockerfile
+   */
+  async buildCustomImage(
+    config: ContainerConfig,
+    imageTag: string,
+    progressHandler?: ContainerBuildProgressHandler
+  ): Promise<ContainerBuildResult> {
+    const logs: string[] = []
+    const dockerfile = this.generateDockerfile(config)
+    const dockerfilePath = join(this.options.cacheDir, "Dockerfile.generated")
+
+    // Save generated Dockerfile
+    try {
+      writeFileSync(dockerfilePath, dockerfile, "utf-8")
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      return { success: false, imageTag, logs: [`Failed to save Dockerfile: ${errorMessage}`] }
+    }
+
+    return new Promise((resolve, reject) => {
+      const proc = spawn(
+        "podman",
+        ["build", "-t", imageTag, "-f", dockerfilePath, "."],
+        {
+          cwd: process.cwd(),
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      )
+
+      proc.stdout?.on("data", (data: Buffer) => {
+        const chunk = data.toString()
+        const lines = chunk.split("\n").filter(l => l.trim())
+        for (const line of lines) {
+          logs.push(line)
+          progressHandler?.onLog(line)
+        }
+      })
+
+      proc.stderr?.on("data", (data: Buffer) => {
+        const chunk = data.toString()
+        const lines = chunk.split("\n").filter(l => l.trim())
+        for (const line of lines) {
+          logs.push(line)
+          progressHandler?.onLog(line)
+        }
+      })
+
+      proc.on("close", (code) => {
+        if (code === 0) {
+          progressHandler?.onStatus({
+            status: "success",
+            message: "Build completed successfully",
+            logs,
+            canCancel: false,
+          })
+          resolve({ success: true, imageTag, logs })
+        } else {
+          const errorMessage = `Build failed with exit code ${code}`
+          progressHandler?.onStatus({
+            status: "failed",
+            message: errorMessage,
+            logs,
+            canCancel: false,
+          })
+          resolve({ success: false, imageTag, logs })
+        }
+      })
+
+      proc.on("error", (err) => {
+        const errorMessage = `Failed to spawn podman build: ${err.message}`
+        progressHandler?.onStatus({
+          status: "failed",
+          message: errorMessage,
+          logs,
+          canCancel: false,
+        })
+        resolve({ success: false, imageTag, logs: [...logs, errorMessage] })
+      })
+    })
+  }
+
+  /**
+   * Load container configuration from .pi/easy-workflow/container-config.json
+   */
+  loadContainerConfig(projectRoot: string): ContainerConfig {
+    const configPath = join(projectRoot, ".pi", "easy-workflow", "container-config.json")
+    const defaultConfig: ContainerConfig = {
+      version: 1,
+      baseImage: "docker.io/alpine:3.19",
+      customDockerfilePath: ".pi/easy-workflow/Dockerfile.custom",
+      generatedDockerfilePath: ".pi/easy-workflow/Dockerfile.generated",
+      packages: [],
+      lastBuild: null,
+    }
+
+    if (!existsSync(configPath)) {
+      return defaultConfig
+    }
+
+    try {
+      const raw = readFileSync(configPath, "utf-8")
+      const parsed = JSON.parse(raw)
+      return {
+        ...defaultConfig,
+        ...parsed,
+        packages: parsed.packages || [],
+      }
+    } catch {
+      return defaultConfig
+    }
+  }
+
+  /**
+   * Save container configuration to .pi/easy-workflow/container-config.json
+   */
+  saveContainerConfig(projectRoot: string, config: ContainerConfig): void {
+    const configDir = join(projectRoot, ".pi", "easy-workflow")
+    const configPath = join(configDir, "container-config.json")
+
+    if (!existsSync(configDir)) {
+      mkdirSync(configDir, { recursive: true })
+    }
+
+    writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
+  }
+
+  /**
+   * Ensure custom Dockerfile exists with template content
+   */
+  ensureCustomDockerfile(projectRoot: string): string {
+    const customPath = join(projectRoot, ".pi", "easy-workflow", "Dockerfile.custom")
+
+    if (!existsSync(customPath)) {
+      const template = `# Custom Dockerfile - User Editable
+# Add your custom RUN commands here
+# These will be appended to the generated Dockerfile
+
+# Example:
+# RUN echo "Custom configuration" >> /etc/motd
+`
+      const customDir = dirname(customPath)
+      if (!existsSync(customDir)) {
+        mkdirSync(customDir, { recursive: true })
+      }
+      writeFileSync(customPath, template, "utf-8")
+    }
+
+    return customPath
+  }
+
+  /**
+   * Apply a preset profile to the configuration
+   */
+  applyProfile(config: ContainerConfig, profile: ContainerProfile): ContainerConfig {
+    const existingPackages = new Map(config.packages.map(p => [p.name, p]))
+
+    // Add profile packages
+    for (const pkg of profile.packages) {
+      if (!existingPackages.has(pkg.name)) {
+        existingPackages.set(pkg.name, {
+          name: pkg.name,
+          category: pkg.category,
+          installOrder: config.packages.length + profile.packages.findIndex(p => p.name === pkg.name),
+        })
+      }
+    }
+
+    return {
+      ...config,
+      packages: Array.from(existingPackages.values()),
+    }
   }
 }

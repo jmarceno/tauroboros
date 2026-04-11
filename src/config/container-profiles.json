@@ -1,0 +1,103 @@
+{
+  "profiles": [
+    {
+      "id": "web-dev",
+      "name": "Web Development",
+      "description": "Chrome, Playwright dependencies, Node.js tools",
+      "packages": [
+        { "name": "chromium", "category": "browser" },
+        { "name": "chromium-chromedriver", "category": "browser" },
+        { "name": "nss", "category": "system" },
+        { "name": "freetype", "category": "system" },
+        { "name": "harfbuzz", "category": "system" },
+        { "name": "ttf-freefont", "category": "system" }
+      ]
+    },
+    {
+      "id": "rust-dev",
+      "name": "Rust Development",
+      "description": "Rust compiler, Cargo, and build essentials",
+      "packages": [
+        { "name": "rust", "category": "language" },
+        { "name": "cargo", "category": "language" },
+        { "name": "build-base", "category": "build" },
+        { "name": "openssl-dev", "category": "build" },
+        { "name": "pkgconfig", "category": "build" }
+      ]
+    },
+    {
+      "id": "python-dev",
+      "name": "Python Development",
+      "description": "Python 3, pip, and development headers",
+      "packages": [
+        { "name": "python3", "category": "language" },
+        { "name": "py3-pip", "category": "language" },
+        { "name": "python3-dev", "category": "build" },
+        { "name": "gcc", "category": "build" },
+        { "name": "musl-dev", "category": "build" }
+      ]
+    },
+    {
+      "id": "data-science",
+      "name": "Data Science",
+      "description": "Python with common data science libraries support",
+      "extends": "python-dev",
+      "packages": [
+        { "name": "lapack-dev", "category": "math" },
+        { "name": "openblas-dev", "category": "math" },
+        { "name": "libffi-dev", "category": "build" }
+      ]
+    },
+    {
+      "id": "go-dev",
+      "name": "Go Development",
+      "description": "Go compiler and standard tools",
+      "packages": [
+        { "name": "go", "category": "language" },
+        { "name": "git", "category": "tool" },
+        { "name": "make", "category": "build" }
+      ]
+    },
+    {
+      "id": "node-dev",
+      "name": "Node.js Development",
+      "description": "Additional Node.js development tools",
+      "packages": [
+        { "name": "yarn", "category": "tool" },
+        { "name": "npm", "category": "tool" },
+        { "name": "nodejs", "category": "language" }
+      ]
+    },
+    {
+      "id": "docker-tools",
+      "name": "Docker Tools",
+      "description": "Tools for working with Docker/Podman",
+      "packages": [
+        { "name": "docker-cli", "category": "tool" },
+        { "name": "buildah", "category": "tool" },
+        { "name": "skopeo", "category": "tool" }
+      ]
+    },
+    {
+      "id": "cloud-cli",
+      "name": "Cloud CLI Tools",
+      "description": "AWS, Azure, and GCP CLI tools",
+      "packages": [
+        { "name": "aws-cli", "category": "tool" },
+        { "name": "azure-cli", "category": "tool" },
+        { "name": "google-cloud-sdk", "category": "tool" }
+      ]
+    },
+    {
+      "id": "database-tools",
+      "name": "Database Tools",
+      "description": "Database clients and tools",
+      "packages": [
+        { "name": "postgresql-client", "category": "tool" },
+        { "name": "mysql-client", "category": "tool" },
+        { "name": "redis", "category": "tool" },
+        { "name": "sqlite", "category": "tool" }
+      ]
+    }
+  ]
+}

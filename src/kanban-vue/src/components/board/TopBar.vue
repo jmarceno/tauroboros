@@ -10,6 +10,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   toggleExecution: []
   openOptions: []
+  openContainerConfig: []
 }>()
 
 const isRunning = computed(() => props.consumedSlots > 0)
@@ -61,6 +62,12 @@ const isRunning = computed(() => props.consumedSlots > 0)
     </div>
 
     <div class="flex items-center gap-3 flex-wrap justify-end">
+      <button class="btn bg-dark-surface2 border-dark-surface3 text-dark-text hover:bg-dark-surface flex items-center gap-2" @click="emit('openContainerConfig')">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+        </svg>
+        Container
+      </button>
       <button class="btn bg-dark-surface2 border-dark-surface3 text-dark-text hover:bg-dark-surface" @click="emit('openOptions')">
         Options
       </button>
