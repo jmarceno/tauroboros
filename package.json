@@ -6,7 +6,9 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
-    "build": "bun build --target=bun src/index.ts --outdir dist",
+    "build": "bun build --target=bun src/index.ts --outdir dist && bun run kanban:build",
+    "kanban:build": "cd src/kanban-vue && npm install && npm run build",
+    "kanban:dev": "cd src/kanban-vue && npm install && npm run dev",
     "test": "bun test",
     "test:e2e": "bun run tests/e2e/prepare.ts && bunx playwright test",
     "test:e2e:ui": "bun run tests/e2e/prepare.ts && bunx playwright test --ui",

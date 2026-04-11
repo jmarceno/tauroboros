@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto"
-import { readFileSync } from "fs"
+import { readFileSync, existsSync } from "fs"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import type { InfrastructureSettings } from "../config/settings.ts"
@@ -17,7 +17,10 @@ import type { RequestContext } from "./types.ts"
 import { WebSocketHub } from "./websocket.ts"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const KANBAN_HTML = readFileSync(join(__dirname, "..", "kanban", "index.html"), "utf-8")
+
+// Static file serving paths - Vue kanban only
+const KANBAN_VUE_DIST = join(__dirname, "..", "kanban-vue", "dist")
+const KANBAN_VUE_INDEX = join(KANBAN_VUE_DIST, "index.html")
 
 const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "autoCommit", "deleteWorktree", "skipPermissionAsking"] as const
 
@@ -290,7 +293,32 @@ export class PiKanbanServer {
   }
 
   private registerRoutes(): void {
-    this.router.get("/", () => new Response(KANBAN_HTML, { headers: { "Content-Type": "text/html" } }))
+    // Serve index.html for root and for any non-API route (SPA routing)
+    this.router.get("/", () => new Response(readFileSync(KANBAN_VUE_INDEX, "utf-8"), { headers: { "Content-Type": "text/html" } }))
+
+    // Static file serving for kanban-vue assets
+    this.router.get("/assets/:file", ({ params }) => {
+      const filePath = join(KANBAN_VUE_DIST, "assets", params.file)
+      if (!existsSync(filePath)) {
+        return new Response("Not found", { status: 404 })
+      }
+      const content = readFileSync(filePath)
+      const ext = params.file.split('.').pop()
+      const contentType = {
+        js: "application/javascript",
+        css: "text/css",
+        svg: "image/svg+xml",
+        png: "image/png",
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        gif: "image/gif",
+        woff2: "font/woff2",
+        woff: "font/woff",
+        ttf: "font/ttf",
+      }[ext || ""] || "application/octet-stream"
+      return new Response(content, { headers: { "Content-Type": contentType } })
+    })
+
     this.router.get("/healthz", ({ json }) => json({ ok: true, wsClients: this.wsHub.size() }))
 
     this.router.get("/api/container/image-status", ({ json }) => {
