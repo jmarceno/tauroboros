@@ -12,8 +12,27 @@ const isAssistant = computed(() => props.message.role === 'assistant')
 const isSystem = computed(() => props.message.role === 'system')
 const isTool = computed(() => props.message.role === 'tool' || props.message.messageType === 'tool_call' || props.message.messageType === 'tool_result')
 
+// Check if this is a thinking message
+const isThinking = computed(() => {
+  const content = props.message.contentJson || {}
+  return content.isThinking === true || props.message.messageType === 'thinking'
+})
+
+// Check if this is a streaming/incomplete message
+const isStreaming = computed(() => {
+  const content = props.message.contentJson || {}
+  return content.streaming === true
+})
+
 const messageText = computed(() => {
   const content = props.message.contentJson
+  
+  // For thinking messages, show the thinking content
+  if (isThinking.value && typeof content.thinking === 'string') {
+    return content.thinking
+  }
+  
+  // For regular messages
   if (typeof content.text === 'string') return content.text
   if (typeof content.message === 'string') return content.message
   return JSON.stringify(content)
@@ -65,12 +84,22 @@ const formatDate = (timestamp: number) => {
         v-if="!isUser"
         class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs"
         :class="{
-          'bg-accent/20 text-accent': isAssistant,
+          'bg-accent/20 text-accent': isAssistant && !isThinking,
+          'bg-dark-surface3 text-dark-dim/50': isThinking,
           'bg-dark-surface3 text-dark-dim': isSystem || isTool
         }"
       >
         <svg
-          v-if="isAssistant"
+          v-if="isAssistant && !isThinking"
+          class="w-4 h-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+        </svg>
+        <svg
+          v-else-if="isThinking"
           class="w-4 h-4"
           fill="none"
           stroke="currentColor"
@@ -104,11 +133,20 @@ const formatDate = (timestamp: number) => {
         class="max-w-[85%] rounded-lg px-3 py-2 text-sm prose prose-invert prose-sm"
         :class="{
           'bg-accent text-white': isUser,
-          'bg-dark-surface2 text-dark-text': isAssistant,
+          'bg-dark-surface2 text-dark-text': isAssistant && !isThinking,
+          'bg-transparent border border-dark-surface3/50 text-dark-dim/70 italic': isThinking,
           'bg-dark-surface3/50 text-dark-dim text-xs italic': isSystem,
           'bg-dark-surface3/80 text-dark-dim text-xs': isTool
         }"
       >
+        <!-- Thinking Label -->
+        <div 
+          v-if="isThinking" 
+          class="text-xs text-dark-dim/40 mb-1 font-medium select-none"
+        >
+          thinking...
+        </div>
+
         <!-- Render HTML content (from TipTap) -->
         <div
           v-if="messageText.startsWith('<')"
@@ -118,6 +156,7 @@ const formatDate = (timestamp: number) => {
         <div
           v-else
           class="whitespace-pre-wrap"
+          :class="{ 'text-dark-dim/60': isThinking }"
         >{{ messageText }}</div>
 
         <!-- Tool Call Details -->
@@ -138,8 +177,9 @@ const formatDate = (timestamp: number) => {
           </span>
         </div>
 
-        <!-- Timestamp in message -->
+        <!-- Timestamp in message (only for non-streaming complete messages) -->
         <div
+          v-if="!isStreaming && !isThinking"
           class="mt-1 text-xs opacity-50 text-right"
           :class="{
             'text-white/50': isUser,
@@ -208,4 +248,9 @@ const formatDate = (timestamp: number) => {
 /* Dark theme adjustments */
 .bg-accent .prose :deep(code) { background: rgba(0, 0, 0, 0.3); }
 .bg-accent .prose :deep(pre) { background: rgba(0, 0, 0, 0.3); }
+
+/* Thinking-specific styling */
+.prose:has(.text-dark-dim\/60) :deep(*) {
+  opacity: 0.85;
+}
 </style>

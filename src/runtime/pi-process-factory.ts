@@ -14,6 +14,8 @@ export interface UnifiedPiProcessOptions {
   onSessionMessage?: (message: SessionMessage) => void
   forceRuntime?: "native" | "container"
   settings?: InfrastructureSettings
+  systemPrompt?: string
+  disableAutoSessionMessages?: boolean
 }
 
 /**
@@ -59,6 +61,8 @@ export function createPiProcess(
         onOutput: options.onOutput,
         onSessionMessage: options.onSessionMessage,
         settings: options.settings,
+        systemPrompt: options.systemPrompt,
+        disableAutoSessionMessages: options.disableAutoSessionMessages,
       })
     }
 
@@ -78,6 +82,8 @@ export function createPiProcess(
     onOutput: options.onOutput,
     onSessionMessage: options.onSessionMessage,
     settings: options.settings,
+    systemPrompt: options.systemPrompt,
+    disableAutoSessionMessages: options.disableAutoSessionMessages,
   })
 }
 

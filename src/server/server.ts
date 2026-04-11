@@ -6,11 +6,12 @@ import type { InfrastructureSettings } from "../config/settings.ts"
 import { buildExecutionGraph, getExecutableTasks, getExecutionGraphTasks, resolveDependencyChain } from "../execution-plan.ts"
 import { discoverPiModels } from "../pi/model-discovery.ts"
 import { isTaskAwaitingPlanApproval } from "../task-state.ts"
-import type { BestOfNConfig, ImageStatusPayload, Task, TaskRun, ThinkingLevel, WSMessage } from "../types.ts"
+import type { BestOfNConfig, ImageStatusPayload, Task, TaskRun, ThinkingLevel, WSMessage, SessionMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
 import { runStartupRecovery } from "../recovery/startup-recovery.ts"
 import { ContainerImageManager } from "../runtime/container-image-manager.ts"
 import { SmartRepairService, type SmartRepairAction } from "../runtime/smart-repair.ts"
+import { PlanningSessionManager, type ContextAttachment } from "../runtime/planning-session.ts"
 import { sendTelegramNotification, type TelegramConfig } from "../telegram.ts"
 import { Router } from "./router.ts"
 import type { RequestContext } from "./types.ts"
@@ -122,6 +123,7 @@ export class PiKanbanServer {
   private readonly smartRepair: SmartRepairService
   private readonly imageManager?: ContainerImageManager
   private readonly settings?: InfrastructureSettings
+  private readonly planningSessionManager: PlanningSessionManager
 
   constructor(
     db: PiKanbanDB,
@@ -167,6 +169,9 @@ export class PiKanbanServer {
         },
       })
     }
+
+    // Initialize planning session manager
+    this.planningSessionManager = new PlanningSessionManager(this.db, undefined, opts.settings)
 
     // Register Telegram notification listener for task status changes
     this.db.setTaskStatusChangeListener((taskId: string, oldStatus: string, newStatus: string) => {
@@ -1053,23 +1058,145 @@ export class PiKanbanServer {
       return json(sessions.map((s) => ({ ...s, sessionUrl: this.sessionUrlFor(s.id) })))
     })
 
-    // Create a new planning session
+    // Create a new planning session with Pi integration
     this.router.post("/api/planning/sessions", async ({ req, json, broadcast }) => {
       const body = await req.json()
-      const id = randomUUID().slice(0, 8)
+      
+      // Get the planning system prompt
+      const planningPrompt = this.db.getPlanningPrompt("default")
+      if (!planningPrompt) {
+        return json({ error: "Planning prompt not configured" }, 500)
+      }
 
-      const session = this.db.createWorkflowSession({
-        id,
-        sessionKind: "planning",
-        status: "starting",
-        cwd: body.cwd ?? process.cwd(),
-        model: body.model ?? "default",
-        thinkingLevel: body.thinkingLevel ?? "default",
-      })
+      try {
+        const { session, planningSession } = await this.planningSessionManager.createSession({
+          cwd: body.cwd ?? process.cwd(),
+          systemPrompt: planningPrompt.promptText,
+          model: body.model ?? "default",
+          thinkingLevel: body.thinkingLevel ?? "default",
+          onMessage: (message: SessionMessage) => {
+            // Broadcast the message to all WebSocket clients
+            broadcast({ type: "planning_session_message", payload: { sessionId: session.id, message } })
+          },
+          onStatusChange: (updatedSession) => {
+            // Broadcast status changes
+            const withUrl = { ...updatedSession, sessionUrl: this.sessionUrlFor(updatedSession.id) }
+            broadcast({ type: "planning_session_updated", payload: withUrl })
+          },
+        })
 
-      const withUrl = { ...session, sessionUrl: this.sessionUrlFor(session.id) }
-      broadcast({ type: "planning_session_created", payload: withUrl })
-      return json(withUrl, 201)
+        const withUrl = { ...session, sessionUrl: this.sessionUrlFor(session.id) }
+        broadcast({ type: "planning_session_created", payload: withUrl })
+        return json(withUrl, 201)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to create planning session: ${message}` }, 500)
+      }
+    })
+
+    // Send a message to a planning session
+    this.router.post("/api/planning/sessions/:id/messages", async ({ params, req, json, broadcast }) => {
+      const session = this.db.getWorkflowSession(params.id)
+      if (!session) return json({ error: "Session not found" }, 404)
+      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+
+      const body = await req.json()
+      const planningSession = this.planningSessionManager.getSession(params.id)
+      
+      if (!planningSession) {
+        return json({ error: "Planning session not active" }, 400)
+      }
+
+      try {
+        await planningSession.sendMessage({
+          content: body.content,
+          contextAttachments: body.contextAttachments as ContextAttachment[] | undefined,
+        })
+
+        return json({ ok: true })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to send message: ${message}` }, 500)
+      }
+    })
+
+    // Create tasks from planning session chat
+    this.router.post("/api/planning/sessions/:id/create-tasks", async ({ params, req, json, broadcast, sessionUrlFor }) => {
+      const session = this.db.getWorkflowSession(params.id)
+      if (!session) return json({ error: "Session not found" }, 404)
+      if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+
+      const body = await req.json()
+      
+      try {
+        // Get all messages from the session
+        const messages = this.db.getSessionMessages(params.id, { limit: 1000, offset: 0 })
+        
+        // Build conversation context
+        const conversationHistory = messages
+          .filter(m => m.messageType === "user_prompt" || m.messageType === "assistant_response")
+          .map(m => ({
+            role: m.role,
+            content: m.contentJson?.text || "",
+          }))
+
+        // Create a task extraction prompt for Pi
+        const taskExtractionPrompt = `Based on the following planning conversation, extract actionable implementation tasks.
+
+Conversation:
+${conversationHistory.map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n")}
+
+Extract tasks and format them as JSON array with the following structure:
+[
+  {
+    "name": "Short task name",
+    "prompt": "Detailed implementation instructions",
+    "status": "backlog",
+    "requirements": ["dependency_task_name_if_any"]
+  }
+]
+
+Respond ONLY with the JSON array, no other text.`
+
+        // Use Pi to extract tasks from the conversation
+        const planningSession = this.planningSessionManager.getSession(params.id)
+        if (!planningSession) {
+          return json({ error: "Planning session not active" }, 400)
+        }
+
+        // Send extraction request
+        await planningSession.sendMessage({
+          content: taskExtractionPrompt,
+        })
+
+        // The task extraction result will be available in the next assistant response
+        // For now, return a placeholder response
+        // In a real implementation, we'd wait for and parse the Pi response
+        
+        // If user provided tasks directly, use those
+        const tasks = body.tasks as Array<{ name: string; prompt: string; status?: string; requirements?: string[] }> | undefined
+        
+        if (tasks && tasks.length > 0) {
+          const createdTasks = []
+          for (const taskData of tasks) {
+            const task = this.db.createTask({
+              id: randomUUID().slice(0, 8),
+              name: taskData.name,
+              prompt: taskData.prompt,
+              status: (taskData.status as Task["status"]) || "backlog",
+              requirements: taskData.requirements || [],
+            })
+            createdTasks.push(normalizeTaskForClient(task, sessionUrlFor))
+            broadcast({ type: "task_created", payload: normalizeTaskForClient(task, sessionUrlFor) })
+          }
+          return json({ tasks: createdTasks, count: createdTasks.length })
+        }
+
+        return json({ message: "Task extraction request sent. The AI will analyze the conversation and suggest tasks in the next response." })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to create tasks: ${message}` }, 500)
+      }
     })
 
     // Get a specific planning session
@@ -1102,6 +1229,9 @@ export class PiKanbanServer {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)
       if (session.sessionKind !== "planning") return json({ error: "Not a planning session" }, 400)
+
+      // Close the Pi process
+      await this.planningSessionManager.closeSession(params.id)
 
       const updated = this.db.updateWorkflowSession(params.id, {
         status: "completed",

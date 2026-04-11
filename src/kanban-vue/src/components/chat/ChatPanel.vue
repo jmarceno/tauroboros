@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, computed } from 'vue'
-import type { ChatSession } from '@/composables/usePlanningChat'
+import { ref, watch, nextTick, onMounted, computed, inject } from 'vue'
+import type { ChatSession, ContextAttachment } from '@/composables/usePlanningChat'
 import type { SessionMessage } from '@/types/api'
 import ChatMessage from './ChatMessage.vue'
 import MarkdownEditor from '@/components/common/MarkdownEditor.vue'
@@ -18,14 +18,14 @@ const emit = defineEmits<{
 }>()
 
 const api = useApi()
+const planningChat = inject<any>('planningChat')
 const messageInput = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
-const isSending = ref(false)
 const isEditingName = ref(false)
 const editedName = ref('')
 const nameInput = ref<HTMLInputElement | null>(null)
 const showAttachMenu = ref(false)
-const attachedContext = ref<string[]>([])
+const attachedContext = ref<ContextAttachment[]>([])
 
 // Auto-scroll to bottom on new messages
 watch(() => props.session.messages.length, async () => {
@@ -77,7 +77,11 @@ const attachFile = async () => {
     for (const file of files) {
       try {
         const text = await file.text()
-        attachedContext.value.push(`File: ${file.name}\n\n${text}`)
+        attachedContext.value.push({
+          type: 'file',
+          name: file.name,
+          content: text,
+        })
       } catch (err) {
         console.error('Failed to read file:', err)
       }
@@ -96,7 +100,11 @@ const attachScreenshot = () => {
 
 const attachCurrentTask = () => {
   // Attach context from the currently selected task if any
-  attachedContext.value.push('Current workspace context')
+  attachedContext.value.push({
+    type: 'task',
+    name: 'Current Task Context',
+    taskId: 'current',
+  })
   showAttachMenu.value = false
 }
 
@@ -105,81 +113,35 @@ const clearAttachedContext = () => {
 }
 
 const sendMessage = async () => {
-  if (!messageInput.value.trim() || isSending.value) return
+  if (!messageInput.value.trim() || props.session.isSending) return
   if (!props.session.session?.id) {
     console.error('No session ID available')
     return
   }
 
-  let content = messageInput.value.trim()
-  
-  // Add attached context if any
-  if (attachedContext.value.length > 0) {
-    content += '\n\n---\n\n**Attached Context:**\n\n' + attachedContext.value.join('\n\n---\n\n')
-    attachedContext.value = [] // Clear after sending
-  }
+  const content = messageInput.value.trim()
+  const attachments = [...attachedContext.value]
   
   messageInput.value = ''
-  isSending.value = true
+  attachedContext.value = [] // Clear after sending
 
   try {
-    // Add user message locally first
-    const userMessage: SessionMessage = {
-      id: `local-${Date.now()}`,
-      sessionId: props.session.session.id,
-      role: 'user',
-      messageType: 'text',
-      contentJson: { text: content },
-      timestamp: Math.floor(Date.now() / 1000),
-      createdAt: Math.floor(Date.now() / 1000),
-    }
-    props.session.messages.push(userMessage)
-
+    await planningChat.sendMessage(props.session.id, content, attachments)
     scrollToBottom()
-
-    // TODO: In a full implementation, this would:
-    // 1. Get the planning prompt from the database via API
-    // 2. Start a Pi session with the planning prompt as system prompt
-    // 3. Send the message to the Pi session
-    // 4. Stream responses back via WebSocket
-    
-    // For now, we simulate a response after a delay
-    // This shows the user that the system is working
-    setTimeout(() => {
-      const assistantMessage: SessionMessage = {
-        id: `local-assistant-${Date.now()}`,
-        sessionId: props.session.session!.id,
-        role: 'assistant',
-        messageType: 'text',
-        contentJson: { text: 'I received your message. To get AI responses, start Pi with the planning system prompt and connect it to this session.' },
-        timestamp: Math.floor(Date.now() / 1000),
-        createdAt: Math.floor(Date.now() / 1000),
-      }
-      props.session.messages.push(assistantMessage)
-      isSending.value = false
-      scrollToBottom()
-    }, 1000)
-
   } catch (e) {
     console.error('Failed to send message:', e)
-    props.session.error = e instanceof Error ? e.message : 'Failed to send message'
-    isSending.value = false
+    scrollToBottom()
   }
 }
 
-const createTasksFromChat = () => {
-  // Extract tasks from the chat messages
-  const chatContent = props.session.messages
-    .filter(m => m.role === 'user' || m.role === 'assistant')
-    .map(m => {
-      const text = typeof m.contentJson?.text === 'string' ? m.contentJson.text : ''
-      return `${m.role}: ${text}`
-    })
-    .join('\n\n')
-  
-  // For now, just log it - in a full implementation, this would create tasks
-  console.log('Creating tasks from chat:', chatContent)
-  emit('createTasks')
+const createTasksFromChat = async () => {
+  try {
+    const result = await planningChat.createTasksFromChat(props.session.id)
+    console.log('Tasks created:', result)
+    emit('createTasks')
+  } catch (e) {
+    console.error('Failed to create tasks:', e)
+  }
 }
 
 const formatTimestamp = (timestamp: number) => {
@@ -318,14 +280,14 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
 
       <!-- Loading Indicator -->
       <div
-        v-if="session.isLoading || isSending"
+        v-if="session.isLoading || session.isSending"
         class="flex items-center gap-2 text-dark-dim text-sm py-2"
       >
         <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
         </svg>
-        <span>{{ session.isLoading ? 'Starting session...' : 'Sending...' }}</span>
+        <span>{{ session.isLoading ? 'Starting session...' : 'Waiting for response...' }}</span>
       </div>
 
       <!-- Error -->
@@ -432,7 +394,7 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
           </svg>
           <span class="truncate max-w-[120px]">
-            {{ ctx.startsWith('File:') ? ctx.split('\n')[0].replace('File:', '').trim() : `Context ${idx + 1}` }}
+            {{ ctx.type === 'file' ? ctx.name : ctx.name }}
           </span>
         </div>
       </div>
@@ -447,7 +409,7 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
 
         <div class="flex items-center justify-between">
           <div class="text-xs text-dark-dim">
-            <span v-if="isSending">Sending...</span>
+            <span v-if="session.isSending">Sending...</span>
             <span v-else-if="session.session?.status === 'starting'">Session starting...</span>
             <span v-else-if="session.session?.status === 'active'">Ready</span>
             <span v-else-if="session.session?.status === 'failed'">Session failed</span>
@@ -457,17 +419,17 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
           <div class="flex items-center gap-2">
             <button
               class="btn btn-sm"
-              :disabled="isSending || !session.session?.id"
+              :disabled="session.isSending || !session.session?.id"
               @click="messageInput = ''"
             >
               Clear
             </button>
             <button
               class="btn btn-primary btn-sm"
-              :disabled="!messageInput.trim() || isSending || !session.session?.id || session.isLoading"
+              :disabled="!messageInput.trim() || session.isSending || !session.session?.id || session.isLoading"
               @click="sendMessage"
             >
-              <span v-if="isSending" class="flex items-center gap-1">
+              <span v-if="session.isSending" class="flex items-center gap-1">
                 <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />

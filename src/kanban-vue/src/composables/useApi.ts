@@ -154,6 +154,20 @@ export function useApi() {
       method: 'POST',
     }),
     getPlanningSessionMessages: (id: string, limit = 500) => request<SessionMessage[]>(`/api/planning/sessions/${id}/messages?limit=${limit}`),
-    getPlanningSessionTimeline: (id: string) => request(`/api/planning/sessions/${id}/timeline`),
+    getPlanningSessionTimeline: (id: string) => request(`/api/planban/sessions/${id}/timeline`),
+    
+    // Send message to planning session
+    sendPlanningMessage: (id: string, content: string, contextAttachments?: Array<{ type: 'file' | 'screenshot' | 'task'; name: string; content?: string; filePath?: string; taskId?: string }>) =>
+      request<{ ok: boolean }>(`/api/planning/sessions/${id}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ content, contextAttachments }),
+      }),
+    
+    // Create tasks from planning session
+    createTasksFromPlanning: (id: string, tasks?: Array<{ name: string; prompt: string; status?: string; requirements?: string[] }>) =>
+      request<{ tasks?: Task[]; count?: number; message?: string }>(`/api/planning/sessions/${id}/create-tasks`, {
+        method: 'POST',
+        body: JSON.stringify({ tasks }),
+      }),
   }
 }

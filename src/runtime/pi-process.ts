@@ -58,6 +58,8 @@ export class PiRpcProcess {
   private readonly onOutput?: (chunk: string) => void
   private readonly onSessionMessage?: (message: SessionMessage) => void
   private readonly settings?: InfrastructureSettings
+  private readonly systemPrompt?: string
+  private readonly disableAutoSessionMessages: boolean
   private proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null
   private requestId = 0
   private readonly pending = new Map<string, Pending>()
@@ -74,12 +76,16 @@ export class PiRpcProcess {
     onOutput?: (chunk: string) => void
     onSessionMessage?: (message: SessionMessage) => void
     settings?: InfrastructureSettings
+    systemPrompt?: string
+    disableAutoSessionMessages?: boolean
   }) {
     this.db = args.db
+    this.disableAutoSessionMessages = args.disableAutoSessionMessages ?? false
     this.session = args.session
     this.onOutput = args.onOutput
     this.onSessionMessage = args.onSessionMessage
     this.settings = args.settings
+    this.systemPrompt = args.systemPrompt
   }
 
   start(): void {
@@ -90,8 +96,14 @@ export class PiRpcProcess {
       ? parseArgs(this.settings.workflow.runtime.piArgs)
       : ["--mode", "rpc", "--no-extensions"]
 
+    // Add system prompt if provided
+    const args = [...configuredArgs]
+    if (this.systemPrompt) {
+      args.push("--system-prompt", this.systemPrompt)
+    }
+
     this.proc = Bun.spawn({
-      cmd: [piBin, ...configuredArgs],
+      cmd: [piBin, ...args],
       cwd: this.session.cwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -383,22 +395,26 @@ export class PiRpcProcess {
       }
     }
 
-    // Project to session messages
-    const message = projectPiEventToSessionMessage({
-      event: parsed,
-      sessionId: this.session.id,
-      taskId: this.session.taskId,
-      taskRunId: this.session.taskRunId,
-    })
-    if (message.contentJson && Object.keys(message.contentJson).length > 0) {
-      const createdMessage = this.db.createSessionMessage(message)
-      if (createdMessage && this.onSessionMessage) {
-        this.onSessionMessage(createdMessage)
+    // Project to session messages (unless disabled for planning sessions)
+    if (!this.disableAutoSessionMessages) {
+      const message = projectPiEventToSessionMessage({
+        event: parsed,
+        sessionId: this.session.id,
+        taskId: this.session.taskId,
+        taskRunId: this.session.taskRunId,
+      })
+      if (message.contentJson && Object.keys(message.contentJson).length > 0) {
+        const createdMessage = this.db.createSessionMessage(message)
+        if (createdMessage && this.onSessionMessage) {
+          this.onSessionMessage(createdMessage)
+        }
       }
-      const text = pullResponseText(parsed)
-      if (text && this.onOutput) {
-        this.onOutput(text)
-      }
+    }
+    
+    // Always call onOutput for response text
+    const text = pullResponseText(parsed)
+    if (text && this.onOutput) {
+      this.onOutput(text)
     }
   }
 

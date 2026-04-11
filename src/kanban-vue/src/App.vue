@@ -348,8 +348,8 @@ ws.on('planning_session_closed', (payload) => {
   toasts.addLog('Planning session closed', 'info')
 })
 
-ws.on('planning_session_message', (payload) => {
-  planningChat.handlePlanningSessionMessage(payload as SessionMessage)
+ws.on('planning_session_message', (payload: { sessionId: string; message: SessionMessage }) => {
+  planningChat.handlePlanningSessionMessage(payload)
 })
 
 // Initialize

@@ -2,6 +2,14 @@ import { ref, computed, watch } from 'vue'
 import type { PlanningSession, PlanningPrompt, SessionMessage } from '@/types/api'
 import { useApi } from './useApi'
 
+export interface ContextAttachment {
+  type: 'file' | 'screenshot' | 'task'
+  name: string
+  content?: string
+  filePath?: string
+  taskId?: string
+}
+
 export interface ChatSession {
   id: string
   name: string
@@ -9,6 +17,7 @@ export interface ChatSession {
   messages: SessionMessage[]
   isMinimized: boolean
   isLoading: boolean
+  isSending: boolean
   error: string | null
 }
 
@@ -77,6 +86,7 @@ export function usePlanningChat() {
       messages: [],
       isMinimized: false,
       isLoading: true,
+      isSending: false,
       error: null,
     }
 
@@ -99,6 +109,45 @@ export function usePlanningChat() {
         sessions.value[idx].error = e instanceof Error ? e.message : 'Failed to create session'
         sessions.value[idx].isLoading = false
       }
+    }
+  }
+
+  const sendMessage = async (sessionId: string, content: string, attachments?: ContextAttachment[]) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session || !session.session?.id) {
+      throw new Error('No active session')
+    }
+
+    if (session.isSending) {
+      throw new Error('Already sending a message')
+    }
+
+    session.isSending = true
+    session.error = null
+
+    try {
+      // The message will appear via WebSocket when the server broadcasts it
+      await api.sendPlanningMessage(session.session.id, content, attachments)
+    } catch (e) {
+      session.error = e instanceof Error ? e.message : 'Failed to send message'
+      throw e
+    } finally {
+      session.isSending = false
+    }
+  }
+
+  const createTasksFromChat = async (sessionId: string, tasks?: Array<{ name: string; prompt: string; status?: string; requirements?: string[] }>) => {
+    const session = sessions.value.find(s => s.id === sessionId)
+    if (!session || !session.session?.id) {
+      throw new Error('No active session')
+    }
+
+    try {
+      const result = await api.createTasksFromPlanning(session.session.id, tasks)
+      return result
+    } catch (e) {
+      console.error('Failed to create tasks:', e)
+      throw e
     }
   }
 
@@ -153,21 +202,31 @@ export function usePlanningChat() {
 
   const addMessageToSession = (sessionId: string, message: SessionMessage) => {
     const session = sessions.value.find(s => s.id === sessionId)
-    if (session) {
-      const existingIdx = session.messages.findIndex(m => m.id === message.id)
-      if (existingIdx >= 0) {
-        session.messages[existingIdx] = message
-      } else {
-        session.messages.push(message)
-      }
-      // Sort by timestamp
-      session.messages.sort((a, b) => {
-        const ta = Number(a.timestamp || 0)
-        const tb = Number(b.timestamp || 0)
-        if (ta !== tb) return ta - tb
-        return Number(a.id || 0) - Number(b.id || 0)
-      })
+    if (!session) return
+
+    // Find existing message by database id or messageId
+    const existingIdx = session.messages.findIndex(m => 
+      m.id === message.id || 
+      (m.messageId && m.messageId === message.messageId)
+    )
+    
+    if (existingIdx >= 0) {
+      // Replace with updated message (backend now handles merging)
+      session.messages[existingIdx] = message
+    } else {
+      session.messages.push(message)
     }
+    
+    // Sort by seq (primary) then timestamp
+    session.messages.sort((a, b) => {
+      const sa = Number(a.seq || 0)
+      const sb = Number(b.seq || 0)
+      if (sa !== sb) return sa - sb
+      const ta = Number(a.timestamp || 0)
+      const tb = Number(b.timestamp || 0)
+      if (ta !== tb) return ta - tb
+      return Number(a.id || 0) - Number(b.id || 0)
+    })
   }
 
   const loadPlanningPrompt = async () => {
@@ -218,10 +277,10 @@ export function usePlanningChat() {
     }
   }
 
-  const handlePlanningSessionMessage = (data: SessionMessage) => {
+  const handlePlanningSessionMessage = (data: { sessionId: string; message: SessionMessage }) => {
     const session = sessions.value.find(s => s.session?.id === data.sessionId)
     if (session) {
-      addMessageToSession(session.id, data)
+      addMessageToSession(session.id, data.message)
     }
   }
 
@@ -260,5 +319,9 @@ export function usePlanningChat() {
     handlePlanningSessionUpdated,
     handlePlanningSessionClosed,
     handlePlanningSessionMessage,
+
+    // Chat actions
+    sendMessage,
+    createTasksFromChat,
   }
 }
