@@ -167,9 +167,9 @@ You have access to file exploration tools to understand the codebase structure w
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" @click.self="emit('close')">
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80" @click.self="emit('close')">
     <div
-      class="bg-dark-surface rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col"
+      class="bg-dark-surface2 rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col border border-dark-surface3"
       @click.stop
     >
       <!-- Header -->

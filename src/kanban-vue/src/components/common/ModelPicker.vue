@@ -40,10 +40,12 @@ const onBlur = () => {
   // Delay to allow clicking on dropdown
   setTimeout(() => {
     showDropdown.value = false
-    // Normalize value on blur
+    // Normalize value on blur and emit only
+    // Let the parent update the prop, which will trigger the watcher to update query
     const normalized = modelSearch.normalizeValue(query.value)
-    query.value = normalized
-    emit('update:modelValue', normalized)
+    if (normalized !== props.modelValue) {
+      emit('update:modelValue', normalized)
+    }
   }, 200)
 }
 

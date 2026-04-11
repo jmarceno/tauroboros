@@ -243,7 +243,7 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
 <template>
   <div class="h-full flex flex-col bg-dark-bg">
     <!-- Session Header -->
-    <div class="flex items-center justify-between px-3 py-2 bg-dark-surface border-b border-dark-surface3">
+    <div class="flex items-center justify-between px-3 py-2 bg-dark-surface2 border-b border-dark-surface3">
       <div class="flex items-center gap-2 min-w-0">
         <!-- Status Indicator -->
         <span
@@ -478,7 +478,7 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
           <!-- Model Menu -->
           <div
             v-if="showModelMenu"
-            class="absolute bottom-full left-0 mb-1 w-64 bg-dark-surface border border-dark-surface3 rounded-lg shadow-xl z-50 py-2"
+            class="absolute bottom-full right-0 mb-1 w-64 bg-dark-surface border border-dark-surface3 rounded-lg shadow-xl z-50 py-2"
           >
             <div class="px-3 py-1 text-xs text-dark-dim border-b border-dark-surface3 mb-2">
               Change Model

@@ -6,17 +6,10 @@ import type { CreateSessionMessageInput, SessionMessage } from "../types.ts"
 import { PiRpcProcess } from "./pi-process.ts"
 import type { PiContainerManager } from "./container-manager.ts"
 import { createPiProcess, type PiRuntimeMode } from "./pi-process-factory.ts"
+import { parseModelSelection } from "./model-utils.ts"
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
-}
-
-function parseModelSelection(model: string): { provider: string; modelId: string } | null {
-  const parts = model.split("/")
-  if (parts.length === 2) {
-    return { provider: parts[0], modelId: parts[1] }
-  }
-  return null
 }
 
 export interface PlanningSessionInput {

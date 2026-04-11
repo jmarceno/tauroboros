@@ -245,7 +245,7 @@ const cancelModelSelection = () => {
     />
 
     <!-- Header -->
-    <div class="flex items-center justify-between px-3 py-2 border-b border-dark-surface3 bg-dark-surface2/50">
+    <div class="flex items-center justify-between px-3 py-2 border-b border-dark-surface3 bg-dark-surface2">
       <div class="flex items-center gap-2">
         <span class="text-sm font-semibold text-dark-text">Planning Chat</span>
         <span v-if="planningChat.sessions.value.length > 0" class="text-xs text-dark-dim">
