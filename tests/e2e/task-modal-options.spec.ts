@@ -6,11 +6,15 @@ import { randomUUID } from 'crypto'
 // These tests ONLY use the Web UI and verify in the database
 
 const DB_PATH = './data/tasks.db'
-const BASE_URL = 'http://localhost:5173'
+// Use baseURL from playwright config (set via TEST_SERVER_PORT env var)
+// Falls back to localhost:3000 for backward compatibility
+const BASE_URL = process.env.TEST_SERVER_PORT 
+  ? `http://localhost:${process.env.TEST_SERVER_PORT}`
+  : 'http://localhost:3000'
 
 test.describe('Task Modal - Options Loading', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto(BASE_URL)
+    await page.goto('/')
     await page.waitForSelector('.kanban-board', { timeout: 10000 })
   })
 
@@ -48,7 +52,7 @@ test.describe('Task Modal - Options Loading', () => {
     const taskName = `Test-${randomUUID().slice(0, 8)}`
     
     // Create task via API with specific model values
-    const createResponse = await page.request.post(`${BASE_URL}/api/tasks`, {
+    const createResponse = await page.request.post('/api/tasks', {
       data: {
         name: taskName,
         prompt: 'Test prompt',
@@ -80,7 +84,7 @@ test.describe('Task Modal - Options Loading', () => {
     expect(execModelInput).toBe('custom-exec-model-456')
     
     // Cleanup - delete the task
-    await page.request.delete(`${BASE_URL}/api/tasks/${task.id}`)
+    await page.request.delete(`/api/tasks/${task.id}`)
   })
 
   test('Task modal should wait for options before showing form', async ({ page }) => {

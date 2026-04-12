@@ -11,7 +11,7 @@ test.describe('Failure Recovery Scenarios', () => {
   test.setTimeout(60000);
 
   test.beforeEach(async ({ page }) => {
-    await page.goto('http://localhost:3000');
+    await page.goto('/');
     await page.waitForLoadState('networkidle');
   });
 

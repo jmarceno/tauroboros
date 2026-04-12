@@ -1,4 +1,12 @@
-This is a TypeScript project using **Bun** for the backend runtime.
+This is a TypeScript project using **Bun** for the backend runtime and Vue for frontend.
+
+The "Pi Easy Workflow" project is an AI-powered workflow orchestration system that:
+- Uses Pi AI agents via RPC protocol for task execution
+- Features a kanban-style task board (template, backlog, executing, review, done)
+- Implements advanced AI execution modes (Plan Mode, Review Loops, Best-of-N)
+- Provides isolation through Git Worktree and optional container isolation
+- Offers real-time updates, session logging, and execution graph visualization
+- Combines Bun backend with Vue 3 + Tailwind CSS kanban frontend
 
 ## Quick Start
 
@@ -17,6 +25,45 @@ bun run dev
 ```
 
 Server starts on port 3789 by default. Open http://localhost:3789
+
+### Dynamic Port Configuration
+
+The server supports dynamic port assignment for running multiple instances simultaneously:
+
+**Settings file** (`.pi/settings.json`):
+```json
+{
+  "workflow": {
+    "server": {
+      "port": 0,  // 0 = auto-assign available port
+      "dbPath": ".pi/easy-workflow/tasks.db"
+    }
+  }
+}
+```
+
+**Environment variables**:
+- `SERVER_PORT` - Override the port from settings (0 for auto-assign)
+- `DEV_PORT` - Vite dev server port (default: 5173)
+
+**Running multiple instances**:
+```bash
+# Terminal 1 - Default port
+bun run start
+
+# Terminal 2 - Different port
+SERVER_PORT=3790 bun run start
+
+# Terminal 3 - Auto-assign any available port
+SERVER_PORT=0 bun run start
+# Server will log the actual port: "server started on http://0.0.0.0:xxxxx"
+```
+
+**Vite dev mode with dynamic backend port**:
+```bash
+# Backend on auto-assigned port, Vite dev server will proxy to it
+SERVER_PORT=0 bun run dev
+```
 
 ## Kanban UI Architecture
 

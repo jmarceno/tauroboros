@@ -6,12 +6,16 @@ import { randomUUID } from 'crypto'
 // These tests ONLY use the Web UI and verify in the database
 
 const DB_PATH = './data/tasks.db'
-const BASE_URL = 'http://localhost:5173'
+// Use baseURL from playwright config (set via TEST_SERVER_PORT env var)
+// Falls back to localhost:3000 for backward compatibility
+const BASE_URL = process.env.TEST_SERVER_PORT 
+  ? `http://localhost:${process.env.TEST_SERVER_PORT}`
+  : 'http://localhost:3000'
 
 test.describe('Options Modal Data Loading and Persistence', () => {
   test.beforeEach(async ({ page }) => {
     // Ensure server is running and load the page
-    await page.goto(BASE_URL)
+    await page.goto('/')
     await page.waitForSelector('.kanban-board', { timeout: 10000 })
   })
 

@@ -79,6 +79,11 @@ mkdirSync(piDir, { recursive: true });
 
 const dbPath = join(projectDir, 'tasks.db');
 
+// Support dynamic port assignment for parallel test runs
+// Use TEST_SERVER_PORT env var, or default to 0 (auto-assign)
+// Port 0 allows multiple test instances to run simultaneously
+const testServerPort = process.env.TEST_SERVER_PORT ? parseInt(process.env.TEST_SERVER_PORT, 10) : 0;
+
 const settings = {
   skills: {
     localPath: join(projectDir, 'skills'),
@@ -91,7 +96,7 @@ const settings = {
   },
   workflow: {
     server: {
-      port: 3000,
+      port: testServerPort,
       dbPath: dbPath,
     },
     runtime: {

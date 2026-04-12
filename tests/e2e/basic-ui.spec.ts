@@ -13,7 +13,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Basic UI Functionality', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('http://localhost:3000');
+    await page.goto('/');
     await page.waitForLoadState('networkidle');
     // Give Vue app time to mount
     await page.waitForTimeout(2000);

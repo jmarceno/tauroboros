@@ -59,7 +59,7 @@ test.describe('REAL Multi-Task Workflow', () => {
   test.setTimeout(600000); // 10 minutes for full workflow
 
   test.beforeEach(async ({ page }) => {
-    await page.goto('http://localhost:3000');
+    await page.goto('/');
     await page.waitForLoadState('networkidle');
     
     // Configure options for reliable test execution

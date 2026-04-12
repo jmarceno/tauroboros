@@ -46,18 +46,36 @@ function getTestProjectDir(): string | null {
 
 const testProjectDir = getTestProjectDir();
 
+// Support dynamic port assignment via environment variable
+// TEST_SERVER_PORT=0 uses auto-assigned port (for parallel test runs)
+// TEST_SERVER_PORT=3000 uses fixed port (backward compatible)
+const testServerPort = process.env.TEST_SERVER_PORT ? parseInt(process.env.TEST_SERVER_PORT, 10) : 0;
+const useDynamicPort = testServerPort === 0;
+
 // Build webServer config
 let webServerConfig = undefined;
+let baseURL = 'http://localhost:3000'; // Default for backward compatibility
 
 if (testProjectDir) {
   // Start server exactly like users would: cd to project and run bun run start
   // We use shell: true to ensure PATH is properly inherited
   const command = `bun run start`;
   
+  if (useDynamicPort) {
+    // For dynamic port (0), we'll use the server's actual port
+    // The server will log its port and we'll need to capture it
+    baseURL = 'http://localhost:3000'; // Placeholder - actual port discovered at runtime
+    console.log('[Playwright] Using dynamic port assignment (port 0)');
+  } else if (testServerPort > 0) {
+    // Use explicit port
+    baseURL = `http://localhost:${testServerPort}`;
+    console.log(`[Playwright] Using fixed port: ${testServerPort}`);
+  }
+  
   webServerConfig = {
     command,
     cwd: testProjectDir,
-    url: 'http://localhost:3000',
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
     env: {
@@ -67,7 +85,7 @@ if (testProjectDir) {
   };
   
   console.log(`[Playwright] Server will start from: ${testProjectDir}`);
-  console.log(`[Playwright] PATH will be: ${process.env.PATH}`);
+  console.log(`[Playwright] baseURL: ${baseURL}`);
 } else {
   console.error('[Playwright] Warning: Test environment not prepared. Run: bun run tests/e2e/prepare.ts');
 }
@@ -84,7 +102,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: baseURL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     headless: true,

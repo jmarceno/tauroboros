@@ -131,7 +131,7 @@ function createTestSettings(mockPiPath: string): InfrastructureSettings {
     },
     workflow: {
       server: {
-        port: 3789,
+        port: 0, // Use dynamic port assignment for tests
         dbPath: ".pi/easy-workflow/tasks.db",
       },
       runtime: {
