@@ -3,6 +3,55 @@ import { dirname, join } from "path"
 import { spawn } from "child_process"
 import type { PackageDefinition, ContainerConfig, ContainerProfile, PackageValidationResult, ContainerBuildResult, ContainerBuildStatus } from "../db/types.ts"
 
+// ===== Standalone Container Config Utilities (no ContainerImageManager instance required) =====
+
+/**
+ * Load container configuration from .pi/easy-workflow/container-config.json
+ * This is a standalone function - no ContainerImageManager instance required.
+ */
+export function loadContainerConfig(projectRoot: string): ContainerConfig {
+  const configPath = join(projectRoot, ".pi", "easy-workflow", "container-config.json")
+  const defaultConfig: ContainerConfig = {
+    version: 1,
+    baseImage: "docker.io/alpine:3.19",
+    customDockerfilePath: ".pi/easy-workflow/Dockerfile.custom",
+    generatedDockerfilePath: ".pi/easy-workflow/Dockerfile.generated",
+    packages: [],
+    lastBuild: null,
+  }
+
+  if (!existsSync(configPath)) {
+    return defaultConfig
+  }
+
+  try {
+    const raw = readFileSync(configPath, "utf-8")
+    const parsed = JSON.parse(raw)
+    return {
+      ...defaultConfig,
+      ...parsed,
+      packages: parsed.packages || [],
+    }
+  } catch {
+    return defaultConfig
+  }
+}
+
+/**
+ * Save container configuration to .pi/easy-workflow/container-config.json
+ * This is a standalone function - no ContainerImageManager instance required.
+ */
+export function saveContainerConfig(projectRoot: string, config: ContainerConfig): void {
+  const configDir = join(projectRoot, ".pi", "easy-workflow")
+  const configPath = join(configDir, "container-config.json")
+
+  if (!existsSync(configDir)) {
+    mkdirSync(configDir, { recursive: true })
+  }
+
+  writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
+}
+
 export type ImageStatus = "not_present" | "preparing" | "ready" | "error"
 export type BuildStatus = "pending" | "running" | "success" | "failed" | "cancelled"
 
@@ -582,47 +631,18 @@ export class ContainerImageManager {
 
   /**
    * Load container configuration from .pi/easy-workflow/container-config.json
+   * Delegates to the standalone loadContainerConfig function.
    */
   loadContainerConfig(projectRoot: string): ContainerConfig {
-    const configPath = join(projectRoot, ".pi", "easy-workflow", "container-config.json")
-    const defaultConfig: ContainerConfig = {
-      version: 1,
-      baseImage: "docker.io/alpine:3.19",
-      customDockerfilePath: ".pi/easy-workflow/Dockerfile.custom",
-      generatedDockerfilePath: ".pi/easy-workflow/Dockerfile.generated",
-      packages: [],
-      lastBuild: null,
-    }
-
-    if (!existsSync(configPath)) {
-      return defaultConfig
-    }
-
-    try {
-      const raw = readFileSync(configPath, "utf-8")
-      const parsed = JSON.parse(raw)
-      return {
-        ...defaultConfig,
-        ...parsed,
-        packages: parsed.packages || [],
-      }
-    } catch {
-      return defaultConfig
-    }
+    return loadContainerConfig(projectRoot)
   }
 
   /**
    * Save container configuration to .pi/easy-workflow/container-config.json
+   * Delegates to the standalone saveContainerConfig function.
    */
   saveContainerConfig(projectRoot: string, config: ContainerConfig): void {
-    const configDir = join(projectRoot, ".pi", "easy-workflow")
-    const configPath = join(configDir, "container-config.json")
-
-    if (!existsSync(configDir)) {
-      mkdirSync(configDir, { recursive: true })
-    }
-
-    writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8")
+    saveContainerConfig(projectRoot, config)
   }
 
   /**

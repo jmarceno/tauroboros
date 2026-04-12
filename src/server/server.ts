@@ -10,7 +10,7 @@ import type { BestOfNConfig, ImageStatusPayload, Task, TaskRun, ThinkingLevel, W
 import { PiKanbanDB } from "../db.ts"
 import type { SessionIORecordType } from "../db/types.ts"
 import { runStartupRecovery } from "../recovery/startup-recovery.ts"
-import { ContainerImageManager } from "../runtime/container-image-manager.ts"
+import { ContainerImageManager, loadContainerConfig, saveContainerConfig } from "../runtime/container-image-manager.ts"
 import { SmartRepairService, type SmartRepairAction } from "../runtime/smart-repair.ts"
 import { PlanningSessionManager, type ContextAttachment } from "../runtime/planning-session.ts"
 import { sendTelegramNotification, type TelegramConfig } from "../telegram.ts"
@@ -174,6 +174,7 @@ export class PiKanbanServer {
     this.onStopRun = opts.onStopRun ?? null
 
     if (opts.settings?.workflow?.container?.enabled) {
+      console.log("[container] Container mode enabled - initializing image manager...")
       const containerSettings = opts.settings.workflow.container
       this.imageManager = new ContainerImageManager({
         imageName: containerSettings.image,
@@ -191,6 +192,9 @@ export class PiKanbanServer {
           this.broadcast({ type: "image_status", payload })
         },
       })
+      console.log("[container] Image manager initialized successfully")
+    } else {
+      console.log("[container] Container mode disabled - container features will be unavailable. To enable, set 'workflow.container.enabled' to true in .pi/settings.json and restart the server.")
     }
 
     this.planningSessionManager = new PlanningSessionManager(this.db, undefined, opts.settings)
@@ -1402,17 +1406,22 @@ Respond ONLY with the JSON array, no other text.`
       }
     })
 
+    // Get container feature availability status
+    this.router.get("/api/container/status", ({ json }) => {
+      const enabled = this.settings?.workflow?.container?.enabled ?? false
+      return json({
+        enabled,
+        available: !!this.imageManager,
+        message: enabled
+          ? (this.imageManager ? "Container mode active" : "Container mode enabled but image manager failed to initialize")
+          : "Container mode is disabled. Edit .pi/settings.json and restart the server to enable.",
+      })
+    })
+
     // Get current container configuration
     this.router.get("/api/container/config", ({ json }) => {
       try {
-        const config = this.imageManager?.loadContainerConfig(process.cwd()) ?? {
-          version: 1,
-          baseImage: "docker.io/alpine:3.19",
-          customDockerfilePath: ".pi/easy-workflow/Dockerfile.custom",
-          generatedDockerfilePath: ".pi/easy-workflow/Dockerfile.generated",
-          packages: [],
-          lastBuild: null,
-        }
+        const config = loadContainerConfig(process.cwd())
         return json(config)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -1433,9 +1442,7 @@ Respond ONLY with the JSON array, no other text.`
           lastBuild: body.lastBuild ?? null,
         }
 
-        if (this.imageManager) {
-          this.imageManager.saveContainerConfig(process.cwd(), config)
-        }
+        saveContainerConfig(process.cwd(), config)
 
         broadcast({ type: "container_config_updated", payload: config })
         return json(config)
@@ -1706,10 +1713,6 @@ Respond ONLY with the JSON array, no other text.`
     // Apply a preset profile
     this.router.post("/api/container/profiles/:id/apply", async ({ params, req, json, broadcast }) => {
       try {
-        if (!this.imageManager) {
-          return json({ error: "Container image manager not available" }, 503)
-        }
-
         const profileId = params.id
         const profilesPath = join(__dirname, "..", "config", "container-profiles.json")
 
@@ -1725,7 +1728,7 @@ Respond ONLY with the JSON array, no other text.`
           return json({ error: `Profile '${profileId}' not found` }, 404)
         }
 
-        const config = this.imageManager.loadContainerConfig(process.cwd())
+        const config = loadContainerConfig(process.cwd())
 
         // Handle profile extension
         let packagesToAdd = [...profile.packages]
@@ -1749,7 +1752,7 @@ Respond ONLY with the JSON array, no other text.`
         config.packages = [...config.packages, ...newPackages]
 
         // Save updated config
-        this.imageManager.saveContainerConfig(process.cwd(), config)
+        saveContainerConfig(process.cwd(), config)
 
         // Save to database
         for (const pkg of newPackages) {

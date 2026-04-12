@@ -55,6 +55,10 @@ const validationMessage = ref('')
 const buildLogs = ref<string[]>([])
 const currentBuildStatus = ref<ContainerBuild | null>(null)
 
+// Container feature availability
+const containerStatus = ref<{ enabled: boolean; available: boolean; message: string } | null>(null)
+const isContainerEnabled = computed(() => containerStatus.value?.enabled ?? false)
+
 // Package categories
 const categories = ['browser', 'language', 'tool', 'build', 'system', 'math']
 
@@ -133,6 +137,18 @@ const loadBuilds = async () => {
     }
   } catch (error) {
     // Silent fail
+  }
+}
+
+const loadContainerStatus = async () => {
+  try {
+    const response = await fetch('/api/container/status')
+    if (response.ok) {
+      containerStatus.value = await response.json()
+    }
+  } catch (error) {
+    // Silent fail - assume disabled if endpoint fails
+    containerStatus.value = { enabled: false, available: false, message: 'Container status unavailable' }
   }
 }
 
@@ -455,6 +471,7 @@ const getStatusIcon = (status: string): string => {
 
 // Initialize
 onMounted(async () => {
+  await loadContainerStatus()
   await Promise.all([
     loadProfiles(),
     loadPackages(),
@@ -485,6 +502,24 @@ watch(activeTab, async (tab) => {
           Container Configuration
         </h2>
         <button class="modal-close" @click="emit('close')">×</button>
+      </div>
+
+      <!-- Container Mode Disabled Banner -->
+      <div
+        v-if="!isContainerEnabled"
+        class="px-4 py-4 border-b bg-amber-500/10 border-amber-500/30"
+      >
+        <div class="flex items-start gap-3">
+          <span class="text-lg">⚠️</span>
+          <div class="flex-1">
+            <p class="text-sm font-medium text-amber-300">
+              Container mode is disabled
+            </p>
+            <p class="text-xs text-amber-200/80 mt-1">
+              {{ containerStatus?.message || 'Container features are currently unavailable.' }}
+            </p>
+          </div>
+        </div>
       </div>
 
       <!-- Build Status Banner -->
@@ -558,7 +593,7 @@ watch(activeTab, async (tab) => {
               </select>
               <button
                 class="btn btn-primary"
-                :disabled="!selectedProfile || isLoading"
+                :disabled="!selectedProfile || isLoading || !isContainerEnabled"
                 @click="applyProfile"
               >
                 Apply
@@ -579,7 +614,7 @@ watch(activeTab, async (tab) => {
             </p>
             <button
               class="btn btn-primary flex items-center gap-2"
-              :disabled="isLoading"
+              :disabled="isLoading || !isContainerEnabled"
               @click="startContainerConfigChat"
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -658,7 +693,7 @@ watch(activeTab, async (tab) => {
               </select>
               <button
                 class="btn btn-primary"
-                :disabled="!newPackageName.trim() || isValidating"
+                :disabled="!newPackageName.trim() || isValidating || !isContainerEnabled"
                 @click="addPackage"
               >
                 {{ isValidating ? 'Checking...' : 'Add' }}
@@ -768,7 +803,7 @@ watch(activeTab, async (tab) => {
         <button class="btn" @click="emit('close')">Close</button>
         <button
           class="btn btn-primary"
-          :disabled="isBuilding"
+          :disabled="isBuilding || !isContainerEnabled"
           @click="saveAndClose"
         >
           Save

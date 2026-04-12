@@ -24,6 +24,7 @@ export async function main(): Promise<void> {
   const { db, server } = createPiServer({
     port,
     dbPath,
+    settings,
   })
 
   const actualPort = await server.start(port)
