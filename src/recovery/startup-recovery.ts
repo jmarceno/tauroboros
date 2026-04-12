@@ -3,6 +3,7 @@ import type { PiKanbanDB } from "../db.ts"
 import type { WorkflowRun, WSMessage } from "../types.ts"
 import { chooseDeterministicRepairAction } from "../task-state.ts"
 import { SmartRepairService, type SmartRepairDecision } from "../runtime/smart-repair.ts"
+import { hasPausedRunState, loadPausedRunState, listPausedRunStates, listPausedSessions } from "../runtime/session-pause-state.ts"
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -100,6 +101,66 @@ export async function runStartupRecovery(args: {
       },
     })
     log(`Marked orphaned session ${session.id} as failed`)
+  }
+
+  // NEW: Check for paused session state on startup from database
+  // If there's a paused run state in database, keep the run paused
+  // This allows users to resume after server restart
+  const pausedRuns = listPausedRunStates(db)
+  const pausedSessions = listPausedSessions(db)
+  
+  if (pausedRuns.length > 0 || pausedSessions.length > 0) {
+    log(`Found ${pausedRuns.length} paused run(s) and ${pausedSessions.length} paused session(s) in database`)
+    
+    for (const pauseState of pausedRuns) {
+      const run = db.getWorkflowRun(pauseState.runId)
+      if (run && run.status === "paused") {
+        log(`Found paused run ${run.id} that can be resumed`)
+        // Check containers for paused sessions
+        for (const session of pauseState.sessions) {
+          if (session.containerId) {
+            log(`Session ${session.sessionId} was using container ${session.containerId} (may need restart)`)
+          }
+        }
+        // Keep the run in paused state - user can resume from UI
+      } else if (run && (run.status === "running" || run.status === "stopping")) {
+        // Run was running but we have pause state - this is inconsistent
+        // Mark as paused so user can decide what to do
+        log(`Run ${run.id} was active but pause state exists - marking as paused`)
+        db.updateWorkflowRun(run.id, {
+          status: "paused",
+          pauseRequested: true,
+        })
+        broadcast({ type: "run_paused", payload: { runId: run.id } })
+      }
+    }
+  }
+  
+  // Fallback: Check for legacy file-based paused state
+  if (hasPausedRunState()) {
+    const pauseState = loadPausedRunState()
+    if (pauseState) {
+      const run = db.getWorkflowRun(pauseState.runId)
+      if (run && run.status === "paused") {
+        log(`Found file-based paused run ${run.id} that can be resumed`)
+        // Check containers for paused sessions
+        for (const session of pauseState.sessions) {
+          if (session.containerId) {
+            log(`Session ${session.sessionId} was using container ${session.containerId} (may need restart)`)
+          }
+        }
+        // Keep the run in paused state - user can resume from UI
+      } else if (run && (run.status === "running" || run.status === "stopping")) {
+        // Run was running but we have pause state - this is inconsistent
+        // Mark as paused so user can decide what to do
+        log(`Run ${run.id} was active but file-based pause state exists - marking as paused`)
+        db.updateWorkflowRun(run.id, {
+          status: "paused",
+          pauseRequested: true,
+        })
+        broadcast({ type: "run_paused", payload: { runId: run.id } })
+      }
+    }
   }
 
   // Phase 1: Recover stale workflow runs

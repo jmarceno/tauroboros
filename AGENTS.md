@@ -46,19 +46,6 @@ The server supports dynamic port assignment for running multiple instances simul
 - `SERVER_PORT` - Override the port from settings (0 for auto-assign)
 - `DEV_PORT` - Vite dev server port (default: 5173)
 
-**Running multiple instances**:
-```bash
-# Terminal 1 - Default port
-bun run start
-
-# Terminal 2 - Different port
-SERVER_PORT=3790 bun run start
-
-# Terminal 3 - Auto-assign any available port
-SERVER_PORT=0 bun run start
-# Server will log the actual port: "server started on http://0.0.0.0:xxxxx"
-```
-
 **Vite dev mode with dynamic backend port**:
 ```bash
 # Backend on auto-assigned port, Vite dev server will proxy to it
@@ -81,29 +68,6 @@ The kanban UI has been migrated from vanilla JS/Alpine.js/Shoelace to Vue 3 + Ta
 - **Search**: Fuse.js for fuzzy model search
 - **UI Components**: Custom components (no heavy UI library)
 - **State Management**: Vue composables with provide/inject pattern
-
-### Key Features
-- 5 kanban columns (template, backlog, executing, review, done)
-- Task cards with badges and inline actions
-- Drag and drop reordering (backlog only)
-- 8 modals: Task, Options, Execution Graph, Approve, Revision, Start Single, Session Viewer, Best-of-N Details
-- Keyboard shortcuts: T (template), B (backlog), S (start), D (archive done), Escape (close)
-- WebSocket live updates with auto-reconnect
-- Mobile responsive design
-
-### Build Commands
-
-**Backend (Bun):**
-```bash
-# Development with auto-reload
-bun run dev
-
-# Production build (backend + kanban)
-bun run build
-
-# Start production server
-bun run start
-```
 
 **Kanban Frontend (handled automatically by root scripts):**
 ```bash
@@ -129,8 +93,6 @@ bun run test:e2e:ui
 bun run compile:test      # Runs comprehensive tests on compiled binary
 ```
 
-### CSS
-When dealing with CSS changes, always get the computed CSS with playwright and never trust visual identification.
 
 ## Binary Compilation
 
@@ -216,3 +178,12 @@ When modifying server static file handling:
 - Use `embeddedFileExists()`, `readEmbeddedFile()`, `readEmbeddedText()` from `embedded-files.ts`
 - These functions handle both development and compiled modes automatically
 - Never use direct `readFileSync` for static assets (breaks compiled binary)
+
+# How you must behave
+## CSS
+  When dealing with CSS changes, always get the computed CSS with playwright and never trust visual identification.
+## Storage
+  This project always prioritize storing data on the database, loose json files are rare exceptions that MUST have manual user approval.
+
+## Test and Errors
+  Errors must be fixed, even if your changes did not cause them, you must fix any errors you find.

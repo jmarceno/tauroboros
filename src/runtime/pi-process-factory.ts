@@ -16,6 +16,15 @@ export interface UnifiedPiProcessOptions {
   settings?: InfrastructureSettings
   systemPrompt?: string
   disableAutoSessionMessages?: boolean
+  /**
+   * Existing container ID to reuse (for resume operations).
+   */
+  existingContainerId?: string | null
+  /**
+   * Container image to use when creating a new container (for resume operations).
+   * If not specified, uses the default image from settings.
+   */
+  containerImage?: string | null
 }
 
 /**
@@ -72,6 +81,8 @@ export function createPiProcess(
       onOutput: options.onOutput,
       onSessionMessage: options.onSessionMessage,
       settings: options.settings,
+      existingContainerId: options.existingContainerId,
+      containerImage: options.containerImage,
     })
   }
 

@@ -292,6 +292,66 @@ export class PiRpcProcess {
     })
   }
 
+  /**
+   * Force kill the process immediately without waiting for graceful shutdown.
+   * Used for emergency stop and destructive operations.
+   */
+  async forceKill(signal: "SIGTERM" | "SIGKILL" = "SIGKILL"): Promise<void> {
+    if (!this.proc) return
+
+    const proc = this.proc
+    this.proc = null
+
+    // Signal stream readers to stop
+    if (this.abortController) {
+      this.abortController.abort()
+      this.abortController = null
+    }
+
+    // Reject all pending requests immediately
+    for (const [id, pending] of this.pending.entries()) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error(`Pi process force killed (${id})`))
+      this.pending.delete(id)
+    }
+
+    // Force kill the process
+    try {
+      if (signal === "SIGKILL") {
+        proc.kill(9) // SIGKILL
+      } else {
+        proc.kill(15) // SIGTERM
+      }
+    } catch {
+      // ignore
+    }
+
+    // Don't wait for exit - force kill is immediate
+    this.db.updateWorkflowSession(this.session.id, {
+      status: "aborted",
+      finishedAt: Math.floor(Date.now() / 1000),
+      exitCode: -1,
+      exitSignal: signal,
+    })
+    this.db.appendSessionIO({
+      sessionId: this.session.id,
+      stream: "server",
+      recordType: "lifecycle",
+      payloadJson: {
+        type: "process_force_killed",
+        signal,
+      },
+    })
+  }
+
+  /**
+   * Get underlying process for direct manipulation.
+   * Used for pause/stop operations.
+   */
+  getProcess(): Bun.Subprocess<"pipe", "pipe", "pipe"> | null {
+    return this.proc
+  }
+
   private captureStdout(): void {
     if (!this.proc || !this.abortController) return
 

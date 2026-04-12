@@ -13,6 +13,7 @@ import { useDragDrop } from '@/composables/useDragDrop'
 import { useMultiSelect } from '@/composables/useMultiSelect'
 import { useSessionUsage } from '@/composables/useSessionUsage'
 import { usePlanningChat } from '@/composables/usePlanningChat'
+import { useWorkflowControl } from '@/composables/useWorkflowControl'
 
 // Components
 import Sidebar from '@/components/board/Sidebar.vue'
@@ -34,6 +35,7 @@ import BestOfNDetailModal from '@/components/modals/BestOfNDetailModal.vue'
 import BatchEditModal from '@/components/modals/BatchEditModal.vue'
 import PlanningPromptModal from '@/components/modals/PlanningPromptModal.vue'
 import ContainerConfigModal from '@/components/modals/ContainerConfigModal.vue'
+import StopConfirmModal from '@/components/modals/StopConfirmModal.vue'
 
 // State
 const optionsComposable = useOptions()
@@ -47,6 +49,16 @@ const multiSelect = useMultiSelect()
 const sessionUsage = useSessionUsage()
 const planningChat = usePlanningChat()
 
+// Workflow control with pause/resume/stop
+const workflowControl = useWorkflowControl(
+  (state) => {
+    toasts.addLog(`Workflow state: ${state}`, 'info')
+  },
+  (run) => {
+    runsComposable.updateRunFromWebSocket(run)
+  }
+)
+
 // Modal state
 const activeModal = ref<string | null>(null)
 const modalData = ref<Record<string, unknown>>({})
@@ -55,14 +67,22 @@ const modalData = ref<Record<string, unknown>>({})
 const showContainerConfigModal = ref(false)
 const logPanelCollapsed = ref(false)
 
+// Stop confirm modal state
+const showStopConfirmModal = ref(false)
+
 // Computed
 const isAnyModalOpen = computed(() => {
-  return activeModal.value !== null || showContainerConfigModal.value
+  return activeModal.value !== null || showContainerConfigModal.value || showStopConfirmModal.value
 })
 
 const consumedSlotsValue = computed(() => runsComposable.consumedRunSlots.value)
 const parallelTasksValue = computed(() => optionsComposable.options.parallelTasks ?? 1)
 const isConnectedValue = computed(() => true)
+
+// Get the current active run for workflow control
+const currentActiveRun = computed(() => {
+  return runsComposable.activeRuns.value[0] || null
+})
 
 // Modal helpers
 const openModal = (name: string, data?: Record<string, unknown>) => {
@@ -75,17 +95,21 @@ const closeModal = () => {
   modalData.value = {}
 }
 
-const closeTopmostModal = () => {
-  if (activeModal.value) {
-    closeModal()
-    return true
+  const closeTopmostModal = () => {
+    if (activeModal.value) {
+      closeModal()
+      return true
+    }
+    if (showContainerConfigModal.value) {
+      showContainerConfigModal.value = false
+      return true
+    }
+    if (showStopConfirmModal.value) {
+      showStopConfirmModal.value = false
+      return true
+    }
+    return false
   }
-  if (showContainerConfigModal.value) {
-    showContainerConfigModal.value = false
-    return true
-  }
-  return false
-}
 
 const clearSelectionAndCloseModal = () => {
   multiSelect.clearSelection()
@@ -102,6 +126,7 @@ provide('session', session)
 provide('multiSelect', multiSelect)
 provide('sessionUsage', sessionUsage)
 provide('planningChat', planningChat)
+provide('workflowControl', workflowControl)
 provide('openModal', openModal)
 provide('closeModal', closeModal)
 
@@ -260,17 +285,62 @@ ws.on('options_updated', () => {
 })
 
 ws.on('run_created', (payload) => {
-  runsComposable.updateRunFromWebSocket(payload as WorkflowRun)
+  const run = payload as WorkflowRun
+  runsComposable.updateRunFromWebSocket(run)
+  workflowControl.handleRunUpdate(run)
 })
 
 ws.on('run_updated', (payload) => {
-  runsComposable.updateRunFromWebSocket(payload as WorkflowRun)
+  const run = payload as WorkflowRun
+  runsComposable.updateRunFromWebSocket(run)
+  workflowControl.handleRunUpdate(run)
 })
 
 ws.on('run_archived', (payload) => {
   const { id } = payload as { id: string }
   toasts.addLog(`Workflow run archived: ${id}`, 'info')
   runsComposable.removeRun(id)
+  workflowControl.clearRun()
+})
+
+ws.on('execution_paused', (payload) => {
+  const data = payload as { runId: string }
+  toasts.showToast('Workflow paused', 'info')
+  toasts.addLog(`Workflow paused: ${data.runId}`, 'info')
+  // Update from runs array per plan
+  workflowControl.updateStateFromRuns(runsComposable.runs.value)
+})
+
+ws.on('execution_resumed', (payload) => {
+  const data = payload as { runId: string }
+  toasts.showToast('Workflow resumed', 'success')
+  toasts.addLog(`Workflow resumed: ${data.runId}`, 'success')
+  // Update from runs array per plan
+  workflowControl.updateStateFromRuns(runsComposable.runs.value)
+})
+
+ws.on('run_paused', (payload) => {
+  const data = payload as { runId: string }
+  toasts.showToast('Workflow run paused', 'info')
+  toasts.addLog(`Workflow run paused: ${data.runId}`, 'info')
+  // Update from runs array per plan
+  workflowControl.updateStateFromRuns(runsComposable.runs.value)
+})
+
+ws.on('run_resumed', (payload) => {
+  const data = payload as { runId: string }
+  toasts.showToast('Workflow run resumed', 'success')
+  toasts.addLog(`Workflow run resumed: ${data.runId}`, 'success')
+  // Update from runs array per plan
+  workflowControl.updateStateFromRuns(runsComposable.runs.value)
+})
+
+ws.on('run_stopped', (payload) => {
+  const data = payload as { runId: string; destructive?: boolean }
+  const message = data.destructive ? 'Workflow force stopped' : 'Workflow stopped'
+  toasts.showToast(message, data.destructive ? 'error' : 'info')
+  toasts.addLog(`${message}: ${data.runId}`, data.destructive ? 'error' : 'info')
+  runsComposable.loadRuns()
 })
 
 ws.on('session_started', (payload) => {
@@ -420,6 +490,18 @@ onMounted(async () => {
   // Phase 3: Connect tasks to runs composable for stale run detection
   runsComposable.setTasksRef(tasksComposable.tasks.value)
 
+  // Check for paused runs and sync workflow control state
+  const hasPaused = await workflowControl.checkPausedState()
+  if (hasPaused) {
+    toasts.showToast('Found paused workflow. Click Resume to continue.', 'info')
+  }
+
+  // Sync with any active runs
+  if (runsComposable.activeRuns.value.length > 0) {
+    const activeRun = runsComposable.activeRuns.value[0]
+    workflowControl.setRun(activeRun)
+  }
+
   const hashMatch = location.hash.match(/^#session\/(.+)$/)
   if (hashMatch) {
     const sessionId = decodeURIComponent(hashMatch[1])
@@ -452,10 +534,26 @@ window.addEventListener('hashchange', () => {
       :consumed-slots="consumedSlotsValue"
       :parallel-tasks="parallelTasksValue"
       :is-connected="isConnectedValue"
-      @toggle-execution="() => {
-        const isRunning = consumedSlotsValue > 0
+      :control-state="workflowControl.controlState.value"
+      :can-pause="workflowControl.canPause.value"
+      :can-resume="workflowControl.canResume.value"
+      :can-stop="workflowControl.canStop.value"
+      :is-control-loading="workflowControl.isLoading.value"
+      :is-paused="workflowControl.isPaused.value"
+      :active-run-id="currentActiveRun?.id ?? null"
+      @toggle-execution="async () => {
+        // Check for paused run first
+        const hasPaused = await workflowControl.checkPausedState()
+        if (hasPaused) {
+          toasts.showToast('Resuming paused workflow...', 'info')
+          await workflowControl.resume()
+          runsComposable.loadRuns()
+          return
+        }
+
+        const isRunning = consumedSlotsValue > 0 || workflowControl.isRunning.value
         if (isRunning) {
-          // Stop the workflow
+          // Show graceful stop
           optionsComposable.stopExecution().then(() => {
             runsComposable.loadRuns()
             toasts.showToast('Workflow stopped', 'success')
@@ -479,6 +577,59 @@ window.addEventListener('hashchange', () => {
             }).catch(e => toasts.showToast('Execution control failed: ' + e.message, 'error'))
           }
         }
+      }"
+      @pause-execution="async (runId: string) => {
+        toasts.showToast('Pausing workflow...', 'info')
+        const success = await workflowControl.pause(runId)
+        if (success) {
+          toasts.showToast('Workflow paused', 'success')
+          runsComposable.loadRuns()
+        } else {
+          toasts.showToast(workflowControl.error.value || 'Failed to pause workflow', 'error')
+        }
+      }"
+      @resume-execution="async (runId: string) => {
+        toasts.showToast('Resuming workflow...', 'info')
+        const success = await workflowControl.resume(runId)
+        if (success) {
+          toasts.showToast('Workflow resumed', 'success')
+          runsComposable.loadRuns()
+        } else {
+          toasts.showToast(workflowControl.error.value || 'Failed to resume workflow', 'error')
+        }
+      }"
+      @stop-execution="(type: 'graceful' | 'destructive') => {
+        workflowControl.requestStop(type)
+      }"
+      @pause-workflow="async () => {
+        // Legacy handler - delegates to pause-execution with current run
+        if (workflowControl.currentRunId.value) {
+          toasts.showToast('Pausing workflow...', 'info')
+          const success = await workflowControl.pause()
+          if (success) {
+            toasts.showToast('Workflow paused', 'success')
+            runsComposable.loadRuns()
+          } else {
+            toasts.showToast(workflowControl.error.value || 'Failed to pause workflow', 'error')
+          }
+        }
+      }"
+      @resume-workflow="async () => {
+        // Legacy handler - delegates to resume-execution with current run
+        toasts.showToast('Resuming workflow...', 'info')
+        const success = await workflowControl.resume()
+        if (success) {
+          toasts.showToast('Workflow resumed', 'success')
+          runsComposable.loadRuns()
+        } else {
+          toasts.showToast(workflowControl.error.value || 'Failed to resume workflow', 'error')
+        }
+      }"
+      @force-stop-workflow="() => {
+        workflowControl.requestStop('destructive')
+      }"
+      @stop-workflow="() => {
+        workflowControl.requestStop('graceful')
       }"
       @open-options="openModal('options')"
       @open-container-config="showContainerConfigModal = true"
@@ -666,6 +817,38 @@ window.addEventListener('hashchange', () => {
     <ContainerConfigModal
       v-if="showContainerConfigModal"
       @close="showContainerConfigModal = false"
+    />
+
+    <StopConfirmModal
+      :is-open="showStopConfirmModal || workflowControl.isConfirmingStop.value"
+      :run-name="currentActiveRun?.displayName"
+      :is-stopping="workflowControl.isStopping.value"
+      @close="() => {
+        showStopConfirmModal = false
+        workflowControl.cancelStop()
+      }"
+      @confirm-graceful="async () => {
+        toasts.showToast('Stopping workflow gracefully...', 'info')
+        const success = await workflowControl.confirmStop()
+        if (success) {
+          toasts.showToast('Workflow stopped gracefully', 'success')
+          runsComposable.loadRuns()
+        } else {
+          toasts.showToast(workflowControl.error.value || 'Failed to stop workflow', 'error')
+        }
+      }"
+      @confirm-destructive="async () => {
+        toasts.showToast('Force stopping workflow...', 'info')
+        const success = await workflowControl.confirmStop()
+        if (success) {
+          const result = workflowControl.lastResult.value
+          toasts.showToast(`Workflow force stopped. Killed ${result?.killed || 0} processes, cleaned ${result?.cleaned || 0} resources.`, 'success')
+          runsComposable.loadRuns()
+          tasksComposable.loadTasks()
+        } else {
+          toasts.showToast(workflowControl.error.value || 'Failed to force stop workflow', 'error')
+        }
+      }"
     />
   </div>
 </template>

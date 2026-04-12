@@ -61,6 +61,8 @@ export class ContainerPiProcess {
   private stderrBuffer = ""
   private isIdle = true
   private abortController: AbortController | null = null
+  private existingContainerId: string | null = null
+  private containerImage: string | null = null
 
   constructor(args: {
     db: PiKanbanDB
@@ -69,6 +71,8 @@ export class ContainerPiProcess {
     onOutput?: (chunk: string) => void
     onSessionMessage?: (message: import("../types.ts").SessionMessage) => void
     settings?: InfrastructureSettings
+    existingContainerId?: string | null
+    containerImage?: string | null
   }) {
     this.db = args.db
     this.session = args.session
@@ -76,6 +80,8 @@ export class ContainerPiProcess {
     this.onOutput = args.onOutput
     this.onSessionMessage = args.onSessionMessage
     this.settings = args.settings
+    this.existingContainerId = args.existingContainerId ?? null
+    this.containerImage = args.containerImage ?? null
   }
 
   /**
@@ -84,9 +90,10 @@ export class ContainerPiProcess {
   async start(): Promise<void> {
     if (this.containerProcess) return
 
-    // Determine container configuration from settings
+    // Determine container configuration from settings or resume parameters
     const containerSettings = this.settings?.workflow?.container
-    const imageName = containerSettings?.image || "pi-agent:alpine"
+    // Use containerImage from resume if provided, otherwise fall back to settings
+    const imageName = this.containerImage || containerSettings?.image || "pi-agent:alpine"
     const runtime = "runc" // Always use runc now, removed gVisor dependency
     const memoryMb = containerSettings?.memoryMb || 512
     const cpuCount = containerSettings?.cpuCount || 1
@@ -98,12 +105,54 @@ export class ContainerPiProcess {
 
     const repoRoot = worktreeDir.replace(/\/\.worktrees\/[^/]+$/, "")
 
+    // Check if we have an existing container to reuse (for resume operations)
+    if (this.existingContainerId) {
+      const containerInfo = await this.containerManager.checkContainerById(this.existingContainerId)
+      if (containerInfo?.running) {
+        console.log(`[container-pi-process] Attaching to existing container ${this.existingContainerId}`)
+        // Try to attach to the existing container to preserve all state
+        const attachedProcess = await this.containerManager.attachToContainer(
+          this.existingContainerId,
+          this.session.id
+        )
+        if (attachedProcess) {
+          this.containerProcess = attachedProcess
+          console.log(`[container-pi-process] Successfully attached to container ${this.existingContainerId}`)
+          
+          this.db.updateWorkflowSession(this.session.id, {
+            status: "active",
+          })
+          this.db.appendSessionIO({
+            sessionId: this.session.id,
+            stream: "server",
+            recordType: "lifecycle",
+            payloadJson: {
+              type: "container_attached",
+              containerId: this.containerProcess.containerId,
+              image: imageName,
+              runtime,
+            },
+          })
+
+          this.abortController = new AbortController()
+          this.captureStdout()
+          this.captureStderr()
+
+          await new Promise((resolve) => setTimeout(resolve, 1000))
+          return
+        } else {
+          console.log(`[container-pi-process] Failed to attach to container ${this.existingContainerId}, will create new one`)
+        }
+      } else {
+        console.log(`[container-pi-process] Existing container ${this.existingContainerId} not running, creating new one`)
+      }
+    }
+
     const containerConfig: ContainerConfig = {
       sessionId: this.session.id,
       worktreeDir,
       repoRoot,
       imageName,
-      runtime,
       memoryMb,
       cpuCount,
     }
@@ -312,6 +361,61 @@ export class ContainerPiProcess {
         type: "container_stopped",
       },
     })
+  }
+
+  /**
+   * Force kill the container immediately without waiting for graceful shutdown.
+   * Used for emergency stop and destructive operations.
+   */
+  async forceKill(): Promise<void> {
+    if (!this.containerProcess) return
+
+    const process = this.containerProcess
+    this.containerProcess = null
+
+    // Signal stream readers to stop
+    if (this.abortController) {
+      this.abortController.abort()
+      this.abortController = null
+    }
+
+    // Reject all pending requests immediately
+    for (const [id, pending] of this.pending.entries()) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error(`Container process force killed (${id})`))
+      this.pending.delete(id)
+    }
+
+    // Force kill the container
+    try {
+      await process.kill()
+    } catch {
+      // Container may already be stopped
+    }
+
+    // Don't wait for exit - force kill is immediate
+    this.db.updateWorkflowSession(this.session.id, {
+      status: "aborted",
+      finishedAt: Math.floor(Date.now() / 1000),
+      exitCode: -1,
+      exitSignal: "SIGKILL",
+    })
+    this.db.appendSessionIO({
+      sessionId: this.session.id,
+      stream: "server",
+      recordType: "lifecycle",
+      payloadJson: {
+        type: "container_force_killed",
+      },
+    })
+  }
+
+  /**
+   * Get the container ID for this process.
+   * Used for pause/resume operations.
+   */
+  async getContainerId(): Promise<string | null> {
+    return this.containerProcess?.containerId ?? null
   }
 
   private captureStdout(): void {

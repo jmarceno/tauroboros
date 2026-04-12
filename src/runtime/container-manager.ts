@@ -417,6 +417,379 @@ export class PiContainerManager {
   }
 
   /**
+   * Check if a container exists and is running by session ID.
+   * Returns the container info if found and running, null otherwise.
+   */
+  async checkContainerExists(sessionId: string): Promise<{
+    containerId: string
+    containerName: string
+    status: string
+    running: boolean
+  } | null> {
+    // First check our managed containers
+    const managedProcess = this.containers.get(sessionId)
+    if (managedProcess) {
+      try {
+        const inspection = await managedProcess.inspect()
+        if (inspection.State.Running) {
+          return {
+            containerId: managedProcess.containerId,
+            containerName: `pi-easy-workflow-${sessionId}`,
+            status: inspection.State.Status,
+            running: true,
+          }
+        }
+      } catch {
+        // Container exists in our map but is not running
+      }
+    }
+
+    // Check if container exists in podman but is not in our managed map
+    // (e.g., after server restart)
+    const containerName = `pi-easy-workflow-${sessionId}`
+    try {
+      const { stdout } = await this.execPodman([
+        "ps",
+        "-a",
+        "-f", `name=${containerName}`,
+        "--format", "{{.ID}}|{{.Names}}|{{.State}}|{{.Status}}",
+      ])
+
+      if (!stdout.trim()) {
+        return null
+      }
+
+      const [id, name, state, status] = stdout.trim().split("|")
+      if (!id) {
+        return null
+      }
+
+      const isRunning = state === "running"
+
+      // If container exists but not in our map, add it so we can manage it
+      if (isRunning && !managedProcess) {
+        // We'll create a minimal process wrapper - the caller will need to
+        // properly reconnect stdin/stdout if they want to interact with it
+        this.containers.set(sessionId, {
+          sessionId,
+          containerId: id,
+          stdin: new WritableStream(),
+          stdout: new ReadableStream(),
+          stderr: new ReadableStream(),
+          kill: async () => {
+            await this.execPodman(["kill", id])
+          },
+          inspect: async () => ({
+            State: { Status: state, Running: true },
+          }),
+        })
+      }
+
+      return {
+        containerId: id,
+        containerName: name,
+        status: state,
+        running: isRunning,
+      }
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Check if a container exists and is running by container ID.
+   * This is used for resume operations when we only have the container ID.
+   */
+  async checkContainerById(containerId: string): Promise<{
+    containerId: string
+    status: string
+    running: boolean
+  } | null> {
+    try {
+      const { stdout } = await this.execPodman([
+        "ps",
+        "-a",
+        "-f", `id=${containerId}`,
+        "--format", "{{.ID}}|{{.State}}|{{.Status}}",
+      ])
+
+      if (!stdout.trim()) {
+        return null
+      }
+
+      const [id, state] = stdout.trim().split("|")
+      if (!id) {
+        return null
+      }
+
+      return {
+        containerId: id,
+        status: state,
+        running: state === "running",
+      }
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Attach to an existing container (for resume).
+   * 
+   * CRITICAL: This is the RECOMMENDED approach for container resume operations.
+   * Reattaching to an existing container preserves:
+   *   - All file system state (modified files, installed packages)
+   *   - Environment variables set during execution
+   *   - Running processes and their state
+   *   - Network connections
+   * 
+   * Container recreation (the fallback) loses all unsaved work and requires
+   * re-execution from scratch. Only use recreation when attach fails.
+   * 
+   * Implementation uses 'podman exec' to create a new session in the existing
+   * container while preserving all container state.
+   * 
+   * @param containerId - The ID of the container to attach to
+   * @param sessionId - The session ID for tracking this attachment
+   * @returns ContainerProcess if successful, null if container not running or attach failed
+   */
+  async attachToContainer(containerId: string, sessionId: string): Promise<ContainerProcess | null> {
+    // Verify container exists and is running
+    const containerInfo = await this.checkContainerById(containerId)
+    if (!containerInfo?.running) {
+      console.log(`[container-manager] Container ${containerId} not running, cannot attach`)
+      return null
+    }
+
+    try {
+      console.log(`[container-manager] Attaching to existing container ${containerId} for session ${sessionId}`)
+      
+      // Spawn podman exec to create a new pi rpc session in the existing container
+      // The -i flag keeps stdin open, allowing us to send commands
+      const proc = spawn("podman", [
+        "exec",
+        "-i",  // Interactive mode - keep stdin open
+        containerId,
+        "pi", "rpc", "--session-id", sessionId,
+      ], {
+        stdio: ["pipe", "pipe", "pipe"],
+      })
+
+      // Wait a moment for the exec to initialize
+      await new Promise((resolve) => setTimeout(resolve, 500))
+
+      // Verify the exec session is still running by checking the process
+      if (!proc.pid) {
+        console.error(`[container-manager] Failed to start podman exec for container ${containerId}`)
+        return null
+      }
+
+      // Create process wrapper with proper stdio streams
+      const process: ContainerProcess = {
+        sessionId,
+        containerId,
+
+        stdin: new WritableStream({
+          write: async (chunk: Uint8Array) => {
+            return new Promise((resolve, reject) => {
+              if (!proc.stdin) {
+                reject(new Error("Process stdin not available"))
+                return
+              }
+              proc.stdin.write(chunk, (err) => {
+                if (err) reject(err)
+                else resolve()
+              })
+            })
+          },
+        }),
+
+        stdout: new ReadableStream({
+          start: (controller) => {
+            if (!proc.stdout) {
+              controller.close()
+              return
+            }
+
+            let isClosed = false
+
+            proc.stdout.on("data", (data: Buffer) => {
+              if (!isClosed) {
+                try {
+                  controller.enqueue(new Uint8Array(data))
+                } catch {
+                  // Controller might be closed
+                }
+              }
+            })
+
+            proc.stdout.on("end", () => {
+              if (!isClosed) {
+                isClosed = true
+                try {
+                  controller.close()
+                } catch {
+                  // Already closed
+                }
+              }
+            })
+
+            proc.on("error", (err) => {
+              if (!isClosed) {
+                isClosed = true
+                try {
+                  controller.error(err)
+                } catch {
+                  // Already closed
+                }
+              }
+            })
+          },
+        }),
+
+        stderr: new ReadableStream({
+          start: (controller) => {
+            if (!proc.stderr) {
+              controller.close()
+              return
+            }
+
+            let isClosed = false
+
+            proc.stderr.on("data", (data: Buffer) => {
+              if (!isClosed) {
+                try {
+                  controller.enqueue(new Uint8Array(data))
+                } catch {
+                  // Controller might be closed
+                }
+              }
+            })
+
+            proc.stderr.on("end", () => {
+              if (!isClosed) {
+                isClosed = true
+                try {
+                  controller.close()
+                } catch {
+                  // Already closed
+                }
+              }
+            })
+
+            proc.on("error", (err) => {
+              if (!isClosed) {
+                isClosed = true
+                try {
+                  controller.error(err)
+                } catch {
+                  // Already closed
+                }
+              }
+            })
+          },
+        }),
+
+        kill: async () => {
+          try {
+            // Kill the exec session by killing the podman exec process
+            proc.kill("SIGTERM")
+            // Also try to kill any processes in the container with this session ID
+            try {
+              await this.execPodman([
+                "exec", containerId,
+                "sh", "-c", 
+                `pkill -f "pi.*${sessionId}" || true`
+              ])
+            } catch {
+              // Ignore errors from pkill
+            }
+          } catch {
+            // Process may already be stopped
+          }
+          this.containers.delete(sessionId)
+        },
+
+        inspect: async () => {
+          // Check if the container is still running
+          const info = await this.checkContainerById(containerId)
+          return {
+            State: { 
+              Status: info?.status || "unknown", 
+              Running: info?.running || false 
+            },
+          }
+        },
+      }
+
+      // Register in managed containers
+      this.containers.set(sessionId, process)
+
+      console.log(`[container-manager] Successfully attached to container ${containerId}`)
+      return process
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[container-manager] Failed to attach to container ${containerId}: ${message}`)
+      return null
+    }
+  }
+
+  /**
+   * Force kill a container (SIGKILL).
+   * Used for emergency stop and destructive operations.
+   */
+  async forceKillContainer(sessionId: string): Promise<boolean> {
+    const containerName = `pi-easy-workflow-${sessionId}`
+    try {
+      // Send SIGKILL instead of graceful stop
+      await this.execPodman(["kill", "-s", "SIGKILL", containerName])
+      this.containers.delete(sessionId)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Restart a container that exists but is not running.
+   * Returns true if successful, false otherwise.
+   */
+  async restartContainer(sessionId: string): Promise<boolean> {
+    const containerName = `pi-easy-workflow-${sessionId}`
+    try {
+      // First try to start the existing container
+      await this.execPodman(["start", containerName])
+
+      // Wait a moment for it to be ready
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+
+      // Verify it's running
+      const check = await this.checkContainerExists(sessionId)
+      return check?.running ?? false
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Remove a container by session ID (forcefully if needed).
+   */
+  async removeContainer(sessionId: string, force = false): Promise<boolean> {
+    const containerName = `pi-easy-workflow-${sessionId}`
+    try {
+      const args = ["rm"]
+      if (force) {
+        args.push("-f")
+      }
+      args.push(containerName)
+      await this.execPodman(args)
+      this.containers.delete(sessionId)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Clean up all managed containers.
    */
   async cleanup(): Promise<void> {

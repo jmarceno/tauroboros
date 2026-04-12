@@ -43,6 +43,7 @@ import type {
   PromptTemplateKey,
   PromptTemplateVersion,
   SessionIORecord,
+  SessionIORecordType,
   SessionIOStream,
   SessionMessageQueryOptions,
   UpdateTaskCandidateInput,
@@ -1322,6 +1323,59 @@ const MIGRATIONS: Migration[] = [
       `INSERT OR REPLACE INTO options (key, value) VALUES ('execution_thinking_level', 'default');`,
       `INSERT OR REPLACE INTO options (key, value) VALUES ('review_thinking_level', 'default');`,
       `INSERT OR REPLACE INTO options (key, value) VALUES ('repair_thinking_level', 'default');`,
+    ],
+  },
+  {
+    version: 7,
+    description: "Add paused_session_states table for workflow pause/resume functionality",
+    statements: [
+      `
+      CREATE TABLE IF NOT EXISTS paused_session_states (
+        session_id TEXT PRIMARY KEY,
+        task_id TEXT,
+        task_run_id TEXT,
+        session_kind TEXT NOT NULL,
+        cwd TEXT,
+        worktree_dir TEXT,
+        branch TEXT,
+        model TEXT NOT NULL,
+        thinking_level TEXT NOT NULL,
+        pi_session_id TEXT,
+        pi_session_file TEXT,
+        container_id TEXT,
+        container_image TEXT,
+        paused_at INTEGER NOT NULL,
+        last_prompt TEXT,
+        execution_phase TEXT,
+        context_json TEXT NOT NULL,
+        pause_reason TEXT,
+        FOREIGN KEY (session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE
+      );
+      `,
+      `CREATE INDEX IF NOT EXISTS idx_paused_sessions_task_id ON paused_session_states(task_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_paused_sessions_session_id ON paused_session_states(session_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_paused_sessions_paused_at ON paused_session_states(paused_at);`,
+    ],
+  },
+  {
+    version: 8,
+    description: "Add paused_run_states table for workflow-level pause state storage",
+    statements: [
+      `
+      CREATE TABLE IF NOT EXISTS paused_run_states (
+        run_id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        task_order_json TEXT NOT NULL DEFAULT '[]',
+        current_task_index INTEGER NOT NULL DEFAULT 0,
+        current_task_id TEXT,
+        target_task_id TEXT,
+        paused_at INTEGER NOT NULL,
+        execution_phase TEXT NOT NULL DEFAULT 'executing',
+        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+      );
+      `,
+      `CREATE INDEX IF NOT EXISTS idx_paused_run_states_run_id ON paused_run_states(run_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_paused_run_states_paused_at ON paused_run_states(paused_at);`,
     ],
   },
 ]
@@ -3281,6 +3335,359 @@ export class PiKanbanDB {
       .prepare("SELECT * FROM container_builds ORDER BY started_at DESC LIMIT 1")
       .get() as Record<string, unknown> | null
     return row ? rowToContainerBuild(row) : null
+  }
+
+  // ---- Paused Session States ----
+
+  savePausedSessionState(state: {
+    sessionId: string
+    taskId: string | null
+    taskRunId: string | null
+    sessionKind: string
+    cwd: string | null
+    worktreeDir: string | null
+    branch: string | null
+    model: string
+    thinkingLevel: string
+    piSessionId: string | null
+    piSessionFile: string | null
+    containerId: string | null
+    containerImage: string | null
+    pausedAt: number
+    lastPrompt: string | null
+    executionPhase: string | null
+    context: { agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }
+    pauseReason?: string | null
+  }): void {
+    const contextJson = JSON.stringify(state.context)
+
+    this.db.run(
+      `INSERT INTO paused_session_states (
+        session_id, task_id, task_run_id, session_kind, cwd, worktree_dir, branch,
+        model, thinking_level, pi_session_id, pi_session_file, container_id,
+        container_image, paused_at, last_prompt, execution_phase, context_json, pause_reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(session_id) DO UPDATE SET
+        task_id = excluded.task_id,
+        task_run_id = excluded.task_run_id,
+        session_kind = excluded.session_kind,
+        cwd = excluded.cwd,
+        worktree_dir = excluded.worktree_dir,
+        branch = excluded.branch,
+        model = excluded.model,
+        thinking_level = excluded.thinking_level,
+        pi_session_id = excluded.pi_session_id,
+        pi_session_file = excluded.pi_session_file,
+        container_id = excluded.container_id,
+        container_image = excluded.container_image,
+        paused_at = excluded.paused_at,
+        last_prompt = excluded.last_prompt,
+        execution_phase = excluded.execution_phase,
+        context_json = excluded.context_json,
+        pause_reason = excluded.pause_reason`,
+      [
+        state.sessionId,
+        state.taskId,
+        state.taskRunId,
+        state.sessionKind,
+        state.cwd,
+        state.worktreeDir,
+        state.branch,
+        state.model,
+        state.thinkingLevel,
+        state.piSessionId,
+        state.piSessionFile,
+        state.containerId,
+        state.containerImage,
+        state.pausedAt,
+        state.lastPrompt,
+        state.executionPhase,
+        contextJson,
+        state.pauseReason ?? null,
+      ]
+    )
+  }
+
+  loadPausedSessionState(sessionId: string): {
+    sessionId: string
+    taskId: string | null
+    taskRunId: string | null
+    sessionKind: string
+    cwd: string | null
+    worktreeDir: string | null
+    branch: string | null
+    model: string
+    thinkingLevel: string
+    piSessionId: string | null
+    piSessionFile: string | null
+    containerId: string | null
+    containerImage: string | null
+    pausedAt: number
+    lastPrompt: string | null
+    executionPhase: string | null
+    context: { agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }
+    pauseReason: string | null
+  } | null {
+    const row = this.db
+      .prepare("SELECT * FROM paused_session_states WHERE session_id = ?")
+      .get(sessionId) as Record<string, unknown> | null
+
+    if (!row) return null
+
+    const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(
+      row.context_json,
+      { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
+    )
+
+    return {
+      sessionId: String(row.session_id),
+      taskId: row.task_id ? String(row.task_id) : null,
+      taskRunId: row.task_run_id ? String(row.task_run_id) : null,
+      sessionKind: String(row.session_kind),
+      cwd: row.cwd ? String(row.cwd) : null,
+      worktreeDir: row.worktree_dir ? String(row.worktree_dir) : null,
+      branch: row.branch ? String(row.branch) : null,
+      model: String(row.model),
+      thinkingLevel: String(row.thinking_level),
+      piSessionId: row.pi_session_id ? String(row.pi_session_id) : null,
+      piSessionFile: row.pi_session_file ? String(row.pi_session_file) : null,
+      containerId: row.container_id ? String(row.container_id) : null,
+      containerImage: row.container_image ? String(row.container_image) : null,
+      pausedAt: Number(row.paused_at),
+      lastPrompt: row.last_prompt ? String(row.last_prompt) : null,
+      executionPhase: row.execution_phase ? String(row.execution_phase) : null,
+      context: {
+        agentOutputSnapshot: context.agentOutputSnapshot ?? null,
+        pendingToolCalls: context.pendingToolCalls ?? null,
+        reviewCount: context.reviewCount ?? 0,
+      },
+      pauseReason: row.pause_reason ? String(row.pause_reason) : null,
+    }
+  }
+
+  clearPausedSessionState(sessionId: string): void {
+    this.db.prepare("DELETE FROM paused_session_states WHERE session_id = ?").run(sessionId)
+  }
+
+  listPausedSessions(): Array<{
+    sessionId: string
+    taskId: string | null
+    taskRunId: string | null
+    sessionKind: string
+    cwd: string | null
+    worktreeDir: string | null
+    branch: string | null
+    model: string
+    thinkingLevel: string
+    piSessionId: string | null
+    piSessionFile: string | null
+    containerId: string | null
+    containerImage: string | null
+    pausedAt: number
+    lastPrompt: string | null
+    executionPhase: string | null
+    context: { agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }
+    pauseReason: string | null
+  }> {
+    const rows = this.db.prepare("SELECT * FROM paused_session_states ORDER BY paused_at DESC").all() as Record<string, unknown>[]
+
+    return rows.map((row) => {
+      const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(
+        row.context_json,
+        { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
+      )
+
+      return {
+        sessionId: String(row.session_id),
+        taskId: row.task_id ? String(row.task_id) : null,
+        taskRunId: row.task_run_id ? String(row.task_run_id) : null,
+        sessionKind: String(row.session_kind),
+        cwd: row.cwd ? String(row.cwd) : null,
+        worktreeDir: row.worktree_dir ? String(row.worktree_dir) : null,
+        branch: row.branch ? String(row.branch) : null,
+        model: String(row.model),
+        thinkingLevel: String(row.thinking_level),
+        piSessionId: row.pi_session_id ? String(row.pi_session_id) : null,
+        piSessionFile: row.pi_session_file ? String(row.pi_session_file) : null,
+        containerId: row.container_id ? String(row.container_id) : null,
+        containerImage: row.container_image ? String(row.container_image) : null,
+        pausedAt: Number(row.paused_at),
+        lastPrompt: row.last_prompt ? String(row.last_prompt) : null,
+        executionPhase: row.execution_phase ? String(row.execution_phase) : null,
+        context: {
+          agentOutputSnapshot: context.agentOutputSnapshot ?? null,
+          pendingToolCalls: context.pendingToolCalls ?? null,
+          reviewCount: context.reviewCount ?? 0,
+        },
+        pauseReason: row.pause_reason ? String(row.pause_reason) : null,
+      }
+    })
+  }
+
+  getPausedSessionsByTask(taskId: string): Array<{
+    sessionId: string
+    taskId: string | null
+    taskRunId: string | null
+    sessionKind: string
+    cwd: string | null
+    worktreeDir: string | null
+    branch: string | null
+    model: string
+    thinkingLevel: string
+    piSessionId: string | null
+    piSessionFile: string | null
+    containerId: string | null
+    containerImage: string | null
+    pausedAt: number
+    lastPrompt: string | null
+    executionPhase: string | null
+    context: { agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }
+    pauseReason: string | null
+  }> {
+    const rows = this.db
+      .prepare("SELECT * FROM paused_session_states WHERE task_id = ? ORDER BY paused_at DESC")
+      .all(taskId) as Record<string, unknown>[]
+
+    return rows.map((row) => {
+      const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(
+        row.context_json,
+        { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
+      )
+
+      return {
+        sessionId: String(row.session_id),
+        taskId: row.task_id ? String(row.task_id) : null,
+        taskRunId: row.task_run_id ? String(row.task_run_id) : null,
+        sessionKind: String(row.session_kind),
+        cwd: row.cwd ? String(row.cwd) : null,
+        worktreeDir: row.worktree_dir ? String(row.worktree_dir) : null,
+        branch: row.branch ? String(row.branch) : null,
+        model: String(row.model),
+        thinkingLevel: String(row.thinking_level),
+        piSessionId: row.pi_session_id ? String(row.pi_session_id) : null,
+        piSessionFile: row.pi_session_file ? String(row.pi_session_file) : null,
+        containerId: row.container_id ? String(row.container_id) : null,
+        containerImage: row.container_image ? String(row.container_image) : null,
+        pausedAt: Number(row.paused_at),
+        lastPrompt: row.last_prompt ? String(row.last_prompt) : null,
+        executionPhase: row.execution_phase ? String(row.execution_phase) : null,
+        context: {
+          agentOutputSnapshot: context.agentOutputSnapshot ?? null,
+          pendingToolCalls: context.pendingToolCalls ?? null,
+          reviewCount: context.reviewCount ?? 0,
+        },
+        pauseReason: row.pause_reason ? String(row.pause_reason) : null,
+      }
+    })
+  }
+
+  clearAllPausedSessionStates(): void {
+    this.db.exec("DELETE FROM paused_session_states")
+  }
+
+  // ---- Paused Run States (workflow-level pause state) ----
+
+  savePausedRunState(state: {
+    runId: string
+    kind: "all_tasks" | "single_task" | "workflow_review"
+    taskOrder: string[]
+    currentTaskIndex: number
+    currentTaskId: string | null
+    targetTaskId: string | null
+    pausedAt: number
+    executionPhase: "not_started" | "planning" | "executing" | "reviewing" | "committing"
+  }): void {
+    this.db.run(
+      `INSERT INTO paused_run_states (
+        run_id, kind, task_order_json, current_task_index, current_task_id,
+        target_task_id, paused_at, execution_phase
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id) DO UPDATE SET
+        kind = excluded.kind,
+        task_order_json = excluded.task_order_json,
+        current_task_index = excluded.current_task_index,
+        current_task_id = excluded.current_task_id,
+        target_task_id = excluded.target_task_id,
+        paused_at = excluded.paused_at,
+        execution_phase = excluded.execution_phase`,
+      [
+        state.runId,
+        state.kind,
+        JSON.stringify(state.taskOrder),
+        state.currentTaskIndex,
+        state.currentTaskId,
+        state.targetTaskId,
+        state.pausedAt,
+        state.executionPhase,
+      ]
+    )
+  }
+
+  loadPausedRunState(runId: string): {
+    runId: string
+    kind: "all_tasks" | "single_task" | "workflow_review"
+    taskOrder: string[]
+    currentTaskIndex: number
+    currentTaskId: string | null
+    targetTaskId: string | null
+    pausedAt: number
+    executionPhase: "not_started" | "planning" | "executing" | "reviewing" | "committing"
+  } | null {
+    const row = this.db
+      .prepare("SELECT * FROM paused_run_states WHERE run_id = ?")
+      .get(runId) as Record<string, unknown> | null
+
+    if (!row) return null
+
+    return {
+      runId: String(row.run_id),
+      kind: String(row.kind) as "all_tasks" | "single_task" | "workflow_review",
+      taskOrder: parseJSON<string[]>(row.task_order_json, []),
+      currentTaskIndex: Number(row.current_task_index ?? 0),
+      currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
+      targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
+      pausedAt: Number(row.paused_at),
+      executionPhase: String(row.execution_phase) as "not_started" | "planning" | "executing" | "reviewing" | "committing",
+    }
+  }
+
+  clearPausedRunState(runId: string): void {
+    this.db.prepare("DELETE FROM paused_run_states WHERE run_id = ?").run(runId)
+  }
+
+  hasPausedRunState(runId: string): boolean {
+    const row = this.db
+      .prepare("SELECT 1 FROM paused_run_states WHERE run_id = ?")
+      .get(runId) as { 1: number } | null
+    return row !== null
+  }
+
+  listPausedRunStates(): Array<{
+    runId: string
+    kind: "all_tasks" | "single_task" | "workflow_review"
+    taskOrder: string[]
+    currentTaskIndex: number
+    currentTaskId: string | null
+    targetTaskId: string | null
+    pausedAt: number
+    executionPhase: "not_started" | "planning" | "executing" | "reviewing" | "committing"
+  }> {
+    const rows = this.db.prepare("SELECT * FROM paused_run_states ORDER BY paused_at DESC").all() as Record<string, unknown>[]
+
+    return rows.map((row) => ({
+      runId: String(row.run_id),
+      kind: String(row.kind) as "all_tasks" | "single_task" | "workflow_review",
+      taskOrder: parseJSON<string[]>(row.task_order_json, []),
+      currentTaskIndex: Number(row.current_task_index ?? 0),
+      currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
+      targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
+      pausedAt: Number(row.paused_at),
+      executionPhase: String(row.execution_phase) as "not_started" | "planning" | "executing" | "reviewing" | "committing",
+    }))
+  }
+
+  clearAllPausedRunStates(): void {
+    this.db.exec("DELETE FROM paused_run_states")
   }
 
 }

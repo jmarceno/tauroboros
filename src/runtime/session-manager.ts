@@ -5,8 +5,10 @@ import type { PiSessionKind, PiWorkflowSession } from "../db/types.ts"
 import type { ThinkingLevel } from "../types.ts"
 import { PiRpcProcess } from "./pi-process.ts"
 import type { PiContainerManager } from "./container-manager.ts"
+import { ContainerPiProcess } from "./container-pi-process.ts"
 import { createPiProcess, type PiRuntimeMode } from "./pi-process-factory.ts"
 import { parseModelSelection } from "./model-utils.ts"
+import { loadPausedRunState } from "./session-pause-state.ts"
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -59,10 +61,25 @@ export interface ExecuteSessionPromptInput {
   onSessionMessage?: (message: import("../types.ts").SessionMessage) => void
   onSessionStart?: (session: PiWorkflowSession) => void
   /**
+   * Called when the process is created. Used to track processes for pause/stop operations.
+   */
+  onSessionCreated?: (process: PiRpcProcess | ContainerPiProcess, session: PiWorkflowSession) => void
+  /**
    * Force specific runtime mode for this session.
    * If not specified, uses workflow.runtime.mode from settings.
    */
   forceRuntime?: PiRuntimeMode
+  /**
+   * Resume fields - used when resuming a paused session
+   */
+  isResume?: boolean
+  resumedSessionId?: string
+  continuationPrompt?: string
+  /**
+   * Container image to use when resuming a paused session.
+   * If not specified, uses the default container image.
+   */
+  containerImage?: string | null
 }
 
 export interface ExecuteSessionPromptResult {
@@ -85,20 +102,68 @@ export class PiSessionManager {
   ) {}
 
   async executePrompt(input: ExecuteSessionPromptInput): Promise<ExecuteSessionPromptResult> {
-    const sessionId = randomUUID().slice(0, 8)
-    let session = this.db.createWorkflowSession({
-      id: sessionId,
-      taskId: input.taskId,
-      taskRunId: input.taskRunId ?? null,
-      sessionKind: input.sessionKind,
-      status: "starting",
-      cwd: input.cwd,
-      worktreeDir: input.worktreeDir ?? null,
-      branch: input.branch ?? null,
-      model: input.model ?? "default",
-      thinkingLevel: input.thinkingLevel ?? "default",
-      startedAt: nowUnix(),
-    })
+    // If resuming, use the same session ID
+    const sessionId = input.resumedSessionId ?? randomUUID().slice(0, 8)
+    
+    // Check if this is a resume of a container session
+    let existingContainerId: string | null = null
+    if (input.isResume && input.resumedSessionId && input.worktreeDir) {
+      const pauseState = loadPausedRunState()
+      if (pauseState) {
+        const pausedSession = pauseState.sessions.find(s => s.sessionId === input.resumedSessionId)
+        if (pausedSession?.containerId && this.containerManager) {
+          // Check if container still exists using containerId (not sessionId)
+          const containerInfo = await this.containerManager.checkContainerById(pausedSession.containerId)
+          if (!containerInfo?.running) {
+            console.log(`[session-manager] Container ${pausedSession.containerId} no longer exists, will create new one`)
+          } else {
+            existingContainerId = pausedSession.containerId
+          }
+        }
+      }
+    }
+
+    // Create or update session
+    let session: PiWorkflowSession
+    if (input.isResume && input.resumedSessionId) {
+      // Update existing session instead of creating new
+      const existingSession = this.db.getWorkflowSession(input.resumedSessionId)
+      if (existingSession) {
+        session = this.db.updateWorkflowSession(input.resumedSessionId, {
+          status: "starting",
+          // Don't reset startedAt, keep original
+        }) ?? existingSession
+      } else {
+        // Session not found, create new one with same ID
+        session = this.db.createWorkflowSession({
+          id: sessionId,
+          taskId: input.taskId,
+          taskRunId: input.taskRunId ?? null,
+          sessionKind: input.sessionKind,
+          status: "starting",
+          cwd: input.cwd,
+          worktreeDir: input.worktreeDir ?? null,
+          branch: input.branch ?? null,
+          model: input.model ?? "default",
+          thinkingLevel: input.thinkingLevel ?? "default",
+          startedAt: nowUnix(),
+        })
+      }
+    } else {
+      session = this.db.createWorkflowSession({
+        id: sessionId,
+        taskId: input.taskId,
+        taskRunId: input.taskRunId ?? null,
+        sessionKind: input.sessionKind,
+        status: "starting",
+        cwd: input.cwd,
+        worktreeDir: input.worktreeDir ?? null,
+        branch: input.branch ?? null,
+        model: input.model ?? "default",
+        thinkingLevel: input.thinkingLevel ?? "default",
+        startedAt: nowUnix(),
+      })
+    }
 
     const process = createPiProcess({
       db: this.db,
@@ -108,7 +173,14 @@ export class PiSessionManager {
       onSessionMessage: input.onSessionMessage,
       forceRuntime: input.forceRuntime,
       settings: this.settings,
+      existingContainerId,
+      containerImage: input.containerImage,
     })
+
+    // Notify caller about the created process for pause/stop tracking
+    if (input.onSessionCreated) {
+      input.onSessionCreated(process, session)
+    }
 
     let responseText = ""
     try {
@@ -146,6 +218,14 @@ export class PiSessionManager {
       session = this.db.updateWorkflowSession(session.id, {
         status: "active",
       }) ?? session
+
+      // If resuming, send continuation prompt
+      if (input.isResume && input.continuationPrompt) {
+        await process.send({
+          type: "prompt",
+          message: input.continuationPrompt,
+        }, 30_000)
+      }
 
       this.db.appendSessionIO({
         sessionId: session.id,

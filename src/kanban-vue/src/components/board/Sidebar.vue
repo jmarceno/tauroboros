@@ -3,6 +3,7 @@ import { computed, inject } from 'vue'
 import type { WorkflowRun } from '@/types/api'
 import type { useTasks } from '@/composables/useTasks'
 import { useVersion } from '@/composables/useVersion'
+import type { WorkflowControlState } from '@/composables/useWorkflowControl'
 
 const props = defineProps<{
   runs: WorkflowRun[]
@@ -10,6 +11,14 @@ const props = defineProps<{
   consumedSlots: number
   parallelTasks: number
   isConnected: boolean
+  controlState?: WorkflowControlState
+  canPause?: boolean
+  canResume?: boolean
+  canStop?: boolean
+  isControlLoading?: boolean
+  // New props per plan
+  isPaused?: boolean
+  activeRunId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +31,15 @@ const emit = defineEmits<{
   togglePlanningChat: []
   archiveRun: [id: string]
   archiveAllStaleRuns: []
+  // New emits per plan with runId parameter
+  pauseExecution: [runId: string]
+  resumeExecution: [runId: string]
+  stopExecution: [type: 'graceful' | 'destructive']
+  // Legacy emits for backward compatibility
+  pauseWorkflow: []
+  resumeWorkflow: []
+  stopWorkflow: []
+  forceStopWorkflow: []
 }>()
 
 const tasks = inject<ReturnType<typeof useTasks>>('tasks')!
@@ -172,24 +190,67 @@ const isRunStale = (run: WorkflowRun) => {
           </button>
         </div>
 
-        <!-- Quick Actions -->
+        <!-- Workflow Controls -->
         <div class="sidebar-section">
-          <div class="sidebar-section-title">Actions</div>
-          <button
-            :class="['sidebar-btn', isRunning ? 'border-accent-danger text-accent-danger' : 'primary']"
-            @click="emit('toggleExecution')"
-          >
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <template v-if="isRunning">
-                <rect x="6" y="6" width="12" height="12" rx="2"/>
-              </template>
-              <template v-else>
+          <div class="sidebar-section-title">Workflow Control</div>
+
+          <!-- Main Start/Pause/Resume/Stop Buttons - grouped together -->
+          <div class="action-group">
+            <!-- Start button (only when idle) -->
+            <button
+              v-if="!isRunning && controlState !== 'paused'"
+              :class="['sidebar-btn', 'primary']"
+              :disabled="isControlLoading"
+              @click="emit('toggleExecution')"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
                 <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </template>
-            </svg>
-            <span class="sidebar-label">{{ isRunning ? 'Stop Workflow' : 'Start Workflow' }}</span>
-          </button>
+              </svg>
+              <span class="sidebar-label">Start Workflow</span>
+            </button>
+
+            <!-- Pause button (when running) -->
+            <button
+              v-if="canPause && isRunning"
+              class="sidebar-btn warning"
+              :disabled="isControlLoading"
+              @click="activeRunId ? emit('pauseExecution', activeRunId) : emit('pauseWorkflow')"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="6" y="6" width="4" height="12" rx="1"/>
+                <rect x="14" y="6" width="4" height="12" rx="1"/>
+              </svg>
+              <span class="sidebar-label">Pause</span>
+            </button>
+
+            <!-- Resume button (when paused) -->
+            <button
+              v-if="canResume && (controlState === 'paused' || isPaused)"
+              :class="['sidebar-btn', 'primary']"
+              :disabled="isControlLoading"
+              @click="activeRunId ? emit('resumeExecution', activeRunId) : emit('resumeWorkflow')"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+                <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              <span class="sidebar-label">Resume</span>
+            </button>
+
+            <!-- Stop button (when running or paused) - opens confirmation modal -->
+            <button
+              v-if="canStop && (isRunning || controlState === 'paused' || isPaused)"
+              class="sidebar-btn danger"
+              :disabled="isControlLoading"
+              @click="emit('stopExecution', 'graceful')"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="6" y="6" width="12" height="12" rx="2"/>
+              </svg>
+              <span class="sidebar-label">Stop</span>
+            </button>
+          </div>
 
           <button class="sidebar-btn" @click="emit('openTemplateModal')">
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -343,5 +404,33 @@ const isRunStale = (run: WorkflowRun) => {
   text-align: center;
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   letter-spacing: 0.025em;
+}
+
+/* Action group for related buttons (pause/resume/stop) */
+.action-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Warning button style (for pause) */
+.sidebar-btn.warning {
+  border-color: #ffc107;
+  color: #ffc107;
+}
+
+.sidebar-btn.warning:hover {
+  background: rgba(255, 193, 7, 0.1);
+}
+
+/* Danger button style (for destructive stop) */
+.sidebar-btn.danger {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+
+.sidebar-btn.danger:hover {
+  background: rgba(255, 107, 107, 0.1);
 }
 </style>

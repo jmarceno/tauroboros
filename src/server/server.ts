@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto"
-import { readFileSync, existsSync } from "fs"
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "fs"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import type { InfrastructureSettings } from "../config/settings.ts"
@@ -8,12 +8,13 @@ import { discoverPiModels } from "../pi/model-discovery.ts"
 import { isTaskAwaitingPlanApproval } from "../task-state.ts"
 import type { BestOfNConfig, ImageStatusPayload, Task, TaskRun, ThinkingLevel, WSMessage, SessionMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
-import type { SessionIORecordType } from "../db/types.ts"
+import type { SessionIORecordType, PackageDefinition } from "../db/types.ts"
 import { runStartupRecovery } from "../recovery/startup-recovery.ts"
 import { ContainerImageManager, loadContainerConfig, saveContainerConfig } from "../runtime/container-image-manager.ts"
 import { SmartRepairService, type SmartRepairAction } from "../runtime/smart-repair.ts"
 import { PlanningSessionManager, type ContextAttachment } from "../runtime/planning-session.ts"
 import { sendTelegramNotification, type TelegramConfig } from "../telegram.ts"
+import { loadPausedRunState, loadPausedSessionState } from "../runtime/session-pause-state.ts"
 import { Router } from "./router.ts"
 import type { RequestContext } from "./types.ts"
 import { WebSocketHub } from "./websocket.ts"
@@ -32,6 +33,7 @@ type RunControlFn = (runId: string) => Promise<any>
 type StartFn = () => Promise<any>
 type StartSingleFn = (taskId: string) => Promise<any>
 type StopFn = () => Promise<any>
+type StopRunFn = (runId: string, options?: { destructive?: boolean }) => Promise<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>
 
 function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean"
@@ -142,7 +144,7 @@ export class PiKanbanServer {
   private readonly onStop: StopFn
   private readonly onPauseRun: RunControlFn | null
   private readonly onResumeRun: RunControlFn | null
-  private readonly onStopRun: RunControlFn | null
+  private readonly onStopRun: StopRunFn | null
   private readonly defaultPort: number
   private readonly smartRepair: SmartRepairService
   private readonly imageManager?: ContainerImageManager
@@ -158,7 +160,7 @@ export class PiKanbanServer {
       onStop?: StopFn
       onPauseRun?: RunControlFn
       onResumeRun?: RunControlFn
-      onStopRun?: RunControlFn
+      onStopRun?: StopRunFn  // Unified stop with destructive option
       settings?: InfrastructureSettings
     } = {},
   ) {
@@ -629,36 +631,118 @@ export class PiKanbanServer {
     })
 
     this.router.post("/api/runs/:id/pause", async ({ params, json, broadcast }) => {
-      if (this.onPauseRun) {
-        const response = await this.onPauseRun(params.id)
-        if (response) return json(response)
+      try {
+        if (this.onPauseRun) {
+          const result = await this.onPauseRun(params.id)
+          if (result) {
+            broadcast({ type: "run_paused", payload: { runId: params.id } })
+            return json({ success: true, run: result })
+          }
+        }
+        // Fallback to just updating the database status
+        const updated = this.db.updateWorkflowRun(params.id, { pauseRequested: true, status: "paused" })
+        if (!updated) return json({ error: "Run not found" }, 404)
+        broadcast({ type: "run_updated", payload: updated })
+        broadcast({ type: "run_paused", payload: { runId: params.id } })
+        return json({ success: true, run: updated })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: message }, 500)
       }
-      const updated = this.db.updateWorkflowRun(params.id, { pauseRequested: true, status: "paused" })
-      if (!updated) return json({ error: "Run not found" }, 404)
-      broadcast({ type: "run_updated", payload: updated })
-      return json(updated)
     })
 
     this.router.post("/api/runs/:id/resume", async ({ params, json, broadcast }) => {
-      if (this.onResumeRun) {
-        const response = await this.onResumeRun(params.id)
-        if (response) return json(response)
+      try {
+        if (this.onResumeRun) {
+          const result = await this.onResumeRun(params.id)
+          if (result) {
+            broadcast({ type: "run_resumed", payload: { runId: params.id } })
+            return json({ success: true, run: result })
+          }
+        }
+        // Fallback to just updating the database status
+        const updated = this.db.updateWorkflowRun(params.id, { pauseRequested: false, status: "running" })
+        if (!updated) return json({ error: "Run not found" }, 404)
+        broadcast({ type: "run_updated", payload: updated })
+        broadcast({ type: "run_resumed", payload: { runId: params.id } })
+        return json({ success: true, run: updated })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: message }, 500)
       }
-      const updated = this.db.updateWorkflowRun(params.id, { pauseRequested: false, status: "running" })
-      if (!updated) return json({ error: "Run not found" }, 404)
-      broadcast({ type: "run_updated", payload: updated })
-      return json(updated)
     })
 
-    this.router.post("/api/runs/:id/stop", async ({ params, json, broadcast }) => {
-      if (this.onStopRun) {
-        const response = await this.onStopRun(params.id)
-        if (response) return json(response)
+    this.router.post("/api/runs/:id/stop", async ({ params, req, json, broadcast }) => {
+      try {
+        const body = await req.json().catch(() => ({}))
+        const destructive = body?.destructive === true
+
+        if (this.onStopRun) {
+          const result = await this.onStopRun(params.id, { destructive })
+          if (result) {
+            if (destructive) {
+              broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
+            }
+            return json(result)
+          }
+        }
+        // Fallback to just updating the database status
+        const updated = this.db.updateWorkflowRun(params.id, { stopRequested: true, status: "stopping" })
+        if (!updated) return json({ error: "Run not found" }, 404)
+        broadcast({ type: "run_updated", payload: updated })
+        return json({ success: true, run: updated })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: message }, 500)
       }
-      const updated = this.db.updateWorkflowRun(params.id, { stopRequested: true, status: "stopping" })
-      if (!updated) return json({ error: "Run not found" }, 404)
-      broadcast({ type: "run_updated", payload: updated })
-      return json(updated)
+    })
+
+    // Note: /api/runs/:id/force-stop is deprecated. Use /api/runs/:id/stop with { destructive: true } instead.
+    this.router.post("/api/runs/:id/force-stop", async ({ params, json, broadcast }) => {
+      try {
+        // Call the unified onStopRun with destructive flag
+        if (this.onStopRun) {
+          const result = await this.onStopRun(params.id, { destructive: true })
+          broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
+          return json(result)
+        }
+        return json({ error: "Force stop not available" }, 503)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: message }, 500)
+      }
+    })
+
+    // Global paused state endpoint - returns whether any paused run exists
+    this.router.get("/api/runs/paused-state", ({ json }) => {
+      const pausedState = loadPausedRunState()
+      return json({
+        hasPausedRun: !!pausedState,
+        state: pausedState,
+      })
+    })
+
+    // Per-run paused state endpoint - returns paused sessions for a specific run
+    this.router.get("/api/runs/:id/paused-state", ({ params, json }) => {
+      const run = this.db.getWorkflowRun(params.id)
+      if (!run) return json({ error: "Run not found" }, 404)
+
+      // Collect paused states for all sessions in this run
+      const pausedStates = []
+      for (const taskId of run.taskOrder) {
+        const task = this.db.getTask(taskId)
+        if (task?.sessionId) {
+          const state = loadPausedSessionState(this.db, task.sessionId)
+          if (state) pausedStates.push(state)
+        }
+      }
+
+      return json({
+        runId: params.id,
+        hasPausedSessions: pausedStates.length > 0,
+        pausedSessions: pausedStates,
+        runStatus: run.status,
+      })
     })
 
     this.router.get("/api/execution-graph", ({ json }) => {

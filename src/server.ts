@@ -63,6 +63,26 @@ export function createPiServer(options: CreateServerOptions = {}): {
       await orchestrator.stop()
       return { ok: true }
     },
+    onPauseRun: async (runId: string) => {
+      if (!orchestrator) throw new Error("Orchestrator unavailable")
+      return await orchestrator.pauseRun(runId)
+    },
+    onResumeRun: async (runId: string) => {
+      if (!orchestrator) throw new Error("Orchestrator unavailable")
+      return await orchestrator.resumeRun(runId)
+    },
+    onStopRun: async (runId: string, options?: { destructive?: boolean }) => {
+      if (!orchestrator) throw new Error("Orchestrator unavailable")
+      if (options?.destructive) {
+        const result = await orchestrator.destructiveStop(runId)
+        const run = db.getWorkflowRun(runId)
+        return { success: true, run, killed: result.killed, cleaned: result.cleaned }
+      } else {
+        await orchestrator.stopRun(runId)
+        const run = db.getWorkflowRun(runId)
+        return { success: true, run }
+      }
+    },
   })
 
   orchestrator = new PiOrchestrator(

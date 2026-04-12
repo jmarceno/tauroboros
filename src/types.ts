@@ -234,9 +234,14 @@ export type WSMessageType =
   | "execution_started"
   | "execution_stopped"
   | "execution_complete"
+  | "execution_paused"
+  | "execution_resumed"
   | "run_created"
   | "run_archived"
   | "run_updated"
+  | "run_paused"           // NEW: Run was paused
+  | "run_resumed"          // NEW: Run was resumed
+  | "run_stopped"          // NEW: Run was stopped (with destructive flag)
   | "agent_output"
   | "error"
   | "task_run_created"
@@ -255,6 +260,16 @@ export type WSMessageType =
   | "planning_session_updated"
   | "planning_session_message"
   | "planning_session_closed"
+  // Container events
+  | "container_config_updated"
+  | "container_package_added"
+  | "container_package_removed"
+  | "container_dockerfile_custom_updated"
+  | "container_build_started"
+  | "container_build_progress"
+  | "container_build_completed"
+  | "container_build_cancelled"
+  | "container_profile_applied"
 
 export interface WSMessage {
   type: WSMessageType

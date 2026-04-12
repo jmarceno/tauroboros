@@ -98,9 +98,14 @@ export function useApi() {
 
     // Workflow runs
     getRuns: () => request<WorkflowRun[]>('/api/runs'),
-    pauseRun: (id: string) => request<WorkflowRun>(`/api/runs/${id}/pause`, { method: 'POST' }),
-    resumeRun: (id: string) => request<WorkflowRun>(`/api/runs/${id}/resume`, { method: 'POST' }),
-    stopRun: (id: string) => request<WorkflowRun>(`/api/runs/${id}/stop`, { method: 'POST' }),
+    pauseRun: (id: string) => request<{ success: boolean; run: WorkflowRun }>(`/api/runs/${id}/pause`, { method: 'POST' }),
+    resumeRun: (id: string) => request<{ success: boolean; run: WorkflowRun }>(`/api/runs/${id}/resume`, { method: 'POST' }),
+    stopRun: (id: string, options?: { destructive?: boolean }) => request<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>(`/api/runs/${id}/stop`, {
+      method: 'POST',
+      body: JSON.stringify(options ?? {}),
+    }),
+    forceStopRun: (id: string) => request<{ success: boolean; killed: number; cleaned: number; run: WorkflowRun }>(`/api/runs/${id}/force-stop`, { method: 'POST' }),
+    getPausedState: () => request<{ hasPausedRun: boolean; state: unknown }>('/api/runs/paused-state'),
     archiveRun: (id: string) => request(`/api/runs/${id}`, { method: 'DELETE' }),
 
     // Options
