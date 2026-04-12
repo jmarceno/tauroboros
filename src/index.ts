@@ -17,13 +17,17 @@ export async function main(): Promise<void> {
   // Resolve dbPath relative to project root
   const dbPath = resolve(projectRoot, settings.workflow.server.dbPath)
 
+  // Support SERVER_PORT environment variable override
+  const envPort = process.env.SERVER_PORT
+  const port = envPort ? parseInt(envPort, 10) : settings.workflow.server.port
+
   const { db, server } = createPiServer({
-    port: settings.workflow.server.port,
+    port,
     dbPath,
   })
 
-  const port = await server.start(settings.workflow.server.port)
-  console.log(`[pi-easy-workflow] server started on http://0.0.0.0:${port}`)
+  const actualPort = await server.start(port)
+  console.log(`[pi-easy-workflow] server started on http://0.0.0.0:${actualPort}`)
 
   const shutdown = () => {
     try {

@@ -17,6 +17,7 @@ import { sendTelegramNotification, type TelegramConfig } from "../telegram.ts"
 import { Router } from "./router.ts"
 import type { RequestContext } from "./types.ts"
 import { WebSocketHub } from "./websocket.ts"
+import { readEmbeddedFile, readEmbeddedText, embeddedFileExists, getContentType, getIndexHtml } from "./embedded-files.ts"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -319,29 +320,29 @@ export class PiKanbanServer {
 
   private registerRoutes(): void {
     // Serve index.html for root and for any non-API route (SPA routing)
-    this.router.get("/", () => new Response(readFileSync(KANBAN_VUE_INDEX, "utf-8"), { headers: { "Content-Type": "text/html" } }))
+    // Uses embedded assets in compiled binary or filesystem in development
+    this.router.get("/", async () => {
+      const content = await getIndexHtml()
+      if (content) {
+        return new Response(content, { headers: { "Content-Type": "text/html" } })
+      }
+      return new Response("index.html not found", { status: 404 })
+    })
 
     // Static file serving for kanban-vue assets
-    this.router.get("/assets/:file", ({ params }) => {
+    // Using Bun.file() which works with both regular files and embedded files in compiled binaries
+    this.router.get("/assets/:file", async ({ params }) => {
       const filePath = join(KANBAN_VUE_DIST, "assets", params.file)
-      if (!existsSync(filePath)) {
+      if (!(await embeddedFileExists(filePath))) {
         return new Response("Not found", { status: 404 })
       }
-      const content = readFileSync(filePath)
-      const ext = params.file.split('.').pop()
-      const contentType = {
-        js: "application/javascript",
-        css: "text/css",
-        svg: "image/svg+xml",
-        png: "image/png",
-        jpg: "image/jpeg",
-        jpeg: "image/jpeg",
-        gif: "image/gif",
-        woff2: "font/woff2",
-        woff: "font/woff",
-        ttf: "font/ttf",
-      }[ext || ""] || "application/octet-stream"
-      return new Response(content, { headers: { "Content-Type": contentType } })
+      try {
+        const content = await readEmbeddedFile(filePath)
+        const contentType = getContentType(params.file)
+        return new Response(content, { headers: { "Content-Type": contentType } })
+      } catch {
+        return new Response("Failed to read file", { status: 500 })
+      }
     })
 
     this.router.get("/healthz", ({ json }) => json({ ok: true, wsClients: this.wsHub.size() }))

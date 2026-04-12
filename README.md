@@ -48,7 +48,7 @@ Pi Easy Workflow is an AI-powered workflow orchestration system that helps you m
 ## Quick Start
 
 ### Prerequisites
-- [Bun](https://bun.sh/) runtime
+- [Bun](https://bun.sh/) runtime (for development and building)
 - Git repository (project must be in a git repo)
 - Pi AI agent binary (for AI execution)
 
@@ -65,7 +65,7 @@ bun install
 bun run setup
 ```
 
-### Start the Server
+### Option 1: Run with Bun (Development/Recommended)
 
 ```bash
 # Start the server (backend + kanban UI)
@@ -78,6 +78,31 @@ bun run dev
 The server will start on port `3789` by default (configurable in `.pi/settings.json`). Open `http://localhost:3789` in your browser.
 
 **Note:** The kanban frontend (Vue app in `src/kanban-vue/`) has its own package.json and uses npm. The root Bun scripts (`bun run start`, `bun run build`) automatically handle building the frontend for you.
+
+### Option 2: Use Compiled Binary (Standalone Distribution)
+
+You can compile the entire application into a single executable binary for easy distribution:
+
+```bash
+# Compile into a single binary (~66 MB)
+bun run compile
+
+# The binary is created as ./pi-easy-workflow
+./pi-easy-workflow
+
+# Run on a custom port
+SERVER_PORT=3790 ./pi-easy-workflow
+
+# Validate the compiled binary works correctly
+bun run compile:test
+```
+
+**Binary Features:**
+- Single file executable (~66 MB) with all frontend assets embedded
+- No dependencies required at runtime (just the binary)
+- Supports all the same features as the Bun runtime version
+- Runtime data (database, settings) stored in `./.pi/` directory
+- Environment variable support: `SERVER_PORT` to customize port
 
 ### Basic Usage
 
@@ -119,6 +144,10 @@ bun run dev
 
 # Build everything (backend + kanban frontend)
 bun run build
+
+# Compile to single binary (standalone distribution)
+bun run compile             # Create ./pi-easy-workflow binary
+bun run compile:test        # Validate compiled binary
 
 # Run unit tests
 bun test

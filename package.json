@@ -7,6 +7,8 @@
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
     "build": "bun build --target=bun src/index.ts --outdir dist && bun run kanban:build",
+    "compile": "bun run scripts/compile.ts",
+    "compile:test": "bun run scripts/test-binary.ts",
     "kanban:build": "cd src/kanban-vue && npm install && npm run build",
     "kanban:dev": "bun run src/index.ts & sleep 3 && cd src/kanban-vue && npm install && npm run dev",
     "test": "bun test",

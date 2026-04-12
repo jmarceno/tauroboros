@@ -124,7 +124,95 @@ bun run test:e2e
 
 # E2E with UI mode
 bun run test:e2e:ui
+
+# Compile binary validation
+bun run compile:test      # Runs comprehensive tests on compiled binary
 ```
 
 ### CSS
 When dealing with CSS changes, always get the computed CSS with playwright and never trust visual identification.
+
+## Binary Compilation
+
+The application can be compiled into a single executable binary using Bun's `--compile` feature.
+
+### Compile Scripts
+
+**`scripts/compile.ts`** - Main compilation orchestrator:
+- Builds kanban-vue frontend (if needed)
+- Runs `scripts/generate-embedded-assets.ts` to inline static files
+- Executes `bun build --compile` to create the binary
+- Outputs to `./pi-easy-workflow` (~66 MB ELF executable)
+
+**`scripts/generate-embedded-assets.ts`** - Asset embedding:
+- Scans `src/kanban-vue/dist/` recursively
+- Generates `src/server/generated-assets.ts` with all files inlined as strings/base64
+- Supports both text files (JS, CSS, HTML) and binary files (fonts, images)
+- Creates a Map-based lookup system for runtime asset access
+
+**`scripts/test-binary.ts`** - Validation suite:
+- Tests binary existence and executable permissions
+- Verifies server starts and health endpoint responds
+- Validates static assets are served correctly
+- Checks API endpoints work
+- Tests custom port via SERVER_PORT environment variable
+
+### Embedded Asset Architecture
+
+**`src/server/embedded-files.ts`** - Dual-mode file serving:
+- Detects presence of `generated-assets.ts` (only exists during/after compilation)
+- Uses embedded assets when available (compiled binary mode)
+- Falls back to filesystem access when not available (development mode)
+- `extractAssetKey()` function normalizes paths: `/path/to/kanban-vue/dist/assets/file.js` → `/assets/file.js`
+- Supports both text and binary content with proper encoding
+
+**`src/server/server.ts`** - Updated static file handlers:
+- `GET /` route uses `getIndexHtml()` for embedded/fallback index.html
+- `GET /assets/:file` uses async `readEmbeddedFile()` with embedded/fallback
+- All routes properly await async file operations
+
+### Generated Assets Module
+
+The generated file (`src/server/generated-assets.ts`) contains:
+```typescript
+export const embeddedAssets = new Map([
+  ["/assets/index-CnuU_D5s.js", { contentType: "...", isText: true, data: "..." }],
+  ["/index.html", { contentType: "text/html", isText: true, data: "..." }],
+  // ... 60+ files
+])
+```
+
+- Total embedded size: ~4.5 MB (compressed JS/CSS)
+- Keys use `/assets/` prefix for assets, `/index.html` for main page
+- Binary files (woff2, png) are base64 encoded
+- Text files are escaped for template literal safety
+
+### Usage
+
+```bash
+# Compile (generates binary + validates)
+bun run compile
+
+# Manual compilation steps
+bun run scripts/compile.ts
+
+# Just validate an existing binary
+bun run scripts/test-binary.ts
+
+# Run the binary
+./pi-easy-workflow
+SERVER_PORT=3790 ./pi-easy-workflow
+```
+
+### Maintenance Notes
+
+When modifying kanban-vue:
+1. Always run `bun run kanban:build` before compiling
+2. The compile script auto-builds if `dist/` is missing/outdated
+3. Embedded assets are regenerated fresh on every compile
+4. `generated-assets.ts` is set to a placeholder after compilation (keeps imports valid)
+
+When modifying server static file handling:
+- Use `embeddedFileExists()`, `readEmbeddedFile()`, `readEmbeddedText()` from `embedded-files.ts`
+- These functions handle both development and compiled modes automatically
+- Never use direct `readFileSync` for static assets (breaks compiled binary)
