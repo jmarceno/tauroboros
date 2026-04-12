@@ -19,9 +19,13 @@ export const KANBAN_VUE_INDEX = join(KANBAN_VUE_DIST, "index.html")
 // Try to import generated assets (will be available in compiled binary)
 let generatedAssets: typeof import("./generated-assets.ts") | null = null
 try {
-  generatedAssets = await import("./generated-assets.ts")
+  const mod = await import("./generated-assets.ts")
+  // Check if the module has the actual implementation or just a placeholder
+  if (mod && typeof mod.getEmbeddedAsset === 'function') {
+    generatedAssets = mod
+  }
 } catch {
-  // generated-assets.ts doesn't exist, will use filesystem fallback
+  // generated-assets.ts doesn't exist or is a placeholder, will use filesystem fallback
 }
 
 /**

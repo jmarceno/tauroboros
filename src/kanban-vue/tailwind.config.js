@@ -7,76 +7,74 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Cursor IDE inspired - True dark theme with glass effects
+        // Prototype 6 - Cyberpunk Neon Theme (without gradients)
         dark: {
-          bg: '#000000',           // Pure black background
-          surface: 'rgba(20, 20, 20, 0.6)',   // Glass panels - subtle transparency
-          surface2: 'rgba(30, 30, 30, 0.8)',  // Cards with slight transparency
-          surface3: 'rgba(50, 50, 50, 0.6)',  // Borders with transparency
-          border: 'rgba(60, 60, 60, 0.5)',    // Subtle borders
-          text: '#e0e0e0',         // Soft white text
-          'text-muted': '#888888',  // Muted gray text
-          'text-dim': '#555555',    // Very dim text
+          bg: '#0c0c14',           // Deep dark background
+          surface: '#151520',      // Slightly lighter panels
+          surface2: '#1e1e2d',     // Cards, secondary surfaces
+          surface3: '#252536',     // Hover states
+          border: '#2a2a3e',       // Subtle borders
+          'border-hover': '#3a3a52', // Hover borders
+          text: '#f0f0f5',         // Primary text
+          'text-secondary': '#a0a0b0', // Secondary text
+          'text-muted': '#6a6a80',    // Muted text
+          input: '#0a0a12',        // Input backgrounds
         },
-        // Subtle accent colors (not overpowering)
+        // Neon Accent Colors (high contrast)
         accent: {
-          primary: 'rgba(100, 100, 100, 0.5)',    // Gray primary for subtle UI
-          'primary-hover': 'rgba(120, 120, 120, 0.6)',
-          success: 'rgba(50, 150, 80, 0.7)',     // Muted green
-          'success-hover': 'rgba(50, 150, 80, 0.9)',
-          warning: 'rgba(200, 150, 50, 0.7)',     // Muted amber
-          danger: 'rgba(200, 80, 80, 0.7)',       // Muted red
-          info: 'rgba(80, 130, 200, 0.7)',       // Muted blue
+          primary: '#00d4ff',      // Cyan primary
+          secondary: '#ff00a0',  // Magenta secondary
+          success: '#00ff88',      // Neon green
+          warning: '#ffcc00',      // Yellow
+          danger: '#ff3366',     // Red
+          info: '#4488ff',       // Blue
         },
-        // Column header colors - subtle glass with color tints
+        // Column-specific colors
         column: {
-          template: { 
-            bg: 'rgba(80, 80, 120, 0.15)',   // Subtle indigo tint
-            text: '#a0a0d0',                  // Soft indigo text
-            border: 'rgba(100, 100, 150, 0.4)'
-          },
-          backlog: { 
-            bg: 'rgba(150, 120, 60, 0.15)',  // Subtle amber tint
-            text: '#d0b080',                  // Soft amber text
-            border: 'rgba(180, 140, 70, 0.4)'
-          },
-          executing: { 
-            bg: 'rgba(60, 150, 80, 0.15)',   // Subtle green tint
-            text: '#80d0a0',                  // Soft green text
-            border: 'rgba(70, 180, 100, 0.4)'
-          },
-          review: { 
-            bg: 'rgba(140, 80, 140, 0.15)', // Subtle purple tint
-            text: '#d080d0',                  // Soft purple text
-            border: 'rgba(160, 90, 160, 0.4)'
-          },
-          done: { 
-            bg: 'rgba(60, 140, 160, 0.15)',  // Subtle cyan tint
-            text: '#80d0e0',                  // Soft cyan text
-            border: 'rgba(70, 160, 180, 0.4)'
-          },
-        }
+          template: '#b388ff',   // Purple
+          backlog: '#ffab40',    // Orange
+          executing: '#69f0ae',  // Green
+          review: '#ff4081',     // Pink
+          done: '#18ffff',       // Cyan
+        },
+        // Legacy aliases for backward compatibility
+        'accent-success': '#00ff88',
+        'accent-danger': '#ff3366',
+        'accent-warning': '#ffcc00',
+        'dark-text': '#f0f0f5',
+        'dark-text-muted': '#a0a0b0',
+        'dark-dim': '#6a6a80',
       },
       fontFamily: {
-        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Helvetica', 'Arial', 'sans-serif'],
+        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Noto Sans', 'sans-serif'],
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'Liberation Mono', 'monospace'],
       },
       animation: {
         'spin': 'spin 0.6s linear infinite',
-        'slide-in': 'slideIn 0.2s ease',
+        'slide-in': 'slideIn 0.3s ease',
+        'slide-out': 'slideOut 0.3s ease',
         'pulse': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'blink': 'blink 1s infinite',
       },
       keyframes: {
         spin: {
           'to': { transform: 'rotate(360deg)' },
         },
         slideIn: {
-          'from': { transform: 'translateX(100%)', opacity: '0' },
-          'to': { transform: 'translateX(0)', opacity: '1' },
+          'from': { right: '-500px' },
+          'to': { right: '0' },
+        },
+        slideOut: {
+          'from': { right: '0' },
+          'to': { right: '-500px' },
         },
         pulse: {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '.5' },
+        },
+        blink: {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.3' },
         },
       },
     },

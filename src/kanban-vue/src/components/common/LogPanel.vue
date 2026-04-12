@@ -15,21 +15,26 @@ const toggleIcon = collapsed.value ? '▼' : '▲'
 <template>
   <div
     :class="[
-      'border-t border-dark-surface3 bg-dark-surface flex flex-col transition-all duration-200',
+      'border-t border-dark-border bg-dark-surface flex flex-col transition-all duration-200 shrink-0',
       collapsed ? 'h-auto' : 'h-44 min-h-[120px]'
     ]"
   >
     <div
-      class="px-3.5 py-2 text-xs font-semibold text-dark-text-muted border-b border-dark-surface3 uppercase tracking-wider flex items-center justify-between cursor-pointer select-none"
+      class="px-3.5 py-2 text-xs font-semibold text-dark-text-secondary border-b border-dark-border uppercase tracking-wider flex items-center justify-between cursor-pointer select-none"
       @click="collapsed = !collapsed"
     >
       <span>Event Log</span>
       <div class="flex items-center gap-2">
         <button
-          class="bg-transparent border-0 text-dark-text-muted cursor-pointer p-1 hover:text-dark-text"
+          class="bg-transparent border-0 text-dark-text-secondary cursor-pointer p-1 hover:text-dark-text"
           @click.stop="collapsed = !collapsed"
         >
-          {{ collapsed ? '▼' : '▲' }}
+          <svg v-if="collapsed" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 9l-7 7-7-7"/>
+          </svg>
+          <svg v-else class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 15l7-7 7 7"/>
+          </svg>
         </button>
         <button class="btn btn-sm" @click.stop="emit('clear')">Clear</button>
       </div>
@@ -44,9 +49,9 @@ const toggleIcon = collapsed.value ? '▼' : '▲'
         :key="idx"
         :class="[
           'mb-1',
-          log.variant === 'info' && 'text-dark-text-muted',
-          log.variant === 'success' && 'text-green-400',
-          log.variant === 'error' && 'text-red-400'
+          log.variant === 'info' && 'text-dark-text-secondary',
+          log.variant === 'success' && 'text-accent-success',
+          log.variant === 'error' && 'text-accent-danger'
         ]"
       >
         [{{ log.ts }}] {{ log.message }}

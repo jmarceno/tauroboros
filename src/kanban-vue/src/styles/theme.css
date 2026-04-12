@@ -2,16 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Cursor IDE inspired dark theme with glass effects */
+/* Prototype 6 - Cyberpunk Neon Theme - TIGHT SPACING */
 @layer base {
   html {
-    scrollbar-color: rgba(80, 80, 80, 0.5) transparent;
+    scrollbar-color: #2a2a3e transparent;
     scrollbar-width: thin;
   }
 
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
   }
 
   ::-webkit-scrollbar-track {
@@ -19,70 +19,590 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgba(80, 80, 80, 0.5);
-    border: 2px solid transparent;
-    border-radius: 999px;
-    background-clip: content-box;
+    background: #2a2a3e;
+    border-radius: 3px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(100, 100, 100, 0.7);
-    background-clip: content-box;
+    background: #3a3a52;
   }
 
   body {
-    background-color: #000000;
+    background-color: #0c0c14;
+    color: #f0f0f5;
+    font-size: 13px;
   }
 }
 
 @layer components {
-  .spinner {
-    @apply inline-block w-3 h-3 border-2 border-dark-text-muted border-t-dark-text rounded-full animate-spin;
+  /* ============================================
+     LAYOUT COMPONENTS - COMPACT SPACING
+     ============================================ */
+
+  /* Main App Layout */
+  .app-layout {
+    @apply grid h-screen overflow-hidden;
+    grid-template-columns: auto 1fr;
   }
 
+  /* Sidebar - Tight spacing like prototype */
+  .sidebar {
+    @apply flex flex-col bg-dark-surface border-r border-dark-border;
+    width: 240px;
+    flex-shrink: 0;
+  }
+
+  .sidebar-header {
+    @apply flex items-center justify-between gap-2 px-3 py-3 h-14 border-b border-dark-border;
+  }
+
+  .sidebar-content {
+    @apply flex-1 overflow-y-auto p-3;
+  }
+
+  .sidebar-section {
+    @apply mb-4;
+  }
+
+  .sidebar-section-title {
+    @apply text-[11px] uppercase tracking-wide text-dark-text-muted mb-2 px-1;
+  }
+
+  /* Main Content Area - Fill all available space */
+  .main-content {
+    @apply flex flex-col overflow-hidden relative min-w-0 h-full;
+  }
+
+  /* Top Bar */
+  .top-bar {
+    @apply flex items-center justify-between h-14 px-4 bg-dark-surface border-b border-dark-border;
+  }
+
+  /* Kanban Area - Fill ALL available space */
+  .kanban-wrapper {
+    @apply flex-1 overflow-hidden relative flex flex-col;
+  }
+
+  .kanban-scroll {
+    @apply flex-1 overflow-x-auto overflow-y-hidden p-4;
+  }
+
+  .kanban-container {
+    @apply flex gap-4 items-stretch;
+    min-width: max-content;
+    height: 100%;
+  }
+
+  /* ============================================
+     CARD COMPONENTS - COMPACT SPACING
+     ============================================ */
+
+  /* Stat Card */
+  .stat-card {
+    @apply p-2.5 bg-dark-surface2 border border-dark-border rounded-md text-center;
+  }
+
+  .stat-value {
+    @apply text-lg font-bold text-accent-primary;
+  }
+
+  .stat-label {
+    @apply text-[10px] text-dark-text-muted mt-1;
+  }
+
+  /* Run Card */
+  .run-card {
+    @apply p-2.5 bg-dark-surface2 border border-dark-border rounded-md mb-2 cursor-pointer transition-all;
+  }
+
+  .run-card:hover {
+    @apply border-accent-primary;
+  }
+
+  .run-card.active {
+    @apply border-accent-success bg-accent-success/5;
+  }
+
+  .run-header {
+    @apply flex items-center justify-between mb-1.5;
+  }
+
+  .run-id {
+    @apply font-semibold text-xs;
+  }
+
+  .run-status {
+    @apply px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .run-status.active {
+    @apply bg-accent-success/15 text-accent-success;
+  }
+
+  .run-status.paused {
+    @apply bg-accent-warning/15 text-accent-warning;
+  }
+
+  .run-meta {
+    @apply flex items-center gap-2 text-xs text-dark-text-secondary;
+  }
+
+  .run-progress {
+    @apply flex-1 h-0.5 bg-dark-border rounded-sm overflow-hidden;
+  }
+
+  .run-progress-fill {
+    @apply h-full rounded-sm;
+    background-color: var(--progress-color, theme('colors.accent.success'));
+  }
+
+  /* Kanban Column - Prototype 300px width, fills available height */
+  .kanban-column {
+    @apply w-[300px] min-w-[300px] bg-dark-surface border border-dark-border rounded-lg flex flex-col overflow-hidden self-stretch;
+  }
+
+  .kanban-column-header {
+    @apply p-3 bg-dark-surface2 border-b border-dark-border flex items-center justify-between;
+  }
+
+  .kanban-column-title {
+    @apply flex items-center gap-2 font-semibold text-sm;
+  }
+
+  .kanban-column-count {
+    @apply px-2 py-0.5 bg-dark-bg rounded-full text-xs text-dark-text-secondary font-medium;
+  }
+
+  .kanban-column-body {
+    @apply flex-1 overflow-y-auto p-2.5 flex flex-col gap-2;
+  }
+
+  /* Task Card */
+  .task-card {
+    @apply p-3 bg-dark-bg border border-dark-border rounded-md cursor-pointer transition-all;
+  }
+
+  .task-card:hover {
+    @apply border-accent-primary;
+    transform: translateX(2px);
+  }
+
+  .task-card.dragging {
+    @apply opacity-50;
+  }
+
+  .task-header {
+    @apply flex items-start gap-2 mb-2;
+  }
+
+  .task-icon {
+    @apply w-3.5 h-3.5 flex-shrink-0 mt-0.5;
+  }
+
+  .task-title {
+    @apply flex-1 text-sm leading-snug;
+  }
+
+  .task-footer {
+    @apply flex items-center justify-between;
+  }
+
+  .task-tags {
+    @apply flex gap-1.5 flex-wrap;
+  }
+
+  .task-tag {
+    @apply px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded text-[11px] text-dark-text-muted;
+  }
+
+  .task-indicator {
+    @apply w-1.5 h-1.5 rounded-full;
+  }
+
+  .task-indicator.high {
+    @apply bg-accent-danger;
+  }
+
+  .task-indicator.medium {
+    @apply bg-accent-warning;
+  }
+
+  .task-indicator.low {
+    @apply bg-accent-info;
+  }
+
+  /* Add Task Button */
+  .add-task-btn {
+    @apply w-full p-2.5 border border-dashed border-dark-border rounded-md bg-transparent text-dark-text-muted text-sm cursor-pointer text-center transition-all;
+  }
+
+  .add-task-btn:hover {
+    @apply border-dark-text-muted text-dark-text-secondary;
+  }
+
+  /* ============================================
+     BUTTON COMPONENTS - COMPACT SPACING
+     ============================================ */
+
+  /* Icon Button */
+  .icon-btn {
+    @apply w-9 h-9 flex items-center justify-center bg-transparent border-none text-dark-text-secondary cursor-pointer rounded-md transition-colors;
+  }
+
+  .icon-btn:hover {
+    @apply bg-dark-surface2 text-dark-text;
+  }
+
+  .icon-btn svg {
+    @apply w-4 h-4;
+  }
+
+  /* Sidebar Button - Tight like prototype */
+  .sidebar-btn {
+    @apply w-full px-3 py-2 bg-dark-surface2 border border-dark-border text-dark-text rounded-md cursor-pointer text-xs flex items-center gap-2 mb-1.5 transition-all;
+  }
+
+  .sidebar-btn:hover {
+    @apply border-accent-primary;
+  }
+
+  .sidebar-btn.primary {
+    @apply bg-accent-primary border-accent-primary text-dark-bg font-semibold;
+  }
+
+  .sidebar-btn.primary:hover {
+    filter: brightness(1.1);
+  }
+
+  .sidebar-btn svg {
+    @apply w-4 h-4 flex-shrink-0;
+  }
+
+  /* Toggle Button */
+  .toggle-btn {
+    @apply w-7 h-7 flex items-center justify-center bg-transparent border-none text-dark-text-secondary cursor-pointer rounded transition-colors;
+  }
+
+  .toggle-btn:hover {
+    @apply bg-dark-surface3 text-dark-text;
+  }
+
+  /* ============================================
+     FORM COMPONENTS
+     ============================================ */
+
   .btn {
-    @apply px-4 py-1.5 rounded-lg border border-dark-surface3 bg-dark-surface2 text-dark-text text-sm font-medium transition-all duration-150 cursor-pointer backdrop-blur-sm;
+    @apply px-4 py-1.5 rounded-lg border border-dark-border bg-dark-surface2 text-dark-text text-sm font-medium transition-all duration-150 cursor-pointer;
   }
 
   .btn:hover {
-    @apply border-dark-text-muted bg-dark-surface;
+    @apply border-dark-text-muted bg-dark-surface3;
   }
 
   .btn-primary {
-    @apply bg-accent-success/80 border-accent-success/50 text-white;
+    @apply bg-accent-primary border-accent-primary text-dark-bg font-semibold;
   }
 
   .btn-primary:hover {
-    @apply bg-accent-success;
+    filter: brightness(1.1);
   }
 
   .btn-danger {
-    @apply bg-accent-danger/80 border-accent-danger/50 text-white;
+    @apply bg-accent-danger border-accent-danger text-white;
   }
 
   .btn-danger:hover {
-    @apply bg-accent-danger;
+    filter: brightness(1.1);
   }
 
   .btn-sm {
     @apply px-2.5 py-1 text-xs;
   }
 
-  .badge {
-    @apply inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-dark-surface2/60 border border-dark-surface3 text-dark-text-muted backdrop-blur-sm;
+  .form-input {
+    @apply w-full px-3 py-2 rounded-lg border border-dark-border bg-dark-input text-dark-text text-sm focus:outline-none focus:border-accent-primary;
   }
 
+  .form-textarea {
+    @apply form-input min-h-[80px] resize-y;
+  }
+
+  /* ============================================
+     CHAT COMPONENTS - COMPACT SPACING
+     ============================================ */
+
+  /* Chat Panel */
+  .chat-panel {
+    @apply fixed top-0 h-screen bg-dark-surface border-l border-dark-border flex flex-col z-40;
+    transition: right 0.3s ease;
+    box-shadow: -4px 0 20px rgba(0,0,0,0.5);
+  }
+
+  .chat-panel.resizing {
+    transition: none;
+  }
+
+  /* Chat Resize Handle */
+  .chat-resize-handle {
+    @apply absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-50;
+    background: transparent;
+    transition: background 0.15s;
+  }
+
+  .chat-resize-handle:hover,
+  .chat-resize-handle:active {
+    background: theme('colors.accent.primary');
+    box-shadow: 0 0 6px theme('colors.accent.primary');
+  }
+
+  /* Chat Toggle Button */
+  .chat-toggle {
+    @apply fixed top-1/2 -translate-y-1/2 right-0 flex flex-col items-center gap-1.5 p-4 px-2.5 bg-accent-primary text-dark-bg border-none cursor-pointer z-30 font-semibold text-xs rounded-l-lg;
+    box-shadow: -2px 0 12px rgba(0, 212, 255, 0.3);
+    transition: right 0.3s ease;
+  }
+
+  .chat-toggle:hover {
+    filter: brightness(1.1);
+  }
+
+  .chat-toggle-badge {
+    @apply absolute top-2 right-2 min-w-4 h-4 px-1.5 bg-accent-secondary text-white text-xs font-bold rounded-full flex items-center justify-center;
+  }
+
+  /* Chat Tabs - Compact like prototype */
+  .chat-tabs-container {
+    @apply bg-dark-surface2 border-b border-dark-border flex flex-col;
+  }
+
+  .chat-tabs-primary {
+    @apply flex items-center gap-0.5 px-2 pt-2 overflow-x-auto;
+  }
+
+  .chat-session-tab {
+    @apply px-3.5 py-2 bg-dark-bg border border-dark-border border-b-0 rounded-t-lg text-dark-text-secondary text-xs cursor-pointer flex items-center gap-2 whitespace-nowrap relative transition-colors;
+    max-width: 160px;
+  }
+
+  .chat-session-tab:hover {
+    @apply bg-dark-surface3 text-dark-text;
+  }
+
+  .chat-session-tab.active {
+    @apply bg-dark-surface border-accent-primary text-accent-primary;
+  }
+
+  .chat-session-tab.active::after {
+    content: '';
+    @apply absolute bottom-0 left-0 right-0 h-px bg-dark-surface;
+  }
+
+  .chat-session-tab .tab-name {
+    @apply overflow-hidden text-ellipsis;
+  }
+
+  .chat-session-tab .tab-close {
+    @apply w-4 h-4 flex items-center justify-center rounded opacity-50;
+  }
+
+  .chat-session-tab .tab-close:hover {
+    @apply bg-accent-danger text-white opacity-100;
+  }
+
+  .chat-session-tab .tab-status {
+    @apply w-1.5 h-1.5 rounded-full flex-shrink-0;
+  }
+
+  .tab-status.online {
+    @apply bg-accent-success;
+    box-shadow: 0 0 4px theme('colors.accent.success');
+  }
+
+  .tab-status.offline {
+    @apply bg-dark-text-muted;
+  }
+
+  .tab-status.typing {
+    @apply bg-accent-warning animate-blink;
+  }
+
+  /* Chat Tabs Secondary - Compact */
+  .chat-tabs-secondary {
+    @apply flex items-center justify-between px-3 py-2;
+  }
+
+  .new-session-btn {
+    @apply px-3 py-1.5 bg-dark-bg border border-dark-border rounded-md text-dark-text-secondary text-xs cursor-pointer flex items-center gap-1.5 transition-colors;
+  }
+
+  .new-session-btn:hover {
+    @apply border-accent-primary text-dark-text;
+  }
+
+  .chat-action-btn {
+    @apply w-7 h-7 flex items-center justify-center bg-transparent border-none text-dark-text-secondary cursor-pointer rounded transition-colors;
+  }
+
+  .chat-action-btn:hover {
+    @apply bg-dark-surface3 text-dark-text;
+  }
+
+  /* Chat Messages - Compact padding */
+  .chat-messages {
+    @apply flex-1 overflow-y-auto bg-dark-bg;
+  }
+
+  .chat-message {
+    @apply border-b border-dark-border px-4 py-3;
+  }
+
+  .chat-message-header {
+    @apply flex items-center gap-2 mb-1.5;
+  }
+
+  .chat-message-sender {
+    @apply font-semibold text-xs uppercase tracking-wide;
+  }
+
+  .chat-message-sender.user {
+    @apply text-accent-primary;
+  }
+
+  .chat-message-sender.assistant {
+    @apply text-accent-success;
+  }
+
+  .chat-message-sender.system {
+    @apply text-accent-warning;
+  }
+
+  .chat-message-time {
+    @apply text-xs text-dark-text-muted;
+  }
+
+  .chat-message-content {
+    @apply text-sm leading-relaxed text-dark-text;
+  }
+
+  .chat-message-content pre {
+    @apply bg-dark-surface2 p-3 rounded-md overflow-x-auto my-2.5 border border-dark-border font-mono text-xs;
+  }
+
+  .chat-message-content code {
+    @apply bg-dark-surface2 px-1.5 py-0.5 rounded font-mono text-xs;
+  }
+
+  /* Chat Input - Compact like prototype */
+  .chat-input-container {
+    @apply px-4 py-3 border-t border-dark-border bg-dark-surface2;
+  }
+
+  .chat-toolbar {
+    @apply flex items-center gap-2 mb-2;
+  }
+
+  .chat-tool-btn {
+    @apply px-3 py-1.5 bg-dark-bg border border-dark-border rounded-md text-dark-text-secondary text-xs cursor-pointer flex items-center gap-1.5 transition-colors;
+  }
+
+  .chat-tool-btn:hover {
+    @apply border-dark-border-hover text-dark-text;
+  }
+
+  .chat-input-box {
+    @apply w-full mb-2;
+  }
+
+  .chat-input {
+    @apply w-full px-3 py-2 bg-dark-input border border-dark-border rounded-lg text-dark-text text-sm resize-none min-h-[42px] max-h-[120px];
+  }
+
+  .chat-input:focus {
+    @apply outline-none border-accent-primary;
+  }
+
+  .chat-input::placeholder {
+    @apply text-dark-text-muted;
+  }
+
+  .chat-send-btn {
+    @apply w-full px-5 py-2.5 bg-accent-primary border-none rounded-lg text-dark-bg text-sm font-semibold cursor-pointer flex items-center justify-center gap-2;
+  }
+
+  .chat-send-btn:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
+
+  .chat-send-btn:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  /* Minimized Session Dock - Compact */
+  .minimized-dock {
+    @apply fixed bottom-5 flex flex-col gap-2 z-30;
+    transition: right 0.3s ease;
+  }
+
+  .minimized-session {
+    @apply px-3.5 py-2.5 bg-dark-surface border border-dark-border rounded-lg text-dark-text-secondary text-xs cursor-pointer flex items-center gap-2 transition-all;
+    max-width: 200px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+
+  .minimized-session:hover {
+    @apply border-accent-primary text-dark-text;
+    transform: translateX(-4px);
+  }
+
+  .minimized-session .min-status {
+    @apply w-2 h-2 rounded-full flex-shrink-0;
+  }
+
+  .minimized-session .min-name {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  .minimized-session .min-badge {
+    @apply px-1.5 py-0.5 bg-accent-primary text-dark-bg text-xs font-semibold rounded-full;
+  }
+
+  /* ============================================
+     BADGE COMPONENTS
+     ============================================ */
+
+  .badge {
+    @apply inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-dark-surface2/60 border border-dark-border text-dark-text-secondary;
+  }
+
+  .system-badge {
+    @apply flex items-center gap-2 px-3 py-1.5 bg-accent-success/10 border border-accent-success/30 rounded-full;
+  }
+
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+    background-color: var(--status-color, theme('colors.accent.success'));
+    box-shadow: 0 0 8px var(--status-color, theme('colors.accent.success'));
+  }
+
+  .status-dot.pulse {
+    animation: pulse 2s infinite;
+  }
+
+  /* ============================================
+     MODAL COMPONENTS - COMPACT SPACING
+     ============================================ */
+
   .modal-overlay {
-    @apply fixed inset-0 p-5 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center;
+    @apply fixed inset-0 p-4 bg-black/80 z-50 flex items-center justify-center;
   }
 
   .modal {
-    @apply bg-dark-surface border border-dark-surface3 rounded-xl flex flex-col overflow-hidden shadow-2xl backdrop-blur-md;
-    max-height: calc(100vh - 40px);
+    @apply bg-dark-surface border border-dark-border rounded-xl flex flex-col overflow-hidden shadow-2xl;
+    max-height: calc(100vh - 32px);
   }
 
   .modal-header {
-    @apply px-5 py-4 border-b border-dark-surface3 flex items-center justify-between gap-3 flex-shrink-0;
+    @apply px-4 py-3 border-b border-dark-border flex items-center justify-between gap-3 flex-shrink-0;
   }
 
   .modal-header h2 {
@@ -90,16 +610,20 @@
   }
 
   .modal-body {
-    @apply p-5 overflow-y-auto flex-1;
-    max-height: calc(100vh - 200px);
+    @apply p-4 overflow-y-auto flex-1;
+    max-height: calc(100vh - 160px);
   }
 
   .modal-footer {
-    @apply px-5 py-3 border-t border-dark-surface3 flex justify-end gap-2.5 flex-shrink-0;
+    @apply px-4 py-2.5 border-t border-dark-border flex justify-end gap-2 flex-shrink-0;
   }
 
+  /* ============================================
+     FORM COMPONENTS (Additional) - COMPACT
+     ============================================ */
+
   .form-group {
-    @apply mb-3.5 relative;
+    @apply mb-3 relative;
   }
 
   .form-group:focus-within {
@@ -114,145 +638,65 @@
     @apply flex items-center gap-1.5 mb-1;
   }
 
-  .label-row label {
-    @apply mb-0;
-  }
-
   .help-btn {
-    @apply w-4 h-4 rounded-full border border-dark-surface3 bg-dark-surface2 text-dark-text-muted cursor-help inline-flex items-center justify-center text-xs font-bold leading-none flex-shrink-0;
+    @apply w-4 h-4 rounded-full border border-dark-border bg-dark-surface2 text-dark-text-muted cursor-help inline-flex items-center justify-center text-xs font-bold leading-none flex-shrink-0;
   }
 
   .help-btn:hover {
     @apply text-dark-text border-dark-text-muted;
   }
 
-  .form-input {
-    @apply w-full min-h-[38px] px-3 py-2 rounded-lg border border-dark-surface3 bg-dark-bg/80 text-dark-text text-sm focus:outline-none focus:border-dark-text-muted focus:ring-1 focus:ring-dark-text-muted/30;
-  }
-
-  .form-textarea {
-    @apply form-input min-h-[100px] resize-y;
-  }
-
   .form-select {
     @apply form-input cursor-pointer appearance-none bg-no-repeat;
-    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%23888888' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236a6a80' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
     background-position: right 0.75rem center;
     background-size: 1.5em 1.5em;
     padding-right: 2.5rem;
-    background-color: rgba(30, 30, 30, 0.95);
+    background-color: #0a0a12;
   }
-  
+
   .form-select option {
-    background-color: #1a1a1a;
-    color: #e0e0e0;
+    background-color: #151520;
+    color: #f0f0f5;
     padding: 8px;
   }
-  
+
   .form-select optgroup {
-    background-color: #1a1a1a;
-    color: #888888;
+    background-color: #151520;
+    color: #6a6a80;
   }
 
   .checkbox-group {
-    @apply grid gap-3;
+    @apply grid gap-2;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   }
 
   .checkbox-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    min-height: 20px;
+    @apply flex items-center gap-2 cursor-pointer min-h-5;
   }
 
   .checkbox-item input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    min-width: 16px;
-    min-height: 16px;
-    margin: 0;
-    padding: 0;
-    border-radius: 3px;
-    background-color: #2a2a2a;
-    border: 1px solid #555555;
-    accent-color: #ffffff;
-    cursor: pointer;
-    flex-shrink: 0;
-    vertical-align: middle;
+    @apply w-4 h-4 min-w-4 min-h-4 m-0 p-0 rounded border border-dark-border bg-dark-surface2 accent-accent-primary cursor-pointer flex-shrink-0 align-middle;
   }
 
   .checkbox-item input[type="checkbox"]:checked {
-    background-color: #3a3a3a;
-    border-color: #777777;
+    @apply bg-dark-surface3 border-dark-text-muted;
   }
 
   .checkbox-item input[type="checkbox"]:focus {
-    outline: 1px solid #666666;
-    outline-offset: 1px;
-  }
-
-  .form-group .checkbox-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    min-height: 20px;
-    margin-bottom: 4px;
+    @apply outline outline-1 outline-dark-text-muted outline-offset-1;
   }
 
   .checkbox-item span {
-    font-size: 14px;
-    color: #e0e0e0;
-    line-height: 20px;
-    user-select: none;
-    flex: 1;
+    @apply text-sm text-dark-text leading-5 select-none flex-1;
   }
 
-  .card {
-    @apply bg-dark-surface2 border border-dark-surface3 rounded-lg p-3 cursor-default transition-all duration-200 min-w-0 relative backdrop-blur-sm;
-  }
+  /* ============================================
+     SESSION VIEWER - COMPACT
+     ============================================ */
 
-  .card:hover {
-    @apply border-dark-text-muted/50 bg-dark-surface2/80;
-  }
-
-  .column {
-    @apply bg-dark-surface/40 rounded-lg border border-dark-surface3 flex flex-col min-h-0 overflow-hidden backdrop-blur-sm;
-  }
-
-  .column-header {
-    @apply px-3 py-2.5 text-xs font-semibold uppercase tracking-wider border-b border-dark-surface3 flex items-center justify-between gap-2 backdrop-blur-md;
-  }
-
-  .column-body {
-    @apply flex-1 min-h-0 p-2 flex flex-col gap-2 overflow-y-auto;
-  }
-
-  .column-body.drag-over {
-    @apply bg-dark-surface/60;
-  }
-
-  .add-task-btn {
-    @apply w-full p-2 border border-dashed border-dark-surface3 rounded-lg bg-dark-surface2/30 text-dark-text-muted cursor-pointer text-sm transition-all duration-200;
-  }
-
-  .add-task-btn:hover {
-    @apply border-dark-text-muted text-dark-text bg-dark-surface2/60;
-  }
-
-  .archive-all-btn {
-    @apply w-full p-2 border border-dashed border-dark-surface3 rounded-lg bg-dark-surface2/30 text-dark-text-muted/80 cursor-pointer text-sm mt-auto transition-all duration-200;
-  }
-
-  .archive-all-btn:hover {
-    @apply border-dark-text-muted text-dark-text-muted bg-dark-surface2/50;
-  }
-
-  /* Session viewer styles */
   .session-entry {
-    @apply border border-dark-surface3 rounded-lg bg-dark-bg p-2.5;
+    @apply border border-dark-border rounded-lg bg-dark-bg p-2.5;
   }
 
   .session-entry.thinking {
@@ -260,28 +704,32 @@
   }
 
   .session-entry.error {
-    @apply border-red-500/50 bg-red-500/10;
+    @apply border-accent-danger/50 bg-accent-danger/10;
   }
 
   .session-role {
-    @apply text-xs tracking-wider uppercase font-bold rounded-full px-2 py-0.5 border border-dark-surface3;
+    @apply text-xs tracking-wider uppercase font-bold rounded-full px-2 py-0.5 border border-dark-border;
   }
 
   .session-role.assistant {
-    @apply text-blue-400 border-blue-400/45;
+    @apply text-accent-info border-accent-info/45;
   }
 
   .session-role.user {
-    @apply text-green-400 border-green-400/45;
+    @apply text-accent-success border-accent-success/45;
   }
 
   .session-role.system {
-    @apply text-amber-400 border-amber-400/45;
+    @apply text-accent-warning border-accent-warning/45;
   }
 
   .session-role.tool {
-    @apply text-purple-400 border-purple-400/45;
+    @apply text-accent-secondary border-accent-secondary/45;
   }
+
+  /* ============================================
+     ANIMATIONS
+     ============================================ */
 
   /* Toast animations */
   .toast-enter-active,
@@ -294,7 +742,19 @@
     @apply translate-x-full opacity-0;
   }
 
-  /* Syntax Highlighting - GitHub Dark Theme Adjustments */
+  /* Drag and drop */
+  .dragging {
+    @apply opacity-50;
+  }
+
+  .drag-over {
+    @apply bg-dark-surface3/60;
+  }
+
+  /* ============================================
+     SYNTAX HIGHLIGHTING - GitHub Dark Theme
+     ============================================ */
+
   .hljs {
     display: block;
     overflow-x: auto;

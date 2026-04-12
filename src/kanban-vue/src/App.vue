@@ -15,8 +15,8 @@ import { useSessionUsage } from '@/composables/useSessionUsage'
 import { usePlanningChat } from '@/composables/usePlanningChat'
 
 // Components
+import Sidebar from '@/components/board/Sidebar.vue'
 import TopBar from '@/components/board/TopBar.vue'
-import RunPanel from '@/components/runs/RunPanel.vue'
 import KanbanBoard from '@/components/board/KanbanBoard.vue'
 import LogPanel from '@/components/common/LogPanel.vue'
 import ToastContainer from '@/components/common/ToastContainer.vue'
@@ -57,15 +57,14 @@ const logPanelCollapsed = ref(false)
 
 // Computed
 const isAnyModalOpen = computed(() => {
-  if (activeModal.value) return true
-  return false
+  return activeModal.value !== null
 })
 
 const consumedSlotsValue = computed(() => runsComposable.consumedRunSlots.value)
 const parallelTasksValue = computed(() => optionsComposable.options.parallelTasks ?? 1)
-const isConnectedValue = computed(() => true) // WebSocket is connected by default
+const isConnectedValue = computed(() => true)
 
-// Modal helpers implementation (must be defined before providing)
+// Modal helpers
 const openModal = (name: string, data?: Record<string, unknown>) => {
   activeModal.value = name
   modalData.value = data || {}
@@ -75,21 +74,6 @@ const closeModal = () => {
   activeModal.value = null
   modalData.value = {}
 }
-
-// Provide state to child components
-provide('tasks', tasksComposable)
-provide('runs', runsComposable)
-provide('options', optionsComposable)
-provide('modelSearch', modelSearch)
-provide('toasts', toasts)
-provide('session', session)
-provide('multiSelect', multiSelect)
-provide('sessionUsage', sessionUsage)
-provide('planningChat', planningChat)  // Provide planningChat for shared state
-
-// Modal helpers (also provided for child components)
-provide('openModal', openModal)
-provide('closeModal', closeModal)
 
 const closeTopmostModal = () => {
   if (activeModal.value) {
@@ -103,6 +87,19 @@ const clearSelectionAndCloseModal = () => {
   multiSelect.clearSelection()
   return closeTopmostModal()
 }
+
+// Provide state to child components
+provide('tasks', tasksComposable)
+provide('runs', runsComposable)
+provide('options', optionsComposable)
+provide('modelSearch', modelSearch)
+provide('toasts', toasts)
+provide('session', session)
+provide('multiSelect', multiSelect)
+provide('sessionUsage', sessionUsage)
+provide('planningChat', planningChat)
+provide('openModal', openModal)
+provide('closeModal', closeModal)
 
 // Drag and drop
 const dragDrop = useDragDrop(async (taskId, targetStatus) => {
@@ -122,17 +119,10 @@ const dragDrop = useDragDrop(async (taskId, targetStatus) => {
 
   try {
     if (targetStatus === 'done' && canMoveToDone) {
-      if (task.status === 'stuck') {
-        await tasksComposable.updateTask(taskId, {
-          status: 'done',
-          completedAt: Math.floor(Date.now() / 1000),
-        })
-      } else {
-        await tasksComposable.updateTask(taskId, {
-          status: 'done',
-          completedAt: Math.floor(Date.now() / 1000),
-        })
-      }
+      await tasksComposable.updateTask(taskId, {
+        status: 'done',
+        completedAt: Math.floor(Date.now() / 1000),
+      })
       toasts.showToast('Task moved to Done', 'success')
     } else if (targetStatus === 'backlog' && canMoveToBacklog) {
       await tasksComposable.resetTask(taskId)
@@ -154,6 +144,14 @@ useKeyboard({
   onCreateBacklog: () => openModal('task', { mode: 'create', createStatus: 'backlog' }),
   onTogglePlanningChat: () => planningChat.togglePanel(),
   onStartWorkflow: async () => {
+    // Check if there are any tasks to execute
+    const executableTasks = tasksComposable.groupedTasks.backlog.length + 
+                            tasksComposable.groupedTasks.review.length +
+                            tasksComposable.groupedTasks.executing.length
+    if (executableTasks === 0) {
+      toasts.showToast('No tasks available to execute. Create some tasks first.', 'error')
+      return
+    }
     if (optionsComposable.options.showExecutionGraph) {
       openModal('executionGraph')
     } else {
@@ -182,7 +180,6 @@ useKeyboard({
     }
   },
   onEscape: () => {
-    // First clear selection if active, then close modals
     if (multiSelect.isSelecting.value) {
       multiSelect.clearSelection()
       return true
@@ -208,7 +205,6 @@ ws.on('task_updated', (payload) => {
     tasksComposable.tasks.push(task)
   }
 
-  // Log transitions
   if (!prev || prev.status !== task.status) {
     if (task.status === 'executing') toasts.addLog(`Task started: ${task.name}`, 'info')
     if (task.status === 'done') toasts.addLog(`Task completed: ${task.name}`, 'success')
@@ -217,7 +213,6 @@ ws.on('task_updated', (payload) => {
     }
   }
 
-  // Refresh best-of-n summaries
   if (task.executionStrategy === 'best_of_n') {
     tasksComposable.refreshBonSummaries([task.id])
   }
@@ -357,7 +352,7 @@ ws.on('planning_session_message', (payload: { sessionId: string; message: Sessio
 })
 
 // Container configuration WebSocket handlers
-ws.on('container_config_updated', (payload) => {
+ws.on('container_config_updated', () => {
   toasts.addLog('Container configuration updated', 'info')
 })
 
@@ -365,7 +360,7 @@ ws.on('container_package_added', (payload) => {
   toasts.addLog(`Package '${payload.name}' added to container config`, 'info')
 })
 
-ws.on('container_package_removed', (payload) => {
+ws.on('container_package_removed', () => {
   toasts.addLog(`Package removed from container config`, 'info')
 })
 
@@ -374,8 +369,8 @@ ws.on('container_build_started', (payload) => {
   toasts.addLog(`Container build #${payload.buildId} started (${payload.imageTag})`, 'info')
 })
 
-ws.on('container_build_progress', (payload) => {
-  // Progress updates are handled within the modal
+ws.on('container_build_progress', () => {
+  // Progress updates handled within modal
 })
 
 ws.on('container_build_completed', (payload) => {
@@ -407,7 +402,6 @@ onMounted(async () => {
   await runsComposable.loadRuns()
   await tasksComposable.loadTasks()
 
-  // Check for session in hash
   const hashMatch = location.hash.match(/^#session\/(.+)$/)
   if (hashMatch) {
     const sessionId = decodeURIComponent(hashMatch[1])
@@ -432,81 +426,104 @@ window.addEventListener('hashchange', () => {
 </script>
 
 <template>
-  <div class="h-screen flex flex-col overflow-hidden bg-dark-bg text-dark-text">
-    <!-- Top Bar -->
-    <TopBar
+  <div class="app-layout bg-dark-bg text-dark-text">
+    <!-- Sidebar -->
+    <Sidebar
+      :runs="runsComposable.runs.value"
       :consumed-slots="consumedSlotsValue"
       :parallel-tasks="parallelTasksValue"
       :is-connected="isConnectedValue"
       @toggle-execution="() => {
-        if (optionsComposable.options.showExecutionGraph) {
-          openModal('executionGraph')
-        } else {
-          optionsComposable.startExecution().then(() => {
+        const isRunning = consumedSlotsValue > 0
+        if (isRunning) {
+          // Stop the workflow
+          optionsComposable.stopExecution().then(() => {
             runsComposable.loadRuns()
-            tasksComposable.loadTasks()
-            toasts.showToast('Workflow run started', 'success')
-          }).catch(e => toasts.showToast('Execution control failed: ' + e.message, 'error'))
+            toasts.showToast('Workflow stopped', 'success')
+          }).catch(e => toasts.showToast('Failed to stop workflow: ' + e.message, 'error'))
+        } else {
+          // Check if there are any tasks to execute
+          const executableTasks = tasksComposable.groupedTasks.backlog.length + 
+                                  tasksComposable.groupedTasks.review.length +
+                                  tasksComposable.groupedTasks.executing.length
+          if (executableTasks === 0) {
+            toasts.showToast('No tasks available to execute. Create some tasks first.', 'error')
+            return
+          }
+          if (optionsComposable.options.showExecutionGraph) {
+            openModal('executionGraph')
+          } else {
+            optionsComposable.startExecution().then(() => {
+              runsComposable.loadRuns()
+              tasksComposable.loadTasks()
+              toasts.showToast('Workflow run started', 'success')
+            }).catch(e => toasts.showToast('Execution control failed: ' + e.message, 'error'))
+          }
         }
       }"
       @open-options="openModal('options')"
       @open-container-config="showContainerConfigModal = true"
-    />
-
-    <!-- Run Panel -->
-    <RunPanel
-      :runs="runsComposable.runs.value"
-      :consumed-slots="consumedSlotsValue"
-      :parallel-tasks="parallelTasksValue"
-      :get-task-name="tasksComposable.getTaskName"
-      @pause="runsComposable.pauseRun"
-      @resume="runsComposable.resumeRun"
-      @stop="runsComposable.stopRun"
-      @archive="runsComposable.archiveRun"
-    />
-
-    <!-- Kanban Board -->
-    <KanbanBoard
-      :grouped-tasks="tasksComposable.groupedTasks"
-      :bon-summaries="tasksComposable.bonSummaries"
-      :get-task-run-color="runsComposable.getTaskRunColor"
-      :is-task-mutation-locked="runsComposable.isTaskMutationLocked"
-      :drag-drop="dragDrop"
-      :is-multi-selecting="multiSelect.isSelecting.value"
-      :get-is-selected="multiSelect.isSelected"
-      :column-sorts="optionsComposable.options.columnSorts"
-      @open-task="(id: string) => openModal('task', { taskId: id })"
       @open-template-modal="openModal('task', { mode: 'create', createStatus: 'template' })"
       @open-task-modal="openModal('task', { mode: 'create', createStatus: 'backlog' })"
-      @deploy-template="(id: string) => openModal('task', { mode: 'deploy', seedTaskId: id })"
-      @open-session="(id: string) => openModal('session', { sessionId: id })"
-      @approve-plan="(id: string) => openModal('approve', { taskId: id })"
-      @request-revision="(id: string) => openModal('revision', { taskId: id })"
-      @start-single="(id: string) => openModal('startSingle', { taskId: id })"
-      @repair-task="(id: string, action: string) => tasksComposable.repairTask(id, action)"
-      @mark-done="(id: string) => tasksComposable.updateTask(id, { status: 'done', completedAt: Math.floor(Date.now() / 1000) })"
-      @reset-task="tasksComposable.resetTask"
-      @convert-to-template="(id: string) => tasksComposable.updateTask(id, { status: 'template' })"
-      @archive-task="tasksComposable.deleteTask"
       @archive-all-done="async () => {
         if (!confirm(`Archive all ${tasksComposable.groupedTasks.done.length} done task(s)?`)) return
         await tasksComposable.archiveAllDone()
         toasts.showToast('All done tasks archived', 'success')
       }"
-      @view-runs="(id: string) => openModal('bestOfNDetail', { taskId: id })"
-      @continue-reviews="(id: string) => openModal('continueReviews', { taskId: id })"
-      @change-column-sort="(status: string, sort: string) => {
-        const newSorts = { ...(optionsComposable.options.columnSorts || {}), [status]: sort }
-        optionsComposable.updateOptions({ columnSorts: newSorts })
-      }"
+      @toggle-planning-chat="planningChat.togglePanel()"
     />
 
-    <!-- Log Panel -->
-    <LogPanel
-      v-model:collapsed="logPanelCollapsed"
-      :logs="toasts.logs.value"
-      @clear="toasts.clearLogs"
-    />
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <TopBar
+        @open-options="openModal('options')"
+        @open-container-config="showContainerConfigModal = true"
+      />
+
+      <!-- Kanban Board -->
+      <KanbanBoard
+        :grouped-tasks="tasksComposable.groupedTasks"
+        :bon-summaries="tasksComposable.bonSummaries"
+        :get-task-run-color="runsComposable.getTaskRunColor"
+        :is-task-mutation-locked="runsComposable.isTaskMutationLocked"
+        :drag-drop="dragDrop"
+        :is-multi-selecting="multiSelect.isSelecting.value"
+        :get-is-selected="multiSelect.isSelected"
+        :column-sorts="optionsComposable.options.columnSorts"
+        @open-task="(id: string) => openModal('task', { taskId: id })"
+        @open-template-modal="openModal('task', { mode: 'create', createStatus: 'template' })"
+        @open-task-modal="openModal('task', { mode: 'create', createStatus: 'backlog' })"
+        @deploy-template="(id: string) => openModal('task', { mode: 'deploy', seedTaskId: id })"
+        @open-session="(id: string) => openModal('session', { sessionId: id })"
+        @approve-plan="(id: string) => openModal('approve', { taskId: id })"
+        @request-revision="(id: string) => openModal('revision', { taskId: id })"
+        @start-single="(id: string) => openModal('startSingle', { taskId: id })"
+        @repair-task="(id: string, action: string) => tasksComposable.repairTask(id, action)"
+        @mark-done="(id: string) => tasksComposable.updateTask(id, { status: 'done', completedAt: Math.floor(Date.now() / 1000) })"
+        @reset-task="tasksComposable.resetTask"
+        @convert-to-template="(id: string) => tasksComposable.updateTask(id, { status: 'template' })"
+        @archive-task="tasksComposable.deleteTask"
+        @archive-all-done="async () => {
+          if (!confirm(`Archive all ${tasksComposable.groupedTasks.done.length} done task(s)?`)) return
+          await tasksComposable.archiveAllDone()
+          toasts.showToast('All done tasks archived', 'success')
+        }"
+        @view-runs="(id: string) => openModal('bestOfNDetail', { taskId: id })"
+        @continue-reviews="(id: string) => openModal('continueReviews', { taskId: id })"
+        @change-column-sort="(status: string, sort: string) => {
+          const newSorts = { ...(optionsComposable.options.columnSorts || {}), [status]: sort }
+          optionsComposable.updateOptions({ columnSorts: newSorts })
+        }"
+      />
+
+      <!-- Log Panel -->
+      <LogPanel
+        v-model:collapsed="logPanelCollapsed"
+        :logs="toasts.logs.value"
+        @clear="toasts.clearLogs"
+      />
+    </main>
 
     <!-- Toast Container -->
     <ToastContainer
@@ -515,28 +532,15 @@ window.addEventListener('hashchange', () => {
       @remove="toasts.removeToast"
     />
 
-    <!-- Planning Chat Toggle Button - Positioned above the Event Log panel -->
-    <button
-      v-if="!planningChat.isOpen.value"
-      class="fixed bottom-16 right-6 z-40 flex items-center gap-2 btn btn-primary shadow-lg"
-      @click="planningChat.togglePanel()"
-    >
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-      </svg>
-      <span class="text-sm font-medium">Planning Chat</span>
-      <span class="text-xs opacity-70">(P)</span>
-    </button>
-
-    <!-- Planning Chat Container -->
+    <!-- Chat Container (Slide-out Panel) -->
     <ChatContainer />
 
     <!-- Multi-Select Floating Action Bar -->
     <div
       v-if="multiSelect.isSelecting.value"
-      class="fixed bottom-20 left-1/2 -translate-x-1/2 bg-dark-surface border border-dark-surface3 rounded-lg shadow-lg px-4 py-3 flex items-center gap-4 z-50"
+      class="fixed bottom-20 left-1/2 -translate-x-1/2 bg-dark-surface border border-dark-border rounded-lg shadow-lg px-4 py-3 flex items-center gap-4 z-50"
     >
-      <span class="text-sm font-medium">
+      <span class="text-sm font-medium text-dark-text">
         {{ multiSelect.selectedCount.value }} task{{ multiSelect.selectedCount.value === 1 ? '' : 's' }} selected
       </span>
       <div class="flex items-center gap-2">

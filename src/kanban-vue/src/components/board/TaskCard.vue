@@ -109,7 +109,6 @@ const bonTotalReviewers = computed(() =>
   props.task.bestOfNConfig?.reviewers?.reduce((sum, r) => sum + r.count, 0) ?? 0
 )
 
-// Get cost for this task's session if available
 const taskCost = computed(() => {
   if (!props.task.sessionId || !sessionUsage) return null
   const usage = sessionUsage.getCachedUsage(props.task.sessionId)
@@ -125,13 +124,13 @@ const taskCost = computed(() => {
 const handleDragStart = (e: DragEvent) => {
   if (!props.canDrag) return
   props.dragDrop.handleDragStart(props.task.id)
-  ;(e.target as HTMLElement).classList.add('opacity-50')
+  ;(e.target as HTMLElement).classList.add('dragging')
   e.dataTransfer!.effectAllowed = 'move'
 }
 
 const handleDragEnd = (e: DragEvent) => {
   props.dragDrop.handleDragEnd()
-  ;(e.target as HTMLElement).classList.remove('opacity-50')
+  ;(e.target as HTMLElement).classList.remove('dragging')
 }
 
 const bestOfNStageMap: Record<string, string> = {
@@ -142,7 +141,6 @@ const bestOfNStageMap: Record<string, string> = {
   completed: 'completed',
 }
 
-// Thinking level display helpers
 const hasNonDefaultThinkingLevel = computed(() => {
   return props.task.thinkingLevel !== 'default' ||
     props.task.planThinkingLevel !== 'default' ||
@@ -164,16 +162,25 @@ const thinkingLevelTooltip = computed(() => {
   parts.push(`Execution: ${props.task.executionThinkingLevel}`)
   return parts.join('\n')
 })
+
+// Status color for the task indicator
+const statusColor = computed(() => {
+  switch (props.task.status) {
+    case 'stuck':
+    case 'failed':
+      return 'high'
+    case 'review':
+      return 'medium'
+    default:
+      return 'low'
+  }
+})
 </script>
 
 <template>
   <div
-    class="card"
-    :class="{
-      'ring-2 ring-accent-primary ring-offset-1 ring-offset-dark-surface': isSelected,
-      'opacity-80': isMultiSelecting && !isSelected
-    }"
-    :style="runColor ? { borderLeft: `3px solid ${runColor}`, paddingLeft: '9px' } : undefined"
+    :class="['task-card', { dragging: isSelected }]"
+    :style="runColor ? { borderLeft: `3px solid ${runColor}` } : undefined"
     :draggable="canDrag && !isMultiSelecting"
     @dragstart="handleDragStart"
     @dragend="handleDragEnd"
@@ -184,244 +191,226 @@ const thinkingLevelTooltip = computed(() => {
     }"
   >
     <!-- Header -->
-    <div class="flex items-center gap-2 mb-1 min-w-0">
-      <span
+    <div class="task-header">
+      <svg
         v-if="task.status === 'executing'"
-        class="spinner flex-shrink-0"
-      />
-      <template v-if="task.status === 'review' && task.reviewActivity === 'running'">
-        <span class="text-xs text-accent-success flex-shrink-0">reviewing</span>
-        <span class="spinner flex-shrink-0" />
-      </template>
-
+        class="task-icon animate-spin text-accent-success"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <circle cx="12" cy="12" r="10" stroke-dasharray="60" stroke-dashoffset="20" />
+      </svg>
+      <svg
+        v-else-if="task.status === 'template'"
+        class="task-icon text-column-template"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      </svg>
+      <svg
+        v-else-if="task.status === 'backlog'"
+        class="task-icon text-column-backlog"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+      </svg>
+      <svg
+        v-else-if="task.status === 'review'"
+        class="task-icon text-column-review"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        <path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+      </svg>
+      <svg
+        v-else-if="task.status === 'done'"
+        class="task-icon text-column-done"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      <svg
+        v-else-if="task.status === 'stuck' || task.status === 'failed'"
+        class="task-icon text-accent-danger"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M12 8v4M12 16h.01"/>
+      </svg>
       <span
-        class="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-semibold block"
-        :class="{ 'text-dark-text cursor-pointer hover:underline': hasLocalSession }"
+        :class="['task-title', { 'cursor-pointer hover:text-accent-primary': hasLocalSession }]"
         :title="task.name"
         @click="hasLocalSession ? emit('openSession') : undefined"
       >
         {{ task.name }}
       </span>
-
-      <span class="text-xs bg-dark-surface2/80 rounded px-1.5 py-0.5 text-dark-text-muted flex-shrink-0 border border-dark-surface3">
-        #{{ task.idx + 1 }}
-      </span>
-
-      <span v-if="task.status === 'stuck'" class="text-accent-danger flex-shrink-0 text-sm">
-        ⚠
-      </span>
     </div>
 
-    <!-- Actions -->
-    <div class="flex gap-1 justify-end mb-2">
-      <button
-        class="bg-transparent border-0 text-dark-text-muted cursor-pointer text-base px-1.5 py-1 rounded hover:text-dark-text hover:bg-dark-surface"
-        :title="task.status === 'template' ? 'Edit Template' : (task.status === 'backlog' ? 'Edit Task' : 'View Task')"
-        @click="emit('open')"
-      >
-        ✏
-      </button>
-
-      <button
-        v-if="task.status === 'template'"
-        class="bg-transparent border-0 text-dark-text-muted cursor-pointer text-xs px-2 py-1 rounded border border-dark-surface3 bg-dark-surface hover:border-accent-primary hover:text-accent-primary"
-        title="Deploy to Backlog"
-        @click="emit('deploy')"
-      >
-        Deploy
-      </button>
-
-      <button
-        v-if="!showInlineActionBar && !isLocked && (task.status === 'stuck' || task.status === 'failed' || task.status === 'done' || task.status === 'review')"
-        class="bg-transparent border-0 text-dark-text-muted cursor-pointer text-base px-1.5 py-1 rounded hover:text-dark-text hover:bg-dark-surface"
-        title="Reset to Backlog"
-        @click="emit('reset')"
-      >
-        ↻
-      </button>
-
-      <button
-        v-if="!showInlineActionBar && (((!isLocked && task.status !== 'executing')) || task.status === 'done')"
-        class="bg-transparent border-0 text-dark-text-muted cursor-pointer text-base px-1.5 py-1 rounded hover:text-dark-text hover:bg-dark-surface"
-        title="Archive Task"
-        @click="emit('archive')"
-      >
-        ✕
-      </button>
-
-      <button
-        v-if="task.status === 'stuck'"
-        class="bg-transparent border-0 text-green-400 cursor-pointer text-base px-1.5 py-1 rounded hover:text-green-300"
-        title="Mark as Done"
-        @click="emit('markDone')"
-      >
-        ✓
-      </button>
-
-      <button
-        v-if="!isLocked && isAnomalousReviewTask"
-        class="bg-transparent border-0 text-green-400 cursor-pointer text-base px-1.5 py-1 rounded hover:text-green-300"
-        title="Mark as Done"
-        @click="emit('markDone')"
-      >
-        ✓
-      </button>
-
-      <button
-        v-if="task.status === 'backlog' && !isLocked"
-        class="bg-transparent border-0 text-green-400 cursor-pointer text-base px-1.5 py-1 rounded hover:text-green-300"
-        title="Start this task and its dependencies"
-        @click="emit('startSingle')"
-      >
-        ▶
-      </button>
-
-      <button
-        v-if="task.status === 'backlog' && !isLocked"
-        class="bg-transparent border-0 text-dark-text-muted cursor-pointer text-xs px-2 py-1 rounded border border-dark-surface3 bg-dark-surface hover:border-accent-primary hover:text-accent-primary"
-        title="Convert to Template"
-        @click="emit('convertToTemplate')"
-      >
-        📖
-      </button>
-    </div>
-
-    <!-- Meta badges -->
-    <div class="flex flex-wrap gap-1 mb-2">
-      <span v-if="task.planmode" class="badge bg-purple-500/15 text-purple-400">
+    <!-- Tags -->
+    <div class="task-tags mb-2">
+      <span v-if="task.planmode" class="task-tag border-accent-secondary/30 text-accent-secondary">
         plan
       </span>
-
       <span
-        v-if="task.status === 'review' && task.awaitingPlanApproval && task.executionPhase === 'plan_complete_waiting_approval'"
-        class="badge bg-amber-500/15 text-amber-400"
+        v-if="task.status === 'review' && task.awaitingPlanApproval"
+        class="task-tag border-accent-warning/30 text-accent-warning"
       >
-        plan approval pending
+        plan approval
       </span>
-
-      <span v-if="task.planRevisionCount > 0" class="badge bg-amber-500/15 text-amber-400">
-        revision {{ task.planRevisionCount }}
-      </span>
-
-      <span v-if="task.status === 'template'" class="badge bg-accent-primary/15 text-accent-primary">
-        template
-      </span>
-
       <span
         v-if="task.review"
         :class="[
-          'badge',
-          (task.status === 'stuck' || isAtReviewLimit) ? 'bg-red-400/15 text-red-400' :
-          isNearReviewLimit ? 'bg-amber-500/15 text-amber-400' :
-          'bg-amber-500/15 text-amber-400'
+          'task-tag',
+          (task.status === 'stuck' || isAtReviewLimit) ? 'border-accent-danger/30 text-accent-danger' :
+          isNearReviewLimit ? 'border-accent-warning/30 text-accent-warning' :
+          'border-accent-warning/30 text-accent-warning'
         ]"
       >
         review {{ task.reviewCount }}/{{ effectiveMaxReviews }}
       </span>
-
       <span
-        v-if="task.status === 'review' && task.reviewActivity === 'idle' && !task.awaitingPlanApproval"
-        class="badge bg-purple-500/15 text-purple-400"
+        v-if="task.executionStrategy === 'best_of_n'"
+        class="task-tag border-accent-info/30 text-accent-info"
       >
-        waiting for human
-      </span>
-
-      <span v-if="depIds.length > 0" class="badge bg-accent-primary/15 text-accent-primary">
-        deps: {{ depIds.join(', ') }}
-      </span>
-
-      <span v-if="task.errorMessage" class="badge bg-red-400/15 text-red-400">
-        error
-      </span>
-
-      <span v-if="task.branch" class="badge">
-        branch: {{ task.branch }}
-      </span>
-
-      <span v-if="hasNonDefaultThinkingLevel" class="badge" :title="thinkingLevelTooltip">
-        thinking: {{ thinkingLevelSummary }}
-      </span>
-
-      <span v-if="task.deleteWorktree === false" class="badge">
-        keep worktree
-      </span>
-
-      <span v-if="task.executionStrategy === 'best_of_n'" class="badge bg-orange-500/15 text-orange-400">
         best-of-n
       </span>
-
-      <span
-        v-if="task.executionStrategy === 'best_of_n' && task.bestOfNSubstage && task.bestOfNSubstage !== 'idle'"
-        :class="[
-          'badge',
-          task.bestOfNSubstage === 'completed' ? 'bg-green-500/15 text-green-400' : 'bg-cyan-500/15 text-cyan-400'
-        ]"
-      >
-        {{ bestOfNStageMap[task.bestOfNSubstage] || task.bestOfNSubstage }}
+      <span v-if="depIds.length > 0" class="task-tag">
+        deps: {{ depIds.join(', ') }}
       </span>
-
-      <template v-if="task.executionStrategy === 'best_of_n'">
-        <template v-if="bonSummary">
-          <span class="badge bg-cyan-500/15 text-cyan-400">
-            workers {{ bonSummary.workersDone }}/{{ bonSummary.workersTotal }}
-          </span>
-          <span class="badge bg-purple-500/15 text-purple-400">
-            reviewers {{ bonSummary.reviewersDone }}/{{ bonSummary.reviewersTotal }}
-          </span>
-        </template>
-        <template v-else-if="task.bestOfNConfig">
-          <span v-if="bonTotalWorkers > 0" class="badge bg-cyan-500/15 text-cyan-400">
-            workers {{ bonTotalWorkers }}
-          </span>
-          <span v-if="bonTotalReviewers > 0" class="badge bg-purple-500/15 text-purple-400">
-            reviewers {{ bonTotalReviewers }}
-          </span>
-        </template>
-      </template>
+      <span
+        v-if="hasNonDefaultThinkingLevel"
+        class="task-tag"
+        :title="thinkingLevelTooltip"
+      >
+        {{ thinkingLevelSummary }}
+      </span>
+      <span v-if="task.branch" class="task-tag">
+        {{ task.branch }}
+      </span>
+      <span
+        v-if="task.errorMessage"
+        class="task-tag border-accent-danger/30 text-accent-danger"
+      >
+        error
+      </span>
     </div>
 
-    <!-- View Runs button for best-of-n tasks -->
-    <button
-      v-if="task.executionStrategy === 'best_of_n' && task.status !== 'template' && task.status !== 'backlog'"
-      class="btn btn-sm mb-2"
-      @click="emit('viewRuns')"
-    >
-      View Runs
-    </button>
+    <!-- Actions -->
+    <div class="task-footer">
+      <div class="flex items-center gap-1">
+        <button
+          class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-dark-text transition-colors"
+          :title="task.status === 'template' ? 'Edit Template' : 'Edit Task'"
+          @click="emit('open')"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+          </svg>
+        </button>
 
-    <!-- Warnings -->
-    <div
-      v-if="task.status === 'review' && task.awaitingPlanApproval && task.executionPhase === 'plan_complete_waiting_approval' && !hasPlanOutput"
-      class="text-xs text-red-400 mt-2"
-    >
-      Plan approval is unavailable because no captured [plan] block exists. Use Smart Repair or Reset.
+        <button
+          v-if="task.status === 'template'"
+          class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-primary transition-colors"
+          title="Deploy to Backlog"
+          @click="emit('deploy')"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 10l7-7m0 0l7 7m-7-7v18"/>
+          </svg>
+        </button>
+
+        <button
+          v-if="!showInlineActionBar && !isLocked && (task.status === 'stuck' || task.status === 'failed' || task.status === 'done' || task.status === 'review')"
+          class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-warning transition-colors"
+          title="Reset to Backlog"
+          @click="emit('reset')"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+          </svg>
+        </button>
+
+        <button
+          v-if="!showInlineActionBar && (((!isLocked && task.status !== 'executing')) || task.status === 'done')"
+          class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-danger transition-colors"
+          title="Archive Task"
+          @click="emit('archive')"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+        </button>
+
+        <button
+          v-if="task.status === 'stuck' || (!isLocked && isAnomalousReviewTask)"
+          class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-success transition-colors"
+          title="Mark as Done"
+          @click="emit('markDone')"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 13l4 4L19 7"/>
+          </svg>
+        </button>
+
+        <button
+          v-if="task.status === 'backlog' && !isLocked"
+          class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-success transition-colors"
+          title="Start this task"
+          @click="emit('startSingle')"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+            <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+        </button>
+
+        <button
+          v-if="task.status === 'backlog' && !isLocked"
+          class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-primary transition-colors"
+          title="Convert to Template"
+          @click="emit('convertToTemplate')"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Status Indicator -->
+      <div :class="['task-indicator', statusColor]" />
     </div>
 
-    <div
-      v-if="isOrphanExecutingTask"
-      class="text-xs text-red-400 mt-2"
-    >
-      Session may have dropped. Click on card title to verify. If the session is no longer active, use Send to Exec, Repair Done, Smart Repair, or Reset.
-    </div>
-
-    <!-- Inline action bar -->
-    <div v-if="showInlineActionBar" class="flex flex-wrap gap-1.5 mt-2">
+    <!-- Inline Action Bar -->
+    <div v-if="showInlineActionBar" class="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-dark-border">
       <template v-if="task.status === 'review' && task.awaitingPlanApproval && task.executionPhase === 'plan_complete_waiting_approval' && hasPlanOutput">
-        <button class="btn btn-sm btn-primary" @click="emit('approvePlan')">
+        <button class="btn btn-primary btn-xs" @click="emit('approvePlan')">
           Approve Plan
         </button>
-        <button
-          class="btn btn-sm"
-          style="border-color: var(--orange); color: var(--orange);"
-          @click="emit('requestRevision')"
-        >
+        <button class="btn btn-xs border-accent-warning/50 text-accent-warning" @click="emit('requestRevision')">
           Request Changes
         </button>
       </template>
 
       <button
         v-if="task.status === 'review' && isAnomalousReviewTask"
-        class="btn btn-sm btn-primary"
+        class="btn btn-primary btn-xs"
         @click="emit('markDone')"
       >
         Mark Done
@@ -429,7 +418,7 @@ const thinkingLevelTooltip = computed(() => {
 
       <button
         v-if="canSendToExecution"
-        class="btn btn-sm btn-primary"
+        class="btn btn-primary btn-xs"
         @click="emit('repair', 'queue_implementation')"
       >
         Send to Execution
@@ -437,43 +426,52 @@ const thinkingLevelTooltip = computed(() => {
 
       <button
         v-if="canRepairToDone && task.status !== 'stuck'"
-        class="btn btn-sm"
+        class="btn btn-xs"
         @click="emit('repair', 'mark_done')"
       >
         Repair Done
       </button>
 
-      <button class="btn btn-sm" @click="emit('repair', 'smart')">
+      <button class="btn btn-xs" @click="emit('repair', 'smart')">
         Smart Repair
       </button>
 
       <template v-if="task.status === 'stuck'">
         <button
-          class="btn btn-sm btn-primary"
+          class="btn btn-primary btn-xs"
           @click="emit('continueReviews')"
         >
-          Continue with More Reviews
-        </button>
-        <button
-          class="btn btn-sm btn-success"
-          @click="emit('markDone')"
-        >
-          Mark Done
+          Continue Reviews
         </button>
       </template>
     </div>
 
+    <!-- View Runs button for best-of-n -->
+    <button
+      v-if="task.executionStrategy === 'best_of_n' && task.status !== 'template' && task.status !== 'backlog'"
+      class="btn btn-xs mt-2"
+      @click="emit('viewRuns')"
+    >
+      View Runs
+    </button>
+
     <!-- Collapsible output -->
     <div v-if="task.agentOutput && (task.status === 'executing' || task.status === 'review' || task.status === 'done' || task.status === 'stuck' || task.status === 'failed')">
       <button
-        class="text-accent-primary text-xs bg-transparent border-0 cursor-pointer py-1 hover:underline"
+        class="text-accent-primary text-xs bg-transparent border-0 cursor-pointer py-1 hover:underline flex items-center gap-1"
         @click="showOutput = !showOutput"
       >
-        {{ showOutput ? '▼' : '▶' }} Agent Output
+        <svg v-if="showOutput" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 9l-7 7-7-7"/>
+        </svg>
+        <svg v-else class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 5l7 7-7 7"/>
+        </svg>
+        Agent Output
       </button>
       <div
         v-if="showOutput"
-        class="text-xs text-dark-text-muted bg-dark-bg rounded p-2 mt-1.5 max-h-52 overflow-y-auto whitespace-pre-wrap break-words"
+        class="text-xs text-dark-text-secondary bg-dark-bg rounded p-2 mt-1.5 max-h-52 overflow-y-auto whitespace-pre-wrap break-words border border-dark-border"
       >
         {{ task.agentOutput.slice(-5000) }}
       </div>
@@ -482,7 +480,7 @@ const thinkingLevelTooltip = computed(() => {
     <!-- Cost badge -->
     <div v-if="taskCost" class="flex items-center gap-2 mt-1 text-xs">
       <span 
-        class="cost-badge" 
+        class="px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full text-dark-text-secondary flex items-center gap-1"
         :title="`${taskCost.formattedTokens} tokens`"
       >
         💰 {{ taskCost.formattedCost }}
@@ -493,24 +491,20 @@ const thinkingLevelTooltip = computed(() => {
     <div v-if="task.completedAt" class="text-xs text-dark-text-muted mt-1">
       Completed: {{ new Date(task.completedAt * 1000).toLocaleString() }}
     </div>
+
+    <!-- Warnings -->
+    <div
+      v-if="task.status === 'review' && task.awaitingPlanApproval && task.executionPhase === 'plan_complete_waiting_approval' && !hasPlanOutput"
+      class="text-xs text-accent-danger mt-2"
+    >
+      Plan approval is unavailable - no [plan] block exists
+    </div>
+
+    <div
+      v-if="isOrphanExecutingTask"
+      class="text-xs text-accent-danger mt-2"
+    >
+      Session may have dropped - click title to verify
+    </div>
   </div>
 </template>
-
-<style scoped>
-.cost-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.125rem 0.5rem;
-  background-color: var(--color-surface2);
-  border: 1px solid var(--color-surface3);
-  border-radius: 9999px;
-  color: var(--color-text-muted);
-  font-weight: 500;
-}
-
-.cost-badge:hover {
-  background-color: var(--color-surface3);
-  color: var(--color-text);
-}
-</style>

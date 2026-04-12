@@ -1,75 +1,62 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-
-const props = defineProps<{
-  consumedSlots: number
-  parallelTasks: number
-  isConnected: boolean
-}>()
-
 const emit = defineEmits<{
-  toggleExecution: []
   openOptions: []
   openContainerConfig: []
 }>()
-
-const isRunning = computed(() => props.consumedSlots > 0)
 </script>
 
 <template>
-  <div class="flex items-center justify-center gap-4 px-6 py-3 bg-dark-bg/80 backdrop-blur-md border-b border-dark-surface3 sticky top-0 z-40">
-    <button
-      :class="[
-        'btn font-semibold',
-        isRunning 
-          ? 'bg-accent-danger/80 border-accent-danger/50 hover:bg-accent-danger text-white' 
-          : 'bg-accent-success/80 border-accent-success/50 hover:bg-accent-success text-white'
-      ]"
-      @click="emit('toggleExecution')"
-    >
-      {{ isRunning ? 'Stop Workflow' : `Start Workflow (${consumedSlots ?? 0}/${parallelTasks ?? 1})` }}
-    </button>
-
-    <div class="flex flex-col items-center gap-1 min-w-[240px]">
-      <h1 class="text-lg font-semibold inline-flex items-center gap-2 text-dark-text">
-        <span>Easy Workflow Kanban</span>
-        <span
-          :class="[
-            'w-2 h-2 rounded-full',
-            isConnected ? 'bg-accent-success' : 'bg-accent-danger'
-          ]"
-          :title="isConnected ? 'Connected' : 'Disconnected'"
-        />
-      </h1>
-      <div class="flex flex-wrap justify-center gap-2 text-dark-text-muted text-xs">
-        <span class="inline-flex items-center gap-1">
-          <kbd class="font-mono text-dark-text font-bold border border-dark-surface3 rounded px-1 bg-dark-surface2">T</kbd>
-          Create template
-        </span>
-        <span class="inline-flex items-center gap-1">
-          <kbd class="font-mono text-dark-text font-bold border border-dark-surface3 rounded px-1 bg-dark-surface2">B</kbd>
-          Create backlog task
-        </span>
-        <span class="inline-flex items-center gap-1">
-          <kbd class="font-mono text-dark-text font-bold border border-dark-surface3 rounded px-1 bg-dark-surface2">S</kbd>
-          Start workflow
-        </span>
-        <span class="inline-flex items-center gap-1">
-          <kbd class="font-mono text-dark-text font-bold border border-dark-surface3 rounded px-1 bg-dark-surface2">D</kbd>
-          Archive all done
-        </span>
+  <div class="top-bar">
+    <!-- Left: Breadcrumb -->
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2 text-sm text-dark-text-secondary">
+        <div class="flex items-center gap-2">
+          <span>Project</span>
+        </div>
+        <span class="text-dark-text-muted">/</span>
+        <div class="flex items-center gap-2">
+          <span class="text-dark-text font-medium">Pi Easy Workflow</span>
+        </div>
       </div>
     </div>
 
-    <div class="flex items-center gap-3 flex-wrap justify-end">
-      <button class="btn bg-dark-surface2 border-dark-surface3 text-dark-text hover:bg-dark-surface flex items-center gap-2" @click="emit('openContainerConfig')">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+    <!-- Right: Actions -->
+    <div class="flex items-center gap-3">
+      <!-- Keyboard shortcuts hint -->
+      <div class="hidden md:flex items-center gap-3 text-xs text-dark-text-muted">
+        <span class="flex items-center gap-1">
+          <kbd class="font-mono text-dark-text font-bold border border-dark-border rounded px-1 bg-dark-surface2">T</kbd>
+          Template
+        </span>
+        <span class="flex items-center gap-1">
+          <kbd class="font-mono text-dark-text font-bold border border-dark-border rounded px-1 bg-dark-surface2">B</kbd>
+          Task
+        </span>
+        <span class="flex items-center gap-1">
+          <kbd class="font-mono text-dark-text font-bold border border-dark-border rounded px-1 bg-dark-surface2">P</kbd>
+          Chat
+        </span>
+        <span class="flex items-center gap-1">
+          <kbd class="font-mono text-dark-text font-bold border border-dark-border rounded px-1 bg-dark-surface2">Esc</kbd>
+          Close
+        </span>
+      </div>
+
+      <div class="h-4 w-px bg-dark-border" />
+
+      <!-- Action buttons -->
+      <button class="icon-btn" title="Search" @click="emit('openOptions')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="M21 21l-4.35-4.35"/>
         </svg>
-        Container
       </button>
-      <button class="btn bg-dark-surface2 border-dark-surface3 text-dark-text hover:bg-dark-surface" @click="emit('openOptions')">
-        Options
+
+      <button class="icon-btn" title="Settings" @click="emit('openContainerConfig')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 1v6m0 6v6m4.22-10.22l4.24-4.24M6.34 17.66l-4.24 4.24M23 12h-6m-6 0H1m20.24 4.24l-4.24-4.24M6.34 6.34L2.1 2.1"/>
+        </svg>
       </button>
     </div>
   </div>

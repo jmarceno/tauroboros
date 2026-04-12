@@ -121,33 +121,40 @@ const setMermaidRef = (id: string, el: HTMLElement | null) => {
 </script>
 
 <template>
-  <div class="flex flex-col gap-1">
+  <div class="chat-message">
     <!-- Date/Time Header -->
     <div
       v-if="showTimestamp"
       class="flex items-center justify-center my-2"
     >
-      <span class="text-xs text-dark-dim/50 bg-dark-surface2 px-2 py-0.5 rounded">
+      <span class="text-xs text-dark-text-muted/50 bg-dark-surface2 px-2 py-0.5 rounded">
         {{ formatDate(message.timestamp) }}
       </span>
     </div>
 
-    <!-- Message Bubble -->
+    <!-- Message Header -->
+    <div class="chat-message-header">
+      <span :class="['chat-message-sender', message.role]">
+        {{ message.role }}
+      </span>
+      <span class="chat-message-time">{{ formatTimestamp(message.timestamp) }}</span>
+    </div>
+
+    <!-- Message Content -->
     <div
-      class="flex gap-2"
+      class="chat-message-content"
       :class="{
-        'justify-end': isUser,
-        'justify-start': isAssistant || isSystem || isTool
+        'text-dark-text-muted/60': isThinking
       }"
     >
-      <!-- Avatar/Icon -->
+      <!-- Avatar/Icon (for non-user messages) -->
       <div
         v-if="!isUser"
         class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs"
         :class="{
-          'bg-accent/20 text-accent': isAssistant && !isThinking,
-          'bg-dark-surface3 text-dark-dim/50': isThinking,
-          'bg-dark-surface3 text-dark-dim': isSystem || isTool
+          'bg-accent-primary/20 text-accent-primary': isAssistant && !isThinking,
+          'bg-dark-surface3 text-dark-text-muted/50': isThinking,
+          'bg-dark-surface3 text-dark-text-muted': isSystem || isTool
         }"
       >
         <svg
@@ -190,178 +197,95 @@ const setMermaidRef = (id: string, el: HTMLElement | null) => {
       </div>
 
       <!-- Message Content -->
+      <!-- Render blocks -->
+      <template v-for="(block, index) in renderedBlocks" :key="index">
+        <!-- HTML content from TipTap -->
+        <div
+          v-if="block.type === 'text' && block.content.startsWith('<')"
+          v-html="block.content"
+        />
+        
+        <!-- Rendered markdown text -->
+        <div
+          v-else-if="block.type === 'text'"
+          class="message-text"
+          v-html="block.content"
+        />
+        
+        <!-- Mermaid chart -->
+        <div
+          v-else-if="block.type === 'mermaid'"
+          class="my-3 bg-dark-bg rounded-lg overflow-hidden border border-dark-border"
+        >
+          <div class="text-xs text-dark-text-muted/60 px-2 py-1 bg-dark-surface2 border-b border-dark-border flex items-center gap-2">
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            Chart
+          </div>
+          <div
+            v-if="block.content.startsWith('<svg')"
+            class="p-2"
+            v-html="block.content"
+          />
+          <div
+            v-else
+            :ref="(el) => setMermaidRef(block.id || '', el as HTMLElement)"
+            class="p-2"
+          >
+            <pre class="text-xs text-dark-text-muted/80">{{ block.content }}</pre>
+          </div>
+        </div>
+        
+        <!-- Code block with syntax highlighting -->
+        <div
+          v-else-if="block.type === 'code'"
+          class="my-2 rounded-lg overflow-hidden bg-dark-bg border border-dark-border"
+        >
+          <div class="text-xs text-dark-text-muted/60 px-3 py-1.5 bg-dark-surface2 border-b border-dark-border flex items-center justify-between">
+            <span class="font-mono">{{ block.language }}</span>
+          </div>
+          <pre class="p-3 overflow-x-auto"><code class="hljs language-{{ block.language }}" v-html="block.content"></code></pre>
+        </div>
+      </template>
+
+      <!-- Fallback for plain text (when no blocks rendered yet) -->
       <div
-        class="max-w-[85%] rounded-lg px-3 py-2 text-sm prose prose-invert prose-sm overflow-hidden"
-        :class="{
-          'bg-accent text-white': isUser,
-          'bg-dark-surface2 text-dark-text': isAssistant && !isThinking,
-          'bg-transparent border border-dark-surface3/50 text-dark-dim/70 italic': isThinking,
-          'bg-dark-surface3/50 text-dark-dim text-xs italic': isSystem,
-          'bg-dark-surface3/80 text-dark-dim text-xs': isTool
-        }"
+        v-if="renderedBlocks.length === 0"
+        class="whitespace-pre-wrap"
+        :class="{ 'text-dark-text-muted/60': isThinking }"
+      >{{ messageText }}</div>
+
+      <!-- Tool Call Details -->
+      <div
+        v-if="isTool && message.toolName"
+        class="mt-1 pt-1 border-t border-dark-border/30 text-xs opacity-70"
       >
-        <!-- Thinking Label -->
-        <div 
-          v-if="isThinking" 
-          class="text-xs text-dark-dim/40 mb-1 font-medium select-none"
-        >
-          thinking...
-        </div>
-
-        <!-- Render blocks -->
-        <template v-for="(block, index) in renderedBlocks" :key="index">
-          <!-- HTML content from TipTap -->
-          <div
-            v-if="block.type === 'text' && block.content.startsWith('<')"
-            v-html="block.content"
-          />
-          
-          <!-- Rendered markdown text -->
-          <div
-            v-else-if="block.type === 'text'"
-            class="message-text"
-            v-html="block.content"
-          />
-          
-          <!-- Mermaid chart -->
-          <div
-            v-else-if="block.type === 'mermaid'"
-            class="mermaid-chart my-3 bg-dark-bg rounded-lg overflow-hidden"
-          >
-            <div class="mermaid-header text-xs text-dark-dim/60 px-2 py-1 bg-dark-surface3/50 border-b border-dark-surface3 flex items-center gap-2">
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              Chart
-            </div>
-            <div
-              v-if="block.content.startsWith('<svg')"
-              class="mermaid-svg p-2"
-              v-html="block.content"
-            />
-            <div
-              v-else
-              :ref="(el) => setMermaidRef(block.id || '', el as HTMLElement)"
-              class="mermaid-container p-2"
-            >
-              <pre class="text-xs text-dark-dim/80">{{ block.content }}</pre>
-            </div>
-          </div>
-          
-          <!-- Code block with syntax highlighting -->
-          <div
-            v-else-if="block.type === 'code'"
-            class="code-block my-2 rounded-lg overflow-hidden bg-dark-bg border border-dark-surface3"
-          >
-            <div class="code-header text-xs text-dark-dim/60 px-3 py-1.5 bg-dark-surface3/50 border-b border-dark-surface3 flex items-center justify-between">
-              <span class="font-mono">{{ block.language }}</span>
-            </div>
-            <pre class="p-3 overflow-x-auto"><code class="hljs language-{{ block.language }}" v-html="block.content"></code></pre>
-          </div>
-        </template>
-
-        <!-- Fallback for plain text (when no blocks rendered yet) -->
-        <div
-          v-if="renderedBlocks.length === 0"
-          class="whitespace-pre-wrap"
-          :class="{ 'text-dark-dim/60': isThinking }"
-        >{{ messageText }}</div>
-
-        <!-- Tool Call Details -->
-        <div
-          v-if="isTool && message.toolName"
-          class="mt-1 pt-1 border-t border-dark-surface3/30 text-xs opacity-70"
-        >
-          <span class="font-medium">{{ message.toolName }}</span>
-          <span
-            v-if="message.toolStatus"
-            class="ml-1"
-            :class="{
-              'text-green-400': message.toolStatus === 'success',
-              'text-red-400': message.toolStatus === 'error'
-            }"
-          >
-            ({{ message.toolStatus }})
-          </span>
-        </div>
-
-        <!-- Timestamp in message (only for non-streaming complete messages) -->
-        <div
-          v-if="!isStreaming && !isThinking"
-          class="mt-1 text-xs opacity-50 text-right"
+        <span class="font-medium">{{ message.toolName }}</span>
+        <span
+          v-if="message.toolStatus"
+          class="ml-1"
           :class="{
-            'text-white/50': isUser,
-            'text-dark-dim': !isUser
+            'text-accent-success': message.toolStatus === 'success',
+            'text-accent-danger': message.toolStatus === 'error'
           }"
         >
-          {{ formatTimestamp(message.timestamp) }}
-        </div>
+          ({{ message.toolStatus }})
+        </span>
       </div>
 
-      <!-- User Avatar -->
-      <div
-        v-if="isUser"
-        class="w-6 h-6 rounded-full bg-dark-surface3 flex items-center justify-center flex-shrink-0 text-xs"
+      <!-- Thinking Label -->
+      <div 
+        v-if="isThinking" 
+        class="text-xs text-dark-text-muted/40 mt-1 font-medium select-none"
       >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-        </svg>
+        thinking...
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* Style markdown content from TipTap */
-.prose :deep(h1) { font-size: 1.25em; font-weight: 600; margin: 0.5em 0; }
-.prose :deep(h2) { font-size: 1.1em; font-weight: 600; margin: 0.5em 0; }
-.prose :deep(h3) { font-size: 1em; font-weight: 600; margin: 0.5em 0; }
-.prose :deep(p) { margin: 0.3em 0; }
-.prose :deep(ul) { list-style-type: disc; padding-left: 1.2em; margin: 0.3em 0; }
-.prose :deep(ol) { list-style-type: decimal; padding-left: 1.2em; margin: 0.3em 0; }
-.prose :deep(li) { margin: 0.1em 0; }
-.prose :deep(code) {
-  background: rgba(0, 0, 0, 0.2);
-  padding: 0.1em 0.3em;
-  border-radius: 3px;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', monospace;
-  font-size: 0.9em;
-}
-.prose :deep(pre) {
-  background: rgba(0, 0, 0, 0.2);
-  padding: 0.5em;
-  border-radius: 4px;
-  overflow-x: auto;
-  margin: 0.3em 0;
-}
-.prose :deep(pre code) {
-  background: none;
-  padding: 0;
-}
-.prose :deep(blockquote) {
-  border-left: 3px solid currentColor;
-  padding-left: 0.5em;
-  margin: 0.3em 0;
-  opacity: 0.8;
-}
-.prose :deep(a) {
-  color: inherit;
-  text-decoration: underline;
-  opacity: 0.9;
-}
-.prose :deep(strong) { font-weight: 600; }
-.prose :deep(em) { font-style: italic; }
-.prose :deep(s) { text-decoration: line-through; }
-
-/* Dark theme adjustments */
-.bg-accent .prose :deep(code) { background: rgba(0, 0, 0, 0.3); }
-.bg-accent .prose :deep(pre) { background: rgba(0, 0, 0, 0.3); }
-
-/* Thinking-specific styling */
-.prose:has(.text-dark-dim\/60) :deep(*) {
-  opacity: 0.85;
-}
-
 /* Message text styling */
 .message-text :deep(br) {
   display: block;
@@ -382,22 +306,22 @@ const setMermaidRef = (id: string, el: HTMLElement | null) => {
 }
 
 .mermaid-error {
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  border: 1px solid rgba(255, 51, 102, 0.3);
 }
 
 /* Code block styling */
-.code-block pre {
+pre {
   margin: 0;
   font-size: 0.875em;
   line-height: 1.5;
 }
 
-.code-block code {
+code {
   font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', monospace;
 }
 
 /* Syntax highlighting adjustments for dark theme */
-.code-block :deep(.hljs) {
+:deep(.hljs) {
   background: transparent;
   color: #e0e0e0;
   font-size: 0.875rem;
@@ -405,21 +329,12 @@ const setMermaidRef = (id: string, el: HTMLElement | null) => {
 }
 
 /* Additional code block styling */
-.code-block pre {
-  background: #1a1a1a;
+pre {
+  background: #0a0a12;
 }
 
-.code-block code {
+code {
   display: block;
   padding: 0;
-}
-
-/* Ensure proper scrolling */
-.overflow-hidden {
-  overflow: hidden;
-}
-
-.max-w-\[85\%\] {
-  max-width: 85%;
 }
 </style>

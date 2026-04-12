@@ -25,6 +25,11 @@ onMounted(async () => {
 })
 
 const startExecution = async () => {
+  // Check if there are tasks to execute
+  if (!graph.value || graph.value.totalTasks === 0) {
+    toasts.showToast('No tasks available to execute. Create some tasks first.', 'error')
+    return
+  }
   try {
     await options.startExecution()
     emit('close')
@@ -150,7 +155,7 @@ const closeOnOverlay = (e: MouseEvent) => {
 
       <div class="modal-footer">
         <button class="btn" @click="emit('close')">Cancel</button>
-        <button class="btn btn-primary" :disabled="isLoading || !!graph?.error" @click="startExecution">
+        <button class="btn btn-primary" :disabled="isLoading || !!graph?.error || !graph || graph.totalTasks === 0" @click="startExecution">
           Confirm & Start
         </button>
       </div>

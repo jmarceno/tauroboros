@@ -19,7 +19,6 @@ const emit = defineEmits<{
   close: []
   rename: [name: string]
   createTasks: []
-  reconnect: []
 }>()
 
 const api = useApi()
@@ -40,18 +39,11 @@ const pendingModel = ref('')
 const pendingThinkingLevel = ref<'default' | 'low' | 'medium' | 'high'>('default')
 const isChangingModel = ref(false)
 
-// Dropdown position tracking for fixed positioning
-const attachMenuLeft = ref(0)
-const attachMenuBottom = ref(0)
-const modelMenuRight = ref(0)
-const modelMenuBottom = ref(0)
-
 // Initialize pendingModel when menu opens
 watch(showModelMenu, (isOpen) => {
   if (isOpen) {
     pendingModel.value = props.session.session?.model || ''
     pendingThinkingLevel.value = props.session.session?.thinkingLevel || 'default'
-    // Calculate position after DOM update
     nextTick(() => calculateModelMenuPosition())
   }
 })
@@ -64,41 +56,26 @@ watch(showAttachMenu, (isOpen) => {
 })
 
 // Calculate dropdown positions
+const attachMenuRef = ref<HTMLElement | null>(null)
+const modelMenuRef = ref<HTMLElement | null>(null)
+
 const calculateAttachMenuPosition = () => {
-  const button = document.querySelector('[data-attach-button]') as HTMLElement
-  if (button) {
-    const rect = button.getBoundingClientRect()
-    attachMenuLeft.value = rect.left
-    attachMenuBottom.value = window.innerHeight - rect.top + 4
-  }
+  // Menu is now inline, no need for fixed positioning
 }
 
 const calculateModelMenuPosition = () => {
-  const button = document.querySelector('[data-model-button]') as HTMLElement
-  if (button) {
-    const rect = button.getBoundingClientRect()
-    modelMenuRight.value = window.innerWidth - rect.right
-    modelMenuBottom.value = window.innerHeight - rect.top + 4
-  }
+  // Menu is now inline, no need for fixed positioning
 }
 
 // Recalculate positions on resize and scroll
 onMounted(() => {
-  window.addEventListener('resize', () => {
-    if (showAttachMenu.value) calculateAttachMenuPosition()
-    if (showModelMenu.value) calculateModelMenuPosition()
-  })
-  window.addEventListener('scroll', () => {
-    if (showAttachMenu.value) calculateAttachMenuPosition()
-    if (showModelMenu.value) calculateModelMenuPosition()
-  }, true)
+  scrollToBottom()
 })
 
 const currentModel = computed(() => props.session.session?.model)
 const currentModelLabel = computed(() => {
   const model = currentModel.value
   if (!model || model === 'default') return ''
-  // Extract model name from provider/model format
   const parts = model.split('/')
   return parts.length > 1 ? parts[1] : model
 })
@@ -106,10 +83,6 @@ const currentModelLabel = computed(() => {
 // Auto-scroll to bottom on new messages
 watch(() => props.session.messages.length, async () => {
   await nextTick()
-  scrollToBottom()
-})
-
-onMounted(() => {
   scrollToBottom()
 })
 
@@ -140,7 +113,6 @@ const cancelEditName = () => {
 }
 
 const attachFile = async () => {
-  // Create a file input element
   const input = document.createElement('input')
   input.type = 'file'
   input.multiple = true
@@ -169,7 +141,6 @@ const attachFile = async () => {
 }
 
 const attachCurrentTask = () => {
-  // Attach context from the currently selected task if any
   attachedContext.value.push({
     type: 'task',
     name: 'Current Task Context',
@@ -193,7 +164,7 @@ const sendMessage = async () => {
   const attachments = [...attachedContext.value]
 
   messageInput.value = ''
-  attachedContext.value = [] // Clear after sending
+  attachedContext.value = []
 
   try {
     await planningChat.sendMessage(props.session.id, content, attachments)
@@ -205,20 +176,11 @@ const sendMessage = async () => {
 }
 
 const handleKeydown = (event: KeyboardEvent) => {
-  // Shift+Enter to send message
   if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault()
     if (messageInput.value.trim() && !props.session.isSending && props.session.session?.id && props.session.session?.status === 'active') {
       sendMessage()
     }
-  }
-}
-
-const handleReconnect = async () => {
-  try {
-    await planningChat.reconnectSession(props.session.id)
-  } catch (e) {
-    console.error('Failed to reconnect:', e)
   }
 }
 
@@ -238,13 +200,7 @@ const changeModel = async () => {
 
 const canReconnect = computed(() => {
   const session = props.session.session
-  // Allow reconnect if session exists but is not in active status or has error
   return session && (session.status !== 'active' || props.session.error?.includes('not active'))
-})
-
-const needsModelSelection = computed(() => {
-  // Show model selector when creating a new session that hasn't loaded yet
-  return props.session.isLoading && !props.session.session?.id
 })
 
 const createTasksFromChat = async () => {
@@ -257,20 +213,15 @@ const createTasksFromChat = async () => {
   }
 }
 
-const formatTimestamp = (timestamp: number) => {
-  const date = new Date(timestamp * 1000)
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-const statusColor = computed(() => {
+const statusColorClass = computed(() => {
   const status = props.session.session?.status
   switch (status) {
-    case 'active': return 'bg-green-500'
-    case 'starting': return 'bg-yellow-500 animate-pulse'
-    case 'paused': return 'bg-orange-500'
-    case 'completed': return 'bg-gray-500'
-    case 'failed': return 'bg-red-500'
-    default: return 'bg-gray-400'
+    case 'active': return 'bg-accent-success'
+    case 'starting': return 'bg-accent-warning animate-pulse'
+    case 'paused': return 'bg-accent-warning'
+    case 'completed': return 'bg-dark-text-muted'
+    case 'failed': return 'bg-accent-danger'
+    default: return 'bg-dark-text-muted'
   }
 })
 
@@ -287,34 +238,39 @@ const statusText = computed(() => {
 })
 
 const hasEnoughMessages = computed(() => props.session.messages.length > 2)
+
+const handleReconnect = async () => {
+  try {
+    await planningChat.reconnectSession(props.session.id)
+  } catch (e) {
+    console.error('Failed to reconnect:', e)
+  }
+}
 </script>
 
 <template>
   <div class="h-full flex flex-col bg-dark-bg">
     <!-- Session Header -->
-    <div class="flex items-center justify-between px-3 py-2 bg-dark-surface2 border-b border-dark-surface3">
+    <div class="flex items-center justify-between px-3 py-2 bg-dark-surface2 border-b border-dark-border">
       <div class="flex items-center gap-2 min-w-0">
-        <!-- Status Indicator -->
         <span
           class="w-2.5 h-2.5 rounded-full flex-shrink-0"
-          :class="statusColor"
+          :class="statusColorClass"
           :title="statusText"
         />
-
-        <!-- Name (editable) -->
         <div class="min-w-0 flex-1">
           <input
             v-if="isEditingName"
             ref="nameInput"
             v-model="editedName"
-            class="w-full bg-dark-bg border border-accent rounded px-2 py-0.5 text-sm text-dark-text focus:outline-none focus:ring-1 focus:ring-accent"
+            class="w-full bg-dark-bg border border-accent-primary rounded px-2 py-0.5 text-sm text-dark-text focus:outline-none"
             @blur="saveName"
             @keydown.enter="saveName"
             @keydown.esc="cancelEditName"
           >
           <button
             v-else
-            class="text-sm font-medium text-dark-text hover:text-accent truncate max-w-[150px] text-left"
+            class="text-sm font-medium text-dark-text hover:text-accent-primary truncate max-w-[150px] text-left"
             @click="startEditingName"
           >
             {{ session.name }}
@@ -323,60 +279,52 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
       </div>
 
       <div class="flex items-center gap-0.5">
-        <!-- Show in Pi Button -->
         <a
           v-if="session.session?.sessionUrl"
           :href="session.session.sessionUrl"
           target="_blank"
-          class="p-1.5 rounded hover:bg-dark-surface3 text-dark-dim hover:text-accent transition-colors"
+          class="p-1.5 rounded hover:bg-dark-surface3 text-dark-text-secondary hover:text-accent-primary transition-colors"
           title="Open in Pi"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
           </svg>
         </a>
-
-        <!-- Minimize -->
         <button
-          class="p-1.5 rounded hover:bg-dark-surface3 text-dark-dim hover:text-dark-text transition-colors"
+          class="p-1.5 rounded hover:bg-dark-surface3 text-dark-text-secondary hover:text-dark-text transition-colors"
           title="Minimize"
           @click="emit('minimize')"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 12H6" />
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 12H6" />
           </svg>
         </button>
-
-        <!-- Close -->
         <button
-          class="p-1.5 rounded hover:bg-dark-surface3 text-dark-dim hover:text-red-400 transition-colors"
+          class="p-1.5 rounded hover:bg-dark-surface3 text-dark-text-secondary hover:text-accent-danger transition-colors"
           title="Close session"
           @click="emit('close')"
         >
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
     </div>
 
     <!-- Messages Area -->
-    <div
-      ref="messagesContainer"
-      class="flex-1 overflow-y-auto p-3 space-y-3"
-    >
+    <div ref="messagesContainer" class="chat-messages">
       <!-- Empty State -->
       <div
         v-if="session.messages.length === 0"
-        class="h-full flex flex-col items-center justify-center text-dark-dim px-4"
+        class="h-full flex flex-col items-center justify-center text-dark-text-muted px-4"
       >
         <div class="text-center mb-4">
-          <svg class="w-10 h-10 mx-auto mb-2 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          <svg class="w-10 h-10 mx-auto mb-2 opacity-40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
           </svg>
           <p class="text-sm">Start a conversation with the planning assistant</p>
         </div>
-        <div class="text-xs text-dark-dim/60 space-y-1 text-center">
+        <div class="text-xs text-dark-text-muted/60 space-y-1 text-center">
           <p>• Break down complex tasks into manageable pieces</p>
           <p>• Get architecture and design suggestions</p>
           <p>• Plan implementation steps before creating tasks</p>
@@ -388,13 +336,12 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
         v-for="(message, index) in session.messages"
         :key="message.id || index"
         :message="message"
-        :show-timestamp="index === 0 || formatTimestamp(message.timestamp) !== formatTimestamp(session.messages[index - 1]?.timestamp || 0)"
       />
 
       <!-- Loading Indicator -->
       <div
         v-if="session.isLoading || session.isSending"
-        class="flex items-center gap-2 text-dark-dim text-sm py-2"
+        class="flex items-center gap-2 text-dark-text-muted text-sm py-2 px-4"
       >
         <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
@@ -403,14 +350,14 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
         <span>{{ session.isLoading ? 'Starting session...' : 'Waiting for response...' }}</span>
       </div>
 
-      <!-- Reconnect Button (for inactive sessions) -->
+      <!-- Reconnect Button -->
       <div
         v-if="canReconnect"
-        class="p-3 rounded bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm"
+        class="mx-4 my-2 p-3 rounded bg-accent-warning/10 border border-accent-warning/30 text-accent-warning text-sm"
       >
         <div class="flex items-start gap-2">
-          <svg class="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          <svg class="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
           </svg>
           <div class="flex-1">
             <p class="mb-2">This session is not currently active. Reconnect to continue chatting.</p>
@@ -426,12 +373,7 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
                 </svg>
                 Reconnecting...
               </span>
-              <span v-else class="flex items-center gap-1">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Reconnect
-              </span>
+              <span v-else>Reconnect</span>
             </button>
           </div>
         </div>
@@ -440,11 +382,11 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
       <!-- Error -->
       <div
         v-if="session.error && !canReconnect"
-        class="p-3 rounded bg-red-500/10 border border-red-500/30 text-red-400 text-sm"
+        class="mx-4 my-2 p-3 rounded bg-accent-danger/10 border border-accent-danger/30 text-accent-danger text-sm"
       >
         <div class="flex items-start gap-2">
-          <svg class="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <svg class="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <span>{{ session.error }}</span>
         </div>
@@ -452,17 +394,16 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
     </div>
 
     <!-- Input Area -->
-    <div class="p-3 bg-dark-surface border-t border-dark-surface3 relative z-50">
+    <div class="chat-input-container">
       <!-- Toolbar -->
-      <div class="flex items-center gap-2 mb-2">
-        <!-- Create Tasks Button (Primary) -->
+      <div class="chat-toolbar">
         <button
           v-if="hasEnoughMessages"
-          class="btn btn-primary btn-xs flex items-center gap-1"
+          class="chat-tool-btn border-accent-primary/50 text-accent-primary"
           @click="createTasksFromChat"
         >
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
           </svg>
           Create Tasks
         </button>
@@ -470,15 +411,15 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
         <!-- Attach Context Dropdown -->
         <div class="relative">
           <button
-            data-attach-button
-            class="btn btn-xs flex items-center gap-1"
+            ref="attachMenuRef"
+            class="chat-tool-btn"
             @click="showAttachMenu = !showAttachMenu"
           >
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
             </svg>
             Attach Context
-            <span v-if="attachedContext.length > 0" class="ml-1 px-1 bg-accent/20 text-accent rounded text-xs">
+            <span v-if="attachedContext.length > 0" class="ml-1 px-1 bg-accent-primary/20 text-accent-primary rounded text-xs">
               {{ attachedContext.length }}
             </span>
           </button>
@@ -486,16 +427,14 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
           <!-- Attach Menu -->
           <div
             v-if="showAttachMenu"
-            class="fixed w-48 bg-dark-surface border border-dark-surface3 rounded-lg shadow-xl z-[200] py-1"
-            style="transform: translateY(-100%); margin-top: -4px;"
-            :style="{ left: attachMenuLeft + 'px', bottom: attachMenuBottom + 'px' }"
+            class="absolute bottom-full left-0 mb-1 w-48 bg-dark-surface border border-dark-border rounded-lg shadow-xl z-50 py-1"
           >
             <button
               class="w-full px-3 py-2 text-left text-sm text-dark-text hover:bg-dark-surface2 flex items-center gap-2"
               @click="attachFile"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               Attach File(s)
             </button>
@@ -503,8 +442,8 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
               class="w-full px-3 py-2 text-left text-sm text-dark-text hover:bg-dark-surface2 flex items-center gap-2"
               @click="attachCurrentTask"
             >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
               </svg>
               Current Task
             </button>
@@ -514,16 +453,16 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
         <!-- Model Selector Dropdown -->
         <div class="relative">
           <button
-            data-model-button
-            class="btn btn-xs flex items-center gap-1"
+            ref="modelMenuRef"
+            class="chat-tool-btn"
             :disabled="!session.session || session.session.status !== 'active'"
             @click="showModelMenu = !showModelMenu"
           >
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
             </svg>
             Model
-            <span v-if="currentModel" class="ml-1 text-accent">
+            <span v-if="currentModel" class="ml-1 text-accent-primary">
               {{ currentModelLabel }}
             </span>
           </button>
@@ -531,11 +470,9 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
           <!-- Model Menu -->
           <div
             v-if="showModelMenu"
-            class="fixed w-72 bg-dark-surface border border-dark-surface3 rounded-lg shadow-xl z-[200] py-2"
-            style="transform: translateY(-100%); margin-top: -4px;"
-            :style="{ right: modelMenuRight + 'px', bottom: modelMenuBottom + 'px' }"
+            class="absolute bottom-full left-0 mb-1 w-72 bg-dark-surface border border-dark-border rounded-lg shadow-xl z-50 py-2"
           >
-            <div class="px-3 py-1 text-xs text-dark-dim border-b border-dark-surface3 mb-2">
+            <div class="px-3 py-1 text-xs text-dark-text-muted border-b border-dark-border mb-2">
               Change Model & Thinking Level
             </div>
             <div class="px-2 pb-2 space-y-2">
@@ -549,7 +486,7 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
                 label="Thinking Level"
               />
             </div>
-            <div class="px-3 py-2 border-t border-dark-surface3 flex justify-end">
+            <div class="px-3 py-2 border-t border-dark-border flex justify-end">
               <button
                 class="btn btn-primary btn-xs"
                 :disabled="!pendingModel || (pendingModel === session.session?.model && pendingThinkingLevel === session.session?.thinkingLevel) || isChangingModel"
@@ -571,11 +508,11 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
         <!-- Clear Attachments Button -->
         <button
           v-if="attachedContext.length > 0"
-          class="text-xs text-dark-dim hover:text-red-400 flex items-center gap-1"
+          class="text-xs text-dark-text-muted hover:text-accent-danger flex items-center gap-1"
           @click="clearAttachedContext"
         >
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M6 18L18 6M6 6l12 12" />
           </svg>
           Clear
         </button>
@@ -586,68 +523,54 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
         <div
           v-for="(ctx, idx) in attachedContext"
           :key="idx"
-          class="px-2 py-1 text-xs bg-accent/10 text-accent border border-accent/20 rounded flex items-center gap-1"
+          class="px-2 py-1 text-xs bg-accent-primary/10 text-accent-primary border border-accent-primary/20 rounded flex items-center gap-1"
         >
-          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
           </svg>
-          <span class="truncate max-w-[120px]">
-            {{ ctx.type === 'file' ? ctx.name : ctx.name }}
-          </span>
+          <span class="truncate max-w-[120px]">{{ ctx.name }}</span>
         </div>
       </div>
 
-      <div class="flex flex-col gap-2">
+      <!-- Input Box -->
+      <div class="chat-input-box">
         <MarkdownEditor
           v-model="messageInput"
           :disabled="session.isLoading || !session.session?.id"
-          placeholder="Type your message... (Markdown supported)"
-          class="min-h-[80px] max-h-[200px]"
+          placeholder="Type your message... (Shift+Enter to send)"
+          class="min-h-[60px] max-h-[150px] w-full"
           @keydown="handleKeydown"
         />
+      </div>
 
-        <div class="flex items-center justify-between">
-          <div class="text-xs text-dark-dim">
-            <span v-if="session.isSending">Sending...</span>
-            <span v-else-if="session.session?.status === 'starting'">Session starting...</span>
-            <span v-else-if="session.session?.status === 'active'" class="flex items-center gap-2">
-              <span>Ready</span>
-              <span class="text-dark-dim/50">|</span>
-              <span class="text-dark-dim/60">Shift+Enter to send</span>
-            </span>
-            <span v-else-if="session.session?.status === 'failed'">Session failed</span>
-            <span v-else>Connect Pi to start chatting</span>
-          </div>
+      <!-- Send Button (below input) -->
+      <button
+        class="chat-send-btn"
+        :disabled="!messageInput.trim() || session.isSending || !session.session?.id || session.isLoading"
+        @click="sendMessage"
+      >
+        <span v-if="session.isSending" class="flex items-center gap-1">
+          <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+        </span>
+        <span v-else class="flex items-center gap-1">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+          </svg>
+          Send
+        </span>
+      </button>
 
-          <div class="flex items-center gap-2">
-            <button
-              class="btn btn-sm"
-              :disabled="session.isSending || !session.session?.id"
-              @click="messageInput = ''"
-            >
-              Clear
-            </button>
-            <button
-              class="btn btn-primary btn-sm"
-              :disabled="!messageInput.trim() || session.isSending || !session.session?.id || session.isLoading"
-              @click="sendMessage"
-            >
-              <span v-if="session.isSending" class="flex items-center gap-1">
-                <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                Sending...
-              </span>
-              <span v-else class="flex items-center gap-1">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                </svg>
-                Send
-              </span>
-            </button>
-          </div>
-        </div>
+      <!-- Status -->
+      <div class="mt-2 text-xs text-dark-text-muted flex items-center justify-between">
+        <span v-if="session.isSending">Sending...</span>
+        <span v-else-if="session.session?.status === 'starting'">Session starting...</span>
+        <span v-else-if="session.session?.status === 'active'">Ready</span>
+        <span v-else-if="session.session?.status === 'failed'">Session failed</span>
+        <span v-else>Connect Pi to start chatting</span>
+        <span class="text-dark-text-muted/50">Shift+Enter to send</span>
       </div>
     </div>
 
