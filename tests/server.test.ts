@@ -561,4 +561,84 @@ describe("PiKanbanServer API", () => {
       db.close()
     }
   })
+
+  it("supports create-and-wait endpoint for synchronous task execution", async () => {
+    const root = createTempDir("pi-easy-workflow-create-and-wait-")
+    initGitRepo(root)
+    const settings = createTestSettings(createMockPiBinary(root))
+
+    const dbPath = join(root, "tasks.db")
+    const { db, server } = createPiServer({ dbPath, port: 0, settings })
+    db.updateOptions({ branch: "master" })
+    const port = await server.start(0)
+    const baseUrl = `http://127.0.0.1:${port}`
+
+    try {
+      // Test create-and-wait with short timeout
+      const response = await fetch(`${baseUrl}/api/tasks/create-and-wait`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Create and wait test task",
+          prompt: "Test synchronous task execution API",
+          status: "backlog",
+          review: false,
+          autoCommit: false,
+          executionStrategy: "standard",
+          timeoutMs: 30000, // 30 seconds timeout
+          pollIntervalMs: 500,
+        }),
+      })
+      expect(response.status).toBe(200)
+      const result = await response.json()
+
+      // Verify the result structure
+      expect(result.task).toBeDefined()
+      expect(result.task.name).toBe("Create and wait test task")
+      expect(result.run).toBeDefined()
+      expect(result.run.kind).toBe("single_task")
+      expect(result.completedAt).toBeDefined()
+      expect(result.durationMs).toBeDefined()
+      expect(result.status).toBeDefined()
+
+      // Task should reach a terminal state (done or failed)
+      expect(["done", "failed", "stuck"]).toContain(result.status)
+
+      // Verify the task was created in the database
+      const dbTask = db.getTask(result.task.id)
+      expect(dbTask).toBeDefined()
+      expect(dbTask?.name).toBe("Create and wait test task")
+    } finally {
+      server.stop()
+      db.close()
+    }
+  })
+
+  it("create-and-wait validates timeout and poll interval parameters", async () => {
+    const root = createTempDir("pi-easy-workflow-create-and-wait-params-")
+    const dbPath = join(root, "tasks.db")
+    const { db, server } = createPiServer({ dbPath, port: 0 })
+    db.updateOptions({ branch: "master" })
+    const port = await server.start(0)
+    const baseUrl = `http://127.0.0.1:${port}`
+
+    try {
+      // Test with invalid thinking level
+      const response = await fetch(`${baseUrl}/api/tasks/create-and-wait`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Invalid params task",
+          prompt: "Test parameter validation",
+          thinkingLevel: "invalid_level",
+        }),
+      })
+      expect(response.status).toBe(400)
+      const error = await response.json()
+      expect(error.error).toContain("Invalid thinkingLevel")
+    } finally {
+      server.stop()
+      db.close()
+    }
+  })
 })

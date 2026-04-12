@@ -426,6 +426,115 @@ export class PiKanbanServer {
       return json(normalized, 201)
     })
 
+    // Create task and wait for completion (synchronous API for CI/CD integration)
+    this.router.post("/api/tasks/create-and-wait", async ({ req, json, sessionUrlFor, broadcast }) => {
+      const body = await req.json()
+      const invalidBooleanField = getInvalidTaskBooleanField(body)
+      if (invalidBooleanField) return json({ error: `Invalid ${invalidBooleanField}. Expected boolean.` }, 400)
+      if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
+        return json({ error: "Invalid thinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      if (body?.planThinkingLevel !== undefined && !isThinkingLevel(body.planThinkingLevel)) {
+        return json({ error: "Invalid planThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      if (body?.executionThinkingLevel !== undefined && !isThinkingLevel(body.executionThinkingLevel)) {
+        return json({ error: "Invalid executionThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      if (body?.executionStrategy !== undefined && !isExecutionStrategy(body.executionStrategy)) {
+        return json({ error: "Invalid executionStrategy. Allowed values: standard, best_of_n" }, 400)
+      }
+      if (body?.executionStrategy === "best_of_n") {
+        const valid = validateBestOfNConfig(body.bestOfNConfig)
+        if (!valid.valid) return json({ error: valid.error }, 400)
+      }
+
+      // Validate timeout (optional, default 30 minutes, max 2 hours)
+      const timeoutMs = Math.min(Math.max(Number(body.timeoutMs) || 1800000, 60000), 7200000)
+
+      // Validate poll interval (optional, default 2 seconds, min 1s, max 30s)
+      const pollIntervalMs = Math.min(Math.max(Number(body.pollIntervalMs) || 2000, 1000), 30000)
+
+      // Create the task
+      const task = this.db.createTask({
+        id: randomUUID().slice(0, 8),
+        name: String(body.name ?? "").trim(),
+        prompt: String(body.prompt ?? ""),
+        status: "backlog",
+        branch: body.branch,
+        planModel: body.planModel,
+        executionModel: body.executionModel,
+        planmode: body.planmode,
+        autoApprovePlan: body.autoApprovePlan,
+        review: body.review,
+        autoCommit: body.autoCommit,
+        deleteWorktree: body.deleteWorktree,
+        requirements: Array.isArray(body.requirements) ? body.requirements : [],
+        thinkingLevel: body.thinkingLevel,
+        planThinkingLevel: body.planThinkingLevel,
+        executionThinkingLevel: body.executionThinkingLevel,
+        executionStrategy: body.executionStrategy,
+        bestOfNConfig: body.bestOfNConfig,
+        bestOfNSubstage: body.bestOfNSubstage,
+        skipPermissionAsking: body.skipPermissionAsking,
+      })
+
+      const normalized = normalizeTaskForClient(task, sessionUrlFor)
+      broadcast({ type: "task_created", payload: normalized })
+
+      // Start the task execution
+      const run = await this.onStartSingle(task.id)
+      if (!run) {
+        return json({ error: "Failed to start task execution" }, 500)
+      }
+
+      // Wait for completion by polling
+      const startTime = Date.now()
+      const terminalStatuses = ["done", "failed", "stuck"] as const
+
+      return new Promise((resolve) => {
+        const checkCompletion = () => {
+          const currentTask = this.db.getTask(task.id)
+          if (!currentTask) {
+            resolve(json({ error: "Task was deleted during execution" }, 500))
+            return
+          }
+
+          // Check if task reached a terminal state
+          if (terminalStatuses.includes(currentTask.status as typeof terminalStatuses[number])) {
+            const result = {
+              task: normalizeTaskForClient(currentTask, sessionUrlFor),
+              run: this.db.getWorkflowRun(run.id),
+              completedAt: Date.now(),
+              durationMs: Date.now() - startTime,
+              status: currentTask.status,
+            }
+            resolve(json(result, 200))
+            return
+          }
+
+          // Check timeout
+          if (Date.now() - startTime >= timeoutMs) {
+            // Attempt to stop the run
+            this.onStopRun?.(run.id, { destructive: false }).catch(() => {})
+            resolve(json({
+              error: "Timeout waiting for task completion",
+              task: normalizeTaskForClient(currentTask, sessionUrlFor),
+              run: this.db.getWorkflowRun(run.id),
+              timeoutMs,
+              elapsedMs: Date.now() - startTime,
+            }, 408))
+            return
+          }
+
+          // Continue polling
+          setTimeout(checkCompletion, pollIntervalMs)
+        }
+
+        // Start polling
+        setTimeout(checkCompletion, pollIntervalMs)
+      })
+    })
+
     this.router.put("/api/tasks/reorder", async ({ req, json, broadcast }) => {
       const body = await req.json()
       if (!body?.id || typeof body.newIdx !== "number") return json({ error: "id and newIdx are required" }, 400)

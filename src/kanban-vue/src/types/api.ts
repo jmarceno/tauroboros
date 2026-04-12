@@ -352,6 +352,24 @@ export interface CreateTaskDTO {
   bestOfNSubstage?: BestOfNSubstage
 }
 
+// Extended DTO for create-and-wait endpoint with timeout options
+export interface CreateTaskAndWaitDTO extends CreateTaskDTO {
+  timeoutMs?: number        // Max time to wait (default: 30 min, max: 2 hours)
+  pollIntervalMs?: number   // Polling interval (default: 2s, min: 1s, max: 30s)
+}
+
+// Result from create-and-wait endpoint
+export interface CreateAndWaitResult {
+  task: Task
+  run?: WorkflowRun
+  completedAt?: number
+  durationMs?: number
+  status: TaskStatus | 'timeout'
+  error?: string
+  timeoutMs?: number
+  elapsedMs?: number
+}
+
 export interface UpdateTaskDTO {
   name?: string
   prompt?: string

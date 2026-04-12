@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import type {
-  Task, CreateTaskDTO, UpdateTaskDTO, WorkflowRun, Options, BranchList,
+  Task, CreateTaskDTO, UpdateTaskDTO, CreateTaskAndWaitDTO, CreateAndWaitResult, WorkflowRun, Options, BranchList,
   ModelCatalog, ExecutionGraph, Session, SessionMessage, TaskRun,
   Candidate, BestOfNSummary, ReviewStatus, SessionUsageRollup,
   PlanningPrompt, PlanningPromptVersion, PlanningSession, CreatePlanningSessionDTO,
@@ -49,6 +49,11 @@ export function useApi() {
     getTasks: () => request<Task[]>('/api/tasks'),
     getTask: (id: string) => request<Task>(`/api/tasks/${id}`),
     createTask: (data: CreateTaskDTO) => request<Task>('/api/tasks', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+    // Create task and wait for completion (synchronous API)
+    createTaskAndWait: (data: CreateTaskAndWaitDTO) => request<CreateAndWaitResult>('/api/tasks/create-and-wait', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
