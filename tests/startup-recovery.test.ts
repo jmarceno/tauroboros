@@ -127,4 +127,151 @@ describe("startup recovery", () => {
     expect(second?.status).toBe("backlog")
     db.close()
   })
+
+  it("recovers stale workflow runs with no executing tasks", async () => {
+    const root = createTempDir("pi-easy-workflow-startup-recovery-runs-")
+    const db = new PiKanbanDB(join(root, "tasks.db"))
+
+    // Create tasks in backlog (not executing)
+    const task1 = db.createTask({
+      id: "task-1",
+      name: "Task 1",
+      prompt: "Task 1 prompt",
+      status: "backlog",
+      planmode: false,
+    })
+    const task2 = db.createTask({
+      id: "task-2",
+      name: "Task 2",
+      prompt: "Task 2 prompt",
+      status: "done",
+      planmode: false,
+    })
+
+    // Create a stale workflow run with status "running" but no executing tasks
+    const staleRun = db.createWorkflowRun({
+      id: "stale-run-1",
+      kind: "all_tasks",
+      status: "running",
+      displayName: "Stale workflow run",
+      taskOrder: [task1.id, task2.id],
+      currentTaskId: task1.id,
+      currentTaskIndex: 0,
+      color: "#ff0000",
+    })
+
+    const broadcasts: string[] = []
+    await runStartupRecovery({
+      db,
+      broadcast: (message) => broadcasts.push(message.type),
+    })
+
+    // Verify stale run was marked as failed
+    const recoveredRun = db.getWorkflowRun(staleRun.id)
+    expect(recoveredRun?.status).toBe("failed")
+    expect(recoveredRun?.errorMessage).toBe("Server restarted during execution - run recovered as failed")
+    expect(recoveredRun?.finishedAt).not.toBeNull()
+
+    // Verify broadcasts were sent
+    expect(broadcasts.includes("run_updated")).toBe(true)
+
+    db.close()
+  })
+
+  it("recovers stale workflow runs in stopping and paused statuses", async () => {
+    const root = createTempDir("pi-easy-workflow-startup-recovery-runs-statuses-")
+    const db = new PiKanbanDB(join(root, "tasks.db"))
+
+    // Create tasks in backlog (not executing)
+    const task = db.createTask({
+      id: "task-status",
+      name: "Task status test",
+      prompt: "Task prompt",
+      status: "backlog",
+      planmode: false,
+    })
+
+    // Create workflow runs in different active statuses
+    const stoppingRun = db.createWorkflowRun({
+      id: "stopping-run",
+      kind: "all_tasks",
+      status: "stopping",
+      displayName: "Stopping run",
+      taskOrder: [task.id],
+      currentTaskId: task.id,
+      currentTaskIndex: 0,
+      color: "#ff0000",
+    })
+
+    const pausedRun = db.createWorkflowRun({
+      id: "paused-run",
+      kind: "all_tasks",
+      status: "paused",
+      displayName: "Paused run",
+      taskOrder: [task.id],
+      currentTaskId: task.id,
+      currentTaskIndex: 0,
+      color: "#0000ff",
+    })
+
+    await runStartupRecovery({ db, broadcast: () => {} })
+
+    // Verify both were marked as failed
+    const recoveredStopping = db.getWorkflowRun(stoppingRun.id)
+    expect(recoveredStopping?.status).toBe("failed")
+
+    const recoveredPaused = db.getWorkflowRun(pausedRun.id)
+    expect(recoveredPaused?.status).toBe("failed")
+
+    db.close()
+  })
+
+  it("does not recover completed or failed workflow runs", async () => {
+    const root = createTempDir("pi-easy-workflow-startup-recovery-runs-terminal-")
+    const db = new PiKanbanDB(join(root, "tasks.db"))
+
+    const task = db.createTask({
+      id: "task-terminal",
+      name: "Task terminal test",
+      prompt: "Task prompt",
+      status: "backlog",
+      planmode: false,
+    })
+
+    // Create already-terminal workflow runs
+    const completedRun = db.createWorkflowRun({
+      id: "completed-run",
+      kind: "all_tasks",
+      status: "completed",
+      displayName: "Completed run",
+      taskOrder: [task.id],
+      currentTaskId: task.id,
+      currentTaskIndex: 1,
+      color: "#00ff00",
+    })
+    db.updateWorkflowRun(completedRun.id, { finishedAt: Math.floor(Date.now() / 1000) })
+
+    const failedRun = db.createWorkflowRun({
+      id: "failed-run",
+      kind: "all_tasks",
+      status: "failed",
+      displayName: "Failed run",
+      taskOrder: [task.id],
+      currentTaskId: task.id,
+      currentTaskIndex: 0,
+      color: "#ff0000",
+    })
+    db.updateWorkflowRun(failedRun.id, { finishedAt: Math.floor(Date.now() / 1000) })
+
+    await runStartupRecovery({ db, broadcast: () => {} })
+
+    // Verify terminal runs were not touched
+    const unchangedCompleted = db.getWorkflowRun(completedRun.id)
+    expect(unchangedCompleted?.status).toBe("completed")
+
+    const unchangedFailed = db.getWorkflowRun(failedRun.id)
+    expect(unchangedFailed?.status).toBe("failed")
+
+    db.close()
+  })
 })

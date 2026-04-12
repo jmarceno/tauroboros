@@ -1,6 +1,6 @@
 import { existsSync } from "fs"
 import type { PiKanbanDB } from "../db.ts"
-import type { WSMessage } from "../types.ts"
+import type { WorkflowRun, WSMessage } from "../types.ts"
 import { chooseDeterministicRepairAction } from "../task-state.ts"
 import { SmartRepairService, type SmartRepairDecision } from "../runtime/smart-repair.ts"
 
@@ -14,6 +14,34 @@ function log(line: string): void {
 
 function needsTaskRecovery(task: { status: string; reviewActivity: string }): boolean {
   return task.status === "executing" || (task.status === "review" && task.reviewActivity === "running")
+}
+
+/**
+ * Detect stale workflow runs that are in active status but have no executing tasks.
+ * A run is stale if:
+ * 1. Status is "running", "stopping", or "paused"
+ * 2. None of the tasks in taskOrder have status "executing"
+ */
+function needsWorkflowRunRecovery(run: WorkflowRun, db: PiKanbanDB): boolean {
+  // Only consider runs in active statuses
+  if (run.status !== "running" && run.status !== "stopping" && run.status !== "paused") {
+    return false
+  }
+
+  // If no taskOrder, consider it stale (orphaned run)
+  if (!run.taskOrder || run.taskOrder.length === 0) {
+    return true
+  }
+
+  // Check if any tasks in the taskOrder are actually executing
+  const tasks = db.getTasks()
+  const hasExecutingTask = run.taskOrder.some((taskId) => {
+    const task = tasks.find((t) => t.id === taskId)
+    return task?.status === "executing"
+  })
+
+  // If no tasks are executing but run claims to be active, it's stale
+  return !hasExecutingTask
 }
 
 export async function runStartupRecovery(args: {
@@ -72,5 +100,23 @@ export async function runStartupRecovery(args: {
       },
     })
     log(`Marked orphaned session ${session.id} as failed`)
+  }
+
+  // Phase 1: Recover stale workflow runs
+  const staleRuns = db.getWorkflowRuns().filter((run) => needsWorkflowRunRecovery(run, db))
+  for (const run of staleRuns) {
+    try {
+      const updated = db.updateWorkflowRun(run.id, {
+        status: "failed",
+        errorMessage: "Server restarted during execution - run recovered as failed",
+        finishedAt: recoveryStartedAt,
+      })
+      if (updated) {
+        broadcast({ type: "run_updated", payload: updated })
+        log(`Recovered stale workflow run ${run.id} (was ${run.status}, now failed)`)
+      }
+    } catch (error) {
+      log(`Failed to recover workflow run ${run.id}: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 }

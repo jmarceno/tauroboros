@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import type { WorkflowRun } from '@/types/api'
+import type { WorkflowRun, Task } from '@/types/api'
 import { useApi } from './useApi'
 
 export function useRuns() {
@@ -7,14 +7,50 @@ export function useRuns() {
   const runs = ref<WorkflowRun[]>([])
   const isLoading = ref(false)
   const error = ref<string | null>(null)
+  // Store reference to tasks for stale run detection
+  const tasksRef = ref<Task[]>([])
+
+  const setTasksRef = (tasks: Task[]) => {
+    tasksRef.value = tasks
+  }
+
+  /**
+   * Detect stale workflow runs - runs that claim to be active but have no executing tasks.
+   * A run is stale if status is 'running'/'stopping'/'paused' but no tasks in taskOrder are 'executing'.
+   */
+  const isStaleRun = (run: WorkflowRun): boolean => {
+    if (run.status !== 'running' && run.status !== 'stopping' && run.status !== 'paused') {
+      return false
+    }
+
+    if (!run.taskOrder || run.taskOrder.length === 0) {
+      return true
+    }
+
+    const hasExecutingTask = run.taskOrder.some((taskId) => {
+      const task = tasksRef.value.find((t) => t.id === taskId)
+      return task?.status === 'executing'
+    })
+
+    return !hasExecutingTask
+  }
 
   const activeRuns = computed(() =>
     runs.value.filter(r => r.status === 'running' || r.status === 'stopping' || r.status === 'paused')
   )
 
-  const consumedRunSlots = computed(() =>
-    runs.value.filter(r => r.status === 'running' || r.status === 'stopping').length
+  const staleRuns = computed(() =>
+    runs.value.filter(r => isStaleRun(r))
   )
+
+  const hasStaleRuns = computed(() => staleRuns.value.length > 0)
+
+  const consumedRunSlots = computed(() => {
+    // Only count non-stale runs as consuming slots
+    return runs.value.filter(r =>
+      (r.status === 'running' || r.status === 'stopping') && !isStaleRun(r)
+    ).length
+  })
 
   const getTaskRunLock = (taskId: string) => {
     return runs.value.find(r =>
@@ -103,9 +139,13 @@ export function useRuns() {
   return {
     runs,
     activeRuns,
+    staleRuns,
+    hasStaleRuns,
     consumedRunSlots,
     isLoading,
     error,
+    setTasksRef,
+    isStaleRun,
     getTaskRunLock,
     isTaskMutationLocked,
     getTaskRunColor,

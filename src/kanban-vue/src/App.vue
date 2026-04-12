@@ -192,6 +192,8 @@ useKeyboard({
 // WebSocket handlers
 ws.on('task_created', (payload) => {
   tasksComposable.tasks.push(payload as Task)
+  // Phase 3: Keep runs composable tasks ref synchronized
+  runsComposable.setTasksRef(tasksComposable.tasks.value)
   toasts.addLog(`Task created: ${(payload as Task).name}`, 'info')
 })
 
@@ -204,6 +206,8 @@ ws.on('task_updated', (payload) => {
   } else {
     tasksComposable.tasks.push(task)
   }
+  // Phase 3: Keep runs composable tasks ref synchronized
+  runsComposable.setTasksRef(tasksComposable.tasks.value)
 
   if (!prev || prev.status !== task.status) {
     if (task.status === 'executing') toasts.addLog(`Task started: ${task.name}`, 'info')
@@ -223,6 +227,8 @@ ws.on('task_deleted', (payload) => {
   const task = tasksComposable.getTaskById(id)
   delete tasksComposable.bonSummaries[id]
   tasksComposable.tasks = tasksComposable.tasks.filter(t => t.id !== id)
+  // Phase 3: Keep runs composable tasks ref synchronized
+  runsComposable.setTasksRef(tasksComposable.tasks.value)
   toasts.addLog(`Task deleted: ${task?.name || id}`, 'info')
 })
 
@@ -231,12 +237,17 @@ ws.on('task_archived', (payload) => {
   const task = tasksComposable.getTaskById(id)
   delete tasksComposable.bonSummaries[id]
   tasksComposable.tasks = tasksComposable.tasks.filter(t => t.id !== id)
+  // Phase 3: Keep runs composable tasks ref synchronized
+  runsComposable.setTasksRef(tasksComposable.tasks.value)
   toasts.addLog(`Task archived: ${task?.name || id}`, 'info')
 })
 
 ws.on('task_reordered', () => {
   toasts.addLog('Task order updated', 'info')
-  tasksComposable.loadTasks()
+  tasksComposable.loadTasks().then(() => {
+    // Phase 3: Keep runs composable tasks ref synchronized
+    runsComposable.setTasksRef(tasksComposable.tasks.value)
+  })
 })
 
 ws.on('options_updated', () => {
@@ -402,6 +413,9 @@ onMounted(async () => {
   await runsComposable.loadRuns()
   await tasksComposable.loadTasks()
 
+  // Phase 3: Connect tasks to runs composable for stale run detection
+  runsComposable.setTasksRef(tasksComposable.tasks.value)
+
   const hashMatch = location.hash.match(/^#session\/(.+)$/)
   if (hashMatch) {
     const sessionId = decodeURIComponent(hashMatch[1])
@@ -430,6 +444,7 @@ window.addEventListener('hashchange', () => {
     <!-- Sidebar -->
     <Sidebar
       :runs="runsComposable.runs.value"
+      :stale-runs="runsComposable.staleRuns.value"
       :consumed-slots="consumedSlotsValue"
       :parallel-tasks="parallelTasksValue"
       :is-connected="isConnectedValue"
@@ -443,7 +458,7 @@ window.addEventListener('hashchange', () => {
           }).catch(e => toasts.showToast('Failed to stop workflow: ' + e.message, 'error'))
         } else {
           // Check if there are any tasks to execute
-          const executableTasks = tasksComposable.groupedTasks.backlog.length + 
+          const executableTasks = tasksComposable.groupedTasks.backlog.length +
                                   tasksComposable.groupedTasks.review.length +
                                   tasksComposable.groupedTasks.executing.length
           if (executableTasks === 0) {
@@ -471,6 +486,25 @@ window.addEventListener('hashchange', () => {
         toasts.showToast('All done tasks archived', 'success')
       }"
       @toggle-planning-chat="planningChat.togglePanel()"
+      @archive-run="async (id: string) => {
+        try {
+          await runsComposable.archiveRun(id)
+          toasts.showToast('Run archived', 'success')
+        } catch (e) {
+          toasts.showToast('Failed to archive run: ' + (e instanceof Error ? e.message : String(e)), 'error')
+        }
+      }"
+      @archive-all-stale-runs="async () => {
+        const staleCount = runsComposable.staleRuns.value.length
+        if (staleCount === 0) return
+        if (!confirm(`Archive ${staleCount} stale workflow run${staleCount > 1 ? 's' : ''}?`)) return
+        try {
+          await Promise.all(runsComposable.staleRuns.value.map(run => runsComposable.archiveRun(run.id)))
+          toasts.showToast(`${staleCount} stale run${staleCount > 1 ? 's' : ''} archived`, 'success')
+        } catch (e) {
+          toasts.showToast('Failed to archive runs: ' + (e instanceof Error ? e.message : String(e)), 'error')
+        }
+      }"
     />
 
     <!-- Main Content -->

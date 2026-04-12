@@ -5,6 +5,7 @@ import type { useTasks } from '@/composables/useTasks'
 
 const props = defineProps<{
   runs: WorkflowRun[]
+  staleRuns: WorkflowRun[]
   consumedSlots: number
   parallelTasks: number
   isConnected: boolean
@@ -18,6 +19,8 @@ const emit = defineEmits<{
   openTaskModal: []
   archiveAllDone: []
   togglePlanningChat: []
+  archiveRun: [id: string]
+  archiveAllStaleRuns: []
 }>()
 
 const tasks = inject<ReturnType<typeof useTasks>>('tasks')!
@@ -33,7 +36,12 @@ const safeRuns = computed(() => Array.isArray(props.runs) ? props.runs : [])
 const visibleRuns = computed(() => safeRuns.value.slice(0, 5))
 const hasRuns = computed(() => safeRuns.value.length > 0)
 
-const getRunStatusClass = (status: string) => {
+// Stale runs (Phase 3)
+const safeStaleRuns = computed(() => Array.isArray(props.staleRuns) ? props.staleRuns : [])
+const hasStaleRuns = computed(() => safeStaleRuns.value.length > 0)
+
+const getRunStatusClass = (status: string, isStale = false) => {
+  if (isStale) return 'stale'
   switch (status) {
     case 'running': return 'active'
     case 'paused': return 'paused'
@@ -50,6 +58,16 @@ const getRunProgressPercent = (run: WorkflowRun) => {
 
 const isRunning = computed(() => props.consumedSlots > 0)
 const freeSlots = computed(() => props.parallelTasks - props.consumedSlots)
+
+// Phase 3: Check if run can be archived (completed or failed status)
+const canArchiveRun = (run: WorkflowRun) => {
+  return run.status === 'completed' || run.status === 'failed'
+}
+
+// Phase 3: Check if a specific run is stale
+const isRunStale = (run: WorkflowRun) => {
+  return safeStaleRuns.value.some(sr => sr.id === run.id)
+}
 </script>
 
 <template>
@@ -94,28 +112,58 @@ const freeSlots = computed(() => props.parallelTasks - props.consumedSlots)
 
       <!-- Active Runs -->
       <div v-if="hasRuns" class="sidebar-section">
-        <div class="sidebar-section-title">Active Runs</div>
+        <div class="sidebar-section-title">
+          Active Runs
+          <span v-if="hasStaleRuns" class="stale-badge" title="Stale runs detected">
+            {{ safeStaleRuns.length }} stale
+          </span>
+        </div>
         <div
           v-for="run in visibleRuns"
           :key="run.id"
-          :class="['run-card', getRunStatusClass(run.status)]"
+          :class="['run-card', getRunStatusClass(run.status, isRunStale(run))]"
         >
           <div class="run-header">
             <span class="run-id">{{ run.displayName || run.kind }}</span>
-            <span :class="['run-status', getRunStatusClass(run.status)]">
-              {{ run.status }}
-            </span>
+            <div class="run-header-actions">
+              <span :class="['run-status', getRunStatusClass(run.status, isRunStale(run))]">
+                {{ isRunStale(run) ? 'stale' : run.status }}
+              </span>
+              <!-- Phase 3: Archive button for completed/failed runs -->
+              <button
+                v-if="canArchiveRun(run)"
+                class="archive-run-btn"
+                title="Archive this run"
+                @click.stop="emit('archiveRun', run.id)"
+              >
+                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                </svg>
+              </button>
+            </div>
           </div>
           <div class="run-meta">
             <span>{{ run.currentTaskIndex || 0 }}/{{ run.taskOrder?.length || 0 }} tasks</span>
             <div class="run-progress">
               <div
                 class="run-progress-fill"
+                :class="{ 'stale-progress': isRunStale(run) }"
                 :style="{ width: getRunProgressPercent(run) + '%', '--progress-color': run.color || '#00ff88' }"
               />
             </div>
           </div>
         </div>
+        <!-- Phase 3: Archive All Stale button -->
+        <button
+          v-if="hasStaleRuns"
+          class="sidebar-btn archive-stale-btn"
+          @click="emit('archiveAllStaleRuns')"
+        >
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+          </svg>
+          <span class="sidebar-label">Archive {{ safeStaleRuns.length }} Stale Run{{ safeStaleRuns.length > 1 ? 's' : '' }}</span>
+        </button>
       </div>
 
       <!-- Quick Actions -->
@@ -203,3 +251,68 @@ const freeSlots = computed(() => props.parallelTasks - props.consumedSlots)
     </div>
   </aside>
 </template>
+
+<style scoped>
+/* Phase 3: Stale run indicators */
+.stale-badge {
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  background-color: #6a6a80;
+  color: #e2e2e5;
+  border-radius: 4px;
+  margin-left: 8px;
+  font-weight: 500;
+}
+
+.run-card.stale {
+  border-color: #6a6a80;
+  opacity: 0.8;
+}
+
+.run-status.stale {
+  background-color: #6a6a80;
+  color: #e2e2e5;
+}
+
+.run-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.archive-run-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  color: #8a8a9a;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.15s ease;
+}
+
+.archive-run-btn:hover {
+  color: #ff6b6b;
+  background-color: rgba(255, 107, 107, 0.1);
+}
+
+.run-progress-fill.stale-progress {
+  opacity: 0.5;
+  background-color: #6a6a80 !important;
+}
+
+.archive-stale-btn {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: #8a8a9a;
+  border-color: #6a6a80;
+}
+
+.archive-stale-btn:hover {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+  background-color: rgba(255, 107, 107, 0.05);
+}
+</style>

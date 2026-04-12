@@ -71,7 +71,39 @@ export class PiOrchestrator {
     this.containerManager = manager
   }
 
+  /**
+   * Detect and clean up stale workflow runs that are in active status but have no executing tasks.
+   * This is a defensive check to prevent ghost runs from blocking new executions.
+   */
+  private cleanupStaleRuns(): void {
+    const activeRuns = this.db.getWorkflowRuns().filter((r) => r.status === "running" || r.status === "stopping" || r.status === "paused")
+
+    for (const run of activeRuns) {
+      // Check if any tasks in the taskOrder are actually executing
+      const hasExecutingTask = run.taskOrder?.some((taskId) => {
+        const task = this.db.getTask(taskId)
+        return task?.status === "executing"
+      })
+
+      if (!hasExecutingTask) {
+        // This is a stale run - mark it as failed
+        const updated = this.db.updateWorkflowRun(run.id, {
+          status: "failed",
+          errorMessage: "Auto-recovered: no executing tasks found",
+          finishedAt: nowUnix(),
+        })
+        if (updated) {
+          this.broadcast({ type: "run_updated", payload: updated })
+          console.log(`[orchestrator] Cleaned up stale run ${run.id} (was ${run.status})`)
+        }
+      }
+    }
+  }
+
   async startAll(): Promise<WorkflowRun> {
+    // Phase 2: Clean up any stale runs before checking if already executing
+    this.cleanupStaleRuns()
+
     if (this.running) throw new Error("Already executing")
 
     // Use getExecutionGraphTasks to get ALL tasks that will run,
@@ -102,6 +134,9 @@ export class PiOrchestrator {
   }
 
   async startSingle(taskId: string): Promise<WorkflowRun> {
+    // Phase 2: Clean up any stale runs before checking if already executing
+    this.cleanupStaleRuns()
+
     if (this.running) throw new Error("Already executing")
     const chain = resolveExecutionTasks(this.db.getTasks(), taskId)
     if (chain.length === 0) throw new Error("No tasks in backlog")
