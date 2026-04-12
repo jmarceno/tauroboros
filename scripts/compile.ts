@@ -58,6 +58,16 @@ async function buildKanban(): Promise<void> {
   console.log("  ✓ Kanban build complete\n")
 }
 
+// Generate version module
+async function generateVersion(): Promise<void> {
+  console.log("🏷️  Generating version module...")
+  const result = await $`bun run ${join(PROJECT_ROOT, "scripts", "generate-version.ts")}`.quiet()
+  if (result.exitCode !== 0) {
+    throw new Error(`Failed to generate version: ${result.stderr}`)
+  }
+  console.log("")
+}
+
 // Generate embedded assets module
 async function generateEmbeddedAssets(): Promise<void> {
   console.log("🔧 Generating embedded assets module...")
@@ -123,10 +133,13 @@ async function main(): Promise<void> {
       console.log("✓ Kanban build found\n")
     }
 
-    // Step 2: Generate embedded assets
+    // Step 2: Generate version info
+    await generateVersion()
+
+    // Step 3: Generate embedded assets
     await generateEmbeddedAssets()
 
-    // Step 3: Compile binary
+    // Step 4: Compile binary
     await compileBinary()
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1)
@@ -153,4 +166,4 @@ if (import.meta.main) {
   void main()
 }
 
-export { buildKanban, compileBinary, checkKanbanBuild, generateEmbeddedAssets }
+export { buildKanban, compileBinary, checkKanbanBuild, generateEmbeddedAssets, generateVersion }

@@ -57,7 +57,7 @@
   }
 
   .sidebar-content {
-    @apply flex-1 overflow-y-auto p-3;
+    @apply flex-1 overflow-y-auto p-3 flex flex-col;
   }
 
   .sidebar-section {

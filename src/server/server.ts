@@ -18,6 +18,7 @@ import { Router } from "./router.ts"
 import type { RequestContext } from "./types.ts"
 import { WebSocketHub } from "./websocket.ts"
 import { readEmbeddedFile, readEmbeddedText, embeddedFileExists, getContentType, getIndexHtml } from "./embedded-files.ts"
+import { VERSION, COMMIT_HASH, DISPLAY_VERSION, IS_COMPILED } from "./version.ts"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -518,6 +519,13 @@ export class PiKanbanServer {
     })
 
     this.router.get("/api/options", ({ json }) => json(this.db.getOptions()))
+
+    this.router.get("/api/version", ({ json }) => json({
+      version: VERSION,
+      commit: COMMIT_HASH,
+      displayVersion: DISPLAY_VERSION,
+      isCompiled: IS_COMPILED,
+    }))
 
     this.router.put("/api/options", async ({ req, json, broadcast }) => {
       const body = await req.json()

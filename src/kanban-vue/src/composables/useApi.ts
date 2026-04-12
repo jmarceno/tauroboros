@@ -110,6 +110,9 @@ export function useApi() {
       body: JSON.stringify(data),
     }),
 
+    // Version
+    getVersion: () => request<{ version: string; commit: string; displayVersion: string; isCompiled: boolean }>('/api/version'),
+
     // Reference data
     getBranches: () => request<BranchList>('/api/branches'),
     getModels: () => request<ModelCatalog>('/api/models'),

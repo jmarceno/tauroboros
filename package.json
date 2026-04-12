@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/index.ts",
+    "predev": "bun run scripts/generate-version.ts",
     "dev": "bun run --watch src/index.ts",
     "build": "bun build --target=bun src/index.ts --outdir dist && bun run kanban:build",
     "compile": "bun run scripts/compile.ts",
