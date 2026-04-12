@@ -57,7 +57,7 @@ const logPanelCollapsed = ref(false)
 
 // Computed
 const isAnyModalOpen = computed(() => {
-  return activeModal.value !== null
+  return activeModal.value !== null || showContainerConfigModal.value
 })
 
 const consumedSlotsValue = computed(() => runsComposable.consumedRunSlots.value)
@@ -78,6 +78,10 @@ const closeModal = () => {
 const closeTopmostModal = () => {
   if (activeModal.value) {
     closeModal()
+    return true
+  }
+  if (showContainerConfigModal.value) {
+    showContainerConfigModal.value = false
     return true
   }
   return false
