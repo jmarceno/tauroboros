@@ -296,7 +296,7 @@ export class BestOfNRunner {
         worktreeDir,
         branch: worktreeInfo.branch,
         model: workerRun.model,
-        thinkingLevel: task.thinkingLevel,
+        thinkingLevel: task.executionThinkingLevel,
         promptText: prompt.renderedText,
         onOutput: (chunk) => {
           if (!trimText(chunk)) return
@@ -388,7 +388,7 @@ export class BestOfNRunner {
         sessionKind: "task_run_reviewer",
         cwd: this.deps.projectRoot,
         model: reviewerRun.model,
-        thinkingLevel: task.thinkingLevel,
+        thinkingLevel: task.executionThinkingLevel,
         promptText: prompt.renderedText,
       })
 
@@ -462,7 +462,7 @@ export class BestOfNRunner {
         worktreeDir,
         branch: worktreeInfo.branch,
         model: finalRun.model,
-        thinkingLevel: task.thinkingLevel,
+        thinkingLevel: task.executionThinkingLevel,
         promptText: prompt.renderedText,
         onOutput: (chunk) => {
           if (!trimText(chunk)) return

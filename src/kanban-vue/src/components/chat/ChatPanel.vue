@@ -7,6 +7,7 @@ import type { useModelSearch } from '@/composables/useModelSearch'
 import ChatMessage from './ChatMessage.vue'
 import MarkdownEditor from '@/components/common/MarkdownEditor.vue'
 import ModelPicker from '@/components/common/ModelPicker.vue'
+import ThinkingLevelSelect from '@/components/common/ThinkingLevelSelect.vue'
 import { useApi } from '@/composables/useApi'
 
 const props = defineProps<{
@@ -36,13 +37,61 @@ const attachedContext = ref<ContextAttachment[]>([])
 // Model selector state
 const showModelMenu = ref(false)
 const pendingModel = ref('')
+const pendingThinkingLevel = ref<'default' | 'low' | 'medium' | 'high'>('default')
 const isChangingModel = ref(false)
+
+// Dropdown position tracking for fixed positioning
+const attachMenuLeft = ref(0)
+const attachMenuBottom = ref(0)
+const modelMenuRight = ref(0)
+const modelMenuBottom = ref(0)
 
 // Initialize pendingModel when menu opens
 watch(showModelMenu, (isOpen) => {
   if (isOpen) {
     pendingModel.value = props.session.session?.model || ''
+    pendingThinkingLevel.value = props.session.session?.thinkingLevel || 'default'
+    // Calculate position after DOM update
+    nextTick(() => calculateModelMenuPosition())
   }
+})
+
+// Watch attach menu to calculate position
+watch(showAttachMenu, (isOpen) => {
+  if (isOpen) {
+    nextTick(() => calculateAttachMenuPosition())
+  }
+})
+
+// Calculate dropdown positions
+const calculateAttachMenuPosition = () => {
+  const button = document.querySelector('[data-attach-button]') as HTMLElement
+  if (button) {
+    const rect = button.getBoundingClientRect()
+    attachMenuLeft.value = rect.left
+    attachMenuBottom.value = window.innerHeight - rect.top + 4
+  }
+}
+
+const calculateModelMenuPosition = () => {
+  const button = document.querySelector('[data-model-button]') as HTMLElement
+  if (button) {
+    const rect = button.getBoundingClientRect()
+    modelMenuRight.value = window.innerWidth - rect.right
+    modelMenuBottom.value = window.innerHeight - rect.top + 4
+  }
+}
+
+// Recalculate positions on resize and scroll
+onMounted(() => {
+  window.addEventListener('resize', () => {
+    if (showAttachMenu.value) calculateAttachMenuPosition()
+    if (showModelMenu.value) calculateModelMenuPosition()
+  })
+  window.addEventListener('scroll', () => {
+    if (showAttachMenu.value) calculateAttachMenuPosition()
+    if (showModelMenu.value) calculateModelMenuPosition()
+  }, true)
 })
 
 const currentModel = computed(() => props.session.session?.model)
@@ -178,7 +227,7 @@ const changeModel = async () => {
 
   isChangingModel.value = true
   try {
-    await planningChat.setSessionModel(props.session.id, pendingModel.value)
+    await planningChat.setSessionModel(props.session.id, pendingModel.value, pendingThinkingLevel.value)
     showModelMenu.value = false
   } catch (e) {
     console.error('Failed to change model:', e)
@@ -403,7 +452,7 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
     </div>
 
     <!-- Input Area -->
-    <div class="p-3 bg-dark-surface border-t border-dark-surface3">
+    <div class="p-3 bg-dark-surface border-t border-dark-surface3 relative z-50">
       <!-- Toolbar -->
       <div class="flex items-center gap-2 mb-2">
         <!-- Create Tasks Button (Primary) -->
@@ -421,6 +470,7 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
         <!-- Attach Context Dropdown -->
         <div class="relative">
           <button
+            data-attach-button
             class="btn btn-xs flex items-center gap-1"
             @click="showAttachMenu = !showAttachMenu"
           >
@@ -436,7 +486,9 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
           <!-- Attach Menu -->
           <div
             v-if="showAttachMenu"
-            class="absolute bottom-full left-0 mb-1 w-48 bg-dark-surface border border-dark-surface3 rounded-lg shadow-xl z-50 py-1"
+            class="fixed w-48 bg-dark-surface border border-dark-surface3 rounded-lg shadow-xl z-[200] py-1"
+            style="transform: translateY(-100%); margin-top: -4px;"
+            :style="{ left: attachMenuLeft + 'px', bottom: attachMenuBottom + 'px' }"
           >
             <button
               class="w-full px-3 py-2 text-left text-sm text-dark-text hover:bg-dark-surface2 flex items-center gap-2"
@@ -462,6 +514,7 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
         <!-- Model Selector Dropdown -->
         <div class="relative">
           <button
+            data-model-button
             class="btn btn-xs flex items-center gap-1"
             :disabled="!session.session || session.session.status !== 'active'"
             @click="showModelMenu = !showModelMenu"
@@ -478,22 +531,28 @@ const hasEnoughMessages = computed(() => props.session.messages.length > 2)
           <!-- Model Menu -->
           <div
             v-if="showModelMenu"
-            class="absolute bottom-full right-0 mb-1 w-64 bg-dark-surface border border-dark-surface3 rounded-lg shadow-xl z-50 py-2"
+            class="fixed w-72 bg-dark-surface border border-dark-surface3 rounded-lg shadow-xl z-[200] py-2"
+            style="transform: translateY(-100%); margin-top: -4px;"
+            :style="{ right: modelMenuRight + 'px', bottom: modelMenuBottom + 'px' }"
           >
             <div class="px-3 py-1 text-xs text-dark-dim border-b border-dark-surface3 mb-2">
-              Change Model
+              Change Model & Thinking Level
             </div>
-            <div class="px-2 pb-2">
+            <div class="px-2 pb-2 space-y-2">
               <ModelPicker
                 v-model="pendingModel"
-                label=""
+                label="Model"
                 placeholder="Type model name..."
+              />
+              <ThinkingLevelSelect
+                v-model="pendingThinkingLevel"
+                label="Thinking Level"
               />
             </div>
             <div class="px-3 py-2 border-t border-dark-surface3 flex justify-end">
               <button
                 class="btn btn-primary btn-xs"
-                :disabled="!pendingModel || pendingModel === session.session?.model || isChangingModel"
+                :disabled="!pendingModel || (pendingModel === session.session?.model && pendingThinkingLevel === session.session?.thinkingLevel) || isChangingModel"
                 @click="changeModel"
               >
                 <span v-if="isChangingModel" class="flex items-center gap-1">

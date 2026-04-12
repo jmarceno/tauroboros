@@ -377,6 +377,12 @@ export class PiKanbanServer {
       if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
         return json({ error: "Invalid thinkingLevel. Allowed values: default, low, medium, high" }, 400)
       }
+      if (body?.planThinkingLevel !== undefined && !isThinkingLevel(body.planThinkingLevel)) {
+        return json({ error: "Invalid planThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      if (body?.executionThinkingLevel !== undefined && !isThinkingLevel(body.executionThinkingLevel)) {
+        return json({ error: "Invalid executionThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
       if (body?.executionStrategy !== undefined && !isExecutionStrategy(body.executionStrategy)) {
         return json({ error: "Invalid executionStrategy. Allowed values: standard, best_of_n" }, 400)
       }
@@ -400,6 +406,8 @@ export class PiKanbanServer {
         deleteWorktree: body.deleteWorktree,
         requirements: Array.isArray(body.requirements) ? body.requirements : [],
         thinkingLevel: body.thinkingLevel,
+        planThinkingLevel: body.planThinkingLevel,
+        executionThinkingLevel: body.executionThinkingLevel,
         executionStrategy: body.executionStrategy,
         bestOfNConfig: body.bestOfNConfig,
         bestOfNSubstage: body.bestOfNSubstage,
@@ -460,6 +468,12 @@ export class PiKanbanServer {
       if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
         return json({ error: "Invalid thinkingLevel. Allowed values: default, low, medium, high" }, 400)
       }
+      if (body?.planThinkingLevel !== undefined && !isThinkingLevel(body.planThinkingLevel)) {
+        return json({ error: "Invalid planThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      if (body?.executionThinkingLevel !== undefined && !isThinkingLevel(body.executionThinkingLevel)) {
+        return json({ error: "Invalid executionThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
       if (body?.executionStrategy !== undefined && !isExecutionStrategy(body.executionStrategy)) {
         return json({ error: "Invalid executionStrategy. Allowed values: standard, best_of_n" }, 400)
       }
@@ -509,6 +523,18 @@ export class PiKanbanServer {
       const body = await req.json()
       if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
         return json({ error: "Invalid thinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      if (body?.planThinkingLevel !== undefined && !isThinkingLevel(body.planThinkingLevel)) {
+        return json({ error: "Invalid planThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      if (body?.executionThinkingLevel !== undefined && !isThinkingLevel(body.executionThinkingLevel)) {
+        return json({ error: "Invalid executionThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      if (body?.reviewThinkingLevel !== undefined && !isThinkingLevel(body.reviewThinkingLevel)) {
+        return json({ error: "Invalid reviewThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      if (body?.repairThinkingLevel !== undefined && !isThinkingLevel(body.repairThinkingLevel)) {
+        return json({ error: "Invalid repairThinkingLevel. Allowed values: default, low, medium, high" }, 400)
       }
       const options = this.db.updateOptions(body)
       broadcast({ type: "options_updated", payload: options })
@@ -1184,6 +1210,12 @@ export class PiKanbanServer {
       if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
 
       const body = await req.json()
+      
+      // Validate thinking level if provided
+      if (body.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
+        return json({ error: "Invalid thinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      
       const planningSession = this.planningSessionManager.getSession(params.id)
       
       if (!planningSession || !planningSession.isActive()) {
@@ -1192,13 +1224,18 @@ export class PiKanbanServer {
 
       try {
         await planningSession.setModel(body.model)
+        
+        // Also update thinking level if provided
+        if (body.thinkingLevel && body.thinkingLevel !== "default") {
+          await planningSession.setThinkingLevel(body.thinkingLevel)
+        }
 
         const updated = this.db.getWorkflowSession(params.id)
         const withUrl = updated ? { ...updated, sessionUrl: this.sessionUrlFor(updated.id) } : null
         if (withUrl) {
           broadcast({ type: "planning_session_updated", payload: withUrl })
         }
-        return json({ ok: true, model: body.model })
+        return json({ ok: true, model: body.model, thinkingLevel: body.thinkingLevel })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         return json({ error: `Failed to change model: ${message}` }, 500)

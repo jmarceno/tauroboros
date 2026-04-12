@@ -155,10 +155,10 @@ export function useApi() {
         method: 'POST',
         body: JSON.stringify(data ?? {}),
       }),
-    setPlanningSessionModel: (id: string, model: string) =>
-      request<{ ok: boolean; model: string }>(`/api/planning/sessions/${id}/model`, {
+    setPlanningSessionModel: (id: string, model: string, thinkingLevel?: string) =>
+      request<{ ok: boolean; model: string; thinkingLevel?: string }>(`/api/planning/sessions/${id}/model`, {
         method: 'POST',
-        body: JSON.stringify({ model }),
+        body: JSON.stringify({ model, thinkingLevel }),
       }),
     closePlanningSession: (id: string) => request<PlanningSession>(`/api/planning/sessions/${id}/close`, {
       method: 'POST',

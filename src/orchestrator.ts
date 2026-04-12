@@ -384,7 +384,7 @@ export class PiOrchestrator {
           branch: worktreeInfo.branch,
           reviewFilePath,
           model: options.reviewModel,
-          thinkingLevel: task.thinkingLevel,
+          thinkingLevel: options.reviewThinkingLevel,
         })
 
         this.db.updateTask(taskId, {
@@ -487,6 +487,7 @@ export class PiOrchestrator {
       worktreeDir: worktreeInfo.directory,
       branch: worktreeInfo.branch,
       model: task.executionModel !== "default" ? task.executionModel : options.executionModel,
+      thinkingLevel: task.executionThinkingLevel,
       promptText: prompt.renderedText,
     })
 
@@ -512,6 +513,7 @@ export class PiOrchestrator {
         worktreeDir: worktreeInfo.directory,
         branch: worktreeInfo.branch,
         model: planModel,
+        thinkingLevel: task.planThinkingLevel,
         promptText: planningPrompt.renderedText,
       })
 
@@ -554,6 +556,7 @@ export class PiOrchestrator {
         worktreeDir: worktreeInfo.directory,
         branch: worktreeInfo.branch,
         model: planModel,
+        thinkingLevel: task.planThinkingLevel,
         promptText: revisionPrompt.renderedText,
       })
 
@@ -611,6 +614,7 @@ export class PiOrchestrator {
       worktreeDir: worktreeInfo.directory,
       branch: worktreeInfo.branch,
       model: task.executionModel !== "default" ? task.executionModel : options.executionModel,
+      thinkingLevel: task.executionThinkingLevel,
       promptText: executionPrompt.renderedText,
     })
 
@@ -635,6 +639,7 @@ export class PiOrchestrator {
       worktreeDir: worktreeInfo.directory,
       branch: worktreeInfo.branch,
       model: task.executionModel !== "default" ? task.executionModel : options.executionModel,
+      thinkingLevel: task.executionThinkingLevel,
       promptText: commitPrompt.renderedText,
     })
     if (commit.responseText.trim()) {
@@ -650,6 +655,7 @@ export class PiOrchestrator {
     worktreeDir?: string | null
     branch?: string | null
     model?: string
+    thinkingLevel?: string
     promptText: string
   }): Promise<{ session: PiWorkflowSession; responseText: string }> {
     const session = await this.sessionManager.executePrompt({
@@ -659,7 +665,7 @@ export class PiOrchestrator {
       worktreeDir: input.worktreeDir,
       branch: input.branch,
       model: input.model,
-      thinkingLevel: input.task.thinkingLevel,
+      thinkingLevel: input.thinkingLevel ?? input.task.thinkingLevel,
       promptText: input.promptText,
       onSessionStart: (startedSession) => {
         const updated = this.db.updateTask(input.task.id, {

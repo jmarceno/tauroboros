@@ -23,6 +23,16 @@ import ToastContainer from '@/components/common/ToastContainer.vue'
 import ChatContainer from '@/components/chat/ChatContainer.vue'
 
 // Modals
+import TaskModal from '@/components/modals/TaskModal.vue'
+import OptionsModal from '@/components/modals/OptionsModal.vue'
+import ExecutionGraphModal from '@/components/modals/ExecutionGraphModal.vue'
+import ApproveModal from '@/components/modals/ApproveModal.vue'
+import RevisionModal from '@/components/modals/RevisionModal.vue'
+import StartSingleModal from '@/components/modals/StartSingleModal.vue'
+import SessionModal from '@/components/modals/SessionModal.vue'
+import BestOfNDetailModal from '@/components/modals/BestOfNDetailModal.vue'
+import BatchEditModal from '@/components/modals/BatchEditModal.vue'
+import PlanningPromptModal from '@/components/modals/PlanningPromptModal.vue'
 import ContainerConfigModal from '@/components/modals/ContainerConfigModal.vue'
 
 // State

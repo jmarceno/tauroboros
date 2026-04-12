@@ -25,6 +25,8 @@ export interface Task {
   skipPermissionAsking: boolean
   requirements: string[]
   thinkingLevel: ThinkingLevel
+  planThinkingLevel: ThinkingLevel
+  executionThinkingLevel: ThinkingLevel
   executionStrategy: ExecutionStrategy
   bestOfNConfig?: BestOfNConfig
   bestOfNSubstage?: BestOfNSubstage
@@ -50,6 +52,7 @@ export interface BestOfNConfig {
   finalApplier: {
     model: string
     taskSuffix?: string
+    thinkingLevel?: ThinkingLevel
   }
   selectionMode: SelectionMode
   minSuccessfulWorkers: number
@@ -60,6 +63,7 @@ export interface BestOfNSlot {
   model: string
   count: number
   taskSuffix?: string
+  thinkingLevel?: ThinkingLevel
 }
 
 export interface BestOfNSummary {
@@ -153,6 +157,10 @@ export interface Options {
   autoDeleteNormalSessions?: boolean
   autoDeleteReviewSessions?: boolean
   thinkingLevel: ThinkingLevel
+  planThinkingLevel: ThinkingLevel
+  executionThinkingLevel: ThinkingLevel
+  reviewThinkingLevel: ThinkingLevel
+  repairThinkingLevel: ThinkingLevel
   telegramNotificationsEnabled?: boolean
   telegramBotToken?: string
   telegramChatId?: string
@@ -337,6 +345,8 @@ export interface CreateTaskDTO {
   skipPermissionAsking?: boolean
   requirements?: string[]
   thinkingLevel?: ThinkingLevel
+  planThinkingLevel?: ThinkingLevel
+  executionThinkingLevel?: ThinkingLevel
   executionStrategy?: ExecutionStrategy
   bestOfNConfig?: BestOfNConfig
   bestOfNSubstage?: BestOfNSubstage
@@ -357,6 +367,8 @@ export interface UpdateTaskDTO {
   skipPermissionAsking?: boolean
   requirements?: string[]
   thinkingLevel?: ThinkingLevel
+  planThinkingLevel?: ThinkingLevel
+  executionThinkingLevel?: ThinkingLevel
   executionStrategy?: ExecutionStrategy
   bestOfNConfig?: BestOfNConfig | null
   bestOfNSubstage?: BestOfNSubstage

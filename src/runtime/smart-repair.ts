@@ -136,7 +136,7 @@ export class SmartRepairService {
       worktreeDir: task.worktreeDir,
       branch: task.branch,
       model: options.repairModel,
-      thinkingLevel: task.thinkingLevel,
+      thinkingLevel: options.repairThinkingLevel,
       promptText: prompt.renderedText,
     })
 

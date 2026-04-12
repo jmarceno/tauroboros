@@ -5,6 +5,7 @@ import type { useOptions } from '@/composables/useOptions'
 import type { useModelSearch } from '@/composables/useModelSearch'
 import type { useToasts } from '@/composables/useToasts'
 import ModelPicker from '../common/ModelPicker.vue'
+import ThinkingLevelSelect from '../common/ThinkingLevelSelect.vue'
 
 const emit = defineEmits<{
   close: []
@@ -39,6 +40,10 @@ const safeForm = computed<Options>(() => {
     autoDeleteNormalSessions: false,
     autoDeleteReviewSessions: false,
     thinkingLevel: 'default',
+    planThinkingLevel: 'default',
+    executionThinkingLevel: 'default',
+    reviewThinkingLevel: 'default',
+    repairThinkingLevel: 'default',
     telegramNotificationsEnabled: false,
     telegramBotToken: '',
     telegramChatId: '',
@@ -109,6 +114,10 @@ const save = async () => {
       autoDeleteNormalSessions: safeForm.value.autoDeleteNormalSessions,
       autoDeleteReviewSessions: safeForm.value.autoDeleteReviewSessions,
       thinkingLevel: safeForm.value.thinkingLevel,
+      planThinkingLevel: safeForm.value.planThinkingLevel,
+      executionThinkingLevel: safeForm.value.executionThinkingLevel,
+      reviewThinkingLevel: safeForm.value.reviewThinkingLevel,
+      repairThinkingLevel: safeForm.value.repairThinkingLevel,
       telegramNotificationsEnabled: safeForm.value.telegramNotificationsEnabled,
       telegramBotToken: safeForm.value.telegramBotToken,
       telegramChatId: safeForm.value.telegramChatId,
@@ -167,48 +176,63 @@ const closeOnOverlay = (e: MouseEvent) => {
             </div>
           </div>
 
-          <!-- Models -->
+          <!-- Models with Thinking Levels -->
           <div class="grid grid-cols-2 gap-3">
-            <ModelPicker
-              :key="'plan-' + formKey"
-              v-model="form!.planModel"
-              label="Plan Model (global)"
-              help="Default planning model for new tasks. Individual tasks can override this value."
-            />
-            <ModelPicker
-              :key="'exec-' + formKey"
-              v-model="form!.executionModel"
-              label="Execution Model (global)"
-              help="Default execution model for new tasks. Individual tasks can override this value."
-            />
+            <div class="space-y-2">
+              <ModelPicker
+                :key="'plan-' + formKey"
+                v-model="form!.planModel"
+                label="Plan Model (global)"
+                help="Default planning model for new tasks. Individual tasks can override this value."
+              />
+              <ThinkingLevelSelect
+                v-model="form!.planThinkingLevel"
+                label="Plan Thinking"
+                help="Default thinking level for planning phase."
+              />
+            </div>
+            <div class="space-y-2">
+              <ModelPicker
+                :key="'exec-' + formKey"
+                v-model="form!.executionModel"
+                label="Execution Model (global)"
+                help="Default execution model for new tasks. Individual tasks can override this value."
+              />
+              <ThinkingLevelSelect
+                v-model="form!.executionThinkingLevel"
+                label="Execution Thinking"
+                help="Default thinking level for execution phase."
+              />
+            </div>
           </div>
 
-          <ModelPicker
-            :key="'review-' + formKey"
-            v-model="form!.reviewModel"
-            label="Review Model"
-            help="Model used by the workflow-review agent. This is stored in the database and used for all review operations."
-          />
-
-          <ModelPicker
-            :key="'repair-' + formKey"
-            v-model="form!.repairModel"
-            label="Repair Model"
-            help="Model used by the workflow-repair agent for state repair analysis."
-          />
-
-          <!-- Thinking Level -->
-          <div class="form-group">
-            <div class="label-row">
-              <label>Thinking Level (global default)</label>
-              <span class="help-btn" title="Default reasoning effort for new tasks. Higher levels are better for harder work but can be slower.">?</span>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="space-y-2">
+              <ModelPicker
+                :key="'review-' + formKey"
+                v-model="form!.reviewModel"
+                label="Review Model"
+                help="Model used by the workflow-review agent. This is stored in the database and used for all review operations."
+              />
+              <ThinkingLevelSelect
+                v-model="form!.reviewThinkingLevel"
+                label="Review Thinking"
+                help="Default thinking level for review phase."
+              />
             </div>
-            <select v-model="form!.thinkingLevel" class="form-select">
-              <option value="default">Default</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
+            <div class="space-y-2">
+              <ModelPicker
+                :key="'repair-' + formKey"
+                v-model="form!.repairModel"
+                label="Repair Model"
+                help="Model used by the workflow-repair agent for state repair analysis."
+              />
+              <ThinkingLevelSelect
+                v-model="form!.repairThinkingLevel"
+                label="Repair Thinking"
+                help="Default thinking level for repair operations."
+              />
+            </div>
           </div>
 
           <!-- Pre-execution Command -->

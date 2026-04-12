@@ -5,6 +5,7 @@ import type { useTasks } from '@/composables/useTasks'
 import type { useModelSearch } from '@/composables/useModelSearch'
 import type { useToasts } from '@/composables/useToasts'
 import ModelPicker from '../common/ModelPicker.vue'
+import ThinkingLevelSelect from '../common/ThinkingLevelSelect.vue'
 
 const props = defineProps<{
   taskIds: string[]
@@ -62,6 +63,10 @@ const form = ref({
   skipPermissionAskingMixed: false,
   thinkingLevel: '' as ThinkingLevel | undefined,
   thinkingLevelMixed: false,
+  planThinkingLevel: '' as ThinkingLevel | undefined,
+  planThinkingLevelMixed: false,
+  executionThinkingLevel: '' as ThinkingLevel | undefined,
+  executionThinkingLevelMixed: false,
   executionStrategy: '' as ExecutionStrategy | undefined,
   executionStrategyMixed: false,
   maxReviewRunsOverride: undefined as number | undefined,
@@ -144,6 +149,14 @@ onMounted(async () => {
   const thinkingLevels = taskList.map(t => t.thinkingLevel)
   form.value.thinkingLevel = getCommonValue(thinkingLevels)
   form.value.thinkingLevelMixed = !isUniform(thinkingLevels)
+
+  const planThinkingLevels = taskList.map(t => t.planThinkingLevel)
+  form.value.planThinkingLevel = getCommonValue(planThinkingLevels)
+  form.value.planThinkingLevelMixed = !isUniform(planThinkingLevels)
+
+  const executionThinkingLevels = taskList.map(t => t.executionThinkingLevel)
+  form.value.executionThinkingLevel = getCommonValue(executionThinkingLevels)
+  form.value.executionThinkingLevelMixed = !isUniform(executionThinkingLevels)
 
   const execStrategies = taskList.map(t => t.executionStrategy)
   form.value.executionStrategy = getCommonValue(execStrategies)
@@ -268,6 +281,12 @@ const save = async () => {
     if (modifiedFields.value.has('thinkingLevel') && form.value.thinkingLevel !== undefined) {
       updateData.thinkingLevel = form.value.thinkingLevel
     }
+    if (modifiedFields.value.has('planThinkingLevel') && form.value.planThinkingLevel !== undefined) {
+      updateData.planThinkingLevel = form.value.planThinkingLevel
+    }
+    if (modifiedFields.value.has('executionThinkingLevel') && form.value.executionThinkingLevel !== undefined) {
+      updateData.executionThinkingLevel = form.value.executionThinkingLevel
+    }
     if (modifiedFields.value.has('executionStrategy') && form.value.executionStrategy !== undefined) {
       updateData.executionStrategy = form.value.executionStrategy
     }
@@ -353,67 +372,86 @@ const mixedIndicator = (isMixed: boolean) => isMixed ? '— ' : ''
           </select>
         </div>
 
-        <!-- Models -->
+        <!-- Models with Thinking Levels -->
         <div class="grid grid-cols-2 gap-3">
-          <div class="form-group">
-            <div class="label-row">
-              <label>Plan Model</label>
-              <span v-if="form.planModelMixed" class="text-xs text-amber-400">(mixed)</span>
-            </div>
-            <select
-              v-model="form.planModel"
-              class="form-select"
-              @change="markModified('planModel')"
-            >
-              <option value="" disabled v-if="form.planModelMixed">— (mixed values)</option>
-              <option
-                v-for="opt in modelSearch.getModelOptions(form.planModel || 'default')"
-                :key="opt.value"
-                :value="opt.value"
+          <div class="space-y-2">
+            <div class="form-group">
+              <div class="label-row">
+                <label>Plan Model</label>
+                <span v-if="form.planModelMixed" class="text-xs text-amber-400">(mixed)</span>
+              </div>
+              <select
+                v-model="form.planModel"
+                class="form-select"
+                @change="markModified('planModel')"
               >
-                {{ mixedIndicator(form.planModelMixed) }}{{ opt.label }}
-              </option>
-            </select>
-          </div>
-          <div class="form-group">
-            <div class="label-row">
-              <label>Execution Model</label>
-              <span v-if="form.executionModelMixed" class="text-xs text-amber-400">(mixed)</span>
+                <option value="" disabled v-if="form.planModelMixed">— (mixed values)</option>
+                <option
+                  v-for="opt in modelSearch.getModelOptions(form.planModel || 'default')"
+                  :key="opt.value"
+                  :value="opt.value"
+                >
+                  {{ mixedIndicator(form.planModelMixed) }}{{ opt.label }}
+                </option>
+              </select>
             </div>
-            <select
-              v-model="form.executionModel"
-              class="form-select"
-              @change="markModified('executionModel')"
-            >
-              <option value="" disabled v-if="form.executionModelMixed">— (mixed values)</option>
-              <option
-                v-for="opt in modelSearch.getModelOptions(form.executionModel || 'default')"
-                :key="opt.value"
-                :value="opt.value"
+            <div class="form-group">
+              <div class="label-row">
+                <label>Plan Thinking</label>
+                <span v-if="form.planThinkingLevelMixed" class="text-xs text-amber-400">(mixed)</span>
+              </div>
+              <select
+                v-model="form.planThinkingLevel"
+                class="form-select"
+                @change="markModified('planThinkingLevel')"
               >
-                {{ mixedIndicator(form.executionModelMixed) }}{{ opt.label }}
-              </option>
-            </select>
+                <option value="" disabled v-if="form.planThinkingLevelMixed">— (mixed values)</option>
+                <option value="default">{{ mixedIndicator(form.planThinkingLevelMixed) }}Default</option>
+                <option value="low">{{ mixedIndicator(form.planThinkingLevelMixed) }}Low</option>
+                <option value="medium">{{ mixedIndicator(form.planThinkingLevelMixed) }}Medium</option>
+                <option value="high">{{ mixedIndicator(form.planThinkingLevelMixed) }}High</option>
+              </select>
+            </div>
           </div>
-        </div>
-
-        <!-- Thinking Level -->
-        <div class="form-group">
-          <div class="label-row">
-            <label>Thinking Level</label>
-            <span v-if="form.thinkingLevelMixed" class="text-xs text-amber-400">(mixed)</span>
+          <div class="space-y-2">
+            <div class="form-group">
+              <div class="label-row">
+                <label>Execution Model</label>
+                <span v-if="form.executionModelMixed" class="text-xs text-amber-400">(mixed)</span>
+              </div>
+              <select
+                v-model="form.executionModel"
+                class="form-select"
+                @change="markModified('executionModel')"
+              >
+                <option value="" disabled v-if="form.executionModelMixed">— (mixed values)</option>
+                <option
+                  v-for="opt in modelSearch.getModelOptions(form.executionModel || 'default')"
+                  :key="opt.value"
+                  :value="opt.value"
+                >
+                  {{ mixedIndicator(form.executionModelMixed) }}{{ opt.label }}
+                </option>
+              </select>
+            </div>
+            <div class="form-group">
+              <div class="label-row">
+                <label>Execution Thinking</label>
+                <span v-if="form.executionThinkingLevelMixed" class="text-xs text-amber-400">(mixed)</span>
+              </div>
+              <select
+                v-model="form.executionThinkingLevel"
+                class="form-select"
+                @change="markModified('executionThinkingLevel')"
+              >
+                <option value="" disabled v-if="form.executionThinkingLevelMixed">— (mixed values)</option>
+                <option value="default">{{ mixedIndicator(form.executionThinkingLevelMixed) }}Default</option>
+                <option value="low">{{ mixedIndicator(form.executionThinkingLevelMixed) }}Low</option>
+                <option value="medium">{{ mixedIndicator(form.executionThinkingLevelMixed) }}Medium</option>
+                <option value="high">{{ mixedIndicator(form.executionThinkingLevelMixed) }}High</option>
+              </select>
+            </div>
           </div>
-          <select 
-            v-model="form.thinkingLevel" 
-            class="form-select"
-            @change="markModified('thinkingLevel')"
-          >
-            <option value="" disabled v-if="form.thinkingLevelMixed">— (mixed values)</option>
-            <option value="default">{{ mixedIndicator(form.thinkingLevelMixed) }}Default</option>
-            <option value="low">{{ mixedIndicator(form.thinkingLevelMixed) }}Low</option>
-            <option value="medium">{{ mixedIndicator(form.thinkingLevelMixed) }}Medium</option>
-            <option value="high">{{ mixedIndicator(form.thinkingLevelMixed) }}High</option>
-          </select>
         </div>
 
         <!-- Execution Strategy -->

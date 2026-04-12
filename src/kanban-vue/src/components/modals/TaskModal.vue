@@ -6,6 +6,7 @@ import type { useModelSearch } from '@/composables/useModelSearch'
 import type { useToasts } from '@/composables/useToasts'
 import type { useOptions } from '@/composables/useOptions'
 import ModelPicker from '../common/ModelPicker.vue'
+import ThinkingLevelSelect from '../common/ThinkingLevelSelect.vue'
 import MarkdownEditor from '../common/MarkdownEditor.vue'
 
 const props = defineProps<{
@@ -39,6 +40,8 @@ const form = ref({
   skipPermissionAsking: true,
   requirements: [] as string[],
   thinkingLevel: 'default' as const,
+  planThinkingLevel: 'default' as const,
+  executionThinkingLevel: 'default' as const,
   executionStrategy: 'standard' as const,
   bonWorkers: [] as BestOfNSlot[],
   bonReviewers: [] as BestOfNSlot[],
@@ -90,6 +93,8 @@ const populateFormFromTask = (task: Task) => {
   form.value.skipPermissionAsking = task.skipPermissionAsking
   form.value.requirements = [...task.requirements]
   form.value.thinkingLevel = task.thinkingLevel
+  form.value.planThinkingLevel = task.planThinkingLevel
+  form.value.executionThinkingLevel = task.executionThinkingLevel
   form.value.executionStrategy = task.executionStrategy
 
   if (task.executionStrategy === 'best_of_n' && task.bestOfNConfig) {
@@ -240,6 +245,8 @@ const save = async () => {
       skipPermissionAsking: form.value.skipPermissionAsking,
       requirements: form.value.requirements,
       thinkingLevel: form.value.thinkingLevel,
+      planThinkingLevel: form.value.planThinkingLevel,
+      executionThinkingLevel: form.value.executionThinkingLevel,
       executionStrategy: form.value.executionStrategy,
     }
 
@@ -332,34 +339,36 @@ const closeOnOverlay = (e: MouseEvent) => {
             />
           </div>
 
-          <!-- Models -->
+          <!-- Models with Thinking Levels -->
           <div class="grid grid-cols-2 gap-3">
-            <ModelPicker
-              v-model="form.planModel"
-              label="Plan Model"
-              help="Model used for planning steps before implementation. Use this when you want a specific model to reason about the approach first."
-              :disabled="isViewOnly"
-            />
-            <ModelPicker
-              v-model="form.executionModel"
-              label="Execution Model"
-              help="Model used for the actual implementation work. Set this when execution should run on a different model than planning."
-              :disabled="isViewOnly"
-            />
-          </div>
-
-          <!-- Thinking Level -->
-          <div class="form-group">
-            <div class="label-row">
-              <label>Thinking Level</label>
-              <span class="help-btn" title="Controls how much reasoning effort the agent should spend. Higher levels can improve harder tasks but usually take longer.">?</span>
+            <div class="space-y-2">
+              <ModelPicker
+                v-model="form.planModel"
+                label="Plan Model"
+                help="Model used for planning steps before implementation. Use this when you want a specific model to reason about the approach first."
+                :disabled="isViewOnly"
+              />
+              <ThinkingLevelSelect
+                v-model="form.planThinkingLevel"
+                label="Plan Thinking"
+                help="Thinking level for planning phase. Higher levels provide more reasoning but take longer."
+                :disabled="isViewOnly"
+              />
             </div>
-            <select v-model="form.thinkingLevel" class="form-select" :disabled="isViewOnly">
-              <option value="default">Default</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
+            <div class="space-y-2">
+              <ModelPicker
+                v-model="form.executionModel"
+                label="Execution Model"
+                help="Model used for the actual implementation work. Set this when execution should run on a different model than planning."
+                :disabled="isViewOnly"
+              />
+              <ThinkingLevelSelect
+                v-model="form.executionThinkingLevel"
+                label="Execution Thinking"
+                help="Thinking level for execution phase. Higher levels provide more reasoning but take longer."
+                :disabled="isViewOnly"
+              />
+            </div>
           </div>
 
           <!-- Execution Strategy -->

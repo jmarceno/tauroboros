@@ -143,19 +143,19 @@ export function usePlanningChat() {
     }
   }
 
-  const setSessionModel = async (sessionId: string, model: string) => {
+  const setSessionModel = async (sessionId: string, model: string, thinkingLevel?: string) => {
     const session = sessions.value.find(s => s.id === sessionId)
     if (!session || !session.session?.id) {
       throw new Error('No active session')
     }
 
     try {
-      await api.setPlanningSessionModel(session.session.id, model)
+      await api.setPlanningSessionModel(session.session.id, model, thinkingLevel)
       // Update the session model locally
       if (session.session) {
-        session.session = { ...session.session, model }
+        session.session = { ...session.session, model, thinkingLevel }
       }
-      return { ok: true, model }
+      return { ok: true, model, thinkingLevel }
     } catch (e) {
       console.error('Failed to change model:', e)
       throw e

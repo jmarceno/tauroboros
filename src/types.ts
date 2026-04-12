@@ -28,11 +28,13 @@ export interface BestOfNSlot {
   model: string
   count: number
   taskSuffix?: string
+  thinkingLevel?: ThinkingLevel
 }
 
 export interface BestOfNFinalApplier {
   model: string
   taskSuffix?: string
+  thinkingLevel?: ThinkingLevel
 }
 
 export interface BestOfNConfig {
@@ -69,6 +71,8 @@ export interface Task {
   updatedAt: number
   completedAt: number | null
   thinkingLevel: ThinkingLevel
+  planThinkingLevel: ThinkingLevel
+  executionThinkingLevel: ThinkingLevel
   executionPhase: ExecutionPhase
   awaitingPlanApproval: boolean
   planRevisionCount: number
@@ -182,6 +186,10 @@ export interface Options {
   showExecutionGraph: boolean
   port: number
   thinkingLevel: ThinkingLevel
+  planThinkingLevel: ThinkingLevel
+  executionThinkingLevel: ThinkingLevel
+  reviewThinkingLevel: ThinkingLevel
+  repairThinkingLevel: ThinkingLevel
   telegramBotToken: string
   telegramChatId: string
   telegramNotificationsEnabled: boolean

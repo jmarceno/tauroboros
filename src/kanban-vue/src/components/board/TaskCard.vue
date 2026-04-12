@@ -141,6 +141,29 @@ const bestOfNStageMap: Record<string, string> = {
   blocked_for_manual_review: 'manual review',
   completed: 'completed',
 }
+
+// Thinking level display helpers
+const hasNonDefaultThinkingLevel = computed(() => {
+  return props.task.thinkingLevel !== 'default' ||
+    props.task.planThinkingLevel !== 'default' ||
+    props.task.executionThinkingLevel !== 'default'
+})
+
+const thinkingLevelSummary = computed(() => {
+  const levels: string[] = []
+  if (props.task.thinkingLevel !== 'default') levels.push(props.task.thinkingLevel)
+  if (props.task.planThinkingLevel !== 'default') levels.push(`plan:${props.task.planThinkingLevel}`)
+  if (props.task.executionThinkingLevel !== 'default') levels.push(`exec:${props.task.executionThinkingLevel}`)
+  return levels.join(', ') || 'default'
+})
+
+const thinkingLevelTooltip = computed(() => {
+  const parts: string[] = []
+  parts.push(`Global: ${props.task.thinkingLevel}`)
+  parts.push(`Plan: ${props.task.planThinkingLevel}`)
+  parts.push(`Execution: ${props.task.executionThinkingLevel}`)
+  return parts.join('\n')
+})
 </script>
 
 <template>
@@ -315,8 +338,8 @@ const bestOfNStageMap: Record<string, string> = {
         branch: {{ task.branch }}
       </span>
 
-      <span v-if="task.thinkingLevel && task.thinkingLevel !== 'default'" class="badge">
-        thinking: {{ task.thinkingLevel }}
+      <span v-if="hasNonDefaultThinkingLevel" class="badge" :title="thinkingLevelTooltip">
+        thinking: {{ thinkingLevelSummary }}
       </span>
 
       <span v-if="task.deleteWorktree === false" class="badge">

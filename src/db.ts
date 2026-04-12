@@ -97,6 +97,10 @@ const DEFAULT_OPTIONS: Options = {
   showExecutionGraph: true,
   port: 3789,
   thinkingLevel: "default",
+  planThinkingLevel: "default",
+  executionThinkingLevel: "default",
+  reviewThinkingLevel: "default",
+  repairThinkingLevel: "default",
   telegramBotToken: "",
   telegramChatId: "",
   telegramNotificationsEnabled: true,
@@ -530,6 +534,8 @@ function rowToTask(row: Record<string, unknown>): Task {
     updatedAt: Number(row.updated_at ?? 0),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at),
     thinkingLevel: asThinkingLevel(row.thinking_level),
+    planThinkingLevel: asThinkingLevel(row.plan_thinking_level),
+    executionThinkingLevel: asThinkingLevel(row.execution_thinking_level),
     executionPhase: asExecutionPhase(row.execution_phase),
     awaitingPlanApproval: Number(row.awaiting_plan_approval ?? 0) === 1,
     planRevisionCount: Number(row.plan_revision_count ?? 0),
@@ -1304,6 +1310,20 @@ const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_container_builds_status ON container_builds(status);`,
     ],
   },
+  {
+    version: 6,
+    description: "Add per-model thinking level columns to tasks and options",
+    statements: [
+      // Add per-model thinking level columns to tasks table
+      `ALTER TABLE tasks ADD COLUMN plan_thinking_level TEXT NOT NULL DEFAULT 'default';`,
+      `ALTER TABLE tasks ADD COLUMN execution_thinking_level TEXT NOT NULL DEFAULT 'default';`,
+      // Add per-model thinking level columns to options
+      `INSERT OR REPLACE INTO options (key, value) VALUES ('plan_thinking_level', 'default');`,
+      `INSERT OR REPLACE INTO options (key, value) VALUES ('execution_thinking_level', 'default');`,
+      `INSERT OR REPLACE INTO options (key, value) VALUES ('review_thinking_level', 'default');`,
+      `INSERT OR REPLACE INTO options (key, value) VALUES ('repair_thinking_level', 'default');`,
+    ],
+  },
 ]
 
 export class PiKanbanDB {
@@ -1376,10 +1396,10 @@ export class PiKanbanDB {
           id, name, idx, prompt, branch, plan_model, execution_model, planmode,
           auto_approve_plan, review, auto_commit, delete_worktree, status,
           requirements, agent_output, review_count, created_at, updated_at,
-          thinking_level, execution_phase, awaiting_plan_approval, plan_revision_count,
+          thinking_level, plan_thinking_level, execution_thinking_level, execution_phase, awaiting_plan_approval, plan_revision_count,
           execution_strategy, best_of_n_config, best_of_n_substage, skip_permission_asking,
           max_review_runs_override, smart_repair_hints, review_activity, is_archived, archived_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)
       `)
       .run(
         taskId,
@@ -1399,6 +1419,8 @@ export class PiKanbanDB {
         now,
         now,
         input.thinkingLevel ?? "default",
+        input.planThinkingLevel ?? "default",
+        input.executionThinkingLevel ?? "default",
         input.executionPhase ?? "not_started",
         input.awaitingPlanApproval ? 1 : 0,
         input.planRevisionCount ?? 0,
@@ -1504,6 +1526,14 @@ export class PiKanbanDB {
     if (input.thinkingLevel !== undefined) {
       sets.push("thinking_level = ?")
       values.push(input.thinkingLevel)
+    }
+    if (input.planThinkingLevel !== undefined) {
+      sets.push("plan_thinking_level = ?")
+      values.push(input.planThinkingLevel)
+    }
+    if (input.executionThinkingLevel !== undefined) {
+      sets.push("execution_thinking_level = ?")
+      values.push(input.executionThinkingLevel)
     }
     if (input.executionPhase !== undefined) {
       sets.push("execution_phase = ?")
@@ -2702,6 +2732,10 @@ export class PiKanbanDB {
       showExecutionGraph: getBoolean("show_execution_graph"),
       port: getNumber("port"),
       thinkingLevel: asThinkingLevel(values.get("thinking_level")),
+      planThinkingLevel: asThinkingLevel(values.get("plan_thinking_level")),
+      executionThinkingLevel: asThinkingLevel(values.get("execution_thinking_level")),
+      reviewThinkingLevel: asThinkingLevel(values.get("review_thinking_level")),
+      repairThinkingLevel: asThinkingLevel(values.get("repair_thinking_level")),
       telegramBotToken: getValue("telegram_bot_token"),
       telegramChatId: getValue("telegram_chat_id"),
       telegramNotificationsEnabled: getBoolean("telegram_notifications_enabled"),
@@ -2729,6 +2763,10 @@ export class PiKanbanDB {
     if (partial.showExecutionGraph !== undefined) upsert.run("show_execution_graph", String(partial.showExecutionGraph))
     if (partial.port !== undefined) upsert.run("port", String(partial.port))
     if (partial.thinkingLevel !== undefined) upsert.run("thinking_level", partial.thinkingLevel)
+    if (partial.planThinkingLevel !== undefined) upsert.run("plan_thinking_level", partial.planThinkingLevel)
+    if (partial.executionThinkingLevel !== undefined) upsert.run("execution_thinking_level", partial.executionThinkingLevel)
+    if (partial.reviewThinkingLevel !== undefined) upsert.run("review_thinking_level", partial.reviewThinkingLevel)
+    if (partial.repairThinkingLevel !== undefined) upsert.run("repair_thinking_level", partial.repairThinkingLevel)
     if (partial.telegramBotToken !== undefined) upsert.run("telegram_bot_token", partial.telegramBotToken)
     if (partial.telegramChatId !== undefined) upsert.run("telegram_chat_id", partial.telegramChatId)
     if (partial.telegramNotificationsEnabled !== undefined) upsert.run("telegram_notifications_enabled", String(partial.telegramNotificationsEnabled))
@@ -2888,6 +2926,10 @@ export class PiKanbanDB {
     upsert.run("show_execution_graph", String(DEFAULT_OPTIONS.showExecutionGraph))
     upsert.run("port", String(DEFAULT_OPTIONS.port))
     upsert.run("thinking_level", DEFAULT_OPTIONS.thinkingLevel)
+    upsert.run("plan_thinking_level", DEFAULT_OPTIONS.planThinkingLevel)
+    upsert.run("execution_thinking_level", DEFAULT_OPTIONS.executionThinkingLevel)
+    upsert.run("review_thinking_level", DEFAULT_OPTIONS.reviewThinkingLevel)
+    upsert.run("repair_thinking_level", DEFAULT_OPTIONS.repairThinkingLevel)
     upsert.run("telegram_bot_token", DEFAULT_OPTIONS.telegramBotToken)
     upsert.run("telegram_chat_id", DEFAULT_OPTIONS.telegramChatId)
     upsert.run("telegram_notifications_enabled", String(DEFAULT_OPTIONS.telegramNotificationsEnabled))

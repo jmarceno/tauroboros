@@ -204,6 +204,33 @@ export class PlanningSession {
     }
   }
 
+  async setThinkingLevel(thinkingLevel: "default" | "low" | "medium" | "high"): Promise<void> {
+    if (!this.process || !this.isReady) {
+      throw new Error("Session not ready")
+    }
+
+    if (!thinkingLevel || thinkingLevel === "default") {
+      // No need to set thinking level if it's default
+      return
+    }
+
+    try {
+      await this.process.send({
+        type: "set_thinking_level",
+        level: thinkingLevel,
+      }, 30_000)
+
+      // Update the session in DB to reflect the new thinking level
+      this.session = this.db.updateWorkflowSession(this.session.id, {
+        thinkingLevel: thinkingLevel,
+      }) ?? this.session
+      
+      this.onStatusChange?.(this.session)
+    } catch (error) {
+      throw new Error(`Failed to set thinking level: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   async sendMessage(input: SendMessageInput): Promise<void> {
     if (!this.process || !this.isReady) {
       throw new Error("Session not ready")

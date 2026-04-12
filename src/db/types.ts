@@ -244,6 +244,8 @@ export interface CreateTaskInput {
   deleteWorktree?: boolean
   requirements?: string[]
   thinkingLevel?: ThinkingLevel
+  planThinkingLevel?: ThinkingLevel
+  executionThinkingLevel?: ThinkingLevel
   executionPhase?: ExecutionPhase
   awaitingPlanApproval?: boolean
   planRevisionCount?: number
@@ -278,6 +280,8 @@ export interface UpdateTaskInput {
   reviewCount?: number
   completedAt?: number | null
   thinkingLevel?: ThinkingLevel
+  planThinkingLevel?: ThinkingLevel
+  executionThinkingLevel?: ThinkingLevel
   executionPhase?: ExecutionPhase
   awaitingPlanApproval?: boolean
   planRevisionCount?: number

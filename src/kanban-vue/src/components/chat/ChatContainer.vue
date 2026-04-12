@@ -6,6 +6,7 @@ import type { useOptions } from '@/composables/useOptions'
 import type { useModelSearch } from '@/composables/useModelSearch'
 import { useApi } from '@/composables/useApi'
 import ModelPicker from '@/components/common/ModelPicker.vue'
+import ThinkingLevelSelect from '@/components/common/ThinkingLevelSelect.vue'
 import ChatPanel from './ChatPanel.vue'
 
 type PlanningChatType = ReturnType<typeof usePlanningChat>
@@ -94,6 +95,7 @@ const createNewChat = async () => {
   // Always show model selector, pre-filled with default if available
   showModelSelector.value = true
   selectedModel.value = defaultModel.value || ''
+  selectedThinkingLevel.value = defaultThinkingLevel.value || 'default'
 }
 
 const minimizeSession = (session: ChatSession) => {
@@ -199,6 +201,7 @@ onMounted(() => {
 // Model selection for new sessions
 const showModelSelector = ref(false)
 const selectedModel = ref('')
+const selectedThinkingLevel = ref<'default' | 'low' | 'medium' | 'high'>('default')
 
 // Get default model from options
 const defaultModel = computed(() => {
@@ -207,6 +210,11 @@ const defaultModel = computed(() => {
     return planModel
   }
   return ''
+})
+
+// Get default thinking level from options
+const defaultThinkingLevel = computed(() => {
+  return options.options.value?.planThinkingLevel || 'default'
 })
 
 const confirmModelAndCreate = async () => {
@@ -220,13 +228,14 @@ const confirmModelAndCreate = async () => {
   }
 
   showModelSelector.value = false
-  await planningChat.createNewSession(selectedModel.value)
+  await planningChat.createNewSession(selectedModel.value, selectedThinkingLevel.value)
   activeTab.value = 'chat'
 }
 
 const cancelModelSelection = () => {
   showModelSelector.value = false
   selectedModel.value = ''
+  selectedThinkingLevel.value = 'default'
 }
 </script>
 
@@ -519,6 +528,12 @@ const cancelModelSelection = () => {
           v-model="selectedModel"
           label="Model"
           help="The AI model to use for this planning session"
+        />
+
+        <ThinkingLevelSelect
+          v-model="selectedThinkingLevel"
+          label="Thinking Level"
+          help="Controls how much reasoning effort the agent should spend"
         />
 
         <div class="flex items-center justify-end gap-2 mt-4">
