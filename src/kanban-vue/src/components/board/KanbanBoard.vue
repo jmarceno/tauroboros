@@ -3,8 +3,10 @@ import type { Task, TaskStatus, BestOfNSummary } from '@/types/api'
 import type { useDragDrop } from '@/composables/useDragDrop'
 import KanbanColumn from './KanbanColumn.vue'
 
+import { computed, type Ref, toValue } from 'vue'
+
 const props = defineProps<{
-  groupedTasks: Record<TaskStatus | 'failed' | 'stuck', Task[]>
+  tasks: Task[] | Ref<Task[]>
   bonSummaries: Record<string, BestOfNSummary>
   getTaskRunColor: (taskId: string) => string | null
   isTaskMutationLocked: (taskId: string) => boolean
@@ -33,6 +35,46 @@ const emit = defineEmits<{
   continueReviews: [id: string]
   changeColumnSort: [status: string, sort: string]
 }>()
+
+// Computed property for all grouped tasks - ensures proper reactivity
+const groupedTasks = computed(() => {
+  // Use toValue to unwrap ref if needed, or use the array directly
+  const taskArray = toValue(props.tasks)
+  
+  if (!taskArray || !Array.isArray(taskArray)) {
+    return {
+      template: [],
+      backlog: [],
+      executing: [],
+      review: [],
+      done: [],
+    } as Record<TaskStatus, Task[]>
+  }
+
+  const groups: Record<TaskStatus, Task[]> = {
+    template: [],
+    backlog: [],
+    executing: [],
+    review: [],
+    done: [],
+  }
+
+  for (const task of taskArray) {
+    if (!task) continue
+    if (task.status === 'failed' || task.status === 'stuck') {
+      groups.review.push(task)
+    } else if (task.status && task.status in groups) {
+      groups[task.status as TaskStatus].push(task)
+    }
+  }
+
+  return groups
+})
+
+// Helper to get tasks for a specific status from the computed groups
+const getTasksForStatus = (status: TaskStatus): Task[] => {
+  return groupedTasks.value[status] || []
+}
 
 const columns: { status: TaskStatus; title: string }[] = [
   { status: 'template', title: 'Templates' },
@@ -73,13 +115,13 @@ const columnColors: Record<string, string> = {
       <div class="kanban-container">
         <KanbanColumn
           v-for="column in columns"
-          :key="column.status"
+          :key="`${column.status}-${getTasksForStatus(column.status).length}`"
           :status="column.status"
           :title="column.title"
           :help-text="columnHelpText[column.status]"
           :icon-svg="columnIcons[column.status]"
           :icon-color="columnColors[column.status]"
-          :tasks="groupedTasks?.[column.status] ?? []"
+          :tasks="getTasksForStatus(column.status)"
           :bon-summaries="bonSummaries"
           :get-task-run-color="getTaskRunColor"
           :is-task-mutation-locked="isTaskMutationLocked"

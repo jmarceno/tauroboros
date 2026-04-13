@@ -48,10 +48,10 @@ const tasks = inject<ReturnType<typeof useTasks>>('tasks')!
 const { version } = useVersion()
 
 // Stats
-const totalTasks = computed(() => tasks.tasks.value.length)
-const doneCount = computed(() => tasks.groupedTasks.done?.length || 0)
-const activeCount = computed(() => tasks.groupedTasks.executing?.length || 0)
-const reviewCount = computed(() => tasks.groupedTasks.review?.length || 0)
+const totalTasks = computed(() => tasks.tasks?.value?.length ?? 0)
+const doneCount = computed(() => tasks.groupedTasks?.done?.length ?? 0)
+const activeCount = computed(() => tasks.groupedTasks?.executing?.length ?? 0)
+const reviewCount = computed(() => tasks.groupedTasks?.review?.length ?? 0)
 
 // Active runs
 const safeRuns = computed(() => Array.isArray(props.runs) ? props.runs : [])
@@ -113,7 +113,7 @@ const isRunStale = (run: WorkflowRun) => {
       <div class="flex-1 overflow-y-auto">
         <!-- Overview Stats -->
         <div class="sidebar-section">
-          <div class="sidebar-section-title">Overview</div>
+          <div class="sidebar-section-title">Overview ({{ totalTasks }})</div>
           <div class="grid grid-cols-2 gap-2">
             <div class="stat-card">
               <div class="stat-value">{{ totalTasks }}</div>

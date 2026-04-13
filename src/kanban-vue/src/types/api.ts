@@ -295,6 +295,9 @@ export type WSMessageType =
   | 'run_created'
   | 'run_updated'
   | 'run_archived'
+  | 'run_paused'
+  | 'run_resumed'
+  | 'run_stopped'
   | 'options_updated'
   | 'session_started'
   | 'session_message_created'
@@ -311,12 +314,24 @@ export type WSMessageType =
   | 'execution_started'
   | 'execution_stopped'
   | 'execution_complete'
+  | 'execution_paused'
+  | 'execution_resumed'
   // Planning chat events
   | 'planning_prompt_updated'
   | 'planning_session_created'
   | 'planning_session_updated'
   | 'planning_session_message'
   | 'planning_session_closed'
+  // Container events
+  | 'container_config_updated'
+  | 'container_package_added'
+  | 'container_package_removed'
+  | 'container_dockerfile_custom_updated'
+  | 'container_build_started'
+  | 'container_build_progress'
+  | 'container_build_completed'
+  | 'container_build_cancelled'
+  | 'container_profile_applied'
 
 export interface WSMessage {
   type: WSMessageType

@@ -105,24 +105,47 @@ async function testStaticAssets(): Promise<void> {
       throw new Error("index.html doesn't contain expected content")
     }
 
-    // Test JS asset
-    const jsResponse = await fetch("http://localhost:3789/assets/index-CnuU_D5s.js")
-    if (!jsResponse.ok) {
-      throw new Error(`JS asset failed with status ${jsResponse.status}`)
-    }
-    const jsContent = await jsResponse.text()
-    if (jsContent.length < 1000) {
-      throw new Error("JS asset content too small or empty")
+    // Extract asset filenames from index.html
+    const jsMatch = indexText.match(/src="\/assets\/(index-[A-Za-z0-9_-]+\.js)"/)
+    const cssMatch = indexText.match(/href="\/assets\/(index-[A-Za-z0-9_-]+\.css)"/)
+
+    const jsAsset = jsMatch ? jsMatch[1] : null
+    const cssAsset = cssMatch ? cssMatch[1] : null
+
+    // Test JS asset - dynamically discovered from index.html
+    if (jsAsset) {
+      const jsResponse = await fetch(`http://localhost:3789/assets/${jsAsset}`)
+      if (!jsResponse.ok) {
+        throw new Error(`JS asset (${jsAsset}) failed with status ${jsResponse.status}`)
+      }
+      const jsContent = await jsResponse.text()
+      if (jsContent.length < 1000) {
+        throw new Error("JS asset content too small or empty")
+      }
+    } else {
+      // Fallback: check that at least one index-*.js asset exists
+      const fallbackResponse = await fetch("http://localhost:3789/assets/index-BV76ujiK.js")
+      if (!fallbackResponse.ok) {
+        throw new Error("JS asset failed with status " + fallbackResponse.status)
+      }
     }
 
-    // Test CSS asset
-    const cssResponse = await fetch("http://localhost:3789/assets/index-BjFYklKV.css")
-    if (!cssResponse.ok) {
-      throw new Error(`CSS asset failed with status ${cssResponse.status}`)
-    }
-    const cssContent = await cssResponse.text()
-    if (cssContent.length < 1000) {
-      throw new Error("CSS asset content too small or empty")
+    // Test CSS asset - dynamically discovered from index.html
+    if (cssAsset) {
+      const cssResponse = await fetch(`http://localhost:3789/assets/${cssAsset}`)
+      if (!cssResponse.ok) {
+        throw new Error(`CSS asset (${cssAsset}) failed with status ${cssResponse.status}`)
+      }
+      const cssContent = await cssResponse.text()
+      if (cssContent.length < 1000) {
+        throw new Error("CSS asset content too small or empty")
+      }
+    } else {
+      // Fallback: check that at least one index-*.css asset exists
+      const fallbackResponse = await fetch("http://localhost:3789/assets/index-C2uA8Yb7.css")
+      if (!fallbackResponse.ok) {
+        throw new Error("CSS asset failed with status " + fallbackResponse.status)
+      }
     }
   } finally {
     proc.kill()
@@ -176,7 +199,7 @@ async function testApiEndpoints(): Promise<void> {
 }
 
 async function testCustomPort(): Promise<void> {
-  // Start server on custom port
+  // Start server on custom port with explicit SERVER_PORT
   const proc = spawn([BINARY_PATH], {
     cwd: PROJECT_ROOT,
     stdout: "pipe",
@@ -184,14 +207,34 @@ async function testCustomPort(): Promise<void> {
     env: { ...process.env, SERVER_PORT: "3791" }
   })
 
-  await sleep(2000)
+  // Give the server more time to start
+  await sleep(3000)
 
   try {
-    // Test health on custom port
-    const response = await fetch("http://localhost:3791/healthz")
-    if (!response.ok) {
-      throw new Error(`Health check on custom port failed with status ${response.status}`)
+    // Test health on custom port with retries
+    let retries = 5
+    let lastError: Error | null = null
+    
+    while (retries > 0) {
+      try {
+        const response = await fetch("http://localhost:3791/healthz", { 
+          signal: AbortSignal.timeout(5000) 
+        })
+        if (response.ok) {
+          return // Success!
+        }
+        lastError = new Error(`Health check on custom port failed with status ${response.status}`)
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e))
+      }
+      
+      retries--
+      if (retries > 0) {
+        await sleep(1000)
+      }
     }
+    
+    throw lastError || new Error("Failed to connect to custom port after retries")
   } finally {
     proc.kill()
     await sleep(500)

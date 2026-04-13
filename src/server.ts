@@ -5,6 +5,7 @@ import type { InfrastructureSettings } from "./config/settings.ts"
 import { PiKanbanDB } from "./db.ts"
 import { PiKanbanServer } from "./server/server.ts"
 import { PiOrchestrator } from "./orchestrator.ts"
+import { PiContainerManager } from "./runtime/container-manager.ts"
 
 export interface CreateServerOptions {
   dbPath?: string
@@ -13,10 +14,18 @@ export interface CreateServerOptions {
 }
 
 /**
- * Find the project root by looking for a .git directory or .pi directory
- * starting from the script location and walking up.
+ * Find the project root by looking for a .git directory or .pi directory.
+ * Checks current working directory first, then falls back to walking up
+ * from the script location.
  */
 export function findProjectRoot(): string {
+  // First, check if current working directory has .git or .pi
+  // This is important for E2E tests that run from a temp directory
+  const cwd = process.cwd()
+  if (existsSync(resolve(cwd, ".git")) || existsSync(resolve(cwd, ".pi"))) {
+    return cwd
+  }
+
   // Start from the directory of this script
   const scriptDir = dirname(fileURLToPath(import.meta.url))
   let currentDir = scriptDir
@@ -30,7 +39,7 @@ export function findProjectRoot(): string {
   }
 
   // Fallback to process.cwd() if no project root found
-  return process.cwd()
+  return cwd
 }
 
 export function createPiServer(options: CreateServerOptions = {}): {
@@ -50,6 +59,7 @@ export function createPiServer(options: CreateServerOptions = {}): {
   const server = new PiKanbanServer(db, {
     port: options.port,
     settings: options.settings,
+    projectRoot: projectRoot,
     onStart: async () => {
       if (!orchestrator) throw new Error("Orchestrator unavailable")
       return await orchestrator.startAll()
@@ -91,6 +101,16 @@ export function createPiServer(options: CreateServerOptions = {}): {
     (sessionId) => `/#session/${encodeURIComponent(sessionId)}`,
     projectRoot,
     options.settings,
+    (() => {
+      if (!options.settings?.workflow?.container?.enabled) return undefined
+      const containerSettings = options.settings.workflow.container
+      const containerManager = new PiContainerManager(
+        containerSettings.image,
+        server.getImageManager() ?? undefined,
+      )
+      console.log("[server] PiContainerManager created for orchestrator (image:", containerSettings.image + ")")
+      return containerManager
+    })(),
   )
 
   return { db, server, orchestrator }

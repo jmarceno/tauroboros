@@ -62,7 +62,7 @@ export class PiOrchestrator {
   private shouldPause = false
   private isPaused = false
   private currentRunId: string | null = null
-  private readonly sessionManager: PiSessionManager
+  private sessionManager: PiSessionManager
   private readonly reviewRunner: PiReviewSessionRunner
   private readonly worktree: WorktreeLifecycle
   private containerManager?: PiContainerManager
@@ -97,6 +97,7 @@ export class PiOrchestrator {
    */
   useContainerBackend(manager: PiContainerManager): void {
     this.containerManager = manager
+    this.sessionManager = new PiSessionManager(this.db, manager, this.settings)
   }
 
   /**

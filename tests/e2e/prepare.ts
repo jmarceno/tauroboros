@@ -15,7 +15,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = resolve(__filename, '..');
 const PROJECT_ROOT = resolve(__dirname, '../..');
 
-const useContainer = process.argv.includes('container');
+// Container mode is ALWAYS enabled for E2E tests
+const useContainer = true;
 
 console.log(`[PREPARE] Setting up test environment${useContainer ? ' with container mode' : ''}...`);
 console.log(`[PREPARE] Project root: ${PROJECT_ROOT}`);
@@ -80,9 +81,9 @@ mkdirSync(piDir, { recursive: true });
 const dbPath = join(projectDir, 'tasks.db');
 
 // Support dynamic port assignment for parallel test runs
-// Use TEST_SERVER_PORT env var, or default to 0 (auto-assign)
-// Port 0 allows multiple test instances to run simultaneously
-const testServerPort = process.env.TEST_SERVER_PORT ? parseInt(process.env.TEST_SERVER_PORT, 10) : 0;
+// Default to 3000 to match Playwright's expected baseURL
+// Use TEST_SERVER_PORT env var to override for parallel test runs
+const testServerPort = process.env.TEST_SERVER_PORT ? parseInt(process.env.TEST_SERVER_PORT, 10) : 3000;
 
 const settings = {
   skills: {

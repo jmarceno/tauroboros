@@ -197,6 +197,9 @@ describe("GAP 2: WebSocket Session Message Broadcasting", () => {
       // Send prompt command (this should generate a session message)
       await process_.send({ type: "prompt", message: "Test prompt" }, 5000)
 
+      // Wait for events to be processed
+      await waitFor(() => receivedMessages.length > 0, 10000)
+
       await process_.close()
 
       // Verify that onSessionMessage was called

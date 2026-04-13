@@ -180,6 +180,8 @@ const statusColor = computed(() => {
 <template>
   <div
     :class="['task-card', { dragging: isSelected }]"
+    :data-task-id="task.id"
+    :data-task-status="task.status"
     :style="runColor ? { borderLeft: `3px solid ${runColor}` } : undefined"
     :draggable="canDrag && !isMultiSelecting"
     @dragstart="handleDragStart"

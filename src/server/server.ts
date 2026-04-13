@@ -149,7 +149,12 @@ export class PiKanbanServer {
   private readonly smartRepair: SmartRepairService
   private readonly imageManager?: ContainerImageManager
   private readonly settings?: InfrastructureSettings
+  private readonly projectRoot: string
   private readonly planningSessionManager: PlanningSessionManager
+
+  getImageManager(): ContainerImageManager | null {
+    return this.imageManager ?? null
+  }
 
   constructor(
     db: PiKanbanDB,
@@ -162,10 +167,12 @@ export class PiKanbanServer {
       onResumeRun?: RunControlFn
       onStopRun?: StopRunFn  // Unified stop with destructive option
       settings?: InfrastructureSettings
+      projectRoot?: string
     } = {},
   ) {
     this.db = db
     this.settings = opts.settings
+    this.projectRoot = opts.projectRoot ?? process.cwd()
     this.defaultPort = opts.port ?? this.db.getOptions().port
     this.smartRepair = new SmartRepairService(this.db, opts.settings)
     this.onStart = opts.onStart ?? (async () => null)
@@ -666,8 +673,8 @@ export class PiKanbanServer {
 
     this.router.get("/api/branches", ({ json }) => {
       try {
-        const branchOutput = Bun.spawnSync({ cmd: ["git", "branch", "--format=%(refname:short)"], stdout: "pipe", stderr: "pipe" })
-        const currentOutput = Bun.spawnSync({ cmd: ["git", "branch", "--show-current"], stdout: "pipe", stderr: "pipe" })
+        const branchOutput = Bun.spawnSync({ cmd: ["git", "branch", "--format=%(refname:short)"], stdout: "pipe", stderr: "pipe", cwd: this.projectRoot })
+        const currentOutput = Bun.spawnSync({ cmd: ["git", "branch", "--show-current"], stdout: "pipe", stderr: "pipe", cwd: this.projectRoot })
         if (branchOutput.exitCode !== 0 || currentOutput.exitCode !== 0) {
           return json({ branches: [], current: null, error: "Failed to list git branches" })
         }

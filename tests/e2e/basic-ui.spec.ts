@@ -20,12 +20,11 @@ test.describe('Basic UI Functionality', () => {
   });
 
   test('server starts and UI loads', async ({ page }) => {
-    // Check that the kanban board loaded
-    await expect(page.locator('text=Easy Workflow Kanban')).toBeVisible();
+    // Check that the kanban board loaded by looking for the kanban columns
+    await expect(page.locator('[data-status="template"]')).toBeVisible();
     
-    // Verify the top bar buttons are present
-    await expect(page.getByRole('button', { name: /Start Workflow/ })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Options' })).toBeVisible();
+    // Verify the sidebar has the workflow control section
+    await expect(page.locator('.sidebar:has-text("Workflow Control")')).toBeVisible();
     
     console.log('✓ UI loaded successfully');
   });
@@ -65,10 +64,10 @@ test.describe('Basic UI Functionality', () => {
     
     // Get text content of all kbd elements and verify shortcuts exist
     const kbdTexts = await kbdElements.allTextContents();
-    expect(kbdTexts).toContain('T');
-    expect(kbdTexts).toContain('B');
-    expect(kbdTexts).toContain('S');
-    expect(kbdTexts).toContain('D');
+    expect(kbdTexts).toContain('T');  // Template
+    expect(kbdTexts).toContain('B');  // Backlog/Task
+    expect(kbdTexts).toContain('P');  // Planning Chat
+    expect(kbdTexts).toContain('Esc'); // Close
     
     console.log('✓ Keyboard shortcuts displayed');
   });

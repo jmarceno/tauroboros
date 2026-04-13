@@ -6,6 +6,7 @@ import {
   type ContainerConfig,
   type ContainerProcess,
 } from "./container-manager.ts"
+import { projectPiEventToSessionMessage } from "./message-projection.ts"
 import type { PiEventListener, ExtensionUIRequestHandler } from "./pi-process.ts"
 import type { PiRpcRequest, PiRpcResponse } from "./pi-rpc.ts"
 
@@ -44,6 +45,8 @@ export class ContainerPiProcess {
     message: import("../types.ts").SessionMessage,
   ) => void
   private readonly settings?: InfrastructureSettings
+  private readonly disableAutoSessionMessages: boolean
+  private readonly systemPrompt?: string
 
   private containerProcess: ContainerProcess | null = null
   private requestId = 0
@@ -71,15 +74,19 @@ export class ContainerPiProcess {
     onOutput?: (chunk: string) => void
     onSessionMessage?: (message: import("../types.ts").SessionMessage) => void
     settings?: InfrastructureSettings
+    systemPrompt?: string
+    disableAutoSessionMessages?: boolean
     existingContainerId?: string | null
     containerImage?: string | null
   }) {
     this.db = args.db
+    this.disableAutoSessionMessages = args.disableAutoSessionMessages ?? false
     this.session = args.session
     this.containerManager = args.containerManager
     this.onOutput = args.onOutput
     this.onSessionMessage = args.onSessionMessage
     this.settings = args.settings
+    this.systemPrompt = args.systemPrompt
     this.existingContainerId = args.existingContainerId ?? null
     this.containerImage = args.containerImage ?? null
   }
@@ -134,7 +141,7 @@ export class ContainerPiProcess {
             },
           })
 
-          this.abortController = new AbortController()
+this.abortController = new AbortController()
           this.captureStdout()
           this.captureStderr()
 
@@ -180,8 +187,6 @@ export class ContainerPiProcess {
 
     this.captureStdout()
     this.captureStderr()
-
-    await new Promise((resolve) => setTimeout(resolve, 1000))
   }
 
   /**
@@ -253,7 +258,7 @@ export class ContainerPiProcess {
    * Send a prompt (returns immediately, use onEvent/waitForIdle for results).
    */
   async prompt(message: string): Promise<void> {
-    await this.send({ type: "prompt", message }, 10_000)
+    await this.send({ type: "prompt", message }, 60_000)
   }
 
   /**
@@ -367,7 +372,7 @@ export class ContainerPiProcess {
    * Force kill the container immediately without waiting for graceful shutdown.
    * Used for emergency stop and destructive operations.
    */
-  async forceKill(): Promise<void> {
+  async forceKill(signal: "SIGTERM" | "SIGKILL" = "SIGKILL"): Promise<void> {
     if (!this.containerProcess) return
 
     const process = this.containerProcess
@@ -398,7 +403,7 @@ export class ContainerPiProcess {
       status: "aborted",
       finishedAt: Math.floor(Date.now() / 1000),
       exitCode: -1,
-      exitSignal: "SIGKILL",
+      exitSignal: signal,
     })
     this.db.appendSessionIO({
       sessionId: this.session.id,
@@ -406,6 +411,7 @@ export class ContainerPiProcess {
       recordType: "lifecycle",
       payloadJson: {
         type: "container_force_killed",
+        signal,
       },
     })
   }
@@ -527,14 +533,27 @@ export class ContainerPiProcess {
       }
     }
 
+    // Project to session messages (unless disabled)
+    if (!this.disableAutoSessionMessages) {
+      const message = projectPiEventToSessionMessage({
+        event: parsed,
+        sessionId: this.session.id,
+        taskId: this.session.taskId,
+        taskRunId: this.session.taskRunId,
+      })
+      if (message.contentJson && Object.keys(message.contentJson).length > 0) {
+        const createdMessage = this.db.createSessionMessage(message)
+        if (createdMessage && this.onSessionMessage) {
+          this.onSessionMessage(createdMessage)
+        }
+      }
+    }
+
     // Output handling
     const text = pullResponseText(parsed)
     if (text && this.onOutput) {
       this.onOutput(text)
     }
-
-    // Session message projection would go here if needed
-    // For now, we rely on the event listeners and IO logging
   }
 
   private captureStderr(): void {

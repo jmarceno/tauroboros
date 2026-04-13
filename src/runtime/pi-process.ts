@@ -188,7 +188,7 @@ export class PiRpcProcess {
    * Send a prompt (returns immediately, use onEvent/waitForIdle for results)
    */
   async prompt(message: string): Promise<void> {
-    await this.send({ type: "prompt", message }, 10_000)
+    await this.send({ type: "prompt", message }, 60_000)
   }
 
   /**

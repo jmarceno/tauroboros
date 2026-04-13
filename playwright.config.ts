@@ -46,11 +46,10 @@ function getTestProjectDir(): string | null {
 
 const testProjectDir = getTestProjectDir();
 
-// Support dynamic port assignment via environment variable
-// TEST_SERVER_PORT=0 uses auto-assigned port (for parallel test runs)
-// TEST_SERVER_PORT=3000 uses fixed port (backward compatible)
-const testServerPort = process.env.TEST_SERVER_PORT ? parseInt(process.env.TEST_SERVER_PORT, 10) : 0;
-const useDynamicPort = testServerPort === 0;
+// Support port configuration via environment variable
+// Default to 3000 for Playwright webServer URL matching
+// Use TEST_SERVER_PORT env var to override
+const testServerPort = process.env.TEST_SERVER_PORT ? parseInt(process.env.TEST_SERVER_PORT, 10) : 3000;
 
 // Build webServer config
 let webServerConfig = undefined;
@@ -61,15 +60,9 @@ if (testProjectDir) {
   // We use shell: true to ensure PATH is properly inherited
   const command = `bun run start`;
   
-  if (useDynamicPort) {
-    // For dynamic port (0), we'll use the server's actual port
-    // The server will log its port and we'll need to capture it
-    baseURL = 'http://localhost:3000'; // Placeholder - actual port discovered at runtime
-    console.log('[Playwright] Using dynamic port assignment (port 0)');
-  } else if (testServerPort > 0) {
-    // Use explicit port
+  if (testServerPort > 0) {
     baseURL = `http://localhost:${testServerPort}`;
-    console.log(`[Playwright] Using fixed port: ${testServerPort}`);
+    console.log(`[Playwright] Using port: ${testServerPort}`);
   }
   
   webServerConfig = {

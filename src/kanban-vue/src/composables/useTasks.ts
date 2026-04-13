@@ -25,7 +25,9 @@ export function useTasks(columnSorts?: { value: ColumnSortPreferences | undefine
     return sorts[status] || 'manual'
   }
 
-  const groupedTasks = computed(() => {
+  // Function to get grouped tasks (called on demand from template)
+  const getGroupedTasks = (): Record<TaskStatus | 'failed' | 'stuck', Task[]> => {
+    // Default empty groups
     const groups: Record<TaskStatus | 'failed' | 'stuck', Task[]> = {
       template: [],
       backlog: [],
@@ -36,29 +38,25 @@ export function useTasks(columnSorts?: { value: ColumnSortPreferences | undefine
       stuck: [],
     }
 
+    // Handle case where tasks might not be loaded yet
+    if (!tasks.value || !Array.isArray(tasks.value)) {
+      return groups
+    }
+
     for (const task of tasks.value) {
+      if (!task) continue
       if (task.status === 'failed' || task.status === 'stuck') {
         groups.review.push(task)
-      } else if (task.status in groups) {
-        groups[task.status].push(task)
+      } else if (task.status && task.status in groups) {
+        groups[task.status as TaskStatus].push(task)
       }
     }
 
-    // Sort each group according to its sort preference
-    const sortGroup = (status: TaskStatus) => {
-      const sortOption = getSortForColumn(status)
-      const sortFn = sortFns[sortOption]
-      groups[status].sort(sortFn)
-    }
-
-    sortGroup('template')
-    sortGroup('backlog')
-    sortGroup('executing')
-    sortGroup('review')
-    sortGroup('done')
-
     return groups
-  })
+  }
+
+  // Keep computed for backward compatibility but use the function internally
+  const groupedTasks = computed(getGroupedTasks)
 
   const getTaskById = (id: string) => tasks.value.find(t => t.id === id)
   const getTaskName = (id: string) => getTaskById(id)?.name || id
@@ -186,6 +184,7 @@ export function useTasks(columnSorts?: { value: ColumnSortPreferences | undefine
     bonSummaries,
     isLoading,
     error,
+    api,
     getTaskById,
     getTaskName,
     loadTasks,

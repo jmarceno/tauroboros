@@ -81,6 +81,8 @@ export function createPiProcess(
       onOutput: options.onOutput,
       onSessionMessage: options.onSessionMessage,
       settings: options.settings,
+      systemPrompt: options.systemPrompt,
+      disableAutoSessionMessages: options.disableAutoSessionMessages,
       existingContainerId: options.existingContainerId,
       containerImage: options.containerImage,
     })
@@ -107,7 +109,7 @@ export async function isContainerRuntimeAvailable(
 
   try {
     const status = await containerManager.validateSetup()
-    return status.docker && status.gvisor && status.image
+    return status.podman && status.image
   } catch {
     return false
   }
@@ -129,15 +131,22 @@ export async function validateContainerSetup(
 
   const issues: string[] = [...status.errors]
 
-  if (configuredRuntime === "container" && !status.gvisor) {
+  if (configuredRuntime === "container" && !status.podman) {
     issues.push(
-      "Container runtime is configured but gVisor is not available. " +
-        "Update .pi/settings.json workflow.runtime.mode to 'native' or install gVisor",
+      "Container runtime is configured but Podman is not available. " +
+        "Install Podman or update .pi/settings.json workflow.runtime.mode to 'native'",
+    )
+  }
+
+  if (configuredRuntime === "container" && !status.image) {
+    issues.push(
+      `Container runtime is configured but the image is not available. ` +
+        `Build it with: podman build -t ${settings?.workflow?.container?.image ?? "pi-agent:alpine"} -f docker/pi-agent/Dockerfile .`,
     )
   }
 
   return {
-    available: status.docker && status.gvisor && status.image,
+    available: status.podman && status.image,
     runtime: configuredRuntime,
     issues,
   }

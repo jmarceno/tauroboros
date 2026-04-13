@@ -147,8 +147,9 @@ export class PiContainerManager {
   }
 
   /**
-   * Ensure the container image is ready before creating containers.
-   * If an image manager is configured, this will build/pull the image if needed.
+   * Ensure the container image is ready for use.
+   * Called at server startup (not on every container creation).
+   * This method triggers a build/pull if the image is missing.
    */
   async ensureImageReady(): Promise<void> {
     if (this.imageManager) {
@@ -160,6 +161,24 @@ export class PiContainerManager {
         throw new Error(
           `Podman image '${this.imageName}' not found. ` +
           `Build it with: podman build -t ${this.imageName} -f docker/pi-agent/Dockerfile .`,
+        )
+      }
+    }
+  }
+
+  /**
+   * Verify that the container image is ready (must have been prepared already).
+   * This does NOT trigger image builds - it only checks the prepared flag.
+   * Throws a hard error if the image was not prepared, preventing any
+   * fallback to building/pulling during task execution.
+   */
+  verifyImageReady(): void {
+    if (this.imageManager) {
+      if (!this.imageManager.isReady()) {
+        throw new Error(
+          `Container image '${this.imageName}' has not been prepared. ` +
+          `The server must prepare the image on startup before containers can be created. ` +
+          `Ensure 'autoPrepare: true' is set in .pi/settings.json or manually prepare the image.`,
         )
       }
     }
@@ -183,7 +202,8 @@ export class PiContainerManager {
   async createContainer(config: ContainerConfig): Promise<ContainerProcess> {
     const imageName = config.imageName || this.imageName
 
-    await this.ensureImageReady()
+    // Verify image was prepared at server startup - no fallback build during task execution
+    this.verifyImageReady()
 
     const mounts = createVolumeMounts(config.worktreeDir, config.repoRoot)
 
@@ -195,11 +215,17 @@ export class PiContainerManager {
     }
 
     // Environment variables
+    // PI_OFFLINE=1 prevents pi's package manager from auto-installing
+    // packages on every startup. Packages listed in ~/.pi/agent/settings.json
+    // would otherwise trigger npm install on each fresh container start
+    // (containers are ephemeral with --rm, so installed packages don't persist).
+    const defaultEnv: Record<string, string> = {
+      PI_OFFLINE: "1",
+    }
+    const envVars = { ...defaultEnv, ...(config.env || {}) }
     const envArgs: string[] = []
-    if (config.env) {
-      for (const [key, value] of Object.entries(config.env)) {
-        envArgs.push("-e", `${key}=${value}`)
-      }
+    for (const [key, value] of Object.entries(envVars)) {
+      envArgs.push("-e", `${key}=${value}`)
     }
 
     // Generate container name
@@ -271,9 +297,6 @@ export class PiContainerManager {
     if (!containerId) {
       containerId = `pending-${Date.now()}`
     }
-
-    // Wait a moment for pi process to be ready inside container
-    await new Promise((resolve) => setTimeout(resolve, 1000))
 
     // Create process wrapper with stdio streams
     const process: ContainerProcess = {

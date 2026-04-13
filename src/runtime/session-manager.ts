@@ -188,15 +188,28 @@ export class PiSessionManager {
         input.onSessionStart(session)
       }
 
-      if ("start" in process && typeof process.start === "function") {
+if (process instanceof ContainerPiProcess) {
         await process.start()
       } else {
-        // Native PiRpcProcess uses synchronous start()
-        ;(process as PiRpcProcess).start()
+        process.start()
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 500))
+      // For container processes, the session manager sends an initial set_model
+      // command (even for default model) which serves as a readiness check.
+      // The command will be queued in stdin if the agent is still initializing
+      // and processed once the agent is ready. The 60-second timeout provides
+      // ample time for container startup and initialization.
+      if (process instanceof ContainerPiProcess) {
+        console.log("[session-manager] Container process started, sending initial command as readiness check...")
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
 
+      // Always send a set_model command to the pi agent. This serves as a
+      // readiness check for container processes (the command will be buffered
+      // until the agent is ready) and ensures the model is properly configured.
+      // The 60-second timeout gives container processes enough time to fully
+      // initialize before the command must be acknowledged.
       if (input.model && input.model !== "default") {
         const modelSelection = parseModelSelection(input.model)
         if (modelSelection) {
@@ -204,7 +217,24 @@ export class PiSessionManager {
             type: "set_model",
             provider: modelSelection.provider,
             modelId: modelSelection.modelId,
-          }, 30_000)
+          }, 60_000)
+        }
+      } else {
+        // Even for the default model, send a set_model command as a readiness
+        // check. The response (success or error) confirms the agent is alive
+        // and processing commands.
+        try {
+          await process.send({ type: "set_model", provider: "default", modelId: "default" }, 60_000)
+          console.log("[session-manager] set_model readiness check succeeded")
+        } catch (err) {
+          // Non-fatal: default model configuration may not be supported,
+          // but the agent responded, which means it's ready for commands.
+          const errMsg = err instanceof Error ? err.message : String(err)
+          if (errMsg.includes("timeout") || errMsg.includes("time out") || errMsg.includes("timed out")) {
+            // If we timed out, the agent is not ready. This is a fatal error.
+            throw new Error(`Container pi agent failed to respond within 60 seconds: ${errMsg}`)
+          }
+          console.log(`[session-manager] set_model with default failed (non-fatal: ${errMsg})`)
         }
       }
 

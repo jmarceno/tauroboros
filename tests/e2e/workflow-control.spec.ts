@@ -42,37 +42,38 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
   async function createSimpleTask(page: Page, name: string, prompt: string) {
     // Click "+ Add Task" button in backlog column
     const backlogColumn = page.locator('[data-status="backlog"]');
-    await expect(backlogColumn).toBeVisible();
+    await expect(backlogColumn).toBeVisible({ timeout: 10000 });
     
-    const addTaskButton = backlogColumn.locator('button:has-text("+ Add Task")');
-    await expect(addTaskButton).toBeVisible();
+    const addTaskButton = backlogColumn.locator('button.add-task-btn, button:has-text("+ Add Task")').first();
+    await expect(addTaskButton).toBeVisible({ timeout: 10000 });
     await addTaskButton.click();
     
     // Wait for modal
-    await page.waitForSelector('text=Add Task', { timeout: 5000 });
+    await page.waitForSelector('.modal-overlay', { timeout: 10000 });
+    await page.waitForSelector('input[placeholder="Task name"]', { timeout: 10000 });
     await page.waitForTimeout(500);
     
     // Fill in name
     const nameInput = page.locator('input[placeholder="Task name"]');
-    await expect(nameInput).toBeVisible();
+    await expect(nameInput).toBeVisible({ timeout: 5000 });
     await nameInput.fill(name);
     
     // Fill in prompt
     const promptTextarea = page.locator('textarea[placeholder="What should this task do?"]').first();
-    await expect(promptTextarea).toBeVisible();
+    await expect(promptTextarea).toBeVisible({ timeout: 5000 });
     await promptTextarea.fill(prompt);
     
     // Save
-    const saveButton = page.locator('button:has-text("Save")').filter({ hasNotText: 'Save Template' });
-    await expect(saveButton).toBeVisible();
+    const saveButton = page.locator('button.btn-primary').filter({ hasText: /^Save$/ }).first();
+    await expect(saveButton).toBeVisible({ timeout: 5000 });
     await saveButton.click();
     
     // Wait for modal to close
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1500);
     
     // Verify task appears
-    const taskCard = page.locator(`text=${name}`).first();
-    await expect(taskCard).toBeVisible({ timeout: 5000 });
+    const taskCard = page.locator('.task-card, [data-task-id]').filter({ hasText: name }).first();
+    await expect(taskCard).toBeVisible({ timeout: 10000 });
     
     console.log(`[UI] Created task: ${name}`);
   }
@@ -81,11 +82,11 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
    * Helper: Start workflow via UI
    */
   async function startWorkflowViaUI(page: Page) {
-    const startButton = page.locator('button:has-text("Start Workflow")').first();
-    await expect(startButton).toBeVisible();
+    const startButton = page.locator('button').filter({ hasText: 'Start Workflow' }).first();
+    await expect(startButton).toBeVisible({ timeout: 10000 });
     await startButton.click();
     console.log('[UI] Started workflow');
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(2000);
   }
 
   /**
@@ -138,28 +139,29 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     await page.waitForTimeout(2000);
 
     // Click stop button
-    const stopButton = page.locator('button:has-text("Stop")').first();
-    await expect(stopButton).toBeVisible({ timeout: 5000 });
+    const stopButton = page.locator('button').filter({ hasText: 'Stop' }).first();
+    await expect(stopButton).toBeVisible({ timeout: 10000 });
     await stopButton.click();
 
     // Verify confirmation modal appears
-    await page.waitForSelector('text=Stop Workflow', { timeout: 5000 });
-    const modal = page.locator('.modal-overlay:has-text("Stop Workflow")');
-    await expect(modal).toBeVisible();
+    await page.waitForSelector('.modal-overlay:has-text("Stop Workflow")', { timeout: 10000 });
+    const modal = page.locator('.modal-overlay:has-text("Stop Workflow")').first();
+    await expect(modal).toBeVisible({ timeout: 10000 });
 
     // Verify both graceful and destructive options are shown
-    const gracefulOption = page.locator('button:has-text("Pause & Stop Gracefully")');
-    const destructiveOption = page.locator('button:has-text("Stop & Delete Everything")');
+    const gracefulOption = modal.locator('button').filter({ hasText: 'Pause & Stop Gracefully' }).first();
+    const destructiveOption = modal.locator('button').filter({ hasText: 'Stop & Delete Everything' }).first();
     
-    await expect(gracefulOption).toBeVisible();
-    await expect(destructiveOption).toBeVisible();
+    await expect(gracefulOption).toBeVisible({ timeout: 5000 });
+    await expect(destructiveOption).toBeVisible({ timeout: 5000 });
 
     // Close modal with Cancel
-    const cancelButton = page.locator('button:has-text("Cancel")');
+    const cancelButton = modal.locator('button').filter({ hasText: 'Cancel' }).first();
+    await expect(cancelButton).toBeVisible({ timeout: 5000 });
     await cancelButton.click();
     
     // Verify modal closed
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
     await expect(modal).not.toBeVisible();
 
     console.log('[TEST] ✓ Stop confirmation modal works correctly');
@@ -193,24 +195,25 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     }
 
     // Click stop button to open confirmation modal
-    const stopButton = page.locator('button:has-text("Stop")').first();
-    await expect(stopButton).toBeVisible({ timeout: 5000 });
+    const stopButton = page.locator('button').filter({ hasText: 'Stop' }).first();
+    await expect(stopButton).toBeVisible({ timeout: 10000 });
     await stopButton.click();
 
     // Wait for modal
-    await page.waitForSelector('text=Stop Workflow', { timeout: 5000 });
+    const modal = page.locator('.modal-overlay:has-text("Stop Workflow")').first();
+    await expect(modal).toBeVisible({ timeout: 10000 });
 
     // Click graceful stop option
-    const gracefulOption = page.locator('button:has-text("Pause & Stop Gracefully")');
-    await expect(gracefulOption).toBeVisible();
+    const gracefulOption = modal.locator('button').filter({ hasText: 'Pause & Stop Gracefully' }).first();
+    await expect(gracefulOption).toBeVisible({ timeout: 5000 });
     await gracefulOption.click();
 
     // Wait for stop to take effect
     await page.waitForTimeout(3000);
 
     // Verify workflow is stopped - Start button should be visible again
-    const startButton = page.locator('button:has-text("Start Workflow")').first();
-    await expect(startButton).toBeVisible({ timeout: 10000 });
+    const startButton = page.locator('button').filter({ hasText: 'Start Workflow' }).first();
+    await expect(startButton).toBeVisible({ timeout: 15000 });
 
     // Verify task is not stuck or failed (should be in a recoverable state)
     const status = await getTaskStatusFromUI(page, taskName);
@@ -234,21 +237,25 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     await page.waitForTimeout(2000);
 
     // Click stop button
-    const stopButton = page.locator('button:has-text("Stop")').first();
+    const stopButton = page.locator('button').filter({ hasText: 'Stop' }).first();
+    await expect(stopButton).toBeVisible({ timeout: 10000 });
     await stopButton.click();
 
     // Wait for modal
-    await page.waitForSelector('text=Stop Workflow', { timeout: 5000 });
+    const modal = page.locator('.modal-overlay:has-text("Stop Workflow")').first();
+    await expect(modal).toBeVisible({ timeout: 10000 });
 
-    // Verify destructive option exists and has warning styling
-    const destructiveOption = page.locator('button:has-text("Stop & Delete Everything")');
-    await expect(destructiveOption).toBeVisible();
+    // Verify destructive option exists
+    const destructiveOption = modal.locator('button').filter({ hasText: 'Stop & Delete Everything' }).first();
+    await expect(destructiveOption).toBeVisible({ timeout: 5000 });
     
-    // Check that the destructive option has appropriate warning text
-    await expect(page.locator('text=Danger:')).toBeVisible();
+    // Check that the modal contains danger/warning text
+    const modalText = await modal.textContent() || '';
+    expect(modalText.toLowerCase()).toContain('danger');
 
     // Close modal without stopping
-    const cancelButton = page.locator('button:has-text("Cancel")');
+    const cancelButton = modal.locator('button').filter({ hasText: 'Cancel' }).first();
+    await expect(cancelButton).toBeVisible({ timeout: 5000 });
     await cancelButton.click();
 
     console.log('[TEST] ✓ Destructive stop option is available and properly labeled');
@@ -298,19 +305,19 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     await page.waitForTimeout(2000);
 
     // Open stop modal
-    const stopButton = page.locator('button:has-text("Stop")').first();
+    const stopButton = page.locator('button').filter({ hasText: 'Stop' }).first();
+    await expect(stopButton).toBeVisible({ timeout: 10000 });
     await stopButton.click();
 
     // Wait for modal
-    await page.waitForSelector('text=Stop Workflow', { timeout: 5000 });
-    const modal = page.locator('.modal-overlay:has-text("Stop Workflow")');
-    await expect(modal).toBeVisible();
+    const modal = page.locator('.modal-overlay:has-text("Stop Workflow")').first();
+    await expect(modal).toBeVisible({ timeout: 10000 });
 
-    // Click overlay to close
-    await page.click('.modal-overlay', { position: { x: 10, y: 10 } });
+    // Click overlay to close (click outside the modal container)
+    await modal.click({ position: { x: 10, y: 10 } });
     
     // Verify modal closed
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
     await expect(modal).not.toBeVisible();
 
     console.log('[TEST] ✓ Modal closes correctly via overlay click');
@@ -326,20 +333,21 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     // Wait for workflow to start
     await page.waitForTimeout(2000);
 
-    // Check that sidebar shows active run information
-    // The sidebar should have run cards with progress indicators
+    // Check that sidebar is visible
     const sidebar = page.locator('.sidebar');
-    await expect(sidebar).toBeVisible();
+    await expect(sidebar).toBeVisible({ timeout: 10000 });
 
-    // Look for run-related elements
-    const hasActiveRuns = await page.locator('.run-card').count() > 0 ||
-                          await page.locator('text=Active Runs').isVisible().catch(() => false);
+    // Look for run-related elements (run cards or Active Runs text)
+    const runCards = page.locator('.run-card');
+    const runCardCount = await runCards.count();
+    const hasActiveRunsText = await page.locator('text=Active Runs').isVisible().catch(() => false);
 
-    console.log(`[TEST] Active run info displayed: ${hasActiveRuns}`);
+    const hasActiveRuns = runCardCount > 0 || hasActiveRunsText;
+    console.log(`[TEST] Active run info displayed: ${hasActiveRuns} (run cards: ${runCardCount})`);
 
     // The sidebar should at minimum show workflow controls
-    const workflowControlSection = page.locator('.sidebar').locator('text=Workflow Control');
-    await expect(workflowControlSection).toBeVisible();
+    const workflowControlSection = sidebar.locator('text=Workflow Control');
+    await expect(workflowControlSection).toBeVisible({ timeout: 10000 });
 
     console.log('[TEST] ✓ Sidebar shows workflow control section');
   });

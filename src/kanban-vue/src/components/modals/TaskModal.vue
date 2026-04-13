@@ -134,14 +134,30 @@ const initializeForm = async () => {
   
   if (props.taskId && (isEdit.value || isViewOnly.value)) {
     // Edit/view existing task - load from task data
-    const task = tasks.getTaskById(props.taskId)
+    let task = tasks.getTaskById(props.taskId)
+    // Fallback: fetch from API if not found in local state
+    if (!task) {
+      try {
+        task = await tasks.api.getTask(props.taskId)
+      } catch {
+        toasts.showToast('Failed to load task details', 'error')
+      }
+    }
     if (task) {
       populateFormFromTask(task)
     }
     isInitializing.value = false
   } else if (props.seedTaskId && isDeploy.value) {
     // Deploy from template - load from template data
-    const seedTask = tasks.getTaskById(props.seedTaskId)
+    let seedTask = tasks.getTaskById(props.seedTaskId)
+    // Fallback: fetch from API if not found in local state
+    if (!seedTask) {
+      try {
+        seedTask = await tasks.api.getTask(props.seedTaskId)
+      } catch {
+        toasts.showToast('Failed to load template details', 'error')
+      }
+    }
     if (seedTask) {
       populateFormFromTask(seedTask)
     }

@@ -129,6 +129,8 @@ export class ContainerImageManager {
   private readonly options: ContainerImageManagerOptions
   private currentStatus: ImageStatus = "not_present"
   private cache: ImageCache | null = null
+  private isPrepared = false
+  private preparingPromise: Promise<void> | null = null
 
   constructor(options: ContainerImageManagerOptions) {
     this.options = options
@@ -141,6 +143,14 @@ export class ContainerImageManager {
    */
   getStatus(): ImageStatus {
     return this.currentStatus
+  }
+
+  /**
+   * Check if the image has been prepared and is ready for use.
+   * Returns true only if prepare() has been called successfully at least once.
+   */
+  isReady(): boolean {
+    return this.isPrepared
   }
 
   /**
@@ -165,11 +175,43 @@ export class ContainerImageManager {
   /**
    * Prepare the image - build or pull as needed.
    * This is the main entry point for ensuring the image is ready.
+   * 
+   * Uses a mutex to prevent concurrent builds. If prepare() is already
+   * running, subsequent calls wait for it to complete and then check
+   * readiness. Once successfully prepared, subsequent calls return
+   * immediately without spawning any subprocess.
    */
   async prepare(): Promise<void> {
+    // Fast path: if already prepared, return immediately
+    if (this.isPrepared) {
+      this.updateStatus("ready", "Container image is ready")
+      return
+    }
+
+    // If another prepare() is already running, wait for it
+    if (this.preparingPromise) {
+      await this.preparingPromise
+      // After waiting, the image should be ready
+      if (!this.isPrepared) {
+        throw new Error("Container image preparation failed")
+      }
+      return
+    }
+
+    // We're the first caller - start preparation
+    this.preparingPromise = this.doPrepare()
+    try {
+      await this.preparingPromise
+    } finally {
+      this.preparingPromise = null
+    }
+  }
+
+  private async doPrepare(): Promise<void> {
     // First check if image already exists
     const exists = await this.checkImageExists()
     if (exists) {
+      this.isPrepared = true
       this.updateStatus("ready", "Container image is ready")
       return
     }
@@ -187,6 +229,7 @@ export class ContainerImageManager {
       }
 
       const buildTime = Date.now() - startTime
+      this.isPrepared = true
       this.saveCache({
         imageName: this.options.imageName,
         status: "ready",
@@ -198,6 +241,7 @@ export class ContainerImageManager {
       this.updateStatus("ready", `Container image ready (took ${Math.round(buildTime / 1000)}s)`)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
+      this.isPrepared = false
       this.saveCache({
         imageName: this.options.imageName,
         status: "error",

@@ -14,7 +14,7 @@
       "dbPath": ".pi/easy-workflow/tasks.db"
     },
     "runtime": {
-      "mode": "native",
+      "mode": "container",
       "piBin": "pi",
       "piArgs": "--mode rpc --no-extensions"
     },

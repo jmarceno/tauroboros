@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, provide, onMounted } from 'vue'
+import { ref, computed, provide, onMounted, onUnmounted, nextTick } from 'vue'
 import type { Task, WorkflowRun, Session, SessionMessage } from '@/types/api'
 import { useTasks } from '@/composables/useTasks'
 import { useRuns } from '@/composables/useRuns'
@@ -77,7 +77,7 @@ const isAnyModalOpen = computed(() => {
 
 const consumedSlotsValue = computed(() => runsComposable.consumedRunSlots.value)
 const parallelTasksValue = computed(() => optionsComposable.options.parallelTasks ?? 1)
-const isConnectedValue = computed(() => true)
+const isConnectedValue = computed(() => ws.isConnected.value)
 
 // Get the current active run for workflow control
 const currentActiveRun = computed(() => {
@@ -174,9 +174,9 @@ useKeyboard({
   onTogglePlanningChat: () => planningChat.togglePanel(),
   onStartWorkflow: async () => {
     // Check if there are any tasks to execute
-    const executableTasks = tasksComposable.groupedTasks.backlog.length + 
-                            tasksComposable.groupedTasks.review.length +
-                            tasksComposable.groupedTasks.executing.length
+    const executableTasks = (tasksComposable.groupedTasks?.backlog?.length ?? 0) + 
+                            (tasksComposable.groupedTasks?.review?.length ?? 0) +
+                            (tasksComposable.groupedTasks?.executing?.length ?? 0)
     if (executableTasks === 0) {
       toasts.showToast('No tasks available to execute. Create some tasks first.', 'error')
       return
@@ -195,7 +195,7 @@ useKeyboard({
     }
   },
   onArchiveDone: async () => {
-    const doneTasks = tasksComposable.groupedTasks.done
+    const doneTasks = tasksComposable.groupedTasks?.done ?? []
     if (doneTasks.length === 0) {
       toasts.showToast('No done tasks to archive', 'error')
       return
@@ -219,21 +219,42 @@ useKeyboard({
 })
 
 // WebSocket handlers
-ws.on('task_created', (payload) => {
-  tasksComposable.tasks.push(payload as Task)
-  // Phase 3: Keep runs composable tasks ref synchronized
-  runsComposable.setTasksRef(tasksComposable.tasks.value)
-  toasts.addLog(`Task created: ${(payload as Task).name}`, 'info')
+ws.on('task_created', async (payload) => {
+  try {
+    const task = payload as Task
+    if (!task || !task.id) {
+      console.error('[WebSocket] Invalid task payload:', payload)
+      return
+    }
+    // Use reactive assignment instead of push to ensure Vue detects change
+    tasksComposable.tasks.value = [...tasksComposable.tasks.value, task]
+    // Wait for Vue to update
+    await nextTick()
+    // Debug: show task status in log
+    toasts.addLog(`Task created: ${task.name} (status: ${task.status || 'undefined'})`, 'info')
+  } catch (err) {
+    console.error('[WebSocket] Error in task_created handler:', err)
+  }
 })
 
-ws.on('task_updated', (payload) => {
+ws.on('task_updated', async (payload) => {
   const task = payload as Task
-  const idx = tasksComposable.tasks.findIndex(t => t.id === task.id)
-  const prev = idx >= 0 ? tasksComposable.tasks[idx] : null
+  const idx = tasksComposable.tasks.value.findIndex(t => t.id === task.id)
+  const prev = idx >= 0 ? tasksComposable.tasks.value[idx] : null
+
+  // Stale update protection: skip if incoming update is older than current
+  if (prev && task.updatedAt && prev.updatedAt && task.updatedAt < prev.updatedAt) {
+    console.log(`[WebSocket] Skipping stale task_updated for ${task.name} (incoming ${task.updatedAt} < current ${prev.updatedAt})`)
+    return
+  }
+
+  // Merge: if incoming update lacks fields present in current, preserve them
+  const mergedTask = prev ? { ...prev, ...task } : task
+
   if (idx >= 0) {
-    tasksComposable.tasks[idx] = task
+    tasksComposable.tasks.value = tasksComposable.tasks.value.map((t, i) => i === idx ? mergedTask : t)
   } else {
-    tasksComposable.tasks.push(task)
+    tasksComposable.tasks.value = [...tasksComposable.tasks.value, mergedTask]
   }
   // Phase 3: Keep runs composable tasks ref synchronized
   runsComposable.setTasksRef(tasksComposable.tasks.value)
@@ -254,8 +275,8 @@ ws.on('task_updated', (payload) => {
 ws.on('task_deleted', (payload) => {
   const { id } = payload as { id: string }
   const task = tasksComposable.getTaskById(id)
-  delete tasksComposable.bonSummaries[id]
-  tasksComposable.tasks = tasksComposable.tasks.filter(t => t.id !== id)
+  delete tasksComposable.bonSummaries.value[id]
+  tasksComposable.tasks.value = tasksComposable.tasks.value.filter(t => t.id !== id)
   // Phase 3: Keep runs composable tasks ref synchronized
   runsComposable.setTasksRef(tasksComposable.tasks.value)
   toasts.addLog(`Task deleted: ${task?.name || id}`, 'info')
@@ -264,8 +285,8 @@ ws.on('task_deleted', (payload) => {
 ws.on('task_archived', (payload) => {
   const { id } = payload as { id: string }
   const task = tasksComposable.getTaskById(id)
-  delete tasksComposable.bonSummaries[id]
-  tasksComposable.tasks = tasksComposable.tasks.filter(t => t.id !== id)
+  delete tasksComposable.bonSummaries.value[id]
+  tasksComposable.tasks.value = tasksComposable.tasks.value.filter(t => t.id !== id)
   // Phase 3: Keep runs composable tasks ref synchronized
   runsComposable.setTasksRef(tasksComposable.tasks.value)
   toasts.addLog(`Task archived: ${task?.name || id}`, 'info')
@@ -346,10 +367,10 @@ ws.on('run_stopped', (payload) => {
 ws.on('session_started', (payload) => {
   const data = payload as Session
   if (data.taskId && data.id) {
-    const idx = tasksComposable.tasks.findIndex(t => t.id === data.taskId)
+    const idx = tasksComposable.tasks.value.findIndex(t => t.id === data.taskId)
     if (idx >= 0) {
-      tasksComposable.tasks[idx] = {
-        ...tasksComposable.tasks[idx],
+      tasksComposable.tasks.value[idx] = {
+        ...tasksComposable.tasks.value[idx],
         sessionId: data.id,
         sessionUrl: `/#session/${encodeURIComponent(data.id)}`,
       }
@@ -480,6 +501,31 @@ ws.on('container_dockerfile_custom_updated', () => {
   toasts.addLog('Custom Dockerfile updated', 'info')
 })
 
+// Handle orchestration-level events
+ws.on('execution_started', () => {
+  toasts.addLog('Workflow execution started', 'info')
+})
+
+ws.on('execution_stopped', () => {
+  toasts.addLog('Workflow execution stopped', 'info')
+})
+
+ws.on('execution_complete', () => {
+  toasts.addLog('Workflow execution completed', 'success')
+})
+
+// State resync on WebSocket reconnection
+ws.onReconnect(() => {
+  console.log('[App] Reconnected - syncing state from server')
+  Promise.all([
+    tasksComposable.loadTasks(),
+    runsComposable.loadRuns(),
+    optionsComposable.loadOptions(),
+  ]).catch(err => {
+    console.error('[App] State resync failed:', err)
+  })
+})
+
 // Initialize
 onMounted(async () => {
   await optionsComposable.loadOptions()
@@ -497,7 +543,7 @@ onMounted(async () => {
   }
 
   // Sync with any active runs
-  if (runsComposable.activeRuns.value.length > 0) {
+  if (runsComposable.activeRuns?.value?.length > 0) {
     const activeRun = runsComposable.activeRuns.value[0]
     workflowControl.setRun(activeRun)
   }
@@ -509,6 +555,27 @@ onMounted(async () => {
   }
 
   toasts.addLog('Kanban UI ready', 'info')
+})
+
+// Periodic state sync as safety net (every 30s when connected)
+// This ensures eventual consistency even if WebSocket events are missed
+const SYNC_INTERVAL = 30000
+let syncIntervalId: ReturnType<typeof setInterval> | null = null
+
+onMounted(() => {
+  syncIntervalId = setInterval(() => {
+    if (ws.isConnected.value) {
+      tasksComposable.loadTasks().catch(() => {})
+      runsComposable.loadRuns().catch(() => {})
+    }
+  }, SYNC_INTERVAL)
+})
+
+onUnmounted(() => {
+  if (syncIntervalId) {
+    clearInterval(syncIntervalId)
+    syncIntervalId = null
+  }
 })
 
 // Handle hash changes
@@ -560,9 +627,9 @@ window.addEventListener('hashchange', () => {
           }).catch(e => toasts.showToast('Failed to stop workflow: ' + e.message, 'error'))
         } else {
           // Check if there are any tasks to execute
-          const executableTasks = tasksComposable.groupedTasks.backlog.length +
-                                  tasksComposable.groupedTasks.review.length +
-                                  tasksComposable.groupedTasks.executing.length
+          const executableTasks = (tasksComposable.groupedTasks?.backlog?.length ?? 0) +
+                                  (tasksComposable.groupedTasks?.review?.length ?? 0) +
+                                  (tasksComposable.groupedTasks?.executing?.length ?? 0)
           if (executableTasks === 0) {
             toasts.showToast('No tasks available to execute. Create some tasks first.', 'error')
             return
@@ -636,7 +703,7 @@ window.addEventListener('hashchange', () => {
       @open-template-modal="openModal('task', { mode: 'create', createStatus: 'template' })"
       @open-task-modal="openModal('task', { mode: 'create', createStatus: 'backlog' })"
       @archive-all-done="async () => {
-        if (!confirm(`Archive all ${tasksComposable.groupedTasks.done.length} done task(s)?`)) return
+        if (!confirm(`Archive all ${tasksComposable.groupedTasks?.done?.length ?? 0} done task(s)?`)) return
         await tasksComposable.archiveAllDone()
         toasts.showToast('All done tasks archived', 'success')
       }"
@@ -650,7 +717,7 @@ window.addEventListener('hashchange', () => {
         }
       }"
       @archive-all-stale-runs="async () => {
-        const staleCount = runsComposable.staleRuns.value.length
+        const staleCount = runsComposable.staleRuns?.value?.length ?? 0
         if (staleCount === 0) return
         if (!confirm(`Archive ${staleCount} stale workflow run${staleCount > 1 ? 's' : ''}?`)) return
         try {
@@ -672,7 +739,7 @@ window.addEventListener('hashchange', () => {
 
       <!-- Kanban Board -->
       <KanbanBoard
-        :grouped-tasks="tasksComposable.groupedTasks"
+        :tasks="tasksComposable.tasks"
         :bon-summaries="tasksComposable.bonSummaries"
         :get-task-run-color="runsComposable.getTaskRunColor"
         :is-task-mutation-locked="runsComposable.isTaskMutationLocked"
@@ -680,7 +747,7 @@ window.addEventListener('hashchange', () => {
         :is-multi-selecting="multiSelect.isSelecting.value"
         :get-is-selected="multiSelect.isSelected"
         :column-sorts="optionsComposable.options.columnSorts"
-        @open-task="(id: string) => openModal('task', { taskId: id })"
+        @open-task="(id: string) => openModal('task', { taskId: id, mode: 'edit' })"
         @open-template-modal="openModal('task', { mode: 'create', createStatus: 'template' })"
         @open-task-modal="openModal('task', { mode: 'create', createStatus: 'backlog' })"
         @deploy-template="(id: string) => openModal('task', { mode: 'deploy', seedTaskId: id })"
@@ -694,12 +761,12 @@ window.addEventListener('hashchange', () => {
         @convert-to-template="(id: string) => tasksComposable.updateTask(id, { status: 'template' })"
         @archive-task="tasksComposable.deleteTask"
         @archive-all-done="async () => {
-          if (!confirm(`Archive all ${tasksComposable.groupedTasks.done.length} done task(s)?`)) return
+          if (!confirm(`Archive all ${tasksComposable.groupedTasks?.done?.length ?? 0} done task(s)?`)) return
           await tasksComposable.archiveAllDone()
           toasts.showToast('All done tasks archived', 'success')
         }"
         @view-runs="(id: string) => openModal('bestOfNDetail', { taskId: id })"
-        @continue-reviews="(id: string) => openModal('continueReviews', { taskId: id })"
+        @continue-reviews="(id: string) => tasksComposable.repairTask(id, 'continue_with_more_reviews')"
         @change-column-sort="(status: string, sort: string) => {
           const newSorts = { ...(optionsComposable.options.columnSorts || {}), [status]: sort }
           optionsComposable.updateOptions({ columnSorts: newSorts })
