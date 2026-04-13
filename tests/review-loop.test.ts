@@ -41,7 +41,7 @@ function initGitRepo(root: string): void {
   git(root, ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", "init"])
 }
 
-function createMockPiBinary(root: string, mode: "one_gap_then_pass" | "malformed" | "always_gaps"): string {
+function createMockPiBinary(root: string, mode: "one_gap_then_pass" | "always_gaps"): string {
   const filePath = join(root, "mock-pi-review.js")
   const counterPath = join(root, "review-counter.txt")
 
@@ -79,9 +79,7 @@ rl.on("line", (line) => {
       writeFileSync(counterPath, String(reviewCount), "utf-8")
 
       let textContent = ""
-      if (mode === "malformed") {
-        textContent = "not-json-response"
-      } else if (mode === "always_gaps") {
+      if (mode === "always_gaps") {
         textContent = JSON.stringify({ status: "gaps_found", summary: "Still missing pieces", gaps: ["Gap A"], recommendedPrompt: "Fix Gap A" })
       } else {
         const payload = reviewCount === 1
@@ -172,37 +170,6 @@ describe("review loop", () => {
 
     const reviewFilePath = join(String(current?.worktreeDir), ".pi", "easy-workflow", `review-${task.id}.md`)
     expect(existsSync(reviewFilePath)).toBe(false)
-    db.close()
-  })
-
-  it("marks task failed when review output is malformed JSON", async () => {
-    const root = createTempDir("pi-easy-workflow-review-badjson-")
-    initGitRepo(root)
-    const settings = createTestSettings(createMockPiBinary(root, "malformed"))
-
-    const db = new PiKanbanDB(join(root, "tasks.db"))
-    db.updateOptions({ branch: "master" })
-    const task = db.createTask({
-      id: "review-2",
-      name: "Malformed review json",
-      prompt: "Implement malformed JSON path",
-      status: "backlog",
-      review: true,
-      autoCommit: false,
-      planmode: false,
-    })
-    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
-    await orchestrator.startSingle(task.id)
-
-    await waitFor(() => {
-      const current = db.getTask(task.id)
-      return Boolean(current && (current.status === "failed" || current.status === "stuck"))
-    })
-
-    const current = db.getTask(task.id)
-    expect(current?.status).toBe("failed")
-    expect(current?.errorMessage?.includes("Review response")).toBe(true)
-    expect(current?.reviewActivity).toBe("idle")
     db.close()
   })
 

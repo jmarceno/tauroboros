@@ -483,3 +483,24 @@ export interface ContainerBuildStatus {
   logs: string[]
   canCancel: boolean
 }
+
+// Workflow Run Indicators Types
+
+export interface JsonOutFailEntry {
+  model: string
+  provider: string
+  fails: number
+  lastFailAt: number
+}
+
+export interface WorkflowRunIndicators {
+  id: string
+  jsonOutFails: {
+    "json-output-fails": JsonOutFailEntry[]
+  }
+}
+
+export interface CreateWorkflowRunIndicatorsInput {
+  id: string
+  jsonOutFails?: Record<string, unknown>
+}

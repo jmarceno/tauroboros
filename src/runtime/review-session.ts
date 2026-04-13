@@ -78,6 +78,9 @@ export class PiReviewSessionRunner {
     try {
       parsed = parseStrictJsonObject(response.responseText, "Review response")
     } catch {
+      // Log the JSON parse failure for this model
+      this.db.incrementJsonOutFail(response.session.id, input.model)
+
       parsed = {
         status: "gaps_found",
         summary: `Review model did not return valid JSON. Raw response: ${response.responseText.slice(0, 500)}`,

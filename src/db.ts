@@ -57,8 +57,12 @@ import type {
   ContainerPackage,
   ContainerBuild,
   CreateContainerPackageInput,
+  WorkflowRunIndicators,
+  JsonOutFailEntry,
+  CreateWorkflowRunIndicatorsInput,
 } from "./db/types.ts"
 import { renderTemplate } from "./prompts/renderer.ts"
+import { parseModelSelection } from "./runtime/model-utils.ts"
 import { projectPiEventToSessionMessage } from "./runtime/message-projection.ts"
 
 // Color palette for workflow runs - distinct colors that work well with dark theme
@@ -1374,6 +1378,20 @@ const MIGRATIONS: Migration[] = [
       `,
       `CREATE INDEX IF NOT EXISTS idx_paused_run_states_run_id ON paused_run_states(run_id);`,
       `CREATE INDEX IF NOT EXISTS idx_paused_run_states_paused_at ON paused_run_states(paused_at);`,
+    ],
+  },
+  {
+    version: 9,
+    description: "Add workflow_runs_indicators table for tracking model failure metrics",
+    statements: [
+      `
+      CREATE TABLE IF NOT EXISTS workflow_runs_indicators (
+        id TEXT PRIMARY KEY,
+        json_out_fails TEXT NOT NULL DEFAULT '{"json-output-fails":[]}',
+        FOREIGN KEY (id) REFERENCES workflow_sessions(id) ON DELETE CASCADE
+      );
+      `,
+      `CREATE INDEX IF NOT EXISTS idx_workflow_runs_indicators_id ON workflow_runs_indicators(id);`,
     ],
   },
 ]
@@ -3688,6 +3706,70 @@ export class PiKanbanDB {
     this.db.exec("DELETE FROM paused_run_states")
   }
 
+  // ---- workflow runs indicators ----
+
+  getWorkflowRunIndicators(sessionId: string): WorkflowRunIndicators | null {
+    const row = this.db.prepare("SELECT * FROM workflow_runs_indicators WHERE id = ?").get(sessionId) as Record<string, unknown> | null
+    return row ? rowToWorkflowRunIndicators(row) : null
+  }
+
+  createWorkflowRunIndicators(input: CreateWorkflowRunIndicatorsInput): WorkflowRunIndicators {
+    const defaultFails = { "json-output-fails": [] as JsonOutFailEntry[] }
+    const jsonOutFails = input.jsonOutFails ?? defaultFails
+
+    this.db
+      .prepare("INSERT INTO workflow_runs_indicators (id, json_out_fails) VALUES (?, ?)")
+      .run(input.id, JSON.stringify(jsonOutFails))
+
+    return this.getWorkflowRunIndicators(input.id) as WorkflowRunIndicators
+  }
+
+  incrementJsonOutFail(sessionId: string, model: string): void {
+    const modelSelection = parseModelSelection(model)
+    const provider = modelSelection?.provider ?? "unknown"
+    const modelId = modelSelection?.modelId ?? model
+    const now = nowUnix()
+
+    // Get or create indicators record
+    let indicators = this.getWorkflowRunIndicators(sessionId)
+    if (!indicators) {
+      indicators = this.createWorkflowRunIndicators({ id: sessionId })
+    }
+
+    // Parse existing fails
+    const fails = indicators.jsonOutFails["json-output-fails"] ?? []
+
+    // Find existing entry for this model/provider
+    const existingIndex = fails.findIndex((entry) => entry.model === modelId && entry.provider === provider)
+
+    if (existingIndex >= 0) {
+      // Update existing entry
+      fails[existingIndex].fails += 1
+      fails[existingIndex].lastFailAt = now
+    } else {
+      // Create new entry
+      fails.push({
+        model: modelId,
+        provider,
+        fails: 1,
+        lastFailAt: now,
+      })
+    }
+
+    // Save updated fails
+    const updatedJson = JSON.stringify({ "json-output-fails": fails })
+    this.db.prepare("UPDATE workflow_runs_indicators SET json_out_fails = ? WHERE id = ?").run(updatedJson, sessionId)
+  }
+
+}
+
+// Row converters for indicators
+function rowToWorkflowRunIndicators(row: Record<string, unknown>): WorkflowRunIndicators {
+  const jsonOutFails = parseJSON<{ "json-output-fails": JsonOutFailEntry[] }>(row.json_out_fails, { "json-output-fails": [] })
+  return {
+    id: String(row.id),
+    jsonOutFails,
+  }
 }
 
 // Row converters for container types
