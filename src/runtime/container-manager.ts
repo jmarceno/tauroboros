@@ -1,6 +1,5 @@
 import { spawn, execSync } from "child_process"
 import { randomUUID } from "crypto"
-import { existsSync } from "fs"
 import { ContainerImageManager, type ImageStatusChangeHandler } from "./container-image-manager.ts"
 
 export { ContainerImageManager, type ImageStatusChangeHandler }
@@ -43,12 +42,13 @@ export function createVolumeMounts(
 ): VolumeMount[] {
   const mounts: VolumeMount[] = []
 
-  // Repository root (read-only) - same path inside/outside
+  // Repository root (read-write) - must be writable for git cherry-pick/merge
+  // and worktree metadata operations (.git/worktrees/ etc.)
   mounts.push({
     Source: repoRoot,
     Target: repoRoot,
     Type: "bind",
-    ReadOnly: true,
+    ReadOnly: false,
   })
 
   // Worktree (read-write) - same path inside/outside
@@ -57,14 +57,6 @@ export function createVolumeMounts(
     Target: worktreeDir,
     Type: "bind",
     ReadOnly: false,
-  })
-
-  // Git binary
-  mounts.push({
-    Source: "/usr/bin/git",
-    Target: "/usr/bin/git",
-    Type: "bind",
-    ReadOnly: true,
   })
 
   // Git config - map from host home to container root
@@ -80,24 +72,6 @@ export function createVolumeMounts(
   mounts.push({
     Source: `${homeDir}/.ssh`,
     Target: "/root/.ssh",
-    Type: "bind",
-    ReadOnly: true,
-  })
-
-  // Bun binary (needed for some pi operations)
-  // Detect bun location on host system
-  let bunPath = "/usr/local/bin/bun"
-  try {
-    bunPath = execSync("which bun", { encoding: "utf-8", stdio: "pipe" }).trim()
-  } catch {
-    // Fallback to common locations
-    if (existsSync("/usr/bin/bun")) {
-      bunPath = "/usr/bin/bun"
-    }
-  }
-  mounts.push({
-    Source: bunPath,
-    Target: "/usr/local/bin/bun",
     Type: "bind",
     ReadOnly: true,
   })

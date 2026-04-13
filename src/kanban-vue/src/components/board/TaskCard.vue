@@ -38,6 +38,7 @@ const emit = defineEmits<{
 
 const options = inject<ReturnType<typeof useOptions>>('options')!
 const sessionUsage = inject<ReturnType<typeof useSessionUsage>>('sessionUsage')
+const tasksComposable = inject<ReturnType<typeof useTasks>>('tasks')!
 
 const showOutput = ref(false)
 
@@ -94,7 +95,7 @@ const isAtReviewLimit = computed(() =>
 )
 
 const depIds = computed(() => {
-  const allTasks = inject<ReturnType<typeof useTasks>>('tasks')!.tasks.value
+  const allTasks = tasksComposable.tasks.value
   return (props.task.requirements || [])
     .map(id => allTasks.find(t => t.id === id))
     .filter((dep): dep is Task => dep !== undefined && typeof dep.idx === 'number')

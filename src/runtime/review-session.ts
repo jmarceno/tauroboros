@@ -74,7 +74,17 @@ export class PiReviewSessionRunner {
       onOutput: input.onOutput,
     })
 
-    const parsed = parseStrictJsonObject(response.responseText, "Review response")
+    let parsed: Record<string, unknown>
+    try {
+      parsed = parseStrictJsonObject(response.responseText, "Review response")
+    } catch {
+      parsed = {
+        status: "gaps_found",
+        summary: `Review model did not return valid JSON. Raw response: ${response.responseText.slice(0, 500)}`,
+        gaps: ["Model response was not valid JSON - manual review recommended"],
+        recommendedPrompt: "",
+      }
+    }
     return {
       reviewResult: asReviewResult(parsed),
       responseText: response.responseText,

@@ -70,6 +70,17 @@ console.log('[PREPARE] Initializing git repository...');
 execSync('git init', { cwd: projectDir, stdio: 'ignore' });
 execSync('git config user.email "test@example.com"', { cwd: projectDir, stdio: 'ignore' });
 execSync('git config user.name "Test User"', { cwd: projectDir, stdio: 'ignore' });
+
+// Create .gitignore before initial commit to exclude runtime files
+writeFileSync(join(projectDir, '.gitignore'), [
+  '.pi/',
+  'tasks.db',
+  'tasks.db-shm',
+  'tasks.db-wal',
+  'node_modules/',
+  '.worktrees/',
+].join('\n') + '\n');
+
 writeFileSync(join(projectDir, 'README.md'), '# Test\n');
 execSync('git add .', { cwd: projectDir, stdio: 'ignore' });
 execSync('git commit -m "init"', { cwd: projectDir, stdio: 'ignore' });

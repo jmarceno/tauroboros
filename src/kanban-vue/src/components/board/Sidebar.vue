@@ -48,10 +48,10 @@ const tasks = inject<ReturnType<typeof useTasks>>('tasks')!
 const { version } = useVersion()
 
 // Stats
-const totalTasks = computed(() => tasks.tasks?.value?.length ?? 0)
-const doneCount = computed(() => tasks.groupedTasks?.done?.length ?? 0)
-const activeCount = computed(() => tasks.groupedTasks?.executing?.length ?? 0)
-const reviewCount = computed(() => tasks.groupedTasks?.review?.length ?? 0)
+const totalTasks = computed(() => tasks?.tasks?.value?.length ?? 0)
+const doneCount = computed(() => tasks?.groupedTasks?.value?.done?.length ?? 0)
+const activeCount = computed(() => tasks?.groupedTasks?.value?.executing?.length ?? 0)
+const reviewCount = computed(() => tasks?.groupedTasks?.value?.review?.length ?? 0)
 
 // Active runs
 const safeRuns = computed(() => Array.isArray(props.runs) ? props.runs : [])

@@ -65,16 +65,23 @@ export function buildExecutionVariables(
     userGuidance?: string | null
     isPlanMode?: boolean
   },
+  containerMode = false,
 ): Record<string, unknown> {
   const approvedPlan = planContext?.approvedPlan?.trim()
   const userGuidance = planContext?.userGuidance?.trim()
 
+  let executionIntro = planContext?.isPlanMode
+    ? "The user has approved the plan below. Implement it now."
+    : "Implement the task directly from the task prompt."
+
+  if (containerMode) {
+    executionIntro += "\n\nYou are running inside an isolated container environment. Key information:\n- Both your worktree and the main repository checkout are writable. Git commands (add, commit, cherry-pick, merge, etc.) work normally.\n- The system will handle worktree cleanup after you finish.\n- You are inside a container with Alpine Linux. Some host tools may not be available; use standard git commands for version control.\n- Network access is available for package installation and other tasks."
+  }
+
   return {
     task,
     worktree_dir: worktreeDir,
-    execution_intro: planContext?.isPlanMode
-      ? "The user has approved the plan below. Implement it now."
-      : "Implement the task directly from the task prompt.",
+    execution_intro: executionIntro,
     approved_plan_block: approvedPlan ? `Approved plan:\n${approvedPlan}` : "",
     user_guidance_block: userGuidance ? `User guidance:\n${userGuidance}` : "",
     additional_context_block: asAdditionalContextBlock(options.extraPrompt),
