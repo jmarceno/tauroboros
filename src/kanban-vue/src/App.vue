@@ -174,14 +174,15 @@ useKeyboard({
   onTogglePlanningChat: () => planningChat.togglePanel(),
   onStartWorkflow: async () => {
     // Check if there are any tasks to execute
-    const executableTasks = (tasksComposable.groupedTasks?.backlog?.length ?? 0) + 
-                            (tasksComposable.groupedTasks?.review?.length ?? 0) +
-                            (tasksComposable.groupedTasks?.executing?.length ?? 0)
+    const grouped = tasksComposable.groupedTasks.value
+    const executableTasks = (grouped?.backlog?.length ?? 0) + 
+                            (grouped?.review?.length ?? 0) +
+                            (grouped?.executing?.length ?? 0)
     if (executableTasks === 0) {
       toasts.showToast('No tasks available to execute. Create some tasks first.', 'error')
       return
     }
-    if (optionsComposable.options.showExecutionGraph) {
+    if (optionsComposable.options.value?.showExecutionGraph) {
       openModal('executionGraph')
     } else {
       try {
@@ -195,7 +196,7 @@ useKeyboard({
     }
   },
   onArchiveDone: async () => {
-    const doneTasks = tasksComposable.groupedTasks?.done ?? []
+    const doneTasks = tasksComposable.groupedTasks.value?.done ?? []
     if (doneTasks.length === 0) {
       toasts.showToast('No done tasks to archive', 'error')
       return
@@ -627,14 +628,15 @@ window.addEventListener('hashchange', () => {
           }).catch(e => toasts.showToast('Failed to stop workflow: ' + e.message, 'error'))
         } else {
           // Check if there are any tasks to execute
-          const executableTasks = (tasksComposable.groupedTasks?.backlog?.length ?? 0) +
-                                  (tasksComposable.groupedTasks?.review?.length ?? 0) +
-                                  (tasksComposable.groupedTasks?.executing?.length ?? 0)
+          const grouped = tasksComposable.groupedTasks.value
+          const executableTasks = (grouped?.backlog?.length ?? 0) +
+                                  (grouped?.review?.length ?? 0) +
+                                  (grouped?.executing?.length ?? 0)
           if (executableTasks === 0) {
             toasts.showToast('No tasks available to execute. Create some tasks first.', 'error')
             return
           }
-          if (optionsComposable.options.showExecutionGraph) {
+          if (optionsComposable.options.value?.showExecutionGraph) {
             openModal('executionGraph')
           } else {
             optionsComposable.startExecution().then(() => {

@@ -89,30 +89,54 @@ test.describe('REAL Multi-Task Workflow', () => {
         await fetch('/api/options', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ maxReviews: 2 })
+          body: JSON.stringify({ maxReviews: 2, showExecutionGraph: true })
         });
       } catch (e) {
         console.error('Failed to configure options:', e);
       }
     });
-    await page.waitForTimeout(300);
+    // Wait for options to be applied and WebSocket update to propagate
+    await page.waitForTimeout(1000);
+    console.log('[TEST] Options configured: maxReviews=2, showExecutionGraph=true');
   }
 
   /**
    * Helper: Approve execution graph modal to continue execution
+   * Waits up to 15 seconds for the modal to appear, then clicks Confirm & Start.
    */
   async function approveExecutionGraphModal(page: Page) {
-    const modal = page.locator('.modal-overlay').filter({ hasText: 'Execution Graph' });
-    if (await modal.isVisible().catch(() => false)) {
-      const confirmButton = modal.locator('button').filter({ hasText: 'Confirm & Start' }).first();
-      if (await confirmButton.isVisible().catch(() => false)) {
-        await confirmButton.click();
-        await page.waitForTimeout(1000);
-        console.log('[UI] Approved execution graph modal - execution started');
-        return true;
+    try {
+      // First check if any modal overlay exists
+      const anyModal = page.locator('.modal-overlay');
+      const modalCount = await anyModal.count().catch(() => 0);
+      console.log(`[TEST] Found ${modalCount} modal overlays`);
+      
+      const modal = page.locator('.modal-overlay').filter({ hasText: /Execution Graph/ });
+      await modal.waitFor({ state: 'visible', timeout: 15000 }).catch(() => null);
+      
+      if (!(await modal.isVisible().catch(() => false))) {
+        console.log('[TEST] Execution graph modal not visible after 15s');
+        return false;
       }
+      
+      console.log('[TEST] Execution graph modal is visible');
+      const confirmButton = modal.locator('button').filter({ hasText: 'Confirm & Start' }).first();
+      await confirmButton.waitFor({ state: 'visible', timeout: 5000 }).catch(() => null);
+      
+      if (!(await confirmButton.isVisible().catch(() => false))) {
+        console.log('[TEST] Confirm & Start button not visible');
+        return false;
+      }
+      
+      console.log('[TEST] Clicking Confirm & Start button');
+      await confirmButton.click();
+      await page.waitForTimeout(1500);
+      console.log('[UI] Approved execution graph modal - execution started');
+      return true;
+    } catch (e) {
+      console.log('[TEST] Error in approveExecutionGraphModal:', e);
+      return false;
     }
-    return false;
   }
 
   /**
@@ -303,12 +327,17 @@ test.describe('REAL Multi-Task Workflow', () => {
    * Helper: Start workflow via UI
    */
   async function startWorkflowViaUI(page: Page) {
-    // Find and click the Start Workflow button in the sidebar
     const startButton = page.locator('button').filter({ hasText: 'Start Workflow' }).first();
     await expect(startButton).toBeVisible({ timeout: 10000 });
-    await startButton.click();
     
-    console.log('[UI] Workflow started');
+    // Check if button is enabled
+    const isDisabled = await startButton.isDisabled().catch(() => false);
+    console.log(`[UI] Start Workflow button disabled: ${isDisabled}`);
+    
+    await startButton.click();
+    console.log('[UI] Start Workflow clicked');
+    
+    // Wait for either the modal to appear or execution to start
     await page.waitForTimeout(2000);
   }
 
@@ -357,6 +386,12 @@ End of Log`,
     });
 
     console.log('[TEST] ✓ All 3 tasks created via UI\n');
+
+    // Wait for tasks to be fully loaded in the UI before starting workflow
+    // The groupedTasks computed property needs time to populate after page reloads
+    await page.waitForTimeout(3000);
+    const taskCount = await page.locator('.task-card').count();
+    console.log(`[TEST] Ready to start workflow with ${taskCount} tasks visible`);
 
     // STEP 4: Start the workflow via UI
     await startWorkflowViaUI(page);
@@ -462,6 +497,11 @@ End of Log`,
       name: taskBName,
       prompt: 'Append "Step B executed" to step_order.txt',
     });
+
+    // Wait for tasks to be fully loaded in the UI before starting workflow
+    await page.waitForTimeout(3000);
+    const taskCount = await page.locator('.task-card').count();
+    console.log(`[TEST] Ready to start workflow with ${taskCount} tasks visible`);
 
     // Start workflow via UI
     await startWorkflowViaUI(page);

@@ -86,7 +86,7 @@ export class PiOrchestrator {
     containerManager?: PiContainerManager,
   ) {
     this.sessionManager = new PiSessionManager(db, containerManager, settings)
-    this.reviewRunner = new PiReviewSessionRunner(db, settings)
+    this.reviewRunner = new PiReviewSessionRunner(db, settings, containerManager)
     this.worktree = new WorktreeLifecycle({ baseDirectory: this.projectRoot })
     this.containerManager = containerManager
   }
@@ -98,6 +98,7 @@ export class PiOrchestrator {
   useContainerBackend(manager: PiContainerManager): void {
     this.containerManager = manager
     this.sessionManager = new PiSessionManager(this.db, manager, this.settings)
+    this.reviewRunner = new PiReviewSessionRunner(this.db, this.settings, manager)
   }
 
   /**
