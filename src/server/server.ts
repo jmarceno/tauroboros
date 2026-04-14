@@ -666,6 +666,12 @@ export class PiKanbanServer {
       if (body?.repairThinkingLevel !== undefined && !isThinkingLevel(body.repairThinkingLevel)) {
         return json({ error: "Invalid repairThinkingLevel. Allowed values: default, low, medium, high" }, 400)
       }
+      if (body?.maxJsonParseRetries !== undefined) {
+        const retries = Number(body.maxJsonParseRetries)
+        if (isNaN(retries) || retries < 1 || retries > 20) {
+          return json({ error: "Invalid maxJsonParseRetries. Must be a number between 1 and 20" }, 400)
+        }
+      }
       const options = this.db.updateOptions(body)
       broadcast({ type: "options_updated", payload: options })
       return json(options)

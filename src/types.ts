@@ -63,6 +63,7 @@ export interface Task {
   requirements: string[]
   agentOutput: string
   reviewCount: number
+  jsonParseRetryCount: number
   sessionId: string | null
   sessionUrl: string | null
   worktreeDir: string | null
@@ -194,6 +195,7 @@ export interface Options {
   telegramChatId: string
   telegramNotificationsEnabled: boolean
   maxReviews: number
+  maxJsonParseRetries: number
   columnSorts?: ColumnSortPreferences
 }
 

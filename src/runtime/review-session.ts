@@ -8,8 +8,8 @@ import type { PiContainerManager } from "./container-manager.ts"
 
 function asReviewResult(parsed: Record<string, unknown>): ReviewResult {
   const status = parsed.status
-  if (status !== "pass" && status !== "gaps_found" && status !== "blocked") {
-    throw new Error("Review response JSON must include status: pass|gaps_found|blocked")
+  if (status !== "pass" && status !== "gaps_found" && status !== "blocked" && status !== "json_parse_max_retries") {
+    throw new Error("Review response JSON must include status: pass|gaps_found|blocked|json_parse_max_retries")
   }
 
   const summary = typeof parsed.summary === "string" && parsed.summary.trim()
@@ -40,6 +40,8 @@ export interface RunReviewScratchInput {
   reviewFilePath: string
   model: string
   thinkingLevel: ThinkingLevel
+  maxJsonParseRetries: number
+  currentJsonParseRetryCount: number
   onOutput?: (chunk: string) => void
   onSessionCreated?: (process: import("./container-pi-process.ts").ContainerPiProcess | import("./pi-process.ts").PiRpcProcess, session: import("../db/types.ts").PiWorkflowSession) => void
 }
@@ -48,6 +50,7 @@ export interface RunReviewScratchResult {
   reviewResult: ReviewResult
   responseText: string
   sessionId: string
+  jsonParseRetryCount: number
 }
 
 export class PiReviewSessionRunner {
@@ -80,16 +83,35 @@ export class PiReviewSessionRunner {
     })
 
     let parsed: Record<string, unknown>
+    let jsonParseFailed = false
     try {
       parsed = parseStrictJsonObject(response.responseText, "Review response")
     } catch {
       // Log the JSON parse failure for this model
       this.db.incrementJsonOutFail(response.session.id, input.model)
+      jsonParseFailed = true
+
+      // Check if we've exceeded max retries
+      const newRetryCount = input.currentJsonParseRetryCount + 1
+      if (newRetryCount >= input.maxJsonParseRetries) {
+        // Return special status to indicate max retries exceeded
+        return {
+          reviewResult: {
+            status: "json_parse_max_retries",
+            summary: `Max JSON parse retries (${input.maxJsonParseRetries}) reached. The review model is not returning valid JSON.`,
+            gaps: ["Model consistently returns invalid JSON - task marked as stuck"],
+            recommendedPrompt: "",
+          },
+          responseText: response.responseText,
+          sessionId: response.session.id,
+          jsonParseRetryCount: newRetryCount,
+        }
+      }
 
       parsed = {
         status: "gaps_found",
-        summary: `Review model did not return valid JSON. Raw response: ${response.responseText.slice(0, 500)}`,
-        gaps: ["Model response was not valid JSON - manual review recommended"],
+        summary: `Review model did not return valid JSON (retry ${newRetryCount}/${input.maxJsonParseRetries}). Raw response: ${response.responseText.slice(0, 500)}`,
+        gaps: ["Model response was not valid JSON - retrying with fix"],
         recommendedPrompt: "",
       }
     }
@@ -97,6 +119,7 @@ export class PiReviewSessionRunner {
       reviewResult: asReviewResult(parsed),
       responseText: response.responseText,
       sessionId: response.session.id,
+      jsonParseRetryCount: jsonParseFailed ? input.currentJsonParseRetryCount + 1 : 0,
     }
   }
 }

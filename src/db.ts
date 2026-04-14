@@ -529,6 +529,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     requirements: parseJSON<string[]>(row.requirements, []),
     agentOutput: String(row.agent_output ?? ""),
     reviewCount: Number(row.review_count ?? 0),
+    jsonParseRetryCount: Number(row.json_parse_retry_count ?? 0),
     sessionId: row.session_id ? String(row.session_id) : null,
     sessionUrl: row.session_url ? String(row.session_url) : null,
     worktreeDir: row.worktree_dir ? String(row.worktree_dir) : null,
@@ -919,6 +920,7 @@ const MIGRATIONS: Migration[] = [
         requirements TEXT NOT NULL DEFAULT '[]',
         agent_output TEXT NOT NULL DEFAULT '',
         review_count INTEGER NOT NULL DEFAULT 0,
+        json_parse_retry_count INTEGER NOT NULL DEFAULT 0,
         session_id TEXT,
         session_url TEXT,
         worktree_dir TEXT,
@@ -1588,6 +1590,10 @@ export class PiKanbanDB {
     if (input.reviewCount !== undefined) {
       sets.push("review_count = ?")
       values.push(input.reviewCount)
+    }
+    if (input.jsonParseRetryCount !== undefined) {
+      sets.push("json_parse_retry_count = ?")
+      values.push(input.jsonParseRetryCount)
     }
     if (input.completedAt !== undefined) {
       sets.push("completed_at = ?")
@@ -2810,6 +2816,7 @@ export class PiKanbanDB {
       telegramChatId: getValue("telegram_chat_id"),
       telegramNotificationsEnabled: getBoolean("telegram_notifications_enabled"),
       maxReviews: getNumber("max_reviews"),
+      maxJsonParseRetries: getNumber("max_json_parse_retries") || 5,
       columnSorts,
     }
   }
@@ -2841,6 +2848,7 @@ export class PiKanbanDB {
     if (partial.telegramChatId !== undefined) upsert.run("telegram_chat_id", partial.telegramChatId)
     if (partial.telegramNotificationsEnabled !== undefined) upsert.run("telegram_notifications_enabled", String(partial.telegramNotificationsEnabled))
     if (partial.maxReviews !== undefined) upsert.run("max_reviews", String(partial.maxReviews))
+    if (partial.maxJsonParseRetries !== undefined) upsert.run("max_json_parse_retries", String(partial.maxJsonParseRetries))
     if (partial.columnSorts !== undefined) upsert.run("column_sorts", JSON.stringify(partial.columnSorts))
 
     return this.getOptions()

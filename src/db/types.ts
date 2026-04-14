@@ -278,6 +278,7 @@ export interface UpdateTaskInput {
   worktreeDir?: string | null
   errorMessage?: string | null
   reviewCount?: number
+  jsonParseRetryCount?: number
   completedAt?: number | null
   thinkingLevel?: ThinkingLevel
   planThinkingLevel?: ThinkingLevel

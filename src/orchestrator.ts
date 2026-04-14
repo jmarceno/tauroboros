@@ -1310,7 +1310,9 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     if (!originalTask) return false
 
     let reviewCount = originalTask.reviewCount
+    let jsonParseRetryCount = originalTask.jsonParseRetryCount
     const maxRuns = originalTask.maxReviewRunsOverride ?? options.maxReviews
+    const maxJsonParseRetries = options.maxJsonParseRetries || 5
     const reviewFilePath = this.buildReviewFile(originalTask, worktreeInfo.directory)
 
     try {
@@ -1333,6 +1335,8 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           reviewFilePath,
           model: options.reviewModel,
           thinkingLevel: options.reviewThinkingLevel,
+          maxJsonParseRetries,
+          currentJsonParseRetryCount: jsonParseRetryCount,
           onSessionCreated: (process, startedSession) => {
             // Track review sessions for pause/stop operations
             this.activeSessionProcesses.set(startedSession.id, {
@@ -1346,18 +1350,32 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           sessionId: reviewRun.sessionId,
           sessionUrl: this.sessionUrlFor(reviewRun.sessionId),
           reviewActivity: "idle",
+          jsonParseRetryCount: reviewRun.jsonParseRetryCount,
         })
         this.broadcastTask(taskId)
 
         // Increment reviewCount after every review attempt (pass or fail)
         reviewCount += 1
-        this.db.updateTask(taskId, { reviewCount, reviewActivity: "idle" })
+        jsonParseRetryCount = reviewRun.jsonParseRetryCount
+        this.db.updateTask(taskId, { reviewCount, reviewActivity: "idle", jsonParseRetryCount })
         this.broadcastTask(taskId)
 
         if (reviewRun.reviewResult.status === "pass") {
-          this.db.updateTask(taskId, { status: "executing", reviewActivity: "idle" })
+          this.db.updateTask(taskId, { status: "executing", reviewActivity: "idle", jsonParseRetryCount: 0 })
           this.broadcastTask(taskId)
           return true
+        }
+
+        if (reviewRun.reviewResult.status === "json_parse_max_retries") {
+          this.db.updateTask(taskId, {
+            status: "stuck",
+            reviewCount,
+            reviewActivity: "idle",
+            jsonParseRetryCount: reviewRun.jsonParseRetryCount,
+            errorMessage: reviewRun.reviewResult.summary,
+          })
+          this.broadcastTask(taskId)
+          return false
         }
 
         if (reviewRun.reviewResult.status === "blocked") {
@@ -1723,6 +1741,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     return this.db.updateTask(taskId, {
       status: "backlog",
       reviewCount: 0,
+      jsonParseRetryCount: 0,
       errorMessage: null,
       completedAt: null,
       sessionId: null,

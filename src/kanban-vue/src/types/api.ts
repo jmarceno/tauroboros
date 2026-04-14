@@ -31,6 +31,7 @@ export interface Task {
   bestOfNConfig?: BestOfNConfig
   bestOfNSubstage?: BestOfNSubstage
   reviewCount: number
+  jsonParseRetryCount: number
   maxReviewRunsOverride?: number
   planRevisionCount: number
   agentOutput?: string
@@ -153,6 +154,7 @@ export interface Options {
   extraPrompt?: string
   parallelTasks: number
   maxReviews: number
+  maxJsonParseRetries: number
   showExecutionGraph?: boolean
   autoDeleteNormalSessions?: boolean
   autoDeleteReviewSessions?: boolean

@@ -87,12 +87,24 @@ const effectiveMaxReviews = computed(() =>
   props.task.maxReviewRunsOverride ?? options.options?.maxReviews ?? 2
 )
 
+const effectiveMaxJsonParseRetries = computed(() =>
+  options.options?.maxJsonParseRetries ?? 5
+)
+
 const isNearReviewLimit = computed(() =>
   props.task.reviewCount >= effectiveMaxReviews.value - 1
 )
 
 const isAtReviewLimit = computed(() =>
   props.task.reviewCount >= effectiveMaxReviews.value
+)
+
+const hasJsonParseRetries = computed(() =>
+  props.task.jsonParseRetryCount > 0 && props.task.status === 'review'
+)
+
+const isNearJsonParseLimit = computed(() =>
+  props.task.jsonParseRetryCount >= effectiveMaxJsonParseRetries.value - 1
 )
 
 const depIds = computed(() => {
@@ -310,6 +322,16 @@ onUnmounted(() => {
         ]"
       >
         review {{ task.reviewCount }}/{{ effectiveMaxReviews }}
+      </span>
+      <span
+        v-if="hasJsonParseRetries"
+        :class="[
+          'task-tag',
+          isNearJsonParseLimit ? 'border-accent-danger/30 text-accent-danger' : 'border-accent-warning/30 text-accent-warning'
+        ]"
+        :title="'JSON parse failures: ' + task.jsonParseRetryCount + '/' + effectiveMaxJsonParseRetries"
+      >
+        json retry {{ task.jsonParseRetryCount }}/{{ effectiveMaxJsonParseRetries }}
       </span>
       <span
         v-if="task.executionStrategy === 'best_of_n'"

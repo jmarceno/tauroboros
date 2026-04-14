@@ -262,6 +262,15 @@ const closeOnOverlay = (e: MouseEvent) => {
             <input v-model.number="form!.maxReviews" type="number" min="1" max="10" class="form-input" />
           </div>
 
+          <!-- Max JSON Parse Retries -->
+          <div class="form-group">
+            <div class="label-row">
+              <label>Maximum JSON Parse Retries</label>
+              <span class="help-btn" title="Maximum consecutive retries when a review response fails JSON parsing before marking task as stuck. Resets when a valid JSON response is received.">?</span>
+            </div>
+            <input v-model.number="form!.maxJsonParseRetries" type="number" min="1" max="20" class="form-input" />
+          </div>
+
           <!-- Session Cleanup -->
           <div class="form-group">
             <div class="label-row">
