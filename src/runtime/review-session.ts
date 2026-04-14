@@ -41,6 +41,7 @@ export interface RunReviewScratchInput {
   model: string
   thinkingLevel: ThinkingLevel
   onOutput?: (chunk: string) => void
+  onSessionCreated?: (process: import("./container-pi-process.ts").ContainerPiProcess | import("./pi-process.ts").PiRpcProcess, session: import("../db/types.ts").PiWorkflowSession) => void
 }
 
 export interface RunReviewScratchResult {
@@ -56,8 +57,11 @@ export class PiReviewSessionRunner {
     private readonly db: PiKanbanDB,
     private readonly settings?: InfrastructureSettings,
     containerManager?: PiContainerManager,
+    externalSessionManager?: PiSessionManager,
   ) {
-    this.sessions = new PiSessionManager(db, containerManager, settings)
+    // Use external session manager if provided (for proper process tracking in orchestrator)
+    // Otherwise create our own (for backward compatibility)
+    this.sessions = externalSessionManager ?? new PiSessionManager(db, containerManager, settings)
   }
 
   async run(input: RunReviewScratchInput): Promise<RunReviewScratchResult> {
@@ -72,6 +76,7 @@ export class PiReviewSessionRunner {
       thinkingLevel: input.thinkingLevel,
       promptText: rendered.renderedText,
       onOutput: input.onOutput,
+      onSessionCreated: input.onSessionCreated,
     })
 
     let parsed: Record<string, unknown>

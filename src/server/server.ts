@@ -750,9 +750,9 @@ export class PiKanbanServer {
       try {
         if (this.onPauseRun) {
           const result = await this.onPauseRun(params.id)
-          if (result) {
+          if (result && result.success) {
             broadcast({ type: "run_paused", payload: { runId: params.id } })
-            return json({ success: true, run: result })
+            return json({ success: true, run: result.run })
           }
         }
         // Fallback to just updating the database status
@@ -770,10 +770,10 @@ export class PiKanbanServer {
     this.router.post("/api/runs/:id/resume", async ({ params, json, broadcast }) => {
       try {
         if (this.onResumeRun) {
-          const result = await this.onResumeRun(params.id)
-          if (result) {
+          const run = await this.onResumeRun(params.id)
+          if (run) {
             broadcast({ type: "run_resumed", payload: { runId: params.id } })
-            return json({ success: true, run: result })
+            return json({ success: true, run })
           }
         }
         // Fallback to just updating the database status
@@ -793,21 +793,23 @@ export class PiKanbanServer {
         const body = await req.json().catch(() => ({}))
         const destructive = body?.destructive === true
 
-        if (this.onStopRun) {
-          const result = await this.onStopRun(params.id, { destructive })
-          if (result) {
-            if (destructive) {
-              broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
-            }
-            return json(result)
-          }
+        if (!this.onStopRun) {
+          return json({ error: "Stop handler not available" }, 503)
         }
-        // Fallback to just updating the database status
-        const updated = this.db.updateWorkflowRun(params.id, { stopRequested: true, status: "stopping" })
-        if (!updated) return json({ error: "Run not found" }, 404)
-        broadcast({ type: "run_updated", payload: updated })
-        return json({ success: true, run: updated })
+
+        const result = await this.onStopRun(params.id, { destructive })
+        
+        // Ensure we always have a valid result
+        if (!result || !result.run) {
+          return json({ error: "Failed to stop run - no result from orchestrator" }, 500)
+        }
+        
+        if (destructive) {
+          broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
+        }
+        return json(result)
       } catch (error) {
+        console.error(`[API /runs/:id/stop] Error stopping run ${params.id}:`, error)
         const message = error instanceof Error ? error.message : String(error)
         return json({ error: message }, 500)
       }

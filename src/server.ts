@@ -75,7 +75,9 @@ export function createPiServer(options: CreateServerOptions = {}): {
     },
     onPauseRun: async (runId: string) => {
       if (!orchestrator) throw new Error("Orchestrator unavailable")
-      return await orchestrator.pauseRun(runId)
+      const success = await orchestrator.pauseRun(runId)
+      const run = db.getWorkflowRun(runId)
+      return { success, run }
     },
     onResumeRun: async (runId: string) => {
       if (!orchestrator) throw new Error("Orchestrator unavailable")

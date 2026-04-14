@@ -23,15 +23,15 @@ const isVisible = computed(() => props.isOpen)
         <div class="modal-container" @click.stop>
           <div class="modal-header">
             <div class="flex items-center gap-3">
-              <div class="w-10 h-10 rounded-full bg-accent-warning/10 flex items-center justify-center">
-                <svg class="w-5 h-5 text-accent-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <div class="w-10 h-10 rounded-full bg-accent-danger/20 flex items-center justify-center">
+                <svg class="w-5 h-5 text-accent-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.71 3.86a2 2 0 00-3.42 0z"/>
                   <line x1="12" y1="9" x2="12" y2="13"/>
                   <line x1="12" y1="17" x2="12.01" y2="17"/>
                 </svg>
               </div>
               <div>
-                <h3 class="modal-title text-lg font-semibold text-dark-text">Stop Workflow</h3>
+                <h3 class="modal-title text-lg font-semibold text-dark-text">STOP - Data Will Be Lost</h3>
                 <p class="text-sm text-dark-text-secondary mt-0.5">
                   {{ runName || 'Current workflow run' }}
                 </p>
@@ -40,42 +40,22 @@ const isVisible = computed(() => props.isOpen)
           </div>
 
           <div class="modal-body">
-            <div class="bg-accent-warning/5 border border-accent-warning/20 rounded-lg p-4 mb-6">
+            <div class="bg-accent-danger/10 border border-accent-danger/30 rounded-lg p-4 mb-6">
               <div class="flex items-start gap-3">
-                <svg class="w-5 h-5 text-accent-warning flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg class="w-5 h-5 text-accent-danger flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                 </svg>
                 <div class="text-sm text-dark-text">
-                  <p class="font-medium text-accent-warning mb-1">Are you sure you want to stop this workflow?</p>
+                  <p class="font-medium text-accent-danger mb-1">Stop will delete all containers and lose data</p>
                   <p class="text-dark-text-secondary">
-                    Choose how you want to stop the workflow. The destructive option will lose any uncommitted work.
+                    STOP kills all running agents immediately and deletes containers. Any uncommitted work will be lost. Use PAUSE if you want to preserve state.
                   </p>
                 </div>
               </div>
             </div>
 
             <div class="options-grid">
-              <!-- Graceful Stop -->
-              <button
-                class="option-btn graceful"
-                :disabled="isStopping"
-                @click="emit('confirmGraceful')"
-              >
-                <div class="option-icon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="6" y="4" width="4" height="16"/>
-                    <rect x="14" y="4" width="4" height="16"/>
-                  </svg>
-                </div>
-                <div class="option-content">
-                  <div class="option-title">Pause & Stop Gracefully</div>
-                  <div class="option-desc">
-                    Stop after current task completes. Work is preserved and can be resumed.
-                  </div>
-                </div>
-              </button>
-
-              <!-- Destructive Stop -->
+              <!-- Destructive Stop (Default/Primary) -->
               <button
                 class="option-btn destructive"
                 :disabled="isStopping"
@@ -90,9 +70,29 @@ const isVisible = computed(() => props.isOpen)
                   </svg>
                 </div>
                 <div class="option-content">
-                  <div class="option-title">Stop & Delete Everything</div>
+                  <div class="option-title">STOP - Kill Everything</div>
                   <div class="option-desc">
-                    <span class="text-accent-danger font-medium">Danger:</span> Kills all agents, deletes containers & worktrees immediately. All work is lost.
+                    <span class="text-accent-danger font-medium">Data will be lost.</span> Kills all agents, deletes containers & worktrees immediately.
+                  </div>
+                </div>
+              </button>
+
+              <!-- Graceful Stop / Pause Alternative -->
+              <button
+                class="option-btn graceful"
+                :disabled="isStopping"
+                @click="emit('confirmGraceful')"
+              >
+                <div class="option-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="6" y="4" width="4" height="16"/>
+                    <rect x="14" y="4" width="4" height="16"/>
+                  </svg>
+                </div>
+                <div class="option-content">
+                  <div class="option-title">PAUSE Instead (Preserve Work)</div>
+                  <div class="option-desc">
+                    Use the PAUSE button on the sidebar to gracefully stop and preserve all work for resuming later.
                   </div>
                 </div>
               </button>

@@ -509,10 +509,12 @@ ws.on('execution_started', () => {
 
 ws.on('execution_stopped', () => {
   toasts.addLog('Workflow execution stopped', 'info')
+  workflowControl.updateStateFromRuns(runsComposable.runs.value)
 })
 
 ws.on('execution_complete', () => {
   toasts.addLog('Workflow execution completed', 'success')
+  workflowControl.updateStateFromRuns(runsComposable.runs.value)
 })
 
 // State resync on WebSocket reconnection
@@ -897,25 +899,28 @@ window.addEventListener('hashchange', () => {
         workflowControl.cancelStop()
       }"
       @confirm-graceful="async () => {
-        toasts.showToast('Stopping workflow gracefully...', 'info')
+        toasts.showToast('Pausing workflow gracefully...', 'info')
+        // User clicked PAUSE option in the modal - switch to graceful stop
+        workflowControl.requestStop('graceful')
         const success = await workflowControl.confirmStop()
         if (success) {
-          toasts.showToast('Workflow stopped gracefully', 'success')
+          toasts.showToast('Workflow paused gracefully - work preserved', 'success')
           runsComposable.loadRuns()
         } else {
-          toasts.showToast(workflowControl.error.value || 'Failed to stop workflow', 'error')
+          toasts.showToast(workflowControl.error.value || 'Failed to pause workflow', 'error')
         }
       }"
       @confirm-destructive="async () => {
-        toasts.showToast('Force stopping workflow...', 'info')
+        toasts.showToast('STOPPING workflow - killing all containers...', 'info')
+        // stopType is already 'destructive' from when modal opened
         const success = await workflowControl.confirmStop()
         if (success) {
           const result = workflowControl.lastResult.value
-          toasts.showToast(`Workflow force stopped. Killed ${result?.killed || 0} processes, cleaned ${result?.cleaned || 0} resources.`, 'success')
+          toasts.showToast(`Workflow STOPPED. Killed ${result?.killed || 0} processes, deleted ${result?.cleaned || 0} containers.`, 'warning')
           runsComposable.loadRuns()
           tasksComposable.loadTasks()
         } else {
-          toasts.showToast(workflowControl.error.value || 'Failed to force stop workflow', 'error')
+          toasts.showToast(workflowControl.error.value || 'Failed to stop workflow', 'error')
         }
       }"
     />

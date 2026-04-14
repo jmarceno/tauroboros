@@ -86,7 +86,8 @@ export class PiOrchestrator {
     containerManager?: PiContainerManager,
   ) {
     this.sessionManager = new PiSessionManager(db, containerManager, settings)
-    this.reviewRunner = new PiReviewSessionRunner(db, settings, containerManager)
+    // Pass the same session manager to review runner for proper process tracking
+    this.reviewRunner = new PiReviewSessionRunner(db, settings, containerManager, this.sessionManager)
     this.worktree = new WorktreeLifecycle({ baseDirectory: this.projectRoot })
     this.containerManager = containerManager
   }
@@ -98,17 +99,75 @@ export class PiOrchestrator {
   useContainerBackend(manager: PiContainerManager): void {
     this.containerManager = manager
     this.sessionManager = new PiSessionManager(this.db, manager, this.settings)
-    this.reviewRunner = new PiReviewSessionRunner(this.db, this.settings, manager)
+    // Update review runner to use the new session manager
+    this.reviewRunner = new PiReviewSessionRunner(this.db, this.settings, manager, this.sessionManager)
   }
 
   /**
    * Detect and clean up stale workflow runs that are in active status but have no executing tasks.
    * This is a defensive check to prevent ghost runs from blocking new executions.
    */
-  private cleanupStaleRuns(): void {
+  private async cleanupStaleRuns(): Promise<void> {
     const activeRuns = this.db.getWorkflowRuns().filter((r) => r.status === "running" || r.status === "stopping" || r.status === "paused")
 
     for (const run of activeRuns) {
+      // Runs in "stopping" status should be force-completed - the user requested a stop
+      if (run.status === "stopping") {
+        console.log(`[orchestrator] Force-completing stopping run ${run.id}`)
+        
+        // Kill ALL active tracked sessions to unblock runInBackground immediately
+        // Don't rely on task.sessionId which may not be set yet (race condition)
+        console.log(`[orchestrator] Killing ${this.activeSessionProcesses.size} active sessions during force-complete`)
+        for (const [sessionId, activeProcess] of this.activeSessionProcesses) {
+          console.log(`[orchestrator] Killing session ${sessionId} during force-complete`)
+          if ("forceKill" in activeProcess.process) {
+            await activeProcess.process.forceKill()
+          }
+        }
+        // Clear all tracked sessions
+        this.activeSessionProcesses.clear()
+
+        // Reset any executing/review tasks in this run back to backlog
+        for (const taskId of run.taskOrder ?? []) {
+          const task = this.db.getTask(taskId)
+          if (task && (task.status === "executing" || task.status === "review")) {
+            this.db.updateTask(taskId, {
+              status: "backlog",
+              errorMessage: "Auto-recovered: workflow was stopping",
+              sessionId: null,
+              sessionUrl: null,
+            })
+            this.broadcastTask(taskId)
+          }
+        }
+
+        // Mark the run as completed
+        const updated = this.db.updateWorkflowRun(run.id, {
+          status: "completed",
+          stopRequested: true,
+          finishedAt: nowUnix(),
+        })
+        if (updated) {
+          this.broadcast({ type: "run_updated", payload: updated })
+          this.broadcast({ type: "execution_stopped", payload: {} })
+          console.log(`[orchestrator] Force-completed stopping run ${run.id}`)
+        }
+
+        // Reset orchestrator state if this was the current run
+        if (this.currentRunId === run.id) {
+          this.running = false
+          this.shouldStop = false
+          this.shouldPause = false
+          this.isPaused = false
+          this.currentRunId = null
+          this.activeBestOfNRunner = null
+          this.activeWorktreeInfo = null
+          this.activeTask = null
+          sessionPauseStateManager.clear()
+        }
+        continue
+      }
+
       // Check if any tasks in the taskOrder are actually executing
       const hasExecutingTask = run.taskOrder?.some((taskId) => {
         const task = this.db.getTask(taskId)
@@ -126,13 +185,56 @@ export class PiOrchestrator {
           this.broadcast({ type: "run_updated", payload: updated })
           console.log(`[orchestrator] Cleaned up stale run ${run.id} (was ${run.status})`)
         }
+
+        // Reset orphaned task statuses back to backlog
+        for (const taskId of run.taskOrder ?? []) {
+          const task = this.db.getTask(taskId)
+          if (task && (task.status === "executing" || task.status === "review")) {
+            this.db.updateTask(taskId, {
+              status: "backlog",
+              errorMessage: "Auto-recovered: workflow run was stale",
+              sessionId: null,
+              sessionUrl: null,
+            })
+            this.broadcastTask(taskId)
+          }
+        }
+
+        // Reset orchestrator internal state if this was the current run
+        if (this.currentRunId === run.id) {
+          console.log(`[orchestrator] Resetting orchestrator state for cleaned-up run ${run.id}`)
+          this.running = false
+          this.shouldStop = false
+          this.shouldPause = false
+          this.isPaused = false
+          this.currentRunId = null
+          this.activeBestOfNRunner = null
+          this.activeWorktreeInfo = null
+          this.activeTask = null
+          sessionPauseStateManager.clear()
+          this.broadcast({ type: "execution_stopped", payload: {} })
+        }
       }
+    }
+
+    // Safety net: if running is true but no active runs exist in the DB, reset state
+    if (this.running && activeRuns.length === 0) {
+      console.log(`[orchestrator] Running flag set but no active runs found - resetting state`)
+      this.running = false
+      this.shouldStop = false
+      this.shouldPause = false
+      this.isPaused = false
+      this.currentRunId = null
+      this.activeBestOfNRunner = null
+      this.activeWorktreeInfo = null
+      this.activeTask = null
+      sessionPauseStateManager.clear()
     }
   }
 
   async startAll(): Promise<WorkflowRun> {
     // Phase 2: Clean up any stale runs before checking if already executing
-    this.cleanupStaleRuns()
+    await this.cleanupStaleRuns()
 
     if (this.running) throw new Error("Already executing")
 
@@ -165,7 +267,7 @@ export class PiOrchestrator {
 
   async startSingle(taskId: string): Promise<WorkflowRun> {
     // Phase 2: Clean up any stale runs before checking if already executing
-    this.cleanupStaleRuns()
+    await this.cleanupStaleRuns()
 
     if (this.running) throw new Error("Already executing")
     const chain = resolveExecutionTasks(this.db.getTasks(), taskId)
@@ -196,8 +298,8 @@ export class PiOrchestrator {
   }
 
   /**
-   * Request graceful stop of a specific workflow run by ID.
-   * Sets flags that will be checked in the execution loop.
+   * Stop (kill - SIGKILL) of a specific workflow run by ID.
+   * Sets flags that will be checked in the execution loop and kills active sessions.
    */
   async stopRun(runId: string): Promise<void> {
     const run = this.db.getWorkflowRun(runId)
@@ -206,27 +308,75 @@ export class PiOrchestrator {
       return
     }
 
-    if (run.status !== "running" && run.status !== "paused") {
-      console.error(`[orchestrator] Cannot stop: run ${runId} is not running or paused (status: ${run.status})`)
+    if (run.status !== "running" && run.status !== "paused" && run.status !== "stopping") {
+      console.error(`[orchestrator] Cannot stop: run ${runId} is not running, paused, or stopping (status: ${run.status})`)
       return
     }
 
     console.log(`[orchestrator] Graceful stop requested for run ${runId}`)
     this.shouldStop = true
 
+    // Kill ALL active tracked sessions immediately with SIGKILL
+    // This kills both sessions with task.sessionId set AND those that are tracked
+    // but haven't had their sessionId saved to the task yet (race condition)
+    console.log(`[orchestrator] Killing ${this.activeSessionProcesses.size} active sessions for stop`)
+    for (const [sessionId, activeProcess] of this.activeSessionProcesses) {
+      console.log(`[orchestrator] Killing session ${sessionId} with SIGKILL`)
+      if ("forceKill" in activeProcess.process) {
+        await activeProcess.process.forceKill("SIGKILL")
+      }
+    }
+    // Clear all tracked sessions
+    this.activeSessionProcesses.clear()
+
+    // Reset any executing/review tasks back to backlog immediately
+    for (const taskId of run.taskOrder ?? []) {
+      const task = this.db.getTask(taskId)
+      if (task && (task.status === "executing" || task.status === "review")) {
+        this.db.updateTask(taskId, {
+          status: "backlog",
+          errorMessage: "Workflow stopped by user",
+          sessionId: null,
+          sessionUrl: null,
+        })
+        this.broadcastTask(taskId)
+      }
+    }
+
+    // Mark the run as completed immediately - do not wait
     const updated = this.db.updateWorkflowRun(runId, {
-      status: "stopping",
+      status: "completed",
       stopRequested: true,
+      finishedAt: nowUnix(),
     })
-    if (updated) this.broadcast({ type: "run_updated", payload: updated })
+    if (updated) {
+      this.broadcast({ type: "run_updated", payload: updated })
+      this.broadcast({ type: "execution_stopped", payload: { runId } })
+      console.log(`[orchestrator] Run ${runId} stopped immediately`)
+    }
+
+    // Reset orchestrator state if this was the current run
+    if (this.currentRunId === runId) {
+      this.running = false
+      this.shouldStop = false
+      this.shouldPause = false
+      this.isPaused = false
+      this.currentRunId = null
+      this.activeBestOfNRunner = null
+      this.activeWorktreeInfo = null
+      this.activeTask = null
+      sessionPauseStateManager.clear()
+    }
   }
 
   /**
-   * Request graceful stop of current workflow run (backward compatibility).
+   * Request destructive stop of current workflow run.
+   * This is the main STOP action - it kills everything and loses data.
    */
   async stop(): Promise<void> {
     if (!this.currentRunId) return
-    return this.stopRun(this.currentRunId)
+    // STOP is destructive by design - kills containers, loses data
+    await this.destructiveStop(this.currentRunId)
   }
 
   /**
@@ -460,6 +610,31 @@ export class PiOrchestrator {
     }
 
     this.broadcast({ type: "execution_paused", payload: { runId } })
+
+    // SAFETY NET: Set a timeout to ensure the run doesn't get stuck in a transitional state
+    // This handles edge cases where runInBackground hasn't exited yet
+    const SAFETY_TIMEOUT_MS = 5000 // 5 seconds should be plenty for cleanup
+    setTimeout(() => {
+      const currentRun = this.db.getWorkflowRun(runId)
+      if (currentRun?.status === "running" && this.shouldPause) {
+        console.log(`[orchestrator] Safety timeout: force-pausing run ${runId} that was still running`)
+        
+        // Update run status to paused
+        const pausedRun = this.db.updateWorkflowRun(runId, {
+          status: "paused",
+          pauseRequested: true,
+        })
+        if (pausedRun) {
+          this.broadcast({ type: "run_updated", payload: pausedRun })
+        }
+
+        // Update orchestrator state
+        if (this.currentRunId === runId) {
+          this.isPaused = true
+          this.running = false
+        }
+      }
+    }, SAFETY_TIMEOUT_MS)
 
     return true
   }
@@ -919,8 +1094,8 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         this.broadcast({ type: "execution_complete", payload: {} })
       }
     } catch (error) {
-      // Don't mark as failed if we were paused
-      if (this.shouldPause) {
+      // Don't mark as failed if we were paused or stopped
+      if (this.shouldPause || this.shouldStop) {
         return
       }
       const message = error instanceof Error ? error.message : String(error)
@@ -933,13 +1108,22 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       this.broadcast({ type: "error", payload: { message } })
     } finally {
       if (!this.shouldPause) {
-        this.running = false
-        this.currentRunId = null
-        this.activeBestOfNRunner = null
-        this.activeWorktreeInfo = null
-        this.activeTask = null
-        sessionPauseStateManager.clear()
-        this.broadcast({ type: "execution_stopped", payload: {} })
+        // Only reset orchestrator state if this run is still the current run.
+        // If cleanupStaleRuns() or destructiveStop() has already started a new run,
+        // we must not corrupt that new run's state.
+        if (this.currentRunId === runId) {
+          this.running = false
+          this.currentRunId = null
+          this.activeBestOfNRunner = null
+          this.activeWorktreeInfo = null
+          this.activeTask = null
+          sessionPauseStateManager.clear()
+          this.broadcast({ type: "execution_stopped", payload: {} })
+        } else {
+          // This run was already cleaned up by another operation (e.g., destructiveStop
+          // or cleanupStaleRuns started a new run). Just broadcast that this run stopped.
+          this.broadcast({ type: "execution_stopped", payload: { runId, replaced: true } })
+        }
       }
     }
   }
@@ -982,6 +1166,14 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         sessionUrlFor: this.sessionUrlFor,
         containerManager: this.containerManager,
         settings: this.settings,
+        externalSessionManager: this.sessionManager,
+        onSessionCreated: (process, startedSession) => {
+          // Track BestOfN sessions for pause/stop operations
+          this.activeSessionProcesses.set(startedSession.id, {
+            process,
+            session: startedSession,
+          })
+        },
       })
       this.activeBestOfNRunner = bestOfNRunner
       await bestOfNRunner.run(task, options)
@@ -1075,6 +1267,10 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       })
       this.broadcastTask(task.id)
     } catch (error) {
+      // Don't mark as failed if we were stopped
+      if (this.shouldStop) {
+        throw error
+      }
       const message = error instanceof Error ? error.message : String(error)
       this.db.updateTask(task.id, {
         status: "failed",
@@ -1137,6 +1333,13 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           reviewFilePath,
           model: options.reviewModel,
           thinkingLevel: options.reviewThinkingLevel,
+          onSessionCreated: (process, startedSession) => {
+            // Track review sessions for pause/stop operations
+            this.activeSessionProcesses.set(startedSession.id, {
+              process,
+              session: startedSession,
+            })
+          },
         })
 
         this.db.updateTask(taskId, {
@@ -1196,8 +1399,15 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           worktreeDir: worktreeInfo.directory,
           branch: worktreeInfo.branch,
           model: currentTask.executionModel !== "default" ? currentTask.executionModel : options.executionModel,
-          thinkingLevel: currentTask.thinkingLevel,
+          thinkingLevel: currentTask.executionThinkingLevel,
           promptText: fixPrompt,
+          onSessionCreated: (process, startedSession) => {
+            // Track review fix sessions for pause/stop operations
+            this.activeSessionProcesses.set(startedSession.id, {
+              process,
+              session: startedSession,
+            })
+          },
         })
 
         this.db.updateTask(taskId, {

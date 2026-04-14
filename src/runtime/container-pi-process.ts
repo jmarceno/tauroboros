@@ -282,6 +282,12 @@ this.abortController = new AbortController()
           clearTimeout(timer)
           unsubscribe()
           resolve()
+        } else if (event.type === "process_killed") {
+          // Process was force killed - reject immediately
+          clearTimeout(timer)
+          unsubscribe()
+          const signal = (event as Record<string, unknown>).signal
+          reject(new Error(`Container process was killed (${signal || "SIGKILL"}) while waiting for idle`))
         }
       })
     })
@@ -306,6 +312,12 @@ this.abortController = new AbortController()
           clearTimeout(timer)
           unsubscribe()
           resolve(events)
+        } else if (event.type === "process_killed") {
+          // Process was force killed - reject immediately
+          clearTimeout(timer)
+          unsubscribe()
+          const signal = (event as Record<string, unknown>).signal
+          reject(new Error(`Container process was killed (${signal || "SIGKILL"}) while collecting events`))
         }
       })
     })
@@ -390,6 +402,19 @@ this.abortController = new AbortController()
       pending.reject(new Error(`Container process force killed (${id})`))
       this.pending.delete(id)
     }
+
+    // Notify all event listeners that the process is being killed
+    // This allows collectEvents() and waitForIdle() to reject immediately
+    const killEvent = { type: "process_killed", signal, timestamp: Date.now() }
+    for (const listener of this.eventListeners) {
+      try {
+        listener(killEvent)
+      } catch {
+        // Ignore listener errors during kill
+      }
+    }
+    // Clear event listeners to prevent memory leaks
+    this.eventListeners = []
 
     // Force kill the container
     try {

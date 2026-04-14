@@ -238,12 +238,12 @@ const isRunStale = (run: WorkflowRun) => {
               <span class="sidebar-label">Resume</span>
             </button>
 
-            <!-- Stop button (when running or paused) - opens confirmation modal -->
+            <!-- Stop button (when running or paused) - opens destructive confirmation modal -->
             <button
               v-if="canStop && (isRunning || controlState === 'paused' || isPaused)"
               class="sidebar-btn danger"
               :disabled="isControlLoading"
-              @click="emit('stopExecution', 'graceful')"
+              @click="emit('stopExecution', 'destructive')"
             >
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="6" y="6" width="12" height="12" rx="2"/>

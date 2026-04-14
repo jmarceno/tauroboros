@@ -138,8 +138,16 @@ export class BestOfNRunner {
     sessionUrlFor: (sessionId: string) => string
     containerManager?: PiContainerManager
     settings?: InfrastructureSettings
+    externalSessionManager?: PiSessionManager
+    /**
+     * Called when a session is created for pause/stop tracking.
+     * Used by orchestrator to track active sessions.
+     */
+    onSessionCreated?: (process: import("./container-pi-process.ts").ContainerPiProcess | import("./pi-process.ts").PiRpcProcess, session: import("../db/types.ts").PiWorkflowSession) => void
   }) {
-    this.sessions = new PiSessionManager(this.deps.db, this.deps.containerManager, this.deps.settings)
+    // Use external session manager if provided (for proper process tracking in orchestrator)
+    // Otherwise create our own (for backward compatibility)
+    this.sessions = deps.externalSessionManager ?? new PiSessionManager(this.deps.db, this.deps.containerManager, this.deps.settings)
   }
 
   async run(task: Task, options: Options): Promise<void> {
@@ -304,6 +312,7 @@ export class BestOfNRunner {
           const tagged = appendTaggedOutput(this.deps.db, taskId, `worker-${workerRun.slotIndex}`, chunk)
           if (tagged) this.deps.broadcast({ type: "agent_output", payload: { taskId, output: tagged } })
         },
+        onSessionCreated: this.deps.onSessionCreated,
       })
 
       this.deps.db.updateTaskRun(workerRun.id, {
@@ -390,6 +399,7 @@ export class BestOfNRunner {
         model: reviewerRun.model,
         thinkingLevel: task.executionThinkingLevel,
         promptText: prompt.renderedText,
+        onSessionCreated: this.deps.onSessionCreated,
       })
 
       const reviewerOutput = toReviewerOutput(response.responseText)
@@ -470,6 +480,7 @@ export class BestOfNRunner {
           const tagged = appendTaggedOutput(this.deps.db, taskId, "final-applier", chunk)
           if (tagged) this.deps.broadcast({ type: "agent_output", payload: { taskId, output: tagged } })
         },
+        onSessionCreated: this.deps.onSessionCreated,
       })
 
       this.deps.db.updateTaskRun(finalRun.id, {
