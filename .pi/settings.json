@@ -19,7 +19,7 @@
       "piArgs": "--mode rpc --no-extensions"
     },
     "container": {
-      "enabled": false,
+      "enabled": true,
       "image": "pi-agent:alpine",
       "imageSource": "dockerfile",
       "dockerfilePath": "docker/pi-agent/Dockerfile",

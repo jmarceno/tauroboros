@@ -736,10 +736,7 @@ window.addEventListener('hashchange', () => {
     <!-- Main Content -->
     <main class="main-content">
       <!-- Top Bar -->
-      <TopBar
-        @open-options="openModal('options')"
-        @open-container-config="showContainerConfigModal = true"
-      />
+      <TopBar />
 
       <!-- Kanban Board -->
       <KanbanBoard

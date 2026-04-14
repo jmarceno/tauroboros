@@ -43,13 +43,16 @@
   .app-layout {
     @apply grid h-screen overflow-hidden;
     grid-template-columns: auto 1fr;
+    grid-template-rows: 1fr;
   }
 
   /* Sidebar - Tight spacing like prototype */
   .sidebar {
-    @apply flex flex-col bg-dark-surface border-r border-dark-border;
+    @apply flex flex-col bg-dark-surface border-r border-dark-border overflow-hidden;
     width: 240px;
     flex-shrink: 0;
+    height: 100%;
+    min-height: 0;
   }
 
   .sidebar-header {
@@ -99,15 +102,15 @@
 
   /* Stat Card */
   .stat-card {
-    @apply p-2.5 bg-dark-surface2 border border-dark-border rounded-md text-center;
+    @apply p-1 bg-dark-surface2 border border-dark-border rounded-md text-center;
   }
 
   .stat-value {
-    @apply text-lg font-bold text-accent-primary;
+    @apply text-xs font-bold text-accent-primary;
   }
 
   .stat-label {
-    @apply text-[10px] text-dark-text-muted mt-1;
+    @apply text-[9px] text-dark-text-muted mt-0.5;
   }
 
   /* Run Card */
