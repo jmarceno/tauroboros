@@ -275,7 +275,7 @@ const closeOnOverlay = (e: MouseEvent) => {
           <div class="form-group">
             <div class="label-row">
               <label> Session Cleanup (global)</label>
-              <span class="help-btn" title="Automatically delete Pi workflow sessions after task/review runs finish. Enable only if you do not need session history for debugging.">?</span>
+              <span class="help-btn" title="Automatically delete TaurOboros sessions after task/review runs finish. Enable only if you do not need session history for debugging.">?</span>
             </div>
             <div class="checkbox-group">
               <label class="checkbox-item">

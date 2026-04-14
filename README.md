@@ -1,19 +1,23 @@
 # TaurOboros
 
-TaurOboros is an AI-powered workflow orchestration system that helps you manage and execute complex software development tasks using AI agents. It combines a kanban-style task board with sophisticated execution strategies to deliver high-quality, automated code generation and modification.
+TaurOboros is an agent orchestration system, that uses a Kanban style board to visualize, organize and manage tasks that can them be delegate to agents.
 
+[Features](#features) • [Screenshots](#screenshots) • [Quick Start](#quick-start) • [Commands](#available-commands) • [Configuration](#configuration) • [Architecture](#technical-architecture)
+
+![Kanban Board Overview](images/screenhot1.png)
+
+> [!NOTE]
+> If you use OpenCode and don't want to change, you can try [opencode-easy-workflow](https://github.com/jmarceno/opencode-easy-workflow), altough if does not support all features of TaurOboros, it is still the same tool at its core.
 
 ## Features
 
 ### Task Management
 - **Kanban Board** – Visual task management with columns for templates, backlog, executing, review, done, and failed states
 - **Task Dependencies** – Define requirements between tasks to ensure proper execution order
-- **Drag-and-Drop Reordering** – Prioritize tasks with simple reordering
-- **Archiving** – Clean up completed work while preserving history
 
 ### AI Execution Modes
 - **Standard Execution** – Direct AI agent execution with full access to tools and file system
-- **Plan Mode** – AI creates an implementation plan that you can review and approve before execution
+- **Plan Mode** – Discuss with to AI create an implementation plan that you can them ask the AI to transform in boards tasks for execution.
 - **Review Loops** – Automatic code review with iterative fixes until quality criteria are met
 - **Best-of-N Strategy** – Run multiple AI workers in parallel, have reviewers evaluate results, and automatically select or synthesize the best implementation
 
@@ -24,11 +28,10 @@ TaurOboros is an AI-powered workflow orchestration system that helps you manage 
 
 ### Isolation & Security
 - **Git Worktree Isolation** – Each task runs in its own git worktree for clean separation
-- **Container Isolation (Optional)** – Run AI agents inside Podman containers for filesystem and port isolation
-- **Automatic Cleanup** – Worktrees and resources are cleaned up after task completion
+- **Container Isolation** – Run AI agents inside Podman containers for filesystem and port isolation (can be disabled if you need to run native)
+- **Automatic Cleanup** – Worktrees and resources are cleaned up after successful task completion
 
 ### Monitoring & Observability
-- **Real-time WebSocket Updates** – Live task status updates in the kanban UI
 - **Session Logging** – Full capture of all AI interactions with token usage and cost tracking
 - **Execution Graph Visualization** – See task dependencies and parallelization opportunities
 - **Telegram Notifications** – Get notified when tasks complete or fail
@@ -39,11 +42,6 @@ TaurOboros is an AI-powered workflow orchestration system that helps you manage 
 - **Branch Management** – Flexible git branch selection per task or globally
 - **Auto-commit** – Optional automatic commit and merge of changes
 
-## Screenshots
-
-![Kanban Board Overview](images/screenhot1.png)
-
-![Task Details and Execution](images/screenhot2.png)
 
 ## Quick Start
 
@@ -54,18 +52,15 @@ TaurOboros is an AI-powered workflow orchestration system that helps you manage 
 
 ### Installation
 
+Download the Bun compiled binary from the releases page and run it from inside your project directory. (It must be a inited Git repo for workflows to be able to start)
+
 ```bash
-# Clone or navigate to your project
-cd your-project
-
 # Install dependencies (Bun for backend)
-bun install
+./path/to/exec/tauroroboros
 
-# Setup skills and verify installation
-bun run setup
 ```
 
-### Option 1: Run with Bun (Development/Recommended)
+### Running the Dev server from project repo
 
 ```bash
 # Start the server (backend + kanban UI)
@@ -79,7 +74,7 @@ The server will start on port `3789` by default (configurable in `.pi/settings.j
 
 **Note:** The kanban frontend (Vue app in `src/kanban-vue/`) has its own package.json and uses npm. The root Bun scripts (`bun run start`, `bun run build`) automatically handle building the frontend for you.
 
-### Option 2: Use Compiled Binary (Standalone Distribution)
+### How to Compile from the project directory (Standalone Distribution)
 
 You can compile the entire application into a single executable binary for easy distribution:
 
@@ -112,7 +107,7 @@ bun run compile:test
 4. **Start Execution** – Click the play button or "Start All" to execute all backlog tasks
 5. **Monitor Progress** – Watch real-time updates as the AI works through your tasks
 
-### Container Isolation (Optional)
+### Container Isolation (Default)
 
 For enhanced security and isolation, run AI agents inside Podman containers:
 
@@ -129,6 +124,8 @@ bun run container:verify
 # 4. Run as normal - agents now run in isolated containers
 bun run src/index.ts
 ```
+
+This process will be done automatically to you if you have Podman installed the first time you run Tauroboros in project directory.
 
 ## Available Commands
 
@@ -189,22 +186,23 @@ All infrastructure-level configuration is stored in `.pi/settings.json`. This fi
     "allowGlobal": false
   },
   "project": {
-    "name": "tauroboros",
+    "name": "your-project-name",
     "type": "workflow"
   },
   "workflow": {
     "server": {
       "port": 3789,
-      "dbPath": ".pi/tauroboros/tasks.db"
-    },
-    "runtime": {
-      "mode": "native",
-      "piBin": "pi",
-      "piArgs": "--mode rpc --no-extensions"
+      "dbPath": ".tauroboros/tasks.db"
     },
     "container": {
-      "enabled": false,
+      "enabled": true,
+      "piBin": "pi",
+      "piArgs": "--mode rpc",
       "image": "pi-agent:alpine",
+      "imageSource": "dockerfile",
+      "dockerfilePath": "docker/pi-agent/Dockerfile",
+      "registryUrl": null,
+      "autoPrepare": true,
       "memoryMb": 512,
       "cpuCount": 1,
       "portRangeStart": 30000,
@@ -318,3 +316,8 @@ src/
 ├── db/                   # Database migrations and types
 └── recovery/             # Startup recovery logic
 ```
+
+# Acknolacknowledgements
+
+- [cline](https://github.com/cline/cline "Cline") for Inspiring me. Pay them a visit and test their solution Kanban solution too.
+- [coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent "pi") for being a pretty cool and flexible piece of software to build around.

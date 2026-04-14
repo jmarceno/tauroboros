@@ -64,7 +64,7 @@ const freeSlots = computed(() => props.parallelTasks - props.consumedSlots)
             <path d="M3 9h18M9 21V9"/>
           </svg>
         </div>
-        <span class="sidebar-title text-sm font-bold text-accent-primary whitespace-nowrap">PI WORKFLOW</span>
+        <span class="sidebar-title text-sm font-bold text-accent-primary whitespace-nowrap">TaurOboros</span>
       </div>
     </div>
 

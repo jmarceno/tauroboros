@@ -3,10 +3,12 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
 // Dev mode requires explicit backend port - dynamic port (0) not supported in dev mode
-const SERVER_PORT = process.env.SERVER_PORT
+const SERVER_PORT = process.env.SERVER_PORT || '3789'
 const DEV_PORT = process.env.DEV_PORT || '5173'
 
-if (!SERVER_PORT || SERVER_PORT === '0') {
+// Only check SERVER_PORT for dev mode (when not building)
+const isDev = process.env.NODE_ENV !== 'production' && !process.argv.includes('build')
+if (isDev && (!SERVER_PORT || SERVER_PORT === '0')) {
   throw new Error(
     'Dev mode requires an explicit SERVER_PORT. ' +
     'Run with: SERVER_PORT=3789 bun run dev'
