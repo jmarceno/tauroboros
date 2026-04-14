@@ -53,9 +53,9 @@ export const DEFAULT_INFRASTRUCTURE_SETTINGS: InfrastructureSettings = {
     name: "pi-easy-workflow",
     type: "workflow",
   },
-  workflow: {
+    workflow: {
     server: {
-      port: 3789,
+      port: 0,
       dbPath: ".pi/easy-workflow/tasks.db",
     },
     container: {

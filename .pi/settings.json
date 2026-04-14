@@ -10,7 +10,7 @@
   },
   "workflow": {
     "server": {
-      "port": 3789,
+      "port": 3795,
       "dbPath": ".pi/easy-workflow/tasks.db"
     },
     "container": {

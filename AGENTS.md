@@ -24,18 +24,23 @@ bun run start
 bun run dev
 ```
 
-Server starts on port 3789 by default. Open http://localhost:3789
+Server auto-assigns an available port on first start. The assigned port is saved to `.pi/settings.json` and reused for subsequent runs.
 
-### Dynamic Port Configuration
+### Port Configuration
 
-The server supports dynamic port assignment for running multiple instances simultaneously:
+The server uses **dynamic port assignment by default** (port 0), which allows running multiple projects simultaneously without port conflicts.
+
+**How it works:**
+1. First start: Server auto-assigns an available port (e.g., 49234)
+2. Port is saved to `.pi/settings.json` for persistence
+3. Subsequent starts: Uses the saved port from settings
 
 **Settings file** (`.pi/settings.json`):
 ```json
 {
   "workflow": {
     "server": {
-      "port": 0,  // 0 = auto-assign available port
+      "port": 49234,
       "dbPath": ".pi/easy-workflow/tasks.db"
     }
   }
@@ -46,10 +51,21 @@ The server supports dynamic port assignment for running multiple instances simul
 - `SERVER_PORT` - Override the port from settings (0 for auto-assign)
 - `DEV_PORT` - Vite dev server port (default: 5173)
 
-**Vite dev mode with dynamic backend port**:
+**Running multiple projects:**
 ```bash
-# Backend on auto-assigned port, Vite dev server will proxy to it
-SERVER_PORT=0 bun run dev
+# Terminal 1 - Project A (auto-assigns port 49234)
+bun run start
+
+# Terminal 2 - Project B (auto-assigns port 49235)
+cd /path/to/project-b && bun run start
+
+# Both projects run simultaneously on different ports!
+```
+
+**Development mode:**
+```bash
+# Dev mode requires explicit backend port (dynamic port not supported)
+SERVER_PORT=3789 bun run dev
 ```
 
 ## Kanban UI Architecture

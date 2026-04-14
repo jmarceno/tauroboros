@@ -1,6 +1,6 @@
 import { resolve } from "path"
 import { existsSync } from "fs"
-import { ensureInfrastructureSettings, type InfrastructureSettings } from "./config/settings.ts"
+import { ensureInfrastructureSettings, saveInfrastructureSettings, type InfrastructureSettings } from "./config/settings.ts"
 import { createPiServer, findProjectRoot } from "./server.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
 import { ContainerImageManager } from "./runtime/container-image-manager.ts"
@@ -144,6 +144,12 @@ export async function main(): Promise<void> {
 
   const actualPort = await server.start(port)
   console.log(`[pi-easy-workflow] server started on http://0.0.0.0:${actualPort}`)
+
+  // Persist the assigned port to settings.json for subsequent runs
+  if (actualPort !== settings.workflow.server.port) {
+    settings.workflow.server.port = actualPort
+    saveInfrastructureSettings(projectRoot, settings)
+  }
 
   const shutdown = () => {
     try {
