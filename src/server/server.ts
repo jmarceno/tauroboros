@@ -522,7 +522,9 @@ export class PiKanbanServer {
           // Check timeout
           if (Date.now() - startTime >= timeoutMs) {
             // Attempt to stop the run
-            this.onStopRun?.(run.id, { destructive: false }).catch(() => {})
+            this.onStopRun?.(run.id, { destructive: false }).catch((err: unknown) => {
+              console.error(`[API /create-and-wait] Failed to stop run ${run.id} on timeout:`, err)
+            })
             resolve(json({
               error: "Timeout waiting for task completion",
               task: normalizeTaskForClient(currentTask, sessionUrlFor),
@@ -796,7 +798,12 @@ export class PiKanbanServer {
 
     this.router.post("/api/runs/:id/stop", async ({ params, req, json, broadcast }) => {
       try {
-        const body = await req.json().catch(() => ({}))
+        let body: Record<string, unknown>
+        try {
+          body = await req.json()
+        } catch (err) {
+          return json({ error: "Invalid JSON body" }, 400)
+        }
         const destructive = body?.destructive === true
 
         if (!this.onStopRun) {
@@ -955,7 +962,9 @@ export class PiKanbanServer {
           availableCandidates: summary.availableCandidates,
           selectedCandidates: summary.selectedCandidates,
         })
-      } catch {
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.error(`[API /best-of-n-summary] Error getting summary for task ${params.id}:`, message)
         return json({ error: "Task not found" }, 404)
       }
     })
@@ -965,7 +974,12 @@ export class PiKanbanServer {
       if (!task) return json({ error: "Task not found" }, 404)
       if (task.executionStrategy !== "best_of_n") return json({ error: "Task is not a best_of_n task" }, 400)
 
-      const body = await req.json().catch(() => ({}))
+      let body: Record<string, unknown>
+      try {
+        body = await req.json()
+      } catch (err) {
+        return json({ error: "Invalid JSON body" }, 400)
+      }
       const candidateId = typeof body?.candidateId === "string" ? body.candidateId : ""
       if (!candidateId) return json({ error: "candidateId is required" }, 400)
 
@@ -990,7 +1004,12 @@ export class PiKanbanServer {
       if (!task) return json({ error: "Task not found" }, 404)
       if (task.executionStrategy !== "best_of_n") return json({ error: "Task is not a best_of_n task" }, 400)
 
-      const body = await req.json().catch(() => ({}))
+      let body: Record<string, unknown>
+      try {
+        body = await req.json()
+      } catch (err) {
+        return json({ error: "Invalid JSON body" }, 400)
+      }
       const reason = typeof body?.reason === "string" && body.reason.trim()
         ? body.reason.trim()
         : "Best-of-n execution aborted manually"
@@ -1022,7 +1041,12 @@ export class PiKanbanServer {
       const task = this.db.getTask(params.id)
       if (!task) return json({ error: "Task not found" }, 404)
       if (!task.planmode) return json({ error: "Task is not in plan mode" }, 400)
-      const body = await req.json().catch(() => ({}))
+      let body: Record<string, unknown>
+      try {
+        body = await req.json()
+      } catch (err) {
+        return json({ error: "Invalid JSON body" }, 400)
+      }
 
       const updated = this.db.updateTask(task.id, {
         status: "backlog",
@@ -1119,7 +1143,12 @@ export class PiKanbanServer {
       const task = this.db.getTask(params.id)
       if (!task) return json({ error: "Task not found" }, 404)
 
-      const body = await req.json().catch(() => ({}))
+      let body: Record<string, unknown>
+      try {
+        body = await req.json()
+      } catch (err) {
+        return json({ error: "Invalid JSON body" }, 400)
+      }
       const requestedAction = typeof body?.action === "string" ? body.action : "smart"
 
       if (requestedAction === "smart") {

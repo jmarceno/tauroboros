@@ -1827,7 +1827,7 @@ export class PiKanbanDB {
         input.summary ?? null,
         input.errorMessage ?? null,
         input.candidateId ?? null,
-        JSON.stringify(input.metadataJson ?? {}),
+        input.metadataJson != null ? JSON.stringify(input.metadataJson) : '{}',
         createdAt,
         now,
         input.completedAt ?? null,
@@ -1913,9 +1913,9 @@ export class PiKanbanDB {
         input.taskId,
         input.workerRunId,
         input.status ?? "available",
-        JSON.stringify(input.changedFilesJson ?? []),
-        JSON.stringify(input.diffStatsJson ?? {}),
-        JSON.stringify(input.verificationJson ?? {}),
+        input.changedFilesJson != null ? JSON.stringify(input.changedFilesJson) : '[]',
+        input.diffStatsJson != null ? JSON.stringify(input.diffStatsJson) : '{}',
+        input.verificationJson != null ? JSON.stringify(input.verificationJson) : '{}',
         input.summary ?? null,
         input.errorMessage ?? null,
         createdAt,
@@ -2956,7 +2956,10 @@ export class PiKanbanDB {
   }
 
   renderPromptAndCapture(input: PromptRenderAndCaptureInput): PromptRenderResult {
-    const rendered = this.renderPrompt(input.key, input.variables ?? {})
+    if (input.key == null) {
+      throw new Error(`Prompt render key is required but was not provided`)
+    }
+    const rendered = this.renderPrompt(input.key, input.variables)
     if (input.sessionId) {
       this.appendSessionIO({
         sessionId: input.sessionId,
@@ -2966,7 +2969,7 @@ export class PiKanbanDB {
           templateKey: rendered.template.key,
           templateId: rendered.template.id,
           renderedLength: rendered.renderedText.length,
-          variables: input.variables ?? {},
+          variables: input.variables,
         },
         payloadText: rendered.renderedText,
       })

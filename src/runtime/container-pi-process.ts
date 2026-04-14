@@ -362,8 +362,8 @@ this.abortController = new AbortController()
     // Kill container
     try {
       await process.kill()
-    } catch {
-      // Container may already be stopped
+    } catch (err) {
+      console.error(`[container-pi-process] Error killing container during close:`, err)
     }
 
     this.db.updateWorkflowSession(this.session.id, {
@@ -409,8 +409,8 @@ this.abortController = new AbortController()
     for (const listener of this.eventListeners) {
       try {
         listener(killEvent)
-      } catch {
-        // Ignore listener errors during kill
+      } catch (err) {
+        console.error(`[container-pi-process] Error in event listener during force kill:`, err)
       }
     }
     // Clear event listeners to prevent memory leaks
@@ -419,8 +419,8 @@ this.abortController = new AbortController()
     // Force kill the container
     try {
       await process.kill()
-    } catch {
-      // Container may already be stopped
+    } catch (err) {
+      console.error(`[container-pi-process] Error during force kill:`, err)
     }
 
     // Don't wait for exit - force kill is immediate
@@ -535,16 +535,21 @@ this.abortController = new AbortController()
           parsed as { id: string; method: string; [key: string]: unknown },
         )
         await this.send(response, 10_000)
-      } catch {
+      } catch (err) {
+        console.error(`[container-pi-process] Extension UI handler failed:`, err)
         // Send cancelled response if handler fails
-        await this.send(
-          {
-            type: "extension_ui_response",
-            id: parsed.id,
-            cancelled: true,
-          },
-          10_000,
-        ).catch(() => {})
+        try {
+          await this.send(
+            {
+              type: "extension_ui_response",
+              id: parsed.id,
+              cancelled: true,
+            },
+            10_000,
+          )
+        } catch (sendErr) {
+          console.error(`[container-pi-process] Failed to send cancelled response:`, sendErr)
+        }
       }
       return
     }
@@ -553,8 +558,8 @@ this.abortController = new AbortController()
     for (const listener of this.eventListeners) {
       try {
         listener(parsed)
-      } catch {
-        // Ignore listener errors
+      } catch (err) {
+        console.error(`[container-pi-process] Error in event listener:`, err)
       }
     }
 

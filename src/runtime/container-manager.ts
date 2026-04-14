@@ -129,14 +129,14 @@ export class PiContainerManager {
     if (this.imageManager) {
       await this.imageManager.prepare()
     } else {
-      try {
-        await this.execPodman(["image", "exists", this.imageName])
-      } catch {
-        throw new Error(
-          `Podman image '${this.imageName}' not found. ` +
-          `Build it with: podman build -t ${this.imageName} -f docker/pi-agent/Dockerfile .`,
-        )
-      }
+    try {
+      await this.execPodman(["image", "exists", this.imageName])
+    } catch (err) {
+      throw new Error(
+        `Podman image '${this.imageName}' not found. ` +
+        `Build it with: podman build -t ${this.imageName} -f docker/pi-agent/Dockerfile .`,
+      )
+    }
     }
   }
 
@@ -165,7 +165,8 @@ export class PiContainerManager {
     try {
       execSync("podman --version", { stdio: "pipe" })
       return true
-    } catch {
+    } catch (err) {
+      console.debug(`[container-manager] Podman not available:`, err)
       return false
     }
   }
@@ -196,7 +197,10 @@ export class PiContainerManager {
     const defaultEnv: Record<string, string> = {
       PI_OFFLINE: "1",
     }
-    const envVars = { ...defaultEnv, ...(config.env || {}) }
+    if (!config.env) {
+      throw new Error(`Container config.env is required but was not provided`)
+    }
+    const envVars = { ...defaultEnv, ...config.env }
     const envArgs: string[] = []
     for (const [key, value] of Object.entries(envVars)) {
       envArgs.push("-e", `${key}=${value}`)
@@ -262,14 +266,20 @@ export class PiContainerManager {
           // Container is running, pi should be ready soon
           break
         }
-      } catch {
+      } catch (err) {
         // Container not ready yet, continue polling
+        // This is expected during startup polling, so we only log at debug level
+        console.debug(`[container-manager] Container not ready yet during polling:`, err)
       }
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
     }
 
     if (!containerId) {
-      containerId = `pending-${Date.now()}`
+      throw new Error(
+        `Container failed to start within ${maxWaitMs}ms. ` +
+        `The container process started but podman could not find a running container with name ${containerName}. ` +
+        `Check podman logs with: podman logs ${containerName}`
+      )
     }
 
     // Create process wrapper with stdio streams
@@ -305,8 +315,8 @@ export class PiContainerManager {
             if (!isClosed) {
               try {
                 controller.enqueue(new Uint8Array(data))
-              } catch {
-                // Controller might be closed
+              } catch (err) {
+                console.debug(`[container-manager] stdout controller already closed:`, err)
               }
             }
           })
@@ -316,8 +326,8 @@ export class PiContainerManager {
               isClosed = true
               try {
                 controller.close()
-              } catch {
-                // Already closed
+              } catch (err) {
+                console.debug(`[container-manager] stdout controller already closed on end:`, err)
               }
             }
           })
@@ -327,8 +337,8 @@ export class PiContainerManager {
               isClosed = true
               try {
                 controller.error(err)
-              } catch {
-                // Already closed
+              } catch (closeErr) {
+                console.error(`[container-manager] Failed to error stdout controller:`, closeErr)
               }
             }
           })
@@ -348,8 +358,8 @@ export class PiContainerManager {
             if (!isClosed) {
               try {
                 controller.enqueue(new Uint8Array(data))
-              } catch {
-                // Controller might be closed
+              } catch (err) {
+                console.debug(`[container-manager] stderr controller already closed:`, err)
               }
             }
           })
@@ -359,8 +369,8 @@ export class PiContainerManager {
               isClosed = true
               try {
                 controller.close()
-              } catch {
-                // Already closed
+              } catch (err) {
+                console.debug(`[container-manager] stderr controller already closed on end:`, err)
               }
             }
           })
@@ -370,8 +380,8 @@ export class PiContainerManager {
               isClosed = true
               try {
                 controller.error(err)
-              } catch {
-                // Already closed
+              } catch (closeErr) {
+                console.error(`[container-manager] Failed to error stderr controller:`, closeErr)
               }
             }
           })
@@ -385,8 +395,8 @@ export class PiContainerManager {
           } else {
             proc.kill()
           }
-        } catch {
-          // Container may already be stopped
+        } catch (err) {
+          console.debug(`[container-manager] Error killing container (may already be stopped):`, err)
         }
         this.containers.delete(config.sessionId)
       },
@@ -436,8 +446,8 @@ export class PiContainerManager {
             running: true,
           }
         }
-      } catch {
-        // Container exists in our map but is not running
+      } catch (err) {
+        console.debug(`[container-manager] Container ${sessionId} exists in map but inspection failed:`, err)
       }
     }
 
@@ -488,7 +498,8 @@ export class PiContainerManager {
         status: state,
         running: isRunning,
       }
-    } catch {
+    } catch (err) {
+      console.debug(`[container-manager] Error checking container existence for ${sessionId}:`, err)
       return null
     }
   }
@@ -524,7 +535,8 @@ export class PiContainerManager {
         status: state,
         running: state === "running",
       }
-    } catch {
+    } catch (err) {
+      console.debug(`[container-manager] Error checking container by ID ${containerId}:`, err)
       return null
     }
   }
@@ -613,8 +625,8 @@ export class PiContainerManager {
               if (!isClosed) {
                 try {
                   controller.enqueue(new Uint8Array(data))
-                } catch {
-                  // Controller might be closed
+                } catch (err) {
+                  console.debug(`[container-manager] attach stdout controller already closed:`, err)
                 }
               }
             })
@@ -624,8 +636,8 @@ export class PiContainerManager {
                 isClosed = true
                 try {
                   controller.close()
-                } catch {
-                  // Already closed
+                } catch (err) {
+                  console.debug(`[container-manager] attach stdout controller already closed on end:`, err)
                 }
               }
             })
@@ -635,8 +647,8 @@ export class PiContainerManager {
                 isClosed = true
                 try {
                   controller.error(err)
-                } catch {
-                  // Already closed
+                } catch (closeErr) {
+                  console.error(`[container-manager] Failed to error attach stdout controller:`, closeErr)
                 }
               }
             })
@@ -656,8 +668,8 @@ export class PiContainerManager {
               if (!isClosed) {
                 try {
                   controller.enqueue(new Uint8Array(data))
-                } catch {
-                  // Controller might be closed
+                } catch (err) {
+                  console.debug(`[container-manager] attach stderr controller already closed:`, err)
                 }
               }
             })
@@ -667,8 +679,8 @@ export class PiContainerManager {
                 isClosed = true
                 try {
                   controller.close()
-                } catch {
-                  // Already closed
+                } catch (err) {
+                  console.debug(`[container-manager] attach stderr controller already closed on end:`, err)
                 }
               }
             })
@@ -678,8 +690,8 @@ export class PiContainerManager {
                 isClosed = true
                 try {
                   controller.error(err)
-                } catch {
-                  // Already closed
+                } catch (closeErr) {
+                  console.error(`[container-manager] Failed to error attach stderr controller:`, closeErr)
                 }
               }
             })
@@ -697,11 +709,11 @@ export class PiContainerManager {
                 "sh", "-c", 
                 `pkill -f "pi.*${sessionId}" || true`
               ])
-            } catch {
-              // Ignore errors from pkill
+            } catch (err) {
+              console.debug(`[container-manager] pkill command failed (process may already be stopped):`, err)
             }
-          } catch {
-            // Process may already be stopped
+          } catch (err) {
+            console.debug(`[container-manager] Error killing attached container process:`, err)
           }
           this.containers.delete(sessionId)
         },
@@ -741,7 +753,8 @@ export class PiContainerManager {
       await this.execPodman(["kill", "-s", "SIGKILL", containerName])
       this.containers.delete(sessionId)
       return true
-    } catch {
+    } catch (err) {
+      console.debug(`[container-manager] Failed to force kill container ${sessionId}:`, err)
       return false
     }
   }
@@ -762,7 +775,8 @@ export class PiContainerManager {
       // Verify it's running
       const check = await this.checkContainerExists(sessionId)
       return check?.running ?? false
-    } catch {
+    } catch (err) {
+      console.debug(`[container-manager] Failed to restart container ${sessionId}:`, err)
       return false
     }
   }
@@ -781,7 +795,8 @@ export class PiContainerManager {
       await this.execPodman(args)
       this.containers.delete(sessionId)
       return true
-    } catch {
+    } catch (err) {
+      console.debug(`[container-manager] Failed to remove container ${sessionId}:`, err)
       return false
     }
   }
@@ -790,10 +805,18 @@ export class PiContainerManager {
    * Clean up all managed containers.
    */
   async cleanup(): Promise<void> {
-    const kills = Array.from(this.containers.values()).map((proc) =>
-      proc.kill().catch(() => {}),
+    const killResults = await Promise.allSettled(
+      Array.from(this.containers.values()).map((proc) => proc.kill())
     )
-    await Promise.all(kills)
+    
+    // Log any failures but continue clearing the map
+    for (let i = 0; i < killResults.length; i++) {
+      const result = killResults[i]
+      if (result.status === "rejected") {
+        console.error(`[container-manager] Failed to kill container at index ${i}:`, result.reason)
+      }
+    }
+    
     this.containers.clear()
   }
 
@@ -828,7 +851,8 @@ export class PiContainerManager {
       }
 
       return containers
-    } catch {
+    } catch (err) {
+      console.debug(`[container-manager] Failed to list managed containers:`, err)
       return []
     }
   }
@@ -844,8 +868,8 @@ export class PiContainerManager {
       try {
         await this.execPodman(["kill", info.containerId])
         killed++
-      } catch {
-        // Container may already be stopped
+      } catch (err) {
+        console.debug(`[container-manager] Failed to kill container ${info.containerId} during emergency stop:`, err)
       }
     }
 

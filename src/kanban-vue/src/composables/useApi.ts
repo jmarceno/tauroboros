@@ -107,7 +107,7 @@ export function useApi() {
     resumeRun: (id: string) => request<{ success: boolean; run: WorkflowRun }>(`/api/runs/${id}/resume`, { method: 'POST' }),
     stopRun: (id: string, options?: { destructive?: boolean }) => request<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>(`/api/runs/${id}/stop`, {
       method: 'POST',
-      body: JSON.stringify(options ?? {}),
+      ...(options ? { body: JSON.stringify(options) } : {}),
     }),
     forceStopRun: (id: string) => request<{ success: boolean; killed: number; cleaned: number; run: WorkflowRun }>(`/api/runs/${id}/force-stop`, { method: 'POST' }),
     getPausedState: () => request<{ hasPausedRun: boolean; state: unknown }>('/api/runs/paused-state'),
@@ -166,7 +166,7 @@ export function useApi() {
     reconnectPlanningSession: (id: string, data?: { model?: string; thinkingLevel?: string }) =>
       request<PlanningSession>(`/api/planning/sessions/${id}/reconnect`, {
         method: 'POST',
-        body: JSON.stringify(data ?? {}),
+        ...(data ? { body: JSON.stringify(data) } : {}),
       }),
     setPlanningSessionModel: (id: string, model: string, thinkingLevel?: string) =>
       request<{ ok: boolean; model: string; thinkingLevel?: string }>(`/api/planning/sessions/${id}/model`, {

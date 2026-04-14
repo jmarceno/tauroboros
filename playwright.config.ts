@@ -14,13 +14,17 @@ if (isRealWorkflowTest) {
   try {
     execSync('podman --version', { stdio: 'pipe' });
     hasPodman = true;
-  } catch {}
+  } catch (err) {
+    console.debug(`[playwright.config] Podman not available:`, err);
+  }
   
   if (hasPodman) {
     try {
       const result = execSync('podman images pi-agent:alpine -q', { encoding: 'utf-8', stdio: 'pipe' });
       hasPiAgentImage = result.trim().length > 0;
-    } catch {}
+    } catch (err) {
+      console.debug(`[playwright.config] pi-agent:alpine image not found:`, err);
+    }
   }
   
   if (!hasPodman || !hasPiAgentImage) {
@@ -40,7 +44,9 @@ function getTestProjectDir(): string | null {
     if (existsSync(markerFile)) {
       return readFileSync(markerFile, 'utf-8').trim();
     }
-  } catch {}
+  } catch (err) {
+    console.debug(`[playwright.config] Could not read test project marker file:`, err);
+  }
   return null;
 }
 

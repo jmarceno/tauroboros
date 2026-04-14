@@ -283,8 +283,8 @@ export class PiRpcProcess {
 
     try {
       proc.kill()
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error(`[pi-process] Error killing process during close:`, err)
     }
 
     const exitCode = await proc.exited
@@ -333,8 +333,8 @@ export class PiRpcProcess {
     for (const listener of this.eventListeners) {
       try {
         listener(killEvent)
-      } catch {
-        // Ignore listener errors during kill
+      } catch (err) {
+        console.error(`[pi-process] Error in event listener during force kill:`, err)
       }
     }
     // Clear event listeners to prevent memory leaks
@@ -347,8 +347,8 @@ export class PiRpcProcess {
       } else {
         proc.kill(15) // SIGTERM
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error(`[pi-process] Error during force kill:`, err)
     }
 
     // Don't wait for exit - force kill is immediate
@@ -458,11 +458,15 @@ export class PiRpcProcess {
         await this.send(response, 10_000)
       } catch (error) {
         // Send cancelled response if handler fails
-        await this.send({
-          type: "extension_ui_response",
-          id: parsed.id,
-          cancelled: true,
-        }, 10_000).catch(() => {})
+        try {
+          await this.send({
+            type: "extension_ui_response",
+            id: parsed.id,
+            cancelled: true,
+          }, 10_000)
+        } catch (sendErr) {
+          console.error(`[pi-process] Failed to send cancelled response:`, sendErr)
+        }
       }
       return
     }
@@ -471,8 +475,8 @@ export class PiRpcProcess {
     for (const listener of this.eventListeners) {
       try {
         listener(parsed)
-      } catch {
-        // Ignore listener errors
+      } catch (err) {
+        console.error(`[pi-process] Error in event listener:`, err)
       }
     }
 
