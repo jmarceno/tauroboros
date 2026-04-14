@@ -108,6 +108,7 @@ export class PiRpcProcess {
       stdout: "pipe",
       stderr: "pipe",
       stdin: "pipe",
+      env: { ...process.env, PI_CODING_AGENT: "true" },
     })
 
     this.db.updateWorkflowSession(this.session.id, {

@@ -194,8 +194,10 @@ export class PiContainerManager {
     // packages on every startup. Packages listed in ~/.pi/agent/settings.json
     // would otherwise trigger npm install on each fresh container start
     // (containers are ephemeral with --rm, so installed packages don't persist).
+    // PI_CODING_AGENT=true allows subprocesses to detect they are running inside the coding agent.
     const defaultEnv: Record<string, string> = {
       PI_OFFLINE: "1",
+      PI_CODING_AGENT: "true",
     }
     if (!config.env) {
       throw new Error(`Container config.env is required but was not provided`)
@@ -574,9 +576,11 @@ export class PiContainerManager {
       
       // Spawn podman exec to create a new pi rpc session in the existing container
       // The -i flag keeps stdin open, allowing us to send commands
+      // The -e flag passes the PI_CODING_AGENT environment variable
       const proc = spawn("podman", [
         "exec",
         "-i",  // Interactive mode - keep stdin open
+        "-e", "PI_CODING_AGENT=true",  // Pass environment variable to container
         containerId,
         "pi", "rpc", "--session-id", sessionId,
       ], {
