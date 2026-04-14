@@ -1,5 +1,5 @@
-import { ref, computed, watch } from 'vue'
-import type { PlanningSession, PlanningPrompt, SessionMessage } from '@/types/api'
+import { ref, computed } from 'vue'
+import type { PlanningSession, PlanningPrompt, SessionMessage, ThinkingLevel } from '@/types/api'
 import { useApi } from './useApi'
 
 export interface ContextAttachment {
@@ -24,7 +24,6 @@ export interface ChatSession {
 export function usePlanningChat() {
   const api = useApi()
 
-  // State
   const isOpen = ref(false)
   const width = ref(400)
   const isResizing = ref(false)
@@ -33,7 +32,6 @@ export function usePlanningChat() {
   const planningPrompt = ref<PlanningPrompt | null>(null)
   const isLoadingPrompt = ref(false)
 
-  // Computed
   const activeSession = computed(() => {
     if (!activeSessionId.value) return null
     return sessions.value.find(s => s.id === activeSessionId.value) || null
@@ -49,13 +47,11 @@ export function usePlanningChat() {
 
   const hasSessions = computed(() => sessions.value.length > 0)
 
-  // Actions
   const openPanel = () => {
     isOpen.value = true
     if (!hasSessions.value) {
       createNewSession()
     }
-    // Load prompt on first open
     if (!planningPrompt.value && !isLoadingPrompt.value) {
       loadPlanningPrompt()
     }
@@ -66,11 +62,7 @@ export function usePlanningChat() {
   }
 
   const togglePanel = () => {
-    if (isOpen.value) {
-      closePanel()
-    } else {
-      openPanel()
-    }
+    isOpen.value ? closePanel() : openPanel()
   }
 
   const setWidth = (newWidth: number) => {
@@ -86,6 +78,7 @@ export function usePlanningChat() {
       messages: [],
       isMinimized: false,
       isLoading: true,
+      isSending: false,
       error: null,
     }
 
@@ -96,12 +89,12 @@ export function usePlanningChat() {
       const planningSession = await api.createPlanningSession({
         cwd: window.location.pathname,
         model,
-        thinkingLevel: thinkingLevel as any,
+        thinkingLevel: thinkingLevel as ThinkingLevel | undefined,
       })
 
       const idx = sessions.value.findIndex(s => s.id === sessionId)
       if (idx >= 0) {
-        sessions.value[idx].session = planningSession as PlanningSession
+        sessions.value[idx].session = planningSession
         sessions.value[idx].isLoading = false
       }
     } catch (e) {
@@ -115,7 +108,7 @@ export function usePlanningChat() {
 
   const sendMessage = async (sessionId: string, content: string, attachments?: ContextAttachment[]) => {
     const session = sessions.value.find(s => s.id === sessionId)
-    if (!session || !session.session?.id) {
+    if (!session?.session?.id) {
       throw new Error('No active session')
     }
 
@@ -127,7 +120,6 @@ export function usePlanningChat() {
     session.error = null
 
     try {
-      // The message will appear via WebSocket when the server broadcasts it
       await api.sendPlanningMessage(session.session.id, content, attachments)
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : 'Failed to send message'
@@ -145,16 +137,13 @@ export function usePlanningChat() {
 
   const setSessionModel = async (sessionId: string, model: string, thinkingLevel?: string) => {
     const session = sessions.value.find(s => s.id === sessionId)
-    if (!session || !session.session?.id) {
+    if (!session?.session?.id) {
       throw new Error('No active session')
     }
 
     try {
       await api.setPlanningSessionModel(session.session.id, model, thinkingLevel)
-      // Update the session model locally
-      if (session.session) {
-        session.session = { ...session.session, model, thinkingLevel }
-      }
+      session.session = { ...session.session, model, thinkingLevel }
       return { ok: true, model, thinkingLevel }
     } catch (e) {
       console.error('Failed to change model:', e)
@@ -164,7 +153,7 @@ export function usePlanningChat() {
 
   const reconnectSession = async (sessionId: string, model?: string, thinkingLevel?: string) => {
     const session = sessions.value.find(s => s.id === sessionId)
-    if (!session || !session.session?.id) {
+    if (!session?.session?.id) {
       throw new Error('No session to reconnect')
     }
 
@@ -176,7 +165,7 @@ export function usePlanningChat() {
         model,
         thinkingLevel,
       })
-      session.session = reconnectedSession as PlanningSession
+      session.session = reconnectedSession
       session.isLoading = false
       return reconnectedSession
     } catch (e) {
@@ -188,13 +177,12 @@ export function usePlanningChat() {
 
   const createTasksFromChat = async (sessionId: string, tasks?: Array<{ name: string; prompt: string; status?: string; requirements?: string[] }>) => {
     const session = sessions.value.find(s => s.id === sessionId)
-    if (!session || !session.session?.id) {
+    if (!session?.session?.id) {
       throw new Error('No active session')
     }
 
     try {
-      const result = await api.createTasksFromPlanning(session.session.id, tasks)
-      return result
+      return await api.createTasksFromPlanning(session.session.id, tasks)
     } catch (e) {
       console.error('Failed to create tasks:', e)
       throw e
@@ -220,7 +208,6 @@ export function usePlanningChat() {
     const idx = sessions.value.findIndex(s => s.id === sessionId)
     if (idx >= 0) {
       const session = sessions.value[idx]
-      // Close the pi session if it exists
       if (session.session?.id) {
         api.closePlanningSession(session.session.id).catch(console.error)
       }
@@ -229,11 +216,7 @@ export function usePlanningChat() {
 
     if (activeSessionId.value === sessionId) {
       const visible = visibleSessions.value
-      if (visible.length > 0) {
-        activeSessionId.value = visible[0].id
-      } else {
-        activeSessionId.value = null
-      }
+      activeSessionId.value = visible.length > 0 ? visible[0].id : null
     }
 
     if (sessions.value.length === 0) {
@@ -252,28 +235,24 @@ export function usePlanningChat() {
     const session = sessions.value.find(s => s.id === sessionId)
     if (!session) return
 
-    // Find existing message by database id or messageId
     const existingIdx = session.messages.findIndex(m => 
       m.id === message.id || 
       (m.messageId && m.messageId === message.messageId)
     )
     
     if (existingIdx >= 0) {
-      // Replace with updated message (backend now handles merging)
       session.messages[existingIdx] = message
     } else {
       session.messages.push(message)
     }
     
-    // Sort by seq (primary) then timestamp
     session.messages.sort((a, b) => {
       const sa = Number(a.seq || 0)
       const sb = Number(b.seq || 0)
       if (sa !== sb) return sa - sb
       const ta = Number(a.timestamp || 0)
       const tb = Number(b.timestamp || 0)
-      if (ta !== tb) return ta - tb
-      return Number(a.id || 0) - Number(b.id || 0)
+      return ta !== tb ? ta - tb : Number(a.id || 0) - Number(b.id || 0)
     })
   }
 
@@ -302,7 +281,6 @@ export function usePlanningChat() {
     }
   }
 
-  // WebSocket message handlers
   const handlePlanningSessionCreated = (data: PlanningSession) => {
     const session = sessions.value.find(s => s.session?.id === data.id)
     if (session) {
@@ -332,7 +310,6 @@ export function usePlanningChat() {
   }
 
   return {
-    // State
     isOpen,
     width,
     isResizing,
@@ -340,14 +317,10 @@ export function usePlanningChat() {
     activeSessionId,
     planningPrompt,
     isLoadingPrompt,
-
-    // Computed
     activeSession,
     visibleSessions,
     minimizedSessions,
     hasSessions,
-
-    // Actions
     openPanel,
     closePanel,
     togglePanel,
@@ -360,14 +333,10 @@ export function usePlanningChat() {
     addMessageToSession,
     loadPlanningPrompt,
     savePlanningPrompt,
-
-    // WebSocket handlers
     handlePlanningSessionCreated,
     handlePlanningSessionUpdated,
     handlePlanningSessionClosed,
     handlePlanningSessionMessage,
-
-    // Chat actions
     sendMessage,
     createTasksFromChat,
     reconnectSession,

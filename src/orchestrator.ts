@@ -99,7 +99,6 @@ export class PiOrchestrator {
   useContainerBackend(manager: PiContainerManager): void {
     this.containerManager = manager
     this.sessionManager = new PiSessionManager(this.db, manager, this.settings)
-    // Update review runner to use the new session manager
     this.reviewRunner = new PiReviewSessionRunner(this.db, this.settings, manager, this.sessionManager)
   }
 
@@ -111,12 +110,8 @@ export class PiOrchestrator {
     const activeRuns = this.db.getWorkflowRuns().filter((r) => r.status === "running" || r.status === "stopping" || r.status === "paused")
 
     for (const run of activeRuns) {
-      // Runs in "stopping" status should be force-completed - the user requested a stop
       if (run.status === "stopping") {
         console.log(`[orchestrator] Force-completing stopping run ${run.id}`)
-        
-        // Kill ALL active tracked sessions to unblock runInBackground immediately
-        // Don't rely on task.sessionId which may not be set yet (race condition)
         console.log(`[orchestrator] Killing ${this.activeSessionProcesses.size} active sessions during force-complete`)
         for (const [sessionId, activeProcess] of this.activeSessionProcesses) {
           console.log(`[orchestrator] Killing session ${sessionId} during force-complete`)
@@ -124,10 +119,8 @@ export class PiOrchestrator {
             await activeProcess.process.forceKill()
           }
         }
-        // Clear all tracked sessions
         this.activeSessionProcesses.clear()
 
-        // Reset any executing/review tasks in this run back to backlog
         for (const taskId of run.taskOrder ?? []) {
           const task = this.db.getTask(taskId)
           if (task && (task.status === "executing" || task.status === "review")) {
@@ -417,8 +410,9 @@ export class PiOrchestrator {
         if (task?.sessionId) {
           try {
             await this.containerManager.forceKillContainer(task.sessionId)
-          } catch {
-            // Ignore errors during container kill
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error)
+            console.warn(`[orchestrator] Failed to kill container for session ${task.sessionId}: ${msg}`)
           }
         }
       }
@@ -440,8 +434,9 @@ export class PiOrchestrator {
           })
           this.db.updateTask(taskId, { worktreeDir: null })
           result.cleaned++
-        } catch {
-          // Ignore cleanup errors during force stop
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error)
+          console.warn(`[orchestrator] Failed to remove worktree ${task.worktreeDir}: ${msg}`)
         }
       }
     }
@@ -569,7 +564,6 @@ export class PiOrchestrator {
       }
     }
 
-    // Build pause state
     const pauseState: PausedRunState = {
       runId: run.id,
       kind: run.kind,
@@ -582,10 +576,8 @@ export class PiOrchestrator {
       executionPhase: this.activeTask?.status === "review" ? "reviewing" : "executing",
     }
 
-    // Save to database (replaces file-based storage)
     savePausedRunState(pauseState, this.db)
 
-    // Update run status
     const updated = this.db.updateWorkflowRun(runId, {
       status: "paused",
       pauseRequested: true,
@@ -594,7 +586,6 @@ export class PiOrchestrator {
       this.broadcast({ type: "run_updated", payload: updated })
     }
 
-    // Update current task status if it belongs to this run
     if (this.activeTask && run.taskOrder.includes(this.activeTask.id)) {
       this.db.updateTask(this.activeTask.id, {
         status: "backlog", // Move back to backlog so it will be picked up on resume
@@ -726,12 +717,10 @@ export class PiOrchestrator {
       this.broadcast({ type: "run_updated", payload: updated })
     }
 
-    // Resume execution from where we left off
     this.currentRunId = runId
     this.running = true
     this.shouldStop = false
 
-    // Get remaining tasks
     const remainingTasks = run.taskOrder.slice(run.currentTaskIndex)
     if (remainingTasks.length > 0) {
       void this.runInBackground(runId, remainingTasks)
@@ -747,20 +736,16 @@ export class PiOrchestrator {
    * If no runId provided, checks for persisted pause state in database or uses current run.
    */
   async resume(runId?: string): Promise<WorkflowRun | null> {
-    // If no runId provided, check for persisted pause state in database
     const targetRunId = runId || this.currentRunId
 
     if (!targetRunId) {
-      // Check if there's a persisted pause state in database
       const pausedRuns = listPausedRunStates(this.db)
       if (pausedRuns.length > 0) {
-        // Resume the most recently paused run
         const mostRecent = pausedRuns[0]
         if (mostRecent) {
           return this.resumeFromPauseState(mostRecent)
         }
       }
-      // Fallback: check for legacy file-based pause state
       if (hasPausedRunState()) {
         const pauseState = loadPausedRunState()
         if (pauseState) {
@@ -777,7 +762,6 @@ export class PiOrchestrator {
    * Resume from a loaded pause state.
    */
   private async resumeFromPauseState(pauseState: PausedRunState): Promise<WorkflowRun | null> {
-    // Update run status
     const updated = this.db.updateWorkflowRun(pauseState.runId, {
       status: "running",
       pauseRequested: false,
@@ -786,17 +770,14 @@ export class PiOrchestrator {
       this.broadcast({ type: "run_updated", payload: updated })
     }
 
-    // Clear pause state
     clearGlobalPausedRunState()
 
-    // Set state
     this.currentRunId = pauseState.runId
     this.running = true
     this.shouldStop = false
     this.shouldPause = false
     this.isPaused = false
 
-    // Resume execution from where we left off
     const remainingTasks = pauseState.taskOrder.slice(pauseState.currentTaskIndex)
     if (remainingTasks.length > 0) {
       void this.runInBackground(pauseState.runId, remainingTasks)
@@ -880,13 +861,9 @@ export class PiOrchestrator {
       containerId = await activeProcess.process.getContainerId()
     }
 
-    // Get task for additional context
     const task = session.taskId ? this.db.getTask(session.taskId) : null
 
-    // Build paused state with full context
-    // Get container image from settings if using containers
     const containerImage = this.settings?.workflow?.container?.image || null
-    // Get execution phase from task for richer context
     const executionPhase = task?.executionPhase || null
     
     const pausedState: PausedSessionState = {
@@ -899,36 +876,32 @@ export class PiOrchestrator {
       branch: session.branch,
       model: session.model,
       thinkingLevel: session.thinkingLevel,
-      lastPrompt: null, // We don't capture the exact prompt, will send "continue"
+      lastPrompt: null,
       lastPromptTimestamp: nowUnix(),
       containerId,
       containerName: `pi-easy-workflow-${sessionId}`,
-      containerImage, // Populate from settings for container recreation on resume
+      containerImage,
       piSessionId: session.piSessionId,
       piSessionFile: session.piSessionFile,
-      executionPhase, // Track where we are in task execution
-      pauseReason: "user_pause", // Default pause reason
+      executionPhase,
+      pauseReason: "user_pause",
       context: task ? {
         agentOutputSnapshot: task.agentOutput || null,
-        pendingToolCalls: null, // Not currently tracked
+        pendingToolCalls: null,
         reviewCount: task.reviewCount || 0,
       } : null,
     }
 
-    // Stop the process but DON'T mark session as completed
     try {
       if ("forceKill" in activeProcess.process) {
-        await activeProcess.process.forceKill("SIGTERM") // Use SIGTERM for pause (gentler than SIGKILL)
+        await activeProcess.process.forceKill("SIGTERM")
       }
-    } catch {
-      // Ignore errors during pause
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      console.warn(`[orchestrator] Failed to pause session ${sessionId}: ${msg}`)
     }
 
-    // Update session status to paused (not completed)
-    this.db.updateWorkflowSession(sessionId, {
-      status: "paused",
-      // Don't set finishedAt - we're not done
-    })
+    this.db.updateWorkflowSession(sessionId, { status: "paused" })
 
     this.broadcast({ type: "session_status_changed", payload: {
       sessionId,
@@ -963,11 +936,9 @@ export class PiOrchestrator {
       const containerInfo = await this.containerManager.checkContainerById(pausedSession.containerId)
       if (!containerInfo?.running) {
         console.log(`[orchestrator] Container ${pausedSession.containerId} not running for session ${sessionId}`)
-        // Container will be recreated when executePrompt is called
       }
     }
 
-    // Get the task to resume execution
     if (pausedSession.taskId) {
       const task = this.db.getTask(pausedSession.taskId)
       if (task) {
@@ -976,19 +947,12 @@ export class PiOrchestrator {
     }
   }
 
-  /**
-   * Resume task execution from pause point.
-   * Re-executes the prompt with a "continue" message.
-   */
   private async resumeTaskExecution(task: Task, pausedState: PausedSessionState): Promise<void> {
-    // Create a "continue" prompt that preserves context
-    // Prefer the snapshot from paused state context, fall back to current task output
     const agentOutputSnapshot = pausedState.context?.agentOutputSnapshot ?? task.agentOutput ?? ""
     const continuePrompt = `Continue from where you left off. You were in the middle of implementing a task. Review what you've done so far and continue with the remaining work.
 
 Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}`
 
-    // Re-execute the prompt with container image from paused state
     const execution = await this.sessionManager.executePrompt({
       taskId: task.id,
       sessionKind: pausedState.sessionKind,
@@ -996,22 +960,19 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       worktreeDir: pausedState.worktreeDir,
       branch: pausedState.branch,
       model: pausedState.model,
-      thinkingLevel: pausedState.thinkingLevel as import("./types.ts").ThinkingLevel,
+      thinkingLevel: pausedState.thinkingLevel,
       promptText: continuePrompt,
-      // Indicate this is a resume, not a fresh start
+      isResume: true,
       isResume: true,
       resumedSessionId: pausedState.sessionId,
       continuationPrompt: continuePrompt,
       // Pass container image for container recreation on resume
       containerImage: pausedState.containerImage,
       onSessionCreated: (process, startedSession) => {
-        // Track the process for pause/stop operations
         this.activeSessionProcesses.set(startedSession.id, {
           process,
           session: startedSession,
-          onPause: async () => {
-            // Custom pause handler for resumed sessions
-          },
+          onPause: async () => {},
         })
       },
       onSessionStart: (startedSession) => {
@@ -1022,25 +983,18 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       },
     })
 
-    // Clean up tracking after session completes
     this.activeSessionProcesses.delete(execution.session.id)
   }
 
-  /**
-   * Kill a session immediately without graceful shutdown.
-   * Used for destructive stop operations.
-   */
   private async killSessionImmediately(sessionId: string): Promise<void> {
     const activeProcess = this.activeSessionProcesses.get(sessionId)
     if (activeProcess) {
-      // Force kill without graceful close
       if ("forceKill" in activeProcess.process) {
         await activeProcess.process.forceKill()
       }
       this.activeSessionProcesses.delete(sessionId)
     }
 
-    // Mark session as aborted
     this.db.updateWorkflowSession(sessionId, {
       status: "aborted",
       finishedAt: nowUnix(),
@@ -1054,10 +1008,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     try {
       for (let index = 0; index < taskIds.length; index++) {
         if (this.shouldStop) break
-        if (this.shouldPause) {
-          // Pause requested - exit loop and let pause() handle state
-          return
-        }
+        if (this.shouldPause) return
 
         const taskId = taskIds[index]
         const task = this.db.getTask(taskId)
@@ -1168,7 +1119,6 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         settings: this.settings,
         externalSessionManager: this.sessionManager,
         onSessionCreated: (process, startedSession) => {
-          // Track BestOfN sessions for pause/stop operations
           this.activeSessionProcesses.set(startedSession.id, {
             process,
             session: startedSession,
@@ -1198,8 +1148,9 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           if (existingWorktree) {
             worktreeInfo = existingWorktree
           }
-        } catch {
-          // If verification fails, fall through to create new worktree
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error)
+          console.warn(`[orchestrator] Failed to verify worktree ${task.worktreeDir}: ${msg}`)
         }
       }
 
@@ -1338,7 +1289,6 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           maxJsonParseRetries,
           currentJsonParseRetryCount: jsonParseRetryCount,
           onSessionCreated: (process, startedSession) => {
-            // Track review sessions for pause/stop operations
             this.activeSessionProcesses.set(startedSession.id, {
               process,
               session: startedSession,
@@ -1354,7 +1304,6 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         })
         this.broadcastTask(taskId)
 
-        // Increment reviewCount after every review attempt (pass or fail)
         reviewCount += 1
         jsonParseRetryCount = reviewRun.jsonParseRetryCount
         this.db.updateTask(taskId, { reviewCount, reviewActivity: "idle", jsonParseRetryCount })
@@ -1452,8 +1401,9 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       this.broadcastTask(taskId)
       try {
         unlinkSync(reviewFilePath)
-      } catch {
-        // best-effort cleanup
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error)
+        console.debug(`[orchestrator] Failed to remove review file ${reviewFilePath}: ${msg}`)
       }
     }
   }
@@ -1733,8 +1683,9 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           shouldMerge: false,
           shouldRemove: true,
         })
-      } catch {
-        // best effort
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error)
+        console.warn(`[orchestrator] Failed to remove worktree ${task.worktreeDir}: ${msg}`)
       }
     }
 

@@ -86,8 +86,9 @@ export class PiReviewSessionRunner {
     let jsonParseFailed = false
     try {
       parsed = parseStrictJsonObject(response.responseText, "Review response")
-    } catch {
-      // Log the JSON parse failure for this model
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      console.debug(`[review-session] JSON parse failed: ${msg}`)
       this.db.incrementJsonOutFail(response.session.id, input.model)
       jsonParseFailed = true
 
