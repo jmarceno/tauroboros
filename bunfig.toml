@@ -3,4 +3,4 @@
 
 [test]
 # Exclude e2e tests from bun test (they use Playwright)
-exclude = ["tests/e2e/**"]
+exclude = ["tests/e2e/**/*.spec.ts", "tests/e2e/**/*.test.ts"]

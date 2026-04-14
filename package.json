@@ -12,7 +12,7 @@
     "compile:test": "bun run scripts/test-binary.ts",
     "kanban:build": "cd src/kanban-vue && npm install && npm run build",
     "kanban:dev": "SERVER_PORT=3789 bun run src/index.ts & sleep 3 && cd src/kanban-vue && npm install && SERVER_PORT=3789 npm run dev",
-    "test": "bun test",
+    "test": "bun test tests/*.test.ts",
     "test:e2e": "bun run tests/e2e/prepare.ts && bunx playwright test",
     "test:e2e:ui": "bun run tests/e2e/prepare.ts && bunx playwright test --ui",
     "test:e2e:debug": "bun run tests/e2e/prepare.ts && bunx playwright test --debug",

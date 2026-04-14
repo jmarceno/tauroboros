@@ -162,6 +162,7 @@ this.abortController = new AbortController()
       imageName,
       memoryMb,
       cpuCount,
+      env: {},
     }
 
     this.containerProcess = await this.containerManager.createContainer(

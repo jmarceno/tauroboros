@@ -71,4 +71,79 @@ test.describe('Basic UI Functionality', () => {
     
     console.log('✓ Keyboard shortcuts displayed');
   });
+
+  test('task cards display ID badges when tasks exist', async ({ page }) => {
+    // First create a task to test the badge
+    const taskName = `UI Test Task ${Date.now()}`;
+    
+    // Create a task via API to test UI elements
+    const response = await page.evaluate(async (name) => {
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name,
+          prompt: 'Test prompt for UI verification',
+          status: 'backlog',
+        }),
+      });
+      return { status: res.status, data: await res.json() };
+    }, taskName);
+    
+    expect(response.status).toBe(201);
+    
+    // Reload to show the new task
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(2000);
+    
+    // Find the task card
+    const taskCard = page.locator('.task-card').filter({ hasText: taskName }).first();
+    await expect(taskCard).toBeVisible({ timeout: 10000 });
+    
+    // Check for task ID badge
+    const idBadge = taskCard.locator('.task-id-badge');
+    await expect(idBadge).toBeVisible({ timeout: 5000 });
+    
+    // Verify badge format (#number)
+    const badgeText = await idBadge.textContent();
+    expect(badgeText).toMatch(/#\d+/);
+    
+    // Cleanup: archive the task using Ctrl+click to skip confirmation
+    const archiveButton = taskCard.locator('button[title*="Archive"], button[title*="archive"]').first();
+    if (await archiveButton.isVisible().catch(() => false)) {
+      await archiveButton.click({ modifiers: ['Control'] });
+      await page.waitForTimeout(1000);
+    }
+    
+    console.log('✓ Task ID badges displayed correctly');
+  });
+
+  test('kanban columns have correct data-status attributes', async ({ page }) => {
+    // Verify all expected columns exist with correct data-status
+    const expectedColumns = ['template', 'backlog', 'executing', 'review', 'done'];
+    
+    for (const status of expectedColumns) {
+      const column = page.locator(`[data-status="${status}"]`);
+      await expect(column).toBeVisible({ timeout: 5000 });
+    }
+    
+    console.log('✓ All kanban columns have correct data-status attributes');
+  });
+
+  test('sidebar has workflow control and stats sections', async ({ page }) => {
+    // Verify sidebar sections exist
+    const workflowControl = page.locator('.sidebar:has-text("Workflow Control")');
+    await expect(workflowControl).toBeVisible({ timeout: 10000 });
+    
+    // Verify stats section
+    const statsSection = page.locator('.sidebar .stats-section, .sidebar:has-text("Total")');
+    await expect(statsSection).toBeVisible({ timeout: 5000 });
+    
+    // Verify Options button
+    const optionsButton = page.locator('button:has-text("Options")');
+    await expect(optionsButton).toBeVisible({ timeout: 5000 });
+    
+    console.log('✓ Sidebar has all expected sections');
+  });
 });

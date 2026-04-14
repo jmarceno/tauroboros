@@ -69,8 +69,9 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     const archiveButtons = page.locator('.sidebar button').filter({ hasText: /Archive this run|Archive.*Stale/ });
     let archiveCount = 0;
     while (await archiveButtons.first().isVisible().catch(() => false)) {
-      await archiveButtons.first().click();
-      console.log('[TEST CLEANUP] Archived a run');
+      // Use Ctrl+click to bypass confirmation modal
+      await archiveButtons.first().click({ modifiers: ['Control'] });
+      console.log('[TEST CLEANUP] Archived a run (with Ctrl to skip confirmation)');
       await page.waitForTimeout(1000);
       archiveCount++;
       if (archiveCount > 10) break; // Safety limit

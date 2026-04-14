@@ -127,9 +127,14 @@ test.describe('Task Modal - Options Loading', () => {
         const card = taskCards.nth(i)
         const cardText = await card.textContent().catch(() => '')
         if (cardText && cardText.includes(taskName)) {
-          await card.click()
-          taskClicked = true
-          break
+          // Click on the edit button (pencil icon) in the task card footer
+          // This is more reliable than clicking the whole card
+          const editButton = card.locator('button[title*="Edit"]').first()
+          if (await editButton.isVisible().catch(() => false)) {
+            await editButton.click()
+            taskClicked = true
+            break
+          }
         }
       }
       
