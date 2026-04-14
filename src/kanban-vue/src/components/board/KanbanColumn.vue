@@ -39,8 +39,8 @@ const emit = defineEmits<{
   repairTask: [id: string, action: string]
   markDone: [id: string]
   resetTask: [id: string]
-  convertToTemplate: [id: string]
-  archiveTask: [id: string]
+  convertToTemplate: [id: string, event?: MouseEvent]
+  archiveTask: [id: string, event?: MouseEvent]
   archiveAllDone: []
   viewRuns: [id: string]
   continueReviews: [id: string]
@@ -133,8 +133,8 @@ const handleDrop = (e: DragEvent) => {
         @repair="(action) => emit('repairTask', task.id, action)"
         @mark-done="() => emit('markDone', task.id)"
         @reset="() => emit('resetTask', task.id)"
-        @convert-to-template="() => emit('convertToTemplate', task.id)"
-        @archive="() => emit('archiveTask', task.id)"
+        @convert-to-template="(event) => emit('convertToTemplate', task.id, event)"
+        @archive="(event) => emit('archiveTask', task.id, event)"
         @view-runs="() => emit('viewRuns', task.id)"
         @continue-reviews="() => emit('continueReviews', task.id)"
       />

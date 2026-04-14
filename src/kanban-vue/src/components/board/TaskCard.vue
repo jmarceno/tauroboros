@@ -30,8 +30,8 @@ const emit = defineEmits<{
   repair: [action: string]
   markDone: []
   reset: []
-  convertToTemplate: []
-  archive: []
+  convertToTemplate: [event?: MouseEvent]
+  archive: [event?: MouseEvent]
   viewRuns: []
   continueReviews: []
   toggleSelection: [event: MouseEvent]
@@ -376,8 +376,8 @@ onUnmounted(() => {
         <button
           v-if="!showInlineActionBar && (((!isLocked && task.status !== 'executing')) || task.status === 'done')"
           class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-danger transition-colors"
-          title="Archive Task"
-          @click="emit('archive')"
+          title="Archive Task (Ctrl+click to skip confirmation)"
+          @click="(e) => emit('archive', e)"
         >
           <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -410,8 +410,8 @@ onUnmounted(() => {
         <button
           v-if="task.status === 'backlog' && !isLocked"
           class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-primary transition-colors"
-          title="Convert to Template"
-          @click="emit('convertToTemplate')"
+          title="Convert to Template (Ctrl+click to skip confirmation)"
+          @click="(e) => emit('convertToTemplate', e)"
         >
           <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>

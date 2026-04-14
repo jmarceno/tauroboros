@@ -191,3 +191,6 @@ When modifying server static file handling:
 ## Fallbacks
   NEVER add fallbacks, all conditions and cases must be explicitly.
   If a condition or case is not explicit, it must not exist and it must just throw an error.
+
+## Pre-existing errors
+  You must always fix errors you find, it does not matter if were introduced by your changes or not. We are a team and we work on all the issues together.

@@ -36,6 +36,7 @@ import BatchEditModal from '@/components/modals/BatchEditModal.vue'
 import PlanningPromptModal from '@/components/modals/PlanningPromptModal.vue'
 import ContainerConfigModal from '@/components/modals/ContainerConfigModal.vue'
 import StopConfirmModal from '@/components/modals/StopConfirmModal.vue'
+import ConfirmModal from '@/components/modals/ConfirmModal.vue'
 
 // State
 const optionsComposable = useOptions()
@@ -73,9 +74,15 @@ const logPanelCollapsed = ref(false)
 // Stop confirm modal state
 const showStopConfirmModal = ref(false)
 
+// Confirm modal state for delete/convert actions
+const showConfirmModal = ref(false)
+const confirmModalAction = ref<'delete' | 'convertToTemplate'>('delete')
+const confirmModalTaskId = ref<string | null>(null)
+const confirmModalTaskName = ref<string>('')
+
 // Computed
 const isAnyModalOpen = computed(() => {
-  return activeModal.value !== null || showContainerConfigModal.value || showStopConfirmModal.value
+  return activeModal.value !== null || showContainerConfigModal.value || showStopConfirmModal.value || showConfirmModal.value
 })
 
 const consumedSlotsValue = computed(() => runsComposable.consumedRunSlots.value)
@@ -111,8 +118,49 @@ const closeModal = () => {
       showStopConfirmModal.value = false
       return true
     }
+    if (showConfirmModal.value) {
+      showConfirmModal.value = false
+      confirmModalTaskId.value = null
+      return true
+    }
     return false
   }
+
+// Confirmation modal helpers
+const showConfirmation = (action: 'delete' | 'convertToTemplate', taskId: string, taskName: string, ctrlHeld: boolean) => {
+  // If Ctrl is held, bypass confirmation for delete and convert actions
+  if (ctrlHeld) {
+    executeConfirmedAction(action, taskId)
+    return
+  }
+  // Otherwise, show the confirmation modal
+  confirmModalAction.value = action
+  confirmModalTaskId.value = taskId
+  confirmModalTaskName.value = taskName
+  showConfirmModal.value = true
+}
+
+const executeConfirmedAction = async (action: 'delete' | 'convertToTemplate', taskId: string) => {
+  try {
+    if (action === 'delete') {
+      await tasksComposable.deleteTask(taskId)
+      toasts.showToast('Task deleted', 'success')
+    } else if (action === 'convertToTemplate') {
+      await tasksComposable.updateTask(taskId, { status: 'template' })
+      toasts.showToast('Task converted to template', 'success')
+    }
+  } catch (e) {
+    toasts.showToast(`${action === 'delete' ? 'Delete' : 'Convert'} failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+  }
+}
+
+const handleConfirmModalConfirm = () => {
+  if (confirmModalTaskId.value) {
+    executeConfirmedAction(confirmModalAction.value, confirmModalTaskId.value)
+  }
+  showConfirmModal.value = false
+  confirmModalTaskId.value = null
+}
 
 const clearSelectionAndCloseModal = () => {
   multiSelect.clearSelection()
@@ -775,8 +823,18 @@ window.addEventListener('hashchange', () => {
         @repair-task="(id: string, action: string) => tasksComposable.repairTask(id, action)"
         @mark-done="(id: string) => tasksComposable.updateTask(id, { status: 'done', completedAt: Math.floor(Date.now() / 1000) })"
         @reset-task="tasksComposable.resetTask"
-        @convert-to-template="(id: string) => tasksComposable.updateTask(id, { status: 'template' })"
-        @archive-task="tasksComposable.deleteTask"
+        @convert-to-template="(id: string, event?: MouseEvent) => {
+          const task = tasksComposable.getTaskById(id)
+          const taskName = task?.name || 'this task'
+          const ctrlHeld = event?.ctrlKey || event?.metaKey || false
+          showConfirmation('convertToTemplate', id, taskName, ctrlHeld)
+        }"
+        @archive-task="(id: string, event?: MouseEvent) => {
+          const task = tasksComposable.getTaskById(id)
+          const taskName = task?.name || 'this task'
+          const ctrlHeld = event?.ctrlKey || event?.metaKey || false
+          showConfirmation('delete', id, taskName, ctrlHeld)
+        }"
         @archive-all-done="async () => {
           if (!confirm(`Archive all ${tasksComposable.groupedTasks?.done?.length ?? 0} done task(s)?`)) return
           await tasksComposable.archiveAllDone()
@@ -936,6 +994,17 @@ window.addEventListener('hashchange', () => {
           toasts.showToast(workflowControl.error.value || 'Failed to stop workflow', 'error')
         }
       }"
+    />
+
+    <ConfirmModal
+      :is-open="showConfirmModal"
+      :action="confirmModalAction"
+      :task-name="confirmModalTaskName"
+      @close="() => {
+        showConfirmModal = false
+        confirmModalTaskId = null
+      }"
+      @confirm="handleConfirmModalConfirm"
     />
   </div>
 </template>

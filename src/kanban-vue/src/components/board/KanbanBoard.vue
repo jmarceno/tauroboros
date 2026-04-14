@@ -30,8 +30,8 @@ const emit = defineEmits<{
   repairTask: [id: string, action: string]
   markDone: [id: string]
   resetTask: [id: string]
-  convertToTemplate: [id: string]
-  archiveTask: [id: string]
+  convertToTemplate: [id: string, event?: MouseEvent]
+  archiveTask: [id: string, event?: MouseEvent]
   archiveAllDone: []
   viewRuns: [id: string]
   continueReviews: [id: string]
@@ -145,8 +145,8 @@ const columnColors: Record<string, string> = {
           @repair-task="(id, action) => emit('repairTask', id, action)"
           @mark-done="(id) => emit('markDone', id)"
           @reset-task="(id) => emit('resetTask', id)"
-          @convert-to-template="(id) => emit('convertToTemplate', id)"
-          @archive-task="(id) => emit('archiveTask', id)"
+          @convert-to-template="(id, event) => emit('convertToTemplate', id, event)"
+          @archive-task="(id, event) => emit('archiveTask', id, event)"
           @archive-all-done="emit('archiveAllDone')"
           @view-runs="(id) => emit('viewRuns', id)"
           @continue-reviews="(id) => emit('continueReviews', id)"
