@@ -13,13 +13,10 @@
       "port": 3789,
       "dbPath": ".pi/easy-workflow/tasks.db"
     },
-    "runtime": {
-      "mode": "container",
-      "piBin": "pi",
-      "piArgs": "--mode rpc --no-extensions"
-    },
     "container": {
       "enabled": true,
+      "piBin": "pi",
+      "piArgs": "--mode rpc --no-extensions",
       "image": "pi-agent:alpine",
       "imageSource": "dockerfile",
       "dockerfilePath": "docker/pi-agent/Dockerfile",

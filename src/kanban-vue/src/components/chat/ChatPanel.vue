@@ -26,6 +26,7 @@ const planningChat = inject<any>('planningChat')
 const options = inject<ReturnType<typeof useOptions>>('options')!
 const modelSearch = inject<ReturnType<typeof useModelSearch>>('modelSearch')!
 const messageInput = ref('')
+const editorRef = ref<InstanceType<typeof MarkdownEditor> | null>(null)
 const messagesContainer = ref<HTMLElement | null>(null)
 const isEditingName = ref(false)
 const editedName = ref('')
@@ -163,8 +164,10 @@ const sendMessage = async () => {
   const content = messageInput.value.trim()
   const attachments = [...attachedContext.value]
 
+  // Clear input and editor
   messageInput.value = ''
   attachedContext.value = []
+  editorRef.value?.clear()
 
   try {
     await planningChat.sendMessage(props.session.id, content, attachments)
@@ -535,6 +538,7 @@ const handleReconnect = async () => {
       <!-- Input Box -->
       <div class="chat-input-box">
         <MarkdownEditor
+          ref="editorRef"
           v-model="messageInput"
           :disabled="session.isLoading || !session.session?.id"
           placeholder="Type your message... (Shift+Enter to send)"

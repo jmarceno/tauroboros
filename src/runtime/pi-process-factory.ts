@@ -36,7 +36,7 @@ export type PiRuntimeMode = "native" | "container"
  * Get the configured runtime mode from settings.
  */
 export function getConfiguredRuntime(settings?: InfrastructureSettings): PiRuntimeMode {
-  if (settings?.workflow?.runtime?.mode === "container") return "container"
+  if (settings?.workflow?.container?.enabled === true) return "container"
   return "native" // Default to native
 }
 
@@ -134,7 +134,7 @@ export async function validateContainerSetup(
   if (configuredRuntime === "container" && !status.podman) {
     issues.push(
       "Container runtime is configured but Podman is not available. " +
-        "Install Podman or update .pi/settings.json workflow.runtime.mode to 'native'",
+        "Install Podman or set workflow.container.enabled to false in .pi/settings.json",
     )
   }
 

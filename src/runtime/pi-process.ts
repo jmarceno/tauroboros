@@ -91,9 +91,9 @@ export class PiRpcProcess {
   start(): void {
     if (this.proc) return
 
-    const piBin = this.settings?.workflow?.runtime?.piBin?.trim() || "pi"
-    const configuredArgs = this.settings?.workflow?.runtime?.piArgs
-      ? parseArgs(this.settings.workflow.runtime.piArgs)
+    const piBin = this.settings?.workflow?.container?.piBin?.trim() || "pi"
+    const configuredArgs = this.settings?.workflow?.container?.piArgs
+      ? parseArgs(this.settings.workflow.container.piArgs)
       : ["--mode", "rpc", "--no-extensions"]
 
     // Add system prompt if provided

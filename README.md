@@ -124,7 +124,6 @@ For enhanced security and isolation, run AI agents inside Podman containers:
 bun run container:verify
 
 # 3. Enable container mode by editing .pi/settings.json:
-# Set workflow.runtime.mode to "container"
 # Set workflow.container.enabled to true
 
 # 4. Run as normal - agents now run in isolated containers
@@ -221,10 +220,9 @@ All infrastructure-level configuration is stored in `.pi/settings.json`. This fi
 |---------|-------------|
 | `workflow.server.port` | HTTP server port (default: 3789) |
 | `workflow.server.dbPath` | SQLite database path relative to project root |
-| `workflow.runtime.mode` | Runtime mode: `"native"` or `"container"` |
-| `workflow.runtime.piBin` | Path to Pi binary (default: "pi") |
-| `workflow.runtime.piArgs` | Additional arguments for Pi CLI |
 | `workflow.container.enabled` | Enable container isolation |
+| `workflow.container.piBin` | Path to Pi binary (default: "pi") |
+| `workflow.container.piArgs` | Additional arguments for Pi CLI |
 | `workflow.container.image` | Container image for agents |
 | `workflow.container.memoryMb` | Memory limit per container |
 | `workflow.container.cpuCount` | CPU limit per container |

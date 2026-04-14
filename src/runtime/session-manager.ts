@@ -66,7 +66,7 @@ export interface ExecuteSessionPromptInput {
   onSessionCreated?: (process: PiRpcProcess | ContainerPiProcess, session: PiWorkflowSession) => void
   /**
    * Force specific runtime mode for this session.
-   * If not specified, uses workflow.runtime.mode from settings.
+   * If not specified, uses workflow.container.enabled from settings.
    */
   forceRuntime?: PiRuntimeMode
   /**

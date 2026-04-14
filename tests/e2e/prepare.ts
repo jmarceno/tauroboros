@@ -111,13 +111,10 @@ const settings = {
       port: testServerPort,
       dbPath: dbPath,
     },
-    runtime: {
-      mode: useContainer ? 'container' : 'native',
-      piBin: 'pi',
-      piArgs: '--mode rpc --no-extensions',
-    },
     container: {
       enabled: useContainer,
+      piBin: 'pi',
+      piArgs: '--mode rpc --no-extensions',
       image: 'pi-agent:alpine',
       imageSource: 'dockerfile',
       dockerfilePath: join(projectDir, 'docker/pi-agent/Dockerfile'),

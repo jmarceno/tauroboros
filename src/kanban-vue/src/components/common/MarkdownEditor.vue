@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount, computed } from 'vue'
+import { ref, watch, onBeforeUnmount, computed, defineExpose } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
@@ -17,6 +17,9 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
   'keydown': [event: KeyboardEvent]
 }>()
+
+// Track if we're currently setting content to avoid circular updates
+let isSettingContent = false
 
 const editor = useEditor({
   extensions: [
@@ -42,6 +45,7 @@ const editor = useEditor({
   content: props.modelValue,
   editable: !props.disabled,
   onUpdate: ({ editor }) => {
+    if (isSettingContent) return
     emit('update:modelValue', editor.getHTML())
   },
   editorProps: {
@@ -54,9 +58,18 @@ const editor = useEditor({
 
 // Sync external changes
 watch(() => props.modelValue, (newValue) => {
-  if (editor.value && editor.value.getHTML() !== newValue) {
-    editor.value.commands.setContent(newValue)
-  }
+  if (!editor.value || isSettingContent) return
+  
+  const targetContent = newValue || '<p></p>'
+  const currentContent = editor.value.getHTML()
+  
+  // Check if we need to update (content is different)
+  if (currentContent === targetContent) return
+  
+  // Set content without triggering onUpdate to avoid circular loop
+  isSettingContent = true
+  editor.value.commands.setContent(targetContent, false)
+  isSettingContent = false
 })
 
 watch(() => props.disabled, (disabled) => {
@@ -95,6 +108,14 @@ const toggleLink = () => {
 }
 const undo = () => editor.value?.chain().focus().undo().run()
 const redo = () => editor.value?.chain().focus().redo().run()
+
+// Expose method to clear editor content directly
+const clear = () => {
+  if (!editor.value) return
+  editor.value.chain().focus().clearContent().run()
+}
+
+defineExpose({ clear })
 
 // Check if actions are active
 const isActive = (name: string, attributes?: Record<string, unknown>) => {

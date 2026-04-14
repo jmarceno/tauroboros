@@ -17,14 +17,10 @@ export interface ServerSettings {
   dbPath: string
 }
 
-export interface RuntimeSettings {
-  mode: "native" | "container"
-  piBin: string
-  piArgs: string
-}
-
 export interface ContainerSettings {
   enabled: boolean
+  piBin: string
+  piArgs: string
   image: string
   imageSource: "dockerfile" | "registry"
   dockerfilePath: string
@@ -38,7 +34,6 @@ export interface ContainerSettings {
 
 export interface WorkflowSettings {
   server: ServerSettings
-  runtime: RuntimeSettings
   container: ContainerSettings
 }
 
@@ -63,13 +58,10 @@ export const DEFAULT_INFRASTRUCTURE_SETTINGS: InfrastructureSettings = {
       port: 3789,
       dbPath: ".pi/easy-workflow/tasks.db",
     },
-    runtime: {
-      mode: "native",
-      piBin: "pi",
-      piArgs: "--mode rpc --no-extensions",
-    },
     container: {
       enabled: false,
+      piBin: "pi",
+      piArgs: "--mode rpc --no-extensions",
       image: "pi-agent:alpine",
       imageSource: "dockerfile",
       dockerfilePath: "docker/pi-agent/Dockerfile",
@@ -215,7 +207,7 @@ function validateAndExtractUnknown(
   if (parsed.workflow !== undefined) {
     if (typeof parsed.workflow === "object" && parsed.workflow !== null) {
       const workflow = parsed.workflow as Record<string, unknown>
-      const validWorkflowKeys = ["server", "runtime", "container"]
+      const validWorkflowKeys = ["server", "container"]
       unknownFields.push(...extractUnknownFields(workflow, validWorkflowKeys, "workflow"))
 
       if (workflow.server !== undefined) {
@@ -233,35 +225,13 @@ function validateAndExtractUnknown(
         }
       }
 
-      if (workflow.runtime !== undefined) {
-        if (typeof workflow.runtime === "object" && workflow.runtime !== null) {
-          const runtime = workflow.runtime as Record<string, unknown>
-          const validRuntimeKeys = ["mode", "piBin", "piArgs"]
-          unknownFields.push(...extractUnknownFields(runtime, validRuntimeKeys, "workflow.runtime"))
-
-          if (runtime.mode !== undefined) {
-            if (validateFieldType("workflow.runtime.mode", runtime.mode, "string", warnings)) {
-              if (runtime.mode !== "native" && runtime.mode !== "container") {
-                warnings.push(
-                  `Invalid value at 'workflow.runtime.mode': must be "native" or "container", got "${runtime.mode}"`,
-                )
-              }
-            }
-          }
-          if (runtime.piBin !== undefined) {
-            validateFieldType("workflow.runtime.piBin", runtime.piBin, "string", warnings)
-          }
-          if (runtime.piArgs !== undefined) {
-            validateFieldType("workflow.runtime.piArgs", runtime.piArgs, "string", warnings)
-          }
-        }
-      }
-
       if (workflow.container !== undefined) {
         if (typeof workflow.container === "object" && workflow.container !== null) {
           const container = workflow.container as Record<string, unknown>
           const validContainerKeys = [
             "enabled",
+            "piBin",
+            "piArgs",
             "image",
             "imageSource",
             "dockerfilePath",
@@ -278,6 +248,12 @@ function validateAndExtractUnknown(
 
           if (container.enabled !== undefined) {
             validateFieldType("workflow.container.enabled", container.enabled, "boolean", warnings)
+          }
+          if (container.piBin !== undefined) {
+            validateFieldType("workflow.container.piBin", container.piBin, "string", warnings)
+          }
+          if (container.piArgs !== undefined) {
+            validateFieldType("workflow.container.piArgs", container.piArgs, "string", warnings)
           }
           if (container.image !== undefined) {
             validateFieldType("workflow.container.image", container.image, "string", warnings)

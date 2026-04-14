@@ -12,8 +12,8 @@ function createTestSettings(mockPiBin: string): InfrastructureSettings {
     ...DEFAULT_INFRASTRUCTURE_SETTINGS,
     workflow: {
       ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow,
-      runtime: {
-        ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.runtime,
+      container: {
+        ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.container,
         piBin: mockPiBin,
         piArgs: "",
       },

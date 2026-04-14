@@ -117,11 +117,10 @@ Container settings are configured in `.pi/settings.json`:
 ```json
 {
   "workflow": {
-    "runtime": {
-      "mode": "native"
-    },
     "container": {
       "enabled": false,
+      "piBin": "pi",
+      "piArgs": "--mode rpc --no-extensions",
       "image": "pi-agent:alpine",
       "memoryMb": 512,
       "cpuCount": 1,
@@ -136,8 +135,9 @@ Container settings are configured in `.pi/settings.json`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `workflow.runtime.mode` | `"native"` | Runtime mode: `"native"` or `"container"` |
 | `workflow.container.enabled` | `false` | Enable container isolation globally |
+| `workflow.container.piBin` | `"pi"` | Path to Pi binary |
+| `workflow.container.piArgs` | `"--mode rpc --no-extensions"` | Additional arguments for Pi CLI |
 | `workflow.container.image` | `"pi-agent:alpine"` | Podman image for agents |
 | `workflow.container.memoryMb` | `512` | Memory limit per container (MB) |
 | `workflow.container.cpuCount` | `1` | CPU limit per container |

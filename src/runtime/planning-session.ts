@@ -646,7 +646,7 @@ export class PlanningSessionManager {
     // Store in active sessions
     this.sessions.set(sessionId, planningSession)
 
-    await planningSession.start(input.systemPrompt, input.model, input.thinkingLevel)
+    await planningSession.start(input.systemPrompt, input.model, input.thinkingLevel, "native")
 
     const updatedSession = this.db.getWorkflowSession(sessionId) ?? session
 
@@ -717,8 +717,8 @@ export class PlanningSessionManager {
     // Store in active sessions (or replace old one)
     this.sessions.set(sessionId, planningSession)
 
-    // Reconnect to the Pi process
-    await planningSession.reconnect(input.systemPrompt, input.model, input.thinkingLevel)
+    // Reconnect to the Pi process (planning sessions always use native mode)
+    await planningSession.reconnect(input.systemPrompt, input.model, input.thinkingLevel, "native")
 
     const updatedSession = this.db.getWorkflowSession(sessionId) ?? dbSession
 

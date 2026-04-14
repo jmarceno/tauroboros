@@ -83,18 +83,16 @@ function validateInfrastructureSettings(settings: InfrastructureSettings): void 
     throw new Error("Infrastructure settings workflow.server.dbPath must be a string")
   }
 
-  // Validate runtime settings
-  if (!settings.workflow?.runtime?.mode || !["native", "container"].includes(settings.workflow.runtime.mode)) {
-    throw new Error("Infrastructure settings workflow.runtime.mode must be 'native' or 'container'")
-  }
-  if (!settings.workflow?.runtime?.piBin || typeof settings.workflow.runtime.piBin !== "string") {
-    throw new Error("Infrastructure settings workflow.runtime.piBin must be a string")
-  }
-
   // Validate container settings
   if (settings.workflow?.container) {
     if (typeof settings.workflow.container.enabled !== "boolean") {
       throw new Error("Infrastructure settings workflow.container.enabled must be a boolean")
+    }
+    if (typeof settings.workflow.container.piBin !== "string") {
+      throw new Error("Infrastructure settings workflow.container.piBin must be a string")
+    }
+    if (typeof settings.workflow.container.piArgs !== "string") {
+      throw new Error("Infrastructure settings workflow.container.piArgs must be a string")
     }
     if (typeof settings.workflow.container.image !== "string") {
       throw new Error("Infrastructure settings workflow.container.image must be a string")
