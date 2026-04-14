@@ -231,6 +231,14 @@ ws.on('task_created', async (payload) => {
       console.error('[WebSocket] Invalid task payload:', payload)
       return
     }
+
+    // Check if task already exists to prevent duplicates from race condition
+    const existingTask = tasksComposable.getTaskById(task.id)
+    if (existingTask) {
+      console.log(`[WebSocket] task_created: Task ${task.id} already exists, skipping`)
+      return
+    }
+
     // Use reactive assignment instead of push to ensure Vue detects change
     tasksComposable.tasks.value = [...tasksComposable.tasks.value, task]
     // Wait for Vue to update
@@ -258,9 +266,9 @@ ws.on('task_updated', async (payload) => {
 
   if (idx >= 0) {
     tasksComposable.tasks.value = tasksComposable.tasks.value.map((t, i) => i === idx ? mergedTask : t)
-  } else {
-    tasksComposable.tasks.value = [...tasksComposable.tasks.value, mergedTask]
   }
+  // Note: We intentionally do NOT add new tasks here - task_updated should only update existing tasks.
+  // If task doesn't exist yet, it will be added via task_created event or loadTasks().
   // Phase 3: Keep runs composable tasks ref synchronized
   runsComposable.setTasksRef(tasksComposable.tasks.value)
 

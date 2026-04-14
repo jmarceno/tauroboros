@@ -104,7 +104,10 @@ export function useTasks(columnSorts?: { value: ColumnSortPreferences | undefine
 
   const createTask = async (data: Parameters<typeof api.createTask>[0]) => {
     const task = await api.createTask(data)
-    tasks.value.push(task)
+    // Check if task already exists (WebSocket may have added it first)
+    if (!getTaskById(task.id)) {
+      tasks.value.push(task)
+    }
     return task
   }
 

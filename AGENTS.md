@@ -187,3 +187,7 @@ When modifying server static file handling:
 
 ## Test and Errors
   Errors must be fixed, even if your changes did not cause them, you must fix any errors you find.
+
+## Fallbacks
+  NEVER add fallbacks, all conditions and cases must be explicitly.
+  If a condition or case is not explicit, it must not exist and it must just throw an error.
