@@ -1,6 +1,6 @@
 {
   "name": "tauroboros",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "TaurOboros - AI-powered workflow orchestration system with container isolation",
   "type": "module",
   "scripts": {

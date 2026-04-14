@@ -173,7 +173,7 @@ TaurOboros uses a **standalone server with SQLite database** architecture:
    - Container Configuration modal for image management
 
 3. **Configuration** (`.tauroboros/settings.json` for infrastructure config)
-    - Database location: `<workspace>/.tauroboros/easy-workflow/tasks.db`
+    - Database location: `<workspace>/.tauroboros/tasks.db`
     - Container settings for isolation mode
     - Skills auto-discovery from `.pi/skills/`
 
@@ -218,7 +218,7 @@ Planning sessions support:
 
 The workflow DB is managed by the standalone server at:
 
-`<workspace>/.tauroboros/easy-workflow/tasks.db`
+`<workspace>/.tauroboros/tasks.db`
 
 The storage layer lives in `src/db.ts`.
 

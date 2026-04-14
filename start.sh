@@ -1,7 +1,7 @@
 #!/bin/bash
-# Quick start helper script for pi-easy-workflow
+# Quick start helper script for tauroboros
 
-echo "Pi Easy Workflow - Quick Start"
+echo "TaurOboros - Quick Start"
 echo "================================"
 
 # Check if bun is installed

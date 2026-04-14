@@ -190,7 +190,7 @@ export class PiKanbanServer {
         imageSource: containerSettings.imageSource,
         dockerfilePath: containerSettings.dockerfilePath,
         registryUrl: containerSettings.registryUrl,
-          cacheDir: join(process.cwd(), ".tauroboros", "easy-workflow"),
+          cacheDir: join(process.cwd(), ".tauroboros"),
         onStatusChange: (event) => {
           const payload: ImageStatusPayload = {
             status: event.status,
@@ -1673,8 +1673,8 @@ Respond ONLY with the JSON array, no other text.`
         const config = {
           version: body.version ?? 1,
           baseImage: body.baseImage ?? "docker.io/alpine:3.19",
-          customDockerfilePath: body.customDockerfilePath ?? ".tauroboros/easy-workflow/Dockerfile.custom",
-          generatedDockerfilePath: body.generatedDockerfilePath ?? ".tauroboros/easy-workflow/Dockerfile.generated",
+          customDockerfilePath: body.customDockerfilePath ?? ".tauroboros/Dockerfile.custom",
+          generatedDockerfilePath: body.generatedDockerfilePath ?? ".tauroboros/Dockerfile.generated",
           packages: body.packages ?? [],
           lastBuild: body.lastBuild ?? null,
         }
@@ -1768,7 +1768,7 @@ Respond ONLY with the JSON array, no other text.`
           imageName: "pi-agent:custom",
           imageSource: "dockerfile",
           dockerfilePath: "docker/pi-agent/Dockerfile",
-        cacheDir: join(process.cwd(), ".tauroboros", "easy-workflow"),
+        cacheDir: join(process.cwd(), ".tauroboros"),
         })
 
         const config = tempManager.loadContainerConfig(process.cwd())

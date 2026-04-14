@@ -721,11 +721,11 @@ watch(activeTab, async (tab) => {
               </div>
               <div class="flex justify-between py-1 border-b border-dark-surface3">
                 <span class="text-dark-text-muted">Generated Dockerfile:</span>
-                <code class="text-xs bg-dark-surface px-2 py-0.5 rounded">.tauroboros/easy-workflow/Dockerfile.generated</code>
+                <code class="text-xs bg-dark-surface px-2 py-0.5 rounded">.tauroboros/Dockerfile.generated</code>
               </div>
               <div class="flex justify-between py-1 border-b border-dark-surface3">
                 <span class="text-dark-text-muted">Custom Dockerfile:</span>
-                <code class="text-xs bg-dark-surface px-2 py-0.5 rounded">.tauroboros/easy-workflow/Dockerfile.custom</code>
+                <code class="text-xs bg-dark-surface px-2 py-0.5 rounded">.tauroboros/Dockerfile.custom</code>
               </div>
             </div>
           </div>

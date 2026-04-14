@@ -56,7 +56,7 @@ export const DEFAULT_INFRASTRUCTURE_SETTINGS: InfrastructureSettings = {
     workflow: {
     server: {
       port: 0,
-      dbPath: ".tauroboros/easy-workflow/tasks.db",
+      dbPath: ".tauroboros/tasks.db",
     },
     container: {
       enabled: false,

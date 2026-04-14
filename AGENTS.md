@@ -41,7 +41,7 @@ The server uses **dynamic port assignment by default** (port 0), which allows ru
   "workflow": {
     "server": {
       "port": 49234,
-      "dbPath": ".tauroboros/easy-workflow/tasks.db"
+      "dbPath": ".tauroboros/tasks.db"
     }
   }
 }

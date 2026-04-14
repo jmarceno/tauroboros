@@ -339,7 +339,7 @@ test.describe('Container Configuration System', () => {
 
     test('Build information shows correct paths', async ({ page }) => {
       // Verify build configuration shows paths - use code elements since paths are in <code> tags
-      const dockerfileGenerated = page.locator('code:has-text("Dockerfile.generated"), code:has-text(".tauroboros/easy-workflow")')
+      const dockerfileGenerated = page.locator('code:has-text("Dockerfile.generated"), code:has-text(".tauroboros")')
       const dockerfileCustom = page.locator('code:has-text("Dockerfile.custom")')
       const baseImage = page.locator('code:has-text("alpine"), code:has-text("docker.io")')
       
@@ -350,7 +350,7 @@ test.describe('Container Configuration System', () => {
       } else {
         // Fallback: check text content anywhere on the page
         const pageContent = await page.locator('.modal').textContent()
-        expect(pageContent).toContain('.tauroboros/easy-workflow')
+        expect(pageContent).toContain('.tauroboros')
         expect(pageContent).toContain('Dockerfile')
         expect(pageContent).toContain('alpine')
       }
