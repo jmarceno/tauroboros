@@ -19,7 +19,7 @@ import { useWorkflowControl } from '@/composables/useWorkflowControl'
 import Sidebar from '@/components/board/Sidebar.vue'
 import TopBar from '@/components/board/TopBar.vue'
 import KanbanBoard from '@/components/board/KanbanBoard.vue'
-import LogPanel from '@/components/common/LogPanel.vue'
+import TabbedLogPanel from '@/components/common/TabbedLogPanel.vue'
 import ToastContainer from '@/components/common/ToastContainer.vue'
 import ChatContainer from '@/components/chat/ChatContainer.vue'
 
@@ -659,8 +659,6 @@ window.addEventListener('hashchange', () => {
   <div class="app-layout bg-dark-bg text-dark-text">
     <!-- Sidebar -->
     <Sidebar
-      :runs="runsComposable.runs.value"
-      :stale-runs="runsComposable.staleRuns.value"
       :consumed-slots="consumedSlotsValue"
       :parallel-tasks="parallelTasksValue"
       :is-connected="isConnectedValue"
@@ -671,8 +669,6 @@ window.addEventListener('hashchange', () => {
       :is-control-loading="workflowControl.isLoading.value"
       :is-paused="workflowControl.isPaused.value"
       :active-run-id="currentActiveRun?.id ?? null"
-      @highlight-run="(runId: string) => highlightedRunId = runId"
-      @clear-highlight="highlightedRunId = null"
       @toggle-execution="async () => {
         // Check for paused run first
         const hasPaused = await workflowControl.checkPausedState()
@@ -774,25 +770,6 @@ window.addEventListener('hashchange', () => {
         toasts.showToast('All done tasks archived', 'success')
       }"
       @toggle-planning-chat="planningChat.togglePanel()"
-      @archive-run="async (id: string) => {
-        try {
-          await runsComposable.archiveRun(id)
-          toasts.showToast('Run archived', 'success')
-        } catch (e) {
-          toasts.showToast('Failed to archive run: ' + (e instanceof Error ? e.message : String(e)), 'error')
-        }
-      }"
-      @archive-all-stale-runs="async () => {
-        const staleCount = runsComposable.staleRuns?.value?.length ?? 0
-        if (staleCount === 0) return
-        if (!confirm(`Archive ${staleCount} stale workflow run${staleCount > 1 ? 's' : ''}?`)) return
-        try {
-          await Promise.all(runsComposable.staleRuns.value.map(run => runsComposable.archiveRun(run.id)))
-          toasts.showToast(`${staleCount} stale run${staleCount > 1 ? 's' : ''} archived`, 'success')
-        } catch (e) {
-          toasts.showToast('Failed to archive runs: ' + (e instanceof Error ? e.message : String(e)), 'error')
-        }
-      }"
     />
 
     <!-- Main Content -->
@@ -848,11 +825,34 @@ window.addEventListener('hashchange', () => {
         }"
       />
 
-      <!-- Log Panel -->
-      <LogPanel
+      <!-- Tabbed Log Panel with Workflow Runs -->
+      <TabbedLogPanel
         v-model:collapsed="logPanelCollapsed"
         :logs="toasts.logs.value"
+        :runs="runsComposable.runs.value"
+        :stale-runs="runsComposable.staleRuns.value"
         @clear="toasts.clearLogs"
+        @archive-run="async (id: string) => {
+          try {
+            await runsComposable.archiveRun(id)
+            toasts.showToast('Run archived', 'success')
+          } catch (e) {
+            toasts.showToast('Failed to archive run: ' + (e instanceof Error ? e.message : String(e)), 'error')
+          }
+        }"
+        @archive-all-stale-runs="async () => {
+          const staleCount = runsComposable.staleRuns?.value?.length ?? 0
+          if (staleCount === 0) return
+          if (!confirm(`Archive ${staleCount} stale workflow run${staleCount > 1 ? 's' : ''}?`)) return
+          try {
+            await Promise.all(runsComposable.staleRuns.value.map(run => runsComposable.archiveRun(run.id)))
+            toasts.showToast(`${staleCount} stale run${staleCount > 1 ? 's' : ''} archived`, 'success')
+          } catch (e) {
+            toasts.showToast('Failed to archive runs: ' + (e instanceof Error ? e.message : String(e)), 'error')
+          }
+        }"
+        @highlight-run="(runId: string) => highlightedRunId = runId"
+        @clear-highlight="highlightedRunId = null"
       />
     </main>
 
