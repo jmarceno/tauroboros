@@ -72,6 +72,14 @@ export function useRuns() {
     return null
   }
 
+  // Check if a task belongs to a specific run (any status - for highlight feature)
+  const isTaskInRun = (taskId: string, runId: string | null): boolean => {
+    if (!runId) return false
+    const run = runs.value.find(r => r.id === runId)
+    if (!run) return false
+    return run.taskOrder?.includes(taskId) || false
+  }
+
   const getRunProgressLabel = (run: WorkflowRun) => {
     const total = run.taskOrder?.length ?? 0
     const completed = Math.min(run.currentTaskIndex ?? 0, total)
@@ -149,6 +157,7 @@ export function useRuns() {
     getTaskRunLock,
     isTaskMutationLocked,
     getTaskRunColor,
+    isTaskInRun,
     getRunProgressLabel,
     loadRuns,
     pauseRun,

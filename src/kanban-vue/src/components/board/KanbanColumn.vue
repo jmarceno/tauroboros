@@ -17,6 +17,8 @@ const props = withDefaults(defineProps<{
   isMultiSelecting?: boolean
   getIsSelected?: (taskId: string) => boolean
   currentSort?: string
+  highlightedRunId?: string | null
+  isTaskInRun?: (taskId: string, runId: string | null) => boolean
 }>(), {
   tasks: () => [],
   isMultiSelecting: false,
@@ -121,6 +123,7 @@ const handleDrop = (e: DragEvent) => {
         :drag-drop="dragDrop"
         :is-selected="getIsSelected?.(task.id)"
         :is-multi-selecting="isMultiSelecting"
+        :is-highlighted="isTaskInRun?.(task.id, highlightedRunId) ?? false"
         @open="() => emit('openTask', task.id)"
         @deploy="() => emit('deployTemplate', task.id)"
         @open-session="() => emit('openSession', task.sessionId!)"

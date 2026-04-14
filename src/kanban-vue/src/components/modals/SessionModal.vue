@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, inject, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, inject, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { Session, SessionMessage } from '@/types/api'
 import type { useSession } from '@/composables/useSession'
 import type { useTasks } from '@/composables/useTasks'
@@ -19,10 +19,17 @@ const sessionUsage = useSessionUsage()
 
 const timelineRef = ref<HTMLElement | null>(null)
 const showUsageDetails = ref(false)
+let usagePollInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   session.loadSession(props.sessionId)
   sessionUsage.loadSessionUsage(props.sessionId)
+  sessionUsage.startWatching(props.sessionId)
+  
+  // Poll usage data every 3 seconds
+  usagePollInterval = setInterval(() => {
+    sessionUsage.loadSessionUsage(props.sessionId)
+  }, 3000)
 })
 
 watch(() => session.messages.value, async () => {
@@ -120,6 +127,14 @@ const closeOnOverlay = (e: MouseEvent) => {
     emit('close')
   }
 }
+
+onUnmounted(() => {
+  sessionUsage.stopWatching(props.sessionId)
+  if (usagePollInterval) {
+    clearInterval(usagePollInterval)
+    usagePollInterval = null
+  }
+})
 </script>
 
 <template>
@@ -204,6 +219,9 @@ const closeOnOverlay = (e: MouseEvent) => {
           <span v-if="typeof session.taskRunContext.value?.attemptIndex === 'number'" class="badge">
             attempt: {{ session.taskRunContext.value.attemptIndex + 1 }}
           </span>
+          <!-- Usage badges - always shown -->
+          <span class="badge badge-cost">💰 {{ sessionUsage.formatCost(sessionUsage.getCachedUsage(props.sessionId)?.totalCost ?? 0) }}</span>
+          <span class="badge">🪙 {{ sessionUsage.formatTokenCount(sessionUsage.getCachedUsage(props.sessionId)?.totalTokens ?? 0) }} tokens</span>
         </div>
 
         <!-- Loading -->

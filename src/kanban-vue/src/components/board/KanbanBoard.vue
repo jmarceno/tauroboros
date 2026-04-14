@@ -14,6 +14,8 @@ const props = defineProps<{
   isMultiSelecting?: boolean
   getIsSelected?: (taskId: string) => boolean
   columnSorts?: Record<string, string>
+  highlightedRunId?: string | null
+  isTaskInRun?: (taskId: string, runId: string | null) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -129,6 +131,8 @@ const columnColors: Record<string, string> = {
           :is-multi-selecting="isMultiSelecting"
           :get-is-selected="getIsSelected"
           :current-sort="columnSorts?.[column.status] || 'manual'"
+          :highlighted-run-id="highlightedRunId"
+          :is-task-in-run="isTaskInRun"
           @open-task="(id) => emit('openTask', id)"
           @change-sort="(sort) => emit('changeColumnSort', column.status, sort)"
           @open-template-modal="emit('openTemplateModal')"

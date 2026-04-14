@@ -40,6 +40,9 @@ const emit = defineEmits<{
   resumeWorkflow: []
   stopWorkflow: []
   forceStopWorkflow: []
+  // Run highlight emits
+  highlightRun: [runId: string]
+  clearHighlight: []
 }>()
 
 const tasks = inject<ReturnType<typeof useTasks>>('tasks')!
@@ -233,6 +236,8 @@ const isRunStale = (run: WorkflowRun) => {
             v-for="run in visibleRuns"
             :key="run.id"
             :class="['run-card', getRunStatusClass(run.status, isRunStale(run))]"
+            @mouseenter="emit('highlightRun', run.id)"
+            @mouseleave="emit('clearHighlight')"
           >
             <div class="run-header">
               <span class="run-id">{{ run.displayName || run.kind }}</span>

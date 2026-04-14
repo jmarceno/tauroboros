@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, inject } from 'vue'
+import { ref, computed, inject, watch, onMounted, onUnmounted } from 'vue'
 import type { Task, BestOfNSummary } from '@/types/api'
 import type { useDragDrop } from '@/composables/useDragDrop'
 import type { useOptions } from '@/composables/useOptions'
@@ -15,6 +15,7 @@ const props = defineProps<{
   dragDrop: ReturnType<typeof useDragDrop>
   isSelected?: boolean
   isMultiSelecting?: boolean
+  isHighlighted?: boolean
 }>()
 
 const multiSelect = inject<ReturnType<typeof import('@/composables/useMultiSelect').useMultiSelect>>('multiSelect')
@@ -176,11 +177,30 @@ const statusColor = computed(() => {
       return 'low'
   }
 })
+
+// Watch for sessionId changes and start/stop watching usage
+watch(() => props.task.sessionId, (newSessionId, oldSessionId) => {
+  if (oldSessionId) {
+    sessionUsage?.stopWatching(oldSessionId)
+  }
+  if (newSessionId) {
+    sessionUsage?.startWatching(newSessionId)
+    // Load initial usage data
+    sessionUsage?.loadSessionUsage(newSessionId)
+  }
+}, { immediate: true })
+
+// Cleanup on unmount
+onUnmounted(() => {
+  if (props.task.sessionId) {
+    sessionUsage?.stopWatching(props.task.sessionId)
+  }
+})
 </script>
 
 <template>
   <div
-    :class="['task-card', { dragging: isSelected }]"
+    :class="['task-card', { dragging: isSelected, highlighted: isHighlighted }]"
     :data-task-id="task.id"
     :data-task-status="task.status"
     :style="runColor ? { borderLeft: `3px solid ${runColor}` } : undefined"
@@ -195,6 +215,9 @@ const statusColor = computed(() => {
   >
     <!-- Header -->
     <div class="task-header">
+      <!-- Task ID badge -->
+      <span class="task-id-badge">#{{ task.idx + 1 }}</span>
+      
       <svg
         v-if="task.status === 'executing'"
         class="task-icon animate-spin text-accent-success"
@@ -480,13 +503,19 @@ const statusColor = computed(() => {
       </div>
     </div>
 
-    <!-- Cost badge -->
-    <div v-if="taskCost" class="flex items-center gap-2 mt-1 text-xs">
+    <!-- Cost and tokens badge - always shown -->
+    <div v-if="task.sessionId" class="flex items-center gap-2 mt-1 text-xs">
       <span 
         class="px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full text-dark-text-secondary flex items-center gap-1"
-        :title="`${taskCost.formattedTokens} tokens`"
+        :title="taskCost ? `${taskCost.formattedTokens} tokens` : 'Loading usage data...'"
       >
-        💰 {{ taskCost.formattedCost }}
+        💰 {{ taskCost?.formattedCost ?? '$0' }}
+      </span>
+      <span
+        v-if="taskCost"
+        class="px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full text-dark-text-muted text-[10px]"
+      >
+        {{ taskCost.formattedTokens }}
       </span>
     </div>
 

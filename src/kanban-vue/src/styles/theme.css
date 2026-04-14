@@ -194,6 +194,17 @@
     @apply opacity-50;
   }
 
+  .task-card.highlighted {
+    box-shadow: 0 0 12px rgba(0, 212, 255, 0.4), 0 0 20px rgba(0, 212, 255, 0.2), inset 0 0 12px rgba(0, 212, 255, 0.1);
+    border-color: #00d4ff;
+    transform: translateX(4px);
+    z-index: 10;
+  }
+
+  .task-id-badge {
+    @apply px-1.5 py-0 text-[10px] bg-dark-surface2 border border-dark-border rounded text-dark-text-muted font-mono flex-shrink-0;
+  }
+
   .task-header {
     @apply flex items-start gap-2 mb-2;
   }
@@ -575,6 +586,10 @@
 
   .badge {
     @apply inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-dark-surface2/60 border border-dark-border text-dark-text-secondary;
+  }
+
+  .badge-cost {
+    @apply bg-accent-primary/10 border-accent-primary/30 text-accent-primary;
   }
 
   .system-badge {

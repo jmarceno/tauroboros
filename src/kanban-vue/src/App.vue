@@ -63,6 +63,9 @@ const workflowControl = useWorkflowControl(
 const activeModal = ref<string | null>(null)
 const modalData = ref<Record<string, unknown>>({})
 
+// Workflow highlight state
+const highlightedRunId = ref<string | null>(null)
+
 // Container config modal state
 const showContainerConfigModal = ref(false)
 const logPanelCollapsed = ref(false)
@@ -129,6 +132,7 @@ provide('planningChat', planningChat)
 provide('workflowControl', workflowControl)
 provide('openModal', openModal)
 provide('closeModal', closeModal)
+provide('highlightedRunId', highlightedRunId)
 
 // Drag and drop
 const dragDrop = useDragDrop(async (taskId, targetStatus) => {
@@ -611,6 +615,8 @@ window.addEventListener('hashchange', () => {
       :is-control-loading="workflowControl.isLoading.value"
       :is-paused="workflowControl.isPaused.value"
       :active-run-id="currentActiveRun?.id ?? null"
+      @highlight-run="(runId: string) => highlightedRunId = runId"
+      @clear-highlight="highlightedRunId = null"
       @toggle-execution="async () => {
         // Check for paused run first
         const hasPaused = await workflowControl.checkPausedState()
@@ -748,6 +754,8 @@ window.addEventListener('hashchange', () => {
         :is-multi-selecting="multiSelect.isSelecting.value"
         :get-is-selected="multiSelect.isSelected"
         :column-sorts="optionsComposable.options.columnSorts"
+        :highlighted-run-id="highlightedRunId"
+        :is-task-in-run="runsComposable.isTaskInRun"
         @open-task="(id: string) => openModal('task', { taskId: id, mode: 'edit' })"
         @open-template-modal="openModal('task', { mode: 'create', createStatus: 'template' })"
         @open-task-modal="openModal('task', { mode: 'create', createStatus: 'backlog' })"
