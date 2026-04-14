@@ -104,7 +104,7 @@ afterEach(() => {
 
 describe("PiOrchestrator dependency-aware workflow runs", () => {
   it("executes dependency chains in order for targeted task runs", async () => {
-    const root = createTempDir("pi-easy-workflow-orchestration-")
+    const root = createTempDir("tauroboros-orchestration-")
     initGitRepo(root)
     const mockPiBin = createMockPiBinary(root)
     const settings = createTestSettings(mockPiBin)

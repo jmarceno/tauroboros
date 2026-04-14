@@ -1,4 +1,4 @@
-# Pi MVP Implementation Plan: Gaps 1-3
+# TaurOboros MVP Implementation Plan: Gaps 1-3
 
 ## Executive Summary
 
@@ -11,7 +11,7 @@ This plan addresses the three critical gaps identified in the Pi MVP migration:
 ## Gap 1: Dynamic Dependency Scheduling in startAll
 
 ### Current Behavior
-The `startAll()` method in `pi-easy-workflow/src/orchestrator.ts` calls `resolveExecutionTasks()` which only returns tasks whose dependencies are **already** `done`. It doesn't include tasks whose dependencies will be satisfied by other tasks in the same run.
+The `startAll()` method in `tauroboros/src/orchestrator.ts` calls `resolveExecutionTasks()` which only returns tasks whose dependencies are **already** `done`. It doesn't include tasks whose dependencies will be satisfied by other tasks in the same run.
 
 ### Root Cause
 In `orchestrator.ts` lines 60-82, `startAll()` uses `resolveExecutionTasks(this.db.getTasks())` which internally uses `getExecutableTasks()`. This only returns tasks where `areTaskRequirementsDone()` returns true - meaning dependencies must already be `done`. The legacy version uses `getExecutionGraphTasks()` which considers both `done` tasks AND tasks that will be scheduled in the same run.
@@ -21,7 +21,7 @@ Replace `resolveExecutionTasks()` with a call to `buildExecutionGraph()` (or a s
 
 ### Files to Modify
 
-#### 1. `pi-easy-workflow/src/execution-plan.ts`
+#### 1. `tauroboros/src/execution-plan.ts`
 
 **Changes needed:**
 
@@ -42,7 +42,7 @@ Replace `resolveExecutionTasks()` with a call to `buildExecutionGraph()` (or a s
    }
    ```
 
-#### 2. `pi-easy-workflow/src/server/server.ts`
+#### 2. `tauroboros/src/server/server.ts`
 
 **Changes needed:**
 
@@ -95,7 +95,7 @@ The `/api/execution-graph` endpoint currently uses `getExecutableTasks()` which 
    })
    ```
 
-#### 3. `pi-easy-workflow/src/execution-plan.ts`
+#### 3. `tauroboros/src/execution-plan.ts`
 
 **Additional change needed:**
 
@@ -138,7 +138,7 @@ The `buildExecutionGraph` function currently calls `getExecutionGraphTasks` inte
    }
    ```
 
-#### 4. `pi-easy-workflow/src/orchestrator.ts`
+#### 4. `tauroboros/src/orchestrator.ts`
 
 **Changes needed:**
 
@@ -259,14 +259,14 @@ The `buildExecutionGraph` function currently calls `getExecutionGraphTasks` inte
 Session messages are persisted to the database via `createSessionMessage()` in `pi-process.ts`, but WebSocket broadcasts for `session_message_created` events are not sent. The session viewer modal can load historical data but doesn't receive real-time updates.
 
 ### Root Cause
-In `pi-easy-workflow/src/runtime/pi-process.ts` lines 207-219, session messages are created via `this.db.createSessionMessage(message)` but no WebSocket broadcast is emitted. The legacy version broadcasts `session_message_created` events that the UI listens for.
+In `tauroboros/src/runtime/pi-process.ts` lines 207-219, session messages are created via `this.db.createSessionMessage(message)` but no WebSocket broadcast is emitted. The legacy version broadcasts `session_message_created` events that the UI listens for.
 
 ### Solution
 Add WebSocket broadcasts in the Pi runtime when session messages are created and when session status changes occur.
 
 ### Files to Modify
 
-#### 1. `pi-easy-workflow/src/runtime/pi-process.ts`
+#### 1. `tauroboros/src/runtime/pi-process.ts`
 
 **Changes needed:**
 
@@ -308,7 +308,7 @@ Add WebSocket broadcasts in the Pi runtime when session messages are created and
    }
    ```
 
-#### 2. `pi-easy-workflow/src/runtime/session-manager.ts`
+#### 2. `tauroboros/src/runtime/session-manager.ts`
 
 **Changes needed:**
 
@@ -339,7 +339,7 @@ Add WebSocket broadcasts in the Pi runtime when session messages are created and
    })
    ```
 
-#### 3. `pi-easy-workflow/src/orchestrator.ts`
+#### 3. `tauroboros/src/orchestrator.ts`
 
 **Changes needed:**
 
@@ -367,7 +367,7 @@ Add WebSocket broadcasts in the Pi runtime when session messages are created and
    }
    ```
 
-#### 4. `pi-easy-workflow/src/types.ts`
+#### 4. `tauroboros/src/types.ts`
 
 **Changes needed:**
 
@@ -394,14 +394,14 @@ Add WebSocket broadcasts in the Pi runtime when session messages are created and
 The Pi version has database fields and UI options for Telegram notifications (`telegramBotToken`, `telegramChatId`, `telegramNotificationsEnabled`), but the actual notification sending logic is not implemented. The legacy version sends notifications on task status changes and workflow completion.
 
 ### Root Cause
-In `pi-easy-workflow/src/server/server.ts`, there's no `setTaskStatusChangeListener` equivalent to the legacy implementation. The legacy uses this listener to trigger Telegram notifications whenever a task's status changes.
+In `tauroboros/src/server/server.ts`, there's no `setTaskStatusChangeListener` equivalent to the legacy implementation. The legacy uses this listener to trigger Telegram notifications whenever a task's status changes.
 
 ### Solution
 Implement a status change listener mechanism in the database layer and wire it up to send Telegram notifications, matching the legacy behavior.
 
 ### Files to Create/Modify
 
-#### 1. `pi-easy-workflow/src/telegram.ts` (NEW FILE)
+#### 1. `tauroboros/src/telegram.ts` (NEW FILE)
 
 **Purpose:** Port the Telegram notification service from legacy
 
@@ -490,7 +490,7 @@ export async function sendTelegramNotification(
 }
 ```
 
-#### 2. `pi-easy-workflow/src/db.ts`
+#### 2. `tauroboros/src/db.ts`
 
 **Changes needed:**
 
@@ -536,7 +536,7 @@ export async function sendTelegramNotification(
    }
    ```
 
-#### 3. `pi-easy-workflow/src/server/server.ts`
+#### 3. `tauroboros/src/server/server.ts`
 
 **Changes needed:**
 
@@ -607,13 +607,13 @@ export async function sendTelegramNotification(
 ## Files Summary
 
 ### Modified Files:
-1. `pi-easy-workflow/src/execution-plan.ts` - Gap 1 (export getExecutionGraphTasks, ensure buildExecutionGraph uses it)
-2. `pi-easy-workflow/src/server/server.ts` - Gap 1 (fix /api/execution-graph to show full task set)
-3. `pi-easy-workflow/src/orchestrator.ts` - Gap 1 & 2
-4. `pi-easy-workflow/src/runtime/pi-process.ts` - Gap 2
-5. `pi-easy-workflow/src/runtime/session-manager.ts` - Gap 2
-6. `pi-easy-workflow/src/types.ts` - Gap 2 (add WSMessage type)
-7. `pi-easy-workflow/src/db.ts` - Gap 3
+1. `tauroboros/src/execution-plan.ts` - Gap 1 (export getExecutionGraphTasks, ensure buildExecutionGraph uses it)
+2. `tauroboros/src/server/server.ts` - Gap 1 (fix /api/execution-graph to show full task set)
+3. `tauroboros/src/orchestrator.ts` - Gap 1 & 2
+4. `tauroboros/src/runtime/pi-process.ts` - Gap 2
+5. `tauroboros/src/runtime/session-manager.ts` - Gap 2
+6. `tauroboros/src/types.ts` - Gap 2 (add WSMessage type)
+7. `tauroboros/src/db.ts` - Gap 3
 
 ### New Files:
-1. `pi-easy-workflow/src/telegram.ts` - Gap 3
+1. `tauroboros/src/telegram.ts` - Gap 3

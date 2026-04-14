@@ -20,7 +20,7 @@ Uses `git stash push --include-untracked` to capture the complete worktree state
 
 ```bash
 # When task starts executing
-git stash push --include-untracked -m "pi-easy-workflow:snapshot:task-abc123:pre-execution:1699999999"
+git stash push --include-untracked -m "tauroboros:snapshot:task-abc123:pre-execution:1699999999"
 ```
 
 ### Metadata Storage

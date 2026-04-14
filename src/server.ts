@@ -49,7 +49,7 @@ export function createPiServer(options: CreateServerOptions = {}): {
 } {
   // Use explicit dbPath, or find project root for consistent location
   const projectRoot = findProjectRoot()
-  const defaultDbPath = resolve(projectRoot, ".pi", "easy-workflow", "tasks.db")
+  const defaultDbPath = resolve(projectRoot, ".pi", "tauroboros", "tasks.db")
   const dbPath = options.dbPath ?? defaultDbPath
   mkdirSync(dirname(dbPath), { recursive: true })
 

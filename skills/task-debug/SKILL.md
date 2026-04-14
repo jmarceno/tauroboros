@@ -1,10 +1,10 @@
 ---
 name: task-debug
-description: Diagnose and repair failed, stuck, or otherwise not progressing Easy Workflow tasks using session logs, timelines, worktree state, and deterministic repair logic.
+description: Diagnose and repair failed, stuck, or otherwise not progressing TaurOboros tasks using session logs, timelines, worktree state, and deterministic repair logic.
 compatibility: opencode
 metadata:
   audience: agents
-  workflow: easy-workflow
+  workflow: tauroboros
 ---
 
 ## What I do
@@ -423,7 +423,7 @@ The debug skill operates on the **standalone server with SQLite database** archi
 
 1. **Standalone Server** (`src/server/server.ts`)
    - HTTP API on configured port (default 3789)
-   - SQLite database at `.pi/easy-workflow/tasks.db`
+   - SQLite database at `.pi/tauroboros/tasks.db`
    - Message logger captures all session events with token/cost tracking
    - WebSocket server broadcasts real-time updates
 
@@ -434,58 +434,25 @@ The debug skill operates on the **standalone server with SQLite database** archi
 
 3. **Database Tables:**
 
-   `tasks` — Core task state with archive support
+    `tasks` — Core task state with archive support
 
-   `task_runs` — Child runs for best-of-n
+    `task_runs` — Child runs for best-of-n
 
-   `task_candidates` — Successful worker artifacts
+    `task_candidates` — Successful worker artifacts
 
-   `workflow_runs` — Workflow run tracking with colors
+    `workflow_runs` — Workflow run tracking with colors
 
-   `workflow_sessions` — Workflow session management
+    `workflow_sessions` — Workflow session management
 
-   `session_messages` — Normalized message log with token/cost tracking and cache info
+    `session_messages` — Normalized message log with token/cost tracking and cache info
 
-   `session_io` — Raw I/O capture stream
+    `session_io` — Raw I/O capture stream
 
-   `prompt_templates` / `prompt_template_versions` — Prompt management
-
-## Prompt Template Management
-
-The workflow supports custom prompt templates:
-
-```bash
-# List all prompt templates
-curl http://localhost:<port>/api/prompt-templates
-
-# Get a specific template
-curl http://localhost:<port>/api/prompt-templates/<key>
-
-# Get template version history
-curl http://localhost:<port>/api/prompt-templates/<key>/versions
-
-# Create or update a template
-curl -X POST http://localhost:<port>/api/prompt-templates \
-  -H "Content-Type: application/json" \
-  -d '{
-    "key": "custom_execution",
-    "name": "Custom Execution Prompt",
-    "description": "My custom execution prompt",
-    "templateText": "You are a coding assistant...",
-    "variables": ["task", "options", "worktreeDir"]
-  }'
-
-# Set active template version
-curl -X POST http://localhost:<port>/api/prompt-templates/<key>/set-active \
-  -H "Content-Type: application/json" \
-  -d '{"version": 2}'
-```
-
-Built-in template keys: `execution`, `planning`, `plan_revision`, `review`, `review_fix`, `commit`, `repair`, `best_of_n_worker`, `best_of_n_reviewer`, `best_of_n_final_applier`
+    `prompt_templates` / `prompt_template_versions` — Prompt management
 
 ## Persistence Layout
 
-Database location: `<workspace>/.pi/easy-workflow/tasks.db`
+Database location: `<workspace>/.pi/tauroboros/tasks.db`
 
 The storage layer is in `src/db.ts`.
 

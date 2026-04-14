@@ -17,7 +17,7 @@ import { existsSync } from "fs"
 import { resolve } from "path"
 
 const PROJECT_ROOT = resolve(import.meta.dir, "..")
-const BINARY_PATH = resolve(PROJECT_ROOT, "pi-easy-workflow")
+const BINARY_PATH = resolve(PROJECT_ROOT, "tauroboros")
 
 interface TestResult {
   name: string
@@ -101,7 +101,7 @@ async function testStaticAssets(): Promise<void> {
       throw new Error(`index.html failed with status ${indexResponse.status}`)
     }
     const indexText = await indexResponse.text()
-    if (!indexText.includes("Easy Workflow")) {
+    if (!indexText.includes("TaurOboros")) {
       throw new Error("index.html doesn't contain expected content")
     }
 
@@ -242,7 +242,7 @@ async function testCustomPort(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  console.log("🔬 Pi Easy Workflow Binary Validation Tests")
+  console.log("🔬 TaurOboros Binary Validation Tests")
   console.log("============================================\n")
 
   await runTest("Binary file exists", testBinaryExists)

@@ -39,9 +39,9 @@ async function checkAndPrepareContainer(projectRoot: string): Promise<{
 
   if (!setupStatus.image) {
     // Image not found, need to auto-build
-    console.log("[pi-easy-workflow] Building container image for first run (this may take a minute)...")
+    console.log("[tauroboros] Building container image for first run (this may take a minute)...")
 
-    const cacheDir = resolve(projectRoot, ".pi", "easy-workflow")
+    const cacheDir = resolve(projectRoot, ".pi", "tauroboros")
     const imageManager = new ContainerImageManager({
       imageName: "pi-agent:alpine",
       imageSource: "dockerfile",
@@ -49,7 +49,7 @@ async function checkAndPrepareContainer(projectRoot: string): Promise<{
       cacheDir,
       onStatusChange: (event) => {
         if (event.status === "error") {
-          console.error(`[pi-easy-workflow] ${event.message}`)
+          console.error(`[tauroboros] ${event.message}`)
         }
       },
     })
@@ -94,9 +94,9 @@ export async function main(): Promise<void> {
   // This works in both binary mode (extracts embedded) and source mode (copies from source)
   const extractionResult = extractEmbeddedResources(projectRoot)
   if (extractionResult.mode === "binary") {
-    console.log(`[pi-easy-workflow] Extracted ${extractionResult.extensions} extensions and ${extractionResult.skills} skills from binary`)
+    console.log(`[tauroboros] Extracted ${extractionResult.extensions} extensions and ${extractionResult.skills} skills from binary`)
   } else if (extractionResult.mode === "source") {
-    console.log(`[pi-easy-workflow] Copied ${extractionResult.extensions} extensions and ${extractionResult.skills} skills from source`)
+    console.log(`[tauroboros] Copied ${extractionResult.extensions} extensions and ${extractionResult.skills} skills from source`)
   }
   
   const args = parseCliArgs(process.argv.slice(2))
@@ -111,22 +111,22 @@ export async function main(): Promise<void> {
     // First start - determine mode based on CLI args and container availability
     if (args.native) {
       // User explicitly requested native mode
-      console.log("[pi-easy-workflow] First run - creating settings with native mode...")
+      console.log("[tauroboros] First run - creating settings with native mode...")
       ;({ settings, warnings } = await createInitialSettings(projectRoot, false))
     } else {
       // Default to container mode - check requirements
-      console.log("[pi-easy-workflow] First run detected - setting up container mode...")
+      console.log("[tauroboros] First run detected - setting up container mode...")
       const containerCheck = await checkAndPrepareContainer(projectRoot)
 
       if (!containerCheck.ready) {
-        console.error(`[pi-easy-workflow] ${containerCheck.error}`)
-        console.error("[pi-easy-workflow] To start in native mode instead, run: bun run start -- --native")
+        console.error(`[tauroboros] ${containerCheck.error}`)
+        console.error("[tauroboros] To start in native mode instead, run: bun run start -- --native")
         process.exit(1)
       }
 
       // Container is ready, create settings with container enabled
       ;({ settings, warnings } = await createInitialSettings(projectRoot, true))
-      console.log("[pi-easy-workflow] Settings created with container mode enabled")
+      console.log("[tauroboros] Settings created with container mode enabled")
     }
   } else {
     // Existing settings - load normally
@@ -137,7 +137,7 @@ export async function main(): Promise<void> {
 
   // Report any warnings about settings
   for (const warning of warnings) {
-    console.warn(`[pi-easy-workflow] ${warning}`)
+    console.warn(`[tauroboros] ${warning}`)
   }
 
   // Resolve dbPath relative to project root
@@ -154,7 +154,7 @@ export async function main(): Promise<void> {
   })
 
   const actualPort = await server.start(port)
-  console.log(`[pi-easy-workflow] server started on http://0.0.0.0:${actualPort}`)
+  console.log(`[tauroboros] server started on http://0.0.0.0:${actualPort}`)
 
   // Persist the assigned port to settings.json for subsequent runs
   if (actualPort !== settings.workflow.server.port) {

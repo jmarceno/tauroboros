@@ -7,7 +7,7 @@
 import { PiContainerManager } from "../src/runtime/container-manager.ts"
 
 console.log("=========================================")
-console.log("Pi Easy Workflow - Container Setup Verification")
+console.log("TaurOboros - Container Setup Verification")
 console.log("=========================================\n")
 
 const manager = new PiContainerManager()

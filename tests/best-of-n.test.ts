@@ -134,7 +134,7 @@ afterEach(() => {
 
 describe("PiOrchestrator best-of-n execution", () => {
   it("runs worker/reviewer/final-applier sessions with Pi and preserves run visibility", async () => {
-    const root = createTempDir("pi-easy-workflow-bestofn-")
+    const root = createTempDir("tauroboros-bestofn-")
     initGitRepo(root)
 
     const mockPi = createMockPiBinary(root)
@@ -196,7 +196,7 @@ describe("PiOrchestrator best-of-n execution", () => {
   })
 
   it("routes to manual review when reviewers request manual review", async () => {
-    const root = createTempDir("pi-easy-workflow-bestofn-manual-")
+    const root = createTempDir("tauroboros-bestofn-manual-")
     initGitRepo(root)
 
     const mockPi = createMockPiBinary(root)

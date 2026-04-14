@@ -1,6 +1,6 @@
-# Pi Easy Workflow
+# TaurOboros
 
-Pi Easy Workflow is an AI-powered workflow orchestration system that helps you manage and execute complex software development tasks using AI agents. It combines a kanban-style task board with sophisticated execution strategies to deliver high-quality, automated code generation and modification.
+TaurOboros is an AI-powered workflow orchestration system that helps you manage and execute complex software development tasks using AI agents. It combines a kanban-style task board with sophisticated execution strategies to deliver high-quality, automated code generation and modification.
 
 
 ## Features
@@ -87,11 +87,11 @@ You can compile the entire application into a single executable binary for easy 
 # Compile into a single binary (~66 MB)
 bun run compile
 
-# The binary is created as ./pi-easy-workflow
-./pi-easy-workflow
+# The binary is created as ./tauroboros
+./tauroboros
 
 # Run on a custom port
-SERVER_PORT=3790 ./pi-easy-workflow
+SERVER_PORT=3790 ./tauroboros
 
 # Validate the compiled binary works correctly
 bun run compile:test
@@ -145,7 +145,7 @@ bun run dev
 bun run build
 
 # Compile to single binary (standalone distribution)
-bun run compile             # Create ./pi-easy-workflow binary
+bun run compile             # Create ./tauroboros binary
 bun run compile:test        # Validate compiled binary
 
 # Run unit tests
@@ -189,13 +189,13 @@ All infrastructure-level configuration is stored in `.pi/settings.json`. This fi
     "allowGlobal": false
   },
   "project": {
-    "name": "pi-easy-workflow",
+    "name": "tauroboros",
     "type": "workflow"
   },
   "workflow": {
     "server": {
       "port": 3789,
-      "dbPath": ".pi/easy-workflow/tasks.db"
+      "dbPath": ".pi/tauroboros/tasks.db"
     },
     "runtime": {
       "mode": "native",

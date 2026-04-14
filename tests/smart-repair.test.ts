@@ -78,7 +78,7 @@ afterEach(() => {
 
 describe("smart repair", () => {
   it("applies each repair action with expected task state updates", () => {
-    const root = createTempDir("pi-easy-workflow-smart-repair-actions-")
+    const root = createTempDir("tauroboros-smart-repair-actions-")
     const db = new PiKanbanDB(join(root, "tasks.db"))
     const service = new SmartRepairService(db)
 
@@ -122,7 +122,7 @@ describe("smart repair", () => {
   })
 
   it("runs Pi-backed smart repair and stores repair session IO", async () => {
-    const root = createTempDir("pi-easy-workflow-smart-repair-pi-")
+    const root = createTempDir("tauroboros-smart-repair-pi-")
     const settings = createTestSettings(createRepairMockPi(root, "valid"))
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
@@ -159,7 +159,7 @@ describe("smart repair", () => {
   })
 
   it("falls back to deterministic action when smart repair JSON is malformed", async () => {
-    const root = createTempDir("pi-easy-workflow-smart-repair-fallback-")
+    const root = createTempDir("tauroboros-smart-repair-fallback-")
     const settings = createTestSettings(createRepairMockPi(root, "malformed"))
 
     const db = new PiKanbanDB(join(root, "tasks.db"))

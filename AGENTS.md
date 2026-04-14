@@ -1,6 +1,6 @@
 This is a TypeScript project using **Bun** for the backend runtime and Vue for frontend.
 
-The "Pi Easy Workflow" project is an AI-powered workflow orchestration system that:
+The "TaurOboros" project is an AI-powered workflow orchestration system that:
 - Uses Pi AI agents via RPC protocol for task execution
 - Features a kanban-style task board (template, backlog, executing, review, done)
 - Implements advanced AI execution modes (Plan Mode, Review Loops, Best-of-N)
@@ -41,7 +41,7 @@ The server uses **dynamic port assignment by default** (port 0), which allows ru
   "workflow": {
     "server": {
       "port": 49234,
-      "dbPath": ".pi/easy-workflow/tasks.db"
+      "dbPath": ".pi/tauroboros/tasks.db"
     }
   }
 }
@@ -120,7 +120,7 @@ The application can be compiled into a single executable binary using Bun's `--c
 - Builds kanban-vue frontend (if needed)
 - Runs `scripts/generate-embedded-assets.ts` to inline static files
 - Executes `bun build --compile` to create the binary
-- Outputs to `./pi-easy-workflow` (~66 MB ELF executable)
+- Outputs to `./tauroboros` (~66 MB ELF executable)
 
 **`scripts/generate-embedded-assets.ts`** - Asset embedding:
 - Scans `src/kanban-vue/dist/` recursively
@@ -178,8 +178,8 @@ bun run scripts/compile.ts
 bun run scripts/test-binary.ts
 
 # Run the binary
-./pi-easy-workflow
-SERVER_PORT=3790 ./pi-easy-workflow
+./tauroboros
+SERVER_PORT=3790 ./tauroboros
 ```
 
 ### Maintenance Notes

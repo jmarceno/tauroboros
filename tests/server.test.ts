@@ -126,13 +126,13 @@ function createTestSettings(mockPiPath: string): InfrastructureSettings {
       allowGlobal: false,
     },
     project: {
-      name: "pi-easy-workflow-test",
+      name: "tauroboros-test",
       type: "workflow",
     },
     workflow: {
       server: {
         port: 0, // Use dynamic port assignment for tests
-        dbPath: ".pi/easy-workflow/tasks.db",
+        dbPath: ".pi/tauroboros/tasks.db",
       },
       runtime: {
         mode: "native",
@@ -159,7 +159,7 @@ afterEach(() => {
 
 describe("PiKanbanServer API", () => {
   it("supports tasks/options/runs/models and session endpoints", async () => {
-    const root = createTempDir("pi-easy-workflow-server-")
+    const root = createTempDir("tauroboros-server-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0 })
     db.updateOptions({ branch: "master" })
@@ -393,7 +393,7 @@ describe("PiKanbanServer API", () => {
   })
 
   it("broadcasts websocket task updates", async () => {
-    const root = createTempDir("pi-easy-workflow-ws-")
+    const root = createTempDir("tauroboros-ws-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0 })
     db.updateOptions({ branch: "master" })
@@ -436,7 +436,7 @@ describe("PiKanbanServer API", () => {
   })
 
   it("broadcasts websocket session message updates", async () => {
-    const root = createTempDir("pi-easy-workflow-session-ws-")
+    const root = createTempDir("tauroboros-session-ws-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0 })
     db.updateOptions({ branch: "master" })
@@ -492,7 +492,7 @@ describe("PiKanbanServer API", () => {
   })
 
   it("supports local session viewing for real orchestrated runs", async () => {
-    const root = createTempDir("pi-easy-workflow-local-session-view-")
+    const root = createTempDir("tauroboros-local-session-view-")
     initGitRepo(root)
     const settings = createTestSettings(createMockPiBinary(root))
 
@@ -563,7 +563,7 @@ describe("PiKanbanServer API", () => {
   })
 
   it("supports create-and-wait endpoint for synchronous task execution", async () => {
-    const root = createTempDir("pi-easy-workflow-create-and-wait-")
+    const root = createTempDir("tauroboros-create-and-wait-")
     initGitRepo(root)
     const settings = createTestSettings(createMockPiBinary(root))
 
@@ -615,7 +615,7 @@ describe("PiKanbanServer API", () => {
   })
 
   it("create-and-wait validates timeout and poll interval parameters", async () => {
-    const root = createTempDir("pi-easy-workflow-create-and-wait-params-")
+    const root = createTempDir("tauroboros-create-and-wait-params-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0 })
     db.updateOptions({ branch: "master" })

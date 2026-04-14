@@ -36,7 +36,7 @@ function git(cwd: string, args: string[]): string {
 function initGitRepo(root: string): void {
   git(root, ["init"])
   git(root, ["checkout", "-b", "master"])
-  writeFileSync(join(root, "README.md"), "# pi-easy-workflow test\n", "utf-8")
+  writeFileSync(join(root, "README.md"), "# tauroboros test\n", "utf-8")
   git(root, ["add", "README.md"])
   git(root, ["-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", "init"])
 }
@@ -101,7 +101,7 @@ afterEach(() => {
 
 describe("PiOrchestrator standard execution", () => {
   it("executes a standard task end-to-end with pre-command, commit prompt, merge, and status transitions", async () => {
-    const root = createTempDir("pi-easy-workflow-exec-")
+    const root = createTempDir("tauroboros-exec-")
     initGitRepo(root)
     const mockPi = createMockPiBinary(root)
     const settings = createTestSettings(mockPi)

@@ -6,16 +6,16 @@ import type { PackageDefinition, ContainerConfig, ContainerProfile, PackageValid
 // ===== Standalone Container Config Utilities (no ContainerImageManager instance required) =====
 
 /**
- * Load container configuration from .pi/easy-workflow/container-config.json
+ * Load container configuration from .pi/tauroboros/container-config.json
  * This is a standalone function - no ContainerImageManager instance required.
  */
 export function loadContainerConfig(projectRoot: string): ContainerConfig {
-  const configPath = join(projectRoot, ".pi", "easy-workflow", "container-config.json")
+  const configPath = join(projectRoot, ".pi", "tauroboros", "container-config.json")
   const defaultConfig: ContainerConfig = {
     version: 1,
     baseImage: "docker.io/alpine:3.19",
-    customDockerfilePath: ".pi/easy-workflow/Dockerfile.custom",
-    generatedDockerfilePath: ".pi/easy-workflow/Dockerfile.generated",
+    customDockerfilePath: ".pi/tauroboros/Dockerfile.custom",
+    generatedDockerfilePath: ".pi/tauroboros/Dockerfile.generated",
     packages: [],
     lastBuild: null,
   }
@@ -38,11 +38,11 @@ export function loadContainerConfig(projectRoot: string): ContainerConfig {
 }
 
 /**
- * Save container configuration to .pi/easy-workflow/container-config.json
+ * Save container configuration to .pi/tauroboros/container-config.json
  * This is a standalone function - no ContainerImageManager instance required.
  */
 export function saveContainerConfig(projectRoot: string, config: ContainerConfig): void {
-  const configDir = join(projectRoot, ".pi", "easy-workflow")
+  const configDir = join(projectRoot, ".pi", "tauroboros")
   const configPath = join(configDir, "container-config.json")
 
   if (!existsSync(configDir)) {
@@ -674,7 +674,7 @@ export class ContainerImageManager {
   }
 
   /**
-   * Load container configuration from .pi/easy-workflow/container-config.json
+   * Load container configuration from .pi/tauroboros/container-config.json
    * Delegates to the standalone loadContainerConfig function.
    */
   loadContainerConfig(projectRoot: string): ContainerConfig {
@@ -682,7 +682,7 @@ export class ContainerImageManager {
   }
 
   /**
-   * Save container configuration to .pi/easy-workflow/container-config.json
+   * Save container configuration to .pi/tauroboros/container-config.json
    * Delegates to the standalone saveContainerConfig function.
    */
   saveContainerConfig(projectRoot: string, config: ContainerConfig): void {
@@ -693,7 +693,7 @@ export class ContainerImageManager {
    * Ensure custom Dockerfile exists with template content
    */
   ensureCustomDockerfile(projectRoot: string): string {
-    const customPath = join(projectRoot, ".pi", "easy-workflow", "Dockerfile.custom")
+    const customPath = join(projectRoot, ".pi", "tauroboros", "Dockerfile.custom")
 
     if (!existsSync(customPath)) {
       const template = `# Custom Dockerfile - User Editable

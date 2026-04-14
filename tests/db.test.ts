@@ -8,7 +8,7 @@ import { PiKanbanDB } from "../src/db.ts"
 const tempDirs: string[] = []
 
 function createTempDb(): { db: PiKanbanDB; dbPath: string } {
-  const root = mkdtempSync(join(tmpdir(), "pi-easy-workflow-db-"))
+  const root = mkdtempSync(join(tmpdir(), "tauroboros-db-"))
   tempDirs.push(root)
   const dbPath = join(root, "tasks.db")
   const db = new PiKanbanDB(dbPath)

@@ -21,7 +21,7 @@ afterEach(() => {
 
 describe("startup recovery", () => {
   it("repairs stale executing tasks and fails orphaned sessions", async () => {
-    const root = createTempDir("pi-easy-workflow-startup-recovery-")
+    const root = createTempDir("tauroboros-startup-recovery-")
     const db = new PiKanbanDB(join(root, "tasks.db"))
     const existingWorktree = join(root, "worktree-a")
     mkdirSync(existingWorktree, { recursive: true })
@@ -106,7 +106,7 @@ describe("startup recovery", () => {
   })
 
   it("is idempotent when run multiple times", async () => {
-    const root = createTempDir("pi-easy-workflow-startup-recovery-idempotent-")
+    const root = createTempDir("tauroboros-startup-recovery-idempotent-")
     const db = new PiKanbanDB(join(root, "tasks.db"))
 
     const task = db.createTask({
@@ -129,7 +129,7 @@ describe("startup recovery", () => {
   })
 
   it("recovers stale workflow runs with no executing tasks", async () => {
-    const root = createTempDir("pi-easy-workflow-startup-recovery-runs-")
+    const root = createTempDir("tauroboros-startup-recovery-runs-")
     const db = new PiKanbanDB(join(root, "tasks.db"))
 
     // Create tasks in backlog (not executing)
@@ -179,7 +179,7 @@ describe("startup recovery", () => {
   })
 
   it("recovers stale workflow runs in stopping and paused statuses", async () => {
-    const root = createTempDir("pi-easy-workflow-startup-recovery-runs-statuses-")
+    const root = createTempDir("tauroboros-startup-recovery-runs-statuses-")
     const db = new PiKanbanDB(join(root, "tasks.db"))
 
     // Create tasks in backlog (not executing)
@@ -227,7 +227,7 @@ describe("startup recovery", () => {
   })
 
   it("does not recover completed or failed workflow runs", async () => {
-    const root = createTempDir("pi-easy-workflow-startup-recovery-runs-terminal-")
+    const root = createTempDir("tauroboros-startup-recovery-runs-terminal-")
     const db = new PiKanbanDB(join(root, "tasks.db"))
 
     const task = db.createTask({

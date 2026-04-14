@@ -103,7 +103,7 @@ const settings = {
     allowGlobal: false,
   },
   project: {
-    name: 'pi-easy-workflow-test',
+    name: 'tauroboros-test',
     type: 'workflow',
   },
   workflow: {

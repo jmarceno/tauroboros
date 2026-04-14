@@ -1,6 +1,6 @@
 # Container Isolation for Pi Agents
 
-This document describes the Podman-based container isolation implementation for pi-easy-workflow.
+This document describes the Podman-based container isolation implementation for tauroboros.
 
 ## Overview
 
@@ -18,7 +18,7 @@ The container isolation feature allows pi agents to run inside Podman containers
 ┌─────────────────────────────────────────────────────────────┐
 │                      Host Machine                           │
 │  ┌──────────────┐  ┌─────────────┐  ┌──────────────────┐ │
-│  │ pi-easy-flow │  │   Podman    │  │ Git Repository   │ │
+│  │ TaurOboros   │  │   Podman    │  │ Git Repository   │ │
 │  │   Server     │──│ (daemonless)│──│ /home/user/proj  │ │
 │  └──────────────┘  └─────────────┘  └──────────────────┘ │
 │          │                                        │         │

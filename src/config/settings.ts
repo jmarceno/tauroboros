@@ -50,13 +50,13 @@ export const DEFAULT_INFRASTRUCTURE_SETTINGS: InfrastructureSettings = {
     allowGlobal: false,
   },
   project: {
-    name: "pi-easy-workflow",
+    name: "tauroboros",
     type: "workflow",
   },
     workflow: {
     server: {
       port: 0,
-      dbPath: ".pi/easy-workflow/tasks.db",
+      dbPath: ".pi/tauroboros/tasks.db",
     },
     container: {
       enabled: false,

@@ -1,15 +1,15 @@
 ---
 name: workflow-task-setup
-description: Convert any user-provided implementation plan or scope document into Easy Workflow kanban tasks with correct dependencies, states, and persistence.
+description: Convert any user-provided implementation plan or scope document into TaurOboros kanban tasks with correct dependencies, states, and persistence.
 compatibility: opencode
 metadata:
   audience: agents
-  workflow: easy-workflow
+  workflow: tauroboros
 ---
 
 ## What I do
 
-- Turn any user-provided planning material into Easy Workflow tasks.
+- Turn any user-provided planning material into TaurOboros tasks.
 - Map steps and milestones into executable backlog tasks or reusable templates.
 - Set dependencies, ordering, and task options so the workflow can run them correctly.
 - Configure `standard` vs `best_of_n` execution strategy per task when needed.
@@ -155,7 +155,7 @@ Important runtime rules from the server and orchestrator:
 
 ## Architecture Overview
 
-Easy Workflow uses a **standalone server with SQLite database** architecture:
+TaurOboros uses a **standalone server with SQLite database** architecture:
 
 1. **Standalone Server** (`src/server/server.ts`) - Runs as a Bun server
    - Provides HTTP API and WebSocket server
@@ -173,9 +173,9 @@ Easy Workflow uses a **standalone server with SQLite database** architecture:
    - Container Configuration modal for image management
 
 3. **Configuration** (`.pi/settings.json` for PI config)
-   - Database location: `<workspace>/.pi/easy-workflow/tasks.db`
-   - Container settings for isolation mode
-   - Skills auto-discovery from `.pi/skills/`
+    - Database location: `<workspace>/.pi/tauroboros/tasks.db`
+    - Container settings for isolation mode
+    - Skills auto-discovery from `.pi/skills/`
 
 ## Planning Chat
 
@@ -218,7 +218,7 @@ Planning sessions support:
 
 The workflow DB is managed by the standalone server at:
 
-`<workspace>/.pi/easy-workflow/tasks.db`
+`<workspace>/.pi/tauroboros/tasks.db`
 
 The storage layer lives in `src/db.ts`.
 

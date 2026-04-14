@@ -134,7 +134,7 @@ afterEach(() => {
 
 describe("review loop", () => {
   it("runs review scratch sessions, sends fix prompts, and completes", async () => {
-    const root = createTempDir("pi-easy-workflow-review-")
+    const root = createTempDir("tauroboros-review-")
     initGitRepo(root)
     const settings = createTestSettings(createMockPiBinary(root, "one_gap_then_pass"))
 
@@ -168,13 +168,13 @@ describe("review loop", () => {
     const sessions = db.getWorkflowSessionsByTask(task.id)
     expect(sessions.some((session) => session.sessionKind === "review_scratch")).toBe(true)
 
-    const reviewFilePath = join(String(current?.worktreeDir), ".pi", "easy-workflow", `review-${task.id}.md`)
+    const reviewFilePath = join(String(current?.worktreeDir), ".pi", "tauroboros", `review-${task.id}.md`)
     expect(existsSync(reviewFilePath)).toBe(false)
     db.close()
   })
 
   it("enforces review limit and marks task stuck", async () => {
-    const root = createTempDir("pi-easy-workflow-review-limit-")
+    const root = createTempDir("tauroboros-review-limit-")
     initGitRepo(root)
     const settings = createTestSettings(createMockPiBinary(root, "always_gaps"))
 

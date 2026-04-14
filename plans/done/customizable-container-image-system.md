@@ -35,7 +35,7 @@ A dual-interface system allowing users to customize the Pi Agent container image
 │  ├─ generateDockerfile()      (Template + packages)          │
 │  ├─ validatePackages()      (Alpk APK index check)         │
 │  ├─ buildCustomImage()      (Podman build)                 │
-│  └─ Custom Dockerfile stored in .pi/easy-workflow/         │
+│  └─ Custom Dockerfile stored in .pi/tauroboros/         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -76,13 +76,13 @@ CREATE TABLE container_builds (
 
 ### 1.2 Configuration Files
 
-**`.pi/easy-workflow/container-config.json`** (Tauri-safe)
+**`.pi/tauroboros/container-config.json`** (Tauri-safe)
 ```json
 {
   "version": 1,
   "baseImage": "docker.io/alpine:3.19",
-  "customDockerfilePath": ".pi/easy-workflow/Dockerfile.custom",
-  "generatedDockerfilePath": ".pi/easy-workflow/Dockerfile.generated",
+  "customDockerfilePath": ".pi/tauroboros/Dockerfile.custom",
+  "generatedDockerfilePath": ".pi/tauroboros/Dockerfile.generated",
   "packages": [
     { "name": "chromium", "category": "browser", "installOrder": 0 },
     { "name": "chromium-chromedriver", "category": "browser", "installOrder": 1 },
@@ -96,7 +96,7 @@ CREATE TABLE container_builds (
 }
 ```
 
-**`.pi/easy-workflow/Dockerfile.custom`** (User-editable, optional)
+**`.pi/tauroboros/Dockerfile.custom`** (User-editable, optional)
 - Created empty with comments if doesn't exist
 - User can add custom RUN commands
 - Never modified by the system
@@ -506,15 +506,15 @@ Be conversational but focused. Don't overwhelm with technical details unless ask
 | File Type | Location | Access Mode |
 |-----------|----------|-------------|
 | Base Dockerfile | Internal (bundled) | Read-only, never modified |
-| Generated Dockerfile | `.pi/easy-workflow/Dockerfile.generated` | Write by system |
-| Custom Dockerfile | `.pi/easy-workflow/Dockerfile.custom` | Write by user |
-| Config JSON | `.pi/easy-workflow/container-config.json` | Read/Write by system |
+| Generated Dockerfile | `.pi/tauroboros/Dockerfile.generated` | Write by system |
+| Custom Dockerfile | `.pi/tauroboros/Dockerfile.custom` | Write by user |
+| Config JSON | `.pi/tauroboros/container-config.json` | Read/Write by system |
 | Package Database | SQLite `container_packages` table | Read/Write by system |
 
 ### 5.2 Implementation Notes
 
-1. **Path Resolution**: Use `findProjectRoot()` + `.pi/easy-workflow/` prefix
-2. **File Watching**: Watch `.pi/easy-workflow/Dockerfile.custom` for external edits
+1. **Path Resolution**: Use `findProjectRoot()` + `.pi/tauroboros/` prefix
+2. **File Watching**: Watch `.pi/tauroboros/Dockerfile.custom` for external edits
 3. **Error Handling**: Graceful fallback if file system access restricted
 4. **Dockerfile Merge**: System reads custom Dockerfile and appends it to generated one
 
@@ -555,7 +555,7 @@ async function validateAlpinePackage(name: string): Promise<ValidationResult> {
 3. **Profile System**: Pre-defined profiles for common use cases, but users can mix/match and add custom packages
 4. **Validation**: Pre-flight validation to catch typos and missing packages before long build process
 5. **Dual Interface**: Both visual modal and conversational agent for different user preferences
-6. **Tauri-Safe**: All mutable data in `.pi/easy-workflow/`, never touching internal bundled files
+6. **Tauri-Safe**: All mutable data in `.pi/tauroboros/`, never touching internal bundled files
 
 ---
 

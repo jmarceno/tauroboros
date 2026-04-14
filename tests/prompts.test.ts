@@ -21,7 +21,7 @@ import {
 const tempDirs: string[] = []
 
 function createTempDb(): PiKanbanDB {
-  const root = mkdtempSync(join(tmpdir(), "pi-easy-workflow-prompts-"))
+  const root = mkdtempSync(join(tmpdir(), "tauroboros-prompts-"))
   tempDirs.push(root)
   return new PiKanbanDB(join(root, "tasks.db"))
 }

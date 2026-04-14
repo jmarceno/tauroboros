@@ -209,7 +209,7 @@ export class PiContainerManager {
     }
 
     // Generate container name
-    const containerName = `pi-easy-workflow-${config.sessionId}`
+    const containerName = `tauroboros-${config.sessionId}`
 
     // Resource limits
     const resourceArgs: string[] = []
@@ -236,8 +236,8 @@ export class PiContainerManager {
       "--name", containerName,
       "--workdir", config.worktreeDir,
       "-i",  // Interactive (keep stdin open)
-      "--label", `pi-easy-workflow.session-id=${config.sessionId}`,
-      "--label", `pi-easy-workflow.managed=true`,
+      "--label", `tauroboros.session-id=${config.sessionId}`,
+      "--label", `tauroboros.managed=true`,
       ...resourceArgs,
       ...securityArgs,
       ...networkArgs,
@@ -443,7 +443,7 @@ export class PiContainerManager {
         if (inspection.State.Running) {
           return {
             containerId: managedProcess.containerId,
-            containerName: `pi-easy-workflow-${sessionId}`,
+            containerName: `tauroboros-${sessionId}`,
             status: inspection.State.Status,
             running: true,
           }
@@ -455,7 +455,7 @@ export class PiContainerManager {
 
     // Check if container exists in podman but is not in our managed map
     // (e.g., after server restart)
-    const containerName = `pi-easy-workflow-${sessionId}`
+    const containerName = `tauroboros-${sessionId}`
     try {
       const { stdout } = await this.execPodman([
         "ps",
@@ -496,7 +496,7 @@ export class PiContainerManager {
 
       return {
         containerId: id,
-        containerName: name,
+        containerName: containerName,
         status: state,
         running: isRunning,
       }
@@ -751,7 +751,7 @@ export class PiContainerManager {
    * Used for emergency stop and destructive operations.
    */
   async forceKillContainer(sessionId: string): Promise<boolean> {
-    const containerName = `pi-easy-workflow-${sessionId}`
+    const containerName = `tauroboros-${sessionId}`
     try {
       // Send SIGKILL instead of graceful stop
       await this.execPodman(["kill", "-s", "SIGKILL", containerName])
@@ -768,7 +768,7 @@ export class PiContainerManager {
    * Returns true if successful, false otherwise.
    */
   async restartContainer(sessionId: string): Promise<boolean> {
-    const containerName = `pi-easy-workflow-${sessionId}`
+    const containerName = `tauroboros-${sessionId}`
     try {
       // First try to start the existing container
       await this.execPodman(["start", containerName])
@@ -789,7 +789,7 @@ export class PiContainerManager {
    * Remove a container by session ID (forcefully if needed).
    */
   async removeContainer(sessionId: string, force = false): Promise<boolean> {
-    const containerName = `pi-easy-workflow-${sessionId}`
+    const containerName = `tauroboros-${sessionId}`
     try {
       const args = ["rm"]
       if (force) {
@@ -834,7 +834,7 @@ export class PiContainerManager {
       const { stdout } = await this.execPodman([
         "ps",
         "-a",
-        "--filter", "label=pi-easy-workflow.managed=true",
+        "--filter", "label=tauroboros.managed=true",
         "--format", "{{.ID}}|{{.Names}}|{{.State}}|{{.Labels}}",
       ])
 
@@ -844,7 +844,7 @@ export class PiContainerManager {
         if (!line) continue
         const [id, names, state, labels] = line.split("|")
         
-        const sessionIdMatch = labels?.match(/pi-easy-workflow\.session-id=([^,]+)/)
+        const sessionIdMatch = labels?.match(/tauroboros\.session-id=([^,]+)/)
         const sessionId = sessionIdMatch?.[1] || "unknown"
         
         containers.push({
@@ -862,7 +862,7 @@ export class PiContainerManager {
   }
 
   /**
-   * Emergency stop - kill all pi-easy-workflow containers.
+   * Emergency stop - kill all tauroboros containers.
    */
   async emergencyStop(): Promise<number> {
     const containers = await this.listManagedContainers()

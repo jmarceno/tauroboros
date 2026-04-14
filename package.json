@@ -1,7 +1,7 @@
 {
-  "name": "pi-easy-workflow",
+  "name": "tauroboros",
   "version": "1.0.0",
-  "description": "Pi-based Easy Workflow scaffolding with Podman container isolation",
+  "description": "TaurOboros - AI-powered workflow orchestration system with container isolation",
   "type": "module",
   "scripts": {
     "start": "bun run src/index.ts",

@@ -97,7 +97,7 @@ afterEach(() => {
 
 describe("Plan mode flows", () => {
   it("supports revision requests, approval transitions, and implementation completion", async () => {
-    const root = createTempDir("pi-easy-workflow-plan-")
+    const root = createTempDir("tauroboros-plan-")
     initGitRepo(root)
     const mockPi = createMockPiBinary(root)
     const settings = createTestSettings(mockPi)

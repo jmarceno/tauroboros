@@ -100,7 +100,7 @@
 ## 3. Project Structure
 
 ```
-pi-easy-workflow/
+tauroboros/
 ├── src/
 │   ├── kanban/                    # NEW: Vue frontend
 │   │   ├── index.html              # Entry HTML (replaces current)
@@ -563,13 +563,13 @@ Tauri Desktop App
     "devUrl": "http://localhost:5173"
   },
   "bundle": {
-    "externalBin": ["bin/pi-easy-workflow"],
+    "externalBin": ["bin/tauroboros"],
     "resources": []
   },
   "app": {
     "windows": [
       {
-        "title": "Pi Easy Workflow",
+        "title": "TaurOboros",
         "width": 1400,
         "height": 900,
         "minWidth": 1000,
@@ -586,7 +586,7 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             // Start Bun backend as sidecar
-            let sidecar = app.shell().sidecar("pi-easy-workflow")?;
+            let sidecar = app.shell().sidecar("tauroboros")?;
             let (mut rx, _child) = sidecar.spawn()?;
             
             // Wait for "Server ready" message
@@ -698,7 +698,7 @@ fn main() {
 ### package.json
 ```json
 {
-  "name": "pi-easy-workflow-kanban",
+  "name": "tauroboros-kanban",
   "private": true,
   "version": "1.0.0",
   "type": "module",

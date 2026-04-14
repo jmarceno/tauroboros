@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Compile script for Pi Easy Workflow
+ * Compile script for TaurOboros
  * Creates a single executable binary using Bun's compile feature
  * 
  * This script:
@@ -17,9 +17,9 @@ const PROJECT_ROOT = resolve(import.meta.dir, "..")
 const KANBAN_VUE_DIR = join(PROJECT_ROOT, "src", "kanban-vue")
 const DIST_DIR = join(KANBAN_VUE_DIR, "dist")
 const GENERATED_ASSETS_FILE = join(PROJECT_ROOT, "src", "server", "generated-assets.ts")
-const BIN_OUTPUT = join(PROJECT_ROOT, "pi-easy-workflow")
+const BIN_OUTPUT = join(PROJECT_ROOT, "tauroboros")
 
-console.log("🔨 Pi Easy Workflow Compile Script")
+console.log("🔨 TaurOboros Compile Script")
 console.log("===================================\n")
 
 // Check if kanban-vue/dist exists and has content
@@ -145,9 +145,9 @@ async function main(): Promise<void> {
     const duration = ((Date.now() - startTime) / 1000).toFixed(1)
     console.log(`🎉 Success! Binary compiled in ${duration}s`)
     console.log(`\nUsage:`)
-    console.log(`  ./pi-easy-workflow                    # Run with default settings`)
-    console.log(`  ./pi-easy-workflow --help             # Show help`)
-    console.log(`  SERVER_PORT=3790 ./pi-easy-workflow   # Run on specific port`)
+    console.log(`  ./tauroboros                    # Run with default settings`)
+    console.log(`  ./tauroboros --help             # Show help`)
+    console.log(`  SERVER_PORT=3790 ./tauroboros   # Run on specific port`)
     console.log(`\nThe binary includes all frontend assets and can be run standalone.`)
     console.log(`Runtime data (database, settings) will be stored in ./.pi/\n`)
 

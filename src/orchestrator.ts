@@ -879,7 +879,7 @@ export class PiOrchestrator {
       lastPrompt: null,
       lastPromptTimestamp: nowUnix(),
       containerId,
-      containerName: `pi-easy-workflow-${sessionId}`,
+      containerName: `tauroboros-${sessionId}`,
       containerImage,
       piSessionId: session.piSessionId,
       piSessionFile: session.piSessionFile,
@@ -1238,7 +1238,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
   }
 
   private buildReviewFile(task: Task, worktreeDir: string): string {
-    const reviewDir = join(worktreeDir, ".pi", "easy-workflow")
+    const reviewDir = join(worktreeDir, ".pi", "tauroboros")
     mkdirSync(reviewDir, { recursive: true })
     const reviewFilePath = join(reviewDir, `review-${task.id}.md`)
     const reviewContent = [

@@ -1,6 +1,6 @@
 # Pi local skills setup
 
-This project keeps Pi skills local and reproducible inside `pi-easy-workflow/`.
+This project keeps Pi skills local and reproducible inside `tauroboros/`.
 
 ## Layout
 
@@ -12,7 +12,7 @@ The runtime directory is generated from source. Core workflow behavior should no
 
 ## Commands
 
-From `pi-easy-workflow/`:
+From `tauroboros/`:
 
 ```bash
 bun run skills:sync

@@ -1,6 +1,6 @@
-# Pi Migration MVP Verification
+# TaurOboros Migration MVP Verification
 
-This document records verification evidence for the OpenCode → Pi migration MVP in `pi-easy-workflow/`.
+This document records verification evidence for the OpenCode → Pi migration MVP in `tauroboros/`.
 
 ## Verification run summary
 
@@ -60,7 +60,7 @@ The project is runnable end-to-end:
 Smoke evidence captured from startup:
 
 ```text
-[pi-easy-workflow] server started on http://0.0.0.0:41157
+[tauroboros] server started on http://0.0.0.0:41157
 ```
 
 ## Explicit remaining gaps
