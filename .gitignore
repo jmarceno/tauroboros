@@ -3,7 +3,7 @@
 .worktrees
 
 .playwright-mcp
-.test-results
+test-results
 tauroboros
 prototypes
 debug-reports
