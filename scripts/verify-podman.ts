@@ -44,7 +44,6 @@ async function verify() {
   console.log("\n=========================================")
   if (status.podman && status.image) {
     console.log("✓ All checks passed! Container runtime is ready.")
-    console.log("\nSet PI_EASY_WORKFLOW_RUNTIME=container to enable container mode.")
     process.exit(0)
   } else {
     console.log("✗ Some checks failed. Please fix the issues above.")

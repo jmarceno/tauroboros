@@ -364,7 +364,14 @@ export function saveInfrastructureSettings(
   writeFileSync(settingsPath, content, "utf-8")
 }
 
-export function ensureInfrastructureSettings(projectRoot: string): SettingsLoadResult {
+export interface EnsureSettingsOptions {
+  preferContainer?: boolean
+}
+
+export function ensureInfrastructureSettings(
+  projectRoot: string,
+  options?: EnsureSettingsOptions,
+): SettingsLoadResult {
   const settingsPath = join(projectRoot, ".pi", "settings.json")
 
   let result: SettingsLoadResult
@@ -376,8 +383,15 @@ export function ensureInfrastructureSettings(projectRoot: string): SettingsLoadR
     saveInfrastructureSettings(projectRoot, result.settings)
   } else {
     // Create new with defaults
+    const settings = { ...DEFAULT_INFRASTRUCTURE_SETTINGS }
+
+    // Apply container preference if specified
+    if (options?.preferContainer === true) {
+      settings.workflow.container.enabled = true
+    }
+
     result = {
-      settings: { ...DEFAULT_INFRASTRUCTURE_SETTINGS },
+      settings,
       warnings: ["Created new settings.json with default values"],
       unknownFields: [],
     }
