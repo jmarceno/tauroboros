@@ -61,7 +61,7 @@ export const DEFAULT_INFRASTRUCTURE_SETTINGS: InfrastructureSettings = {
     container: {
       enabled: false,
       piBin: "pi",
-      piArgs: "--mode rpc --no-extensions",
+      piArgs: "--mode rpc",
       image: "pi-agent:alpine",
       imageSource: "dockerfile",
       dockerfilePath: "docker/pi-agent/Dockerfile",

@@ -4,6 +4,7 @@ import { ensureInfrastructureSettings, saveInfrastructureSettings, type Infrastr
 import { createPiServer, findProjectRoot } from "./server.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
 import { ContainerImageManager } from "./runtime/container-image-manager.ts"
+import { extractEmbeddedResources } from "./resource-extractor.ts"
 
 interface CliArgs {
   native: boolean
@@ -88,6 +89,16 @@ async function createInitialSettings(
 
 export async function main(): Promise<void> {
   const projectRoot = findProjectRoot()
+  
+  // Extract embedded resources (extensions and skills) to .pi/
+  // This works in both binary mode (extracts embedded) and source mode (copies from source)
+  const extractionResult = extractEmbeddedResources(projectRoot)
+  if (extractionResult.mode === "binary") {
+    console.log(`[pi-easy-workflow] Extracted ${extractionResult.extensions} extensions and ${extractionResult.skills} skills from binary`)
+  } else if (extractionResult.mode === "source") {
+    console.log(`[pi-easy-workflow] Copied ${extractionResult.extensions} extensions and ${extractionResult.skills} skills from source`)
+  }
+  
   const args = parseCliArgs(process.argv.slice(2))
 
   const settingsPath = resolve(projectRoot, ".pi", "settings.json")

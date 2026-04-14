@@ -44,5 +44,6 @@ RUN mkdir -p /workspace
 # Default working directory (overridden at runtime)
 WORKDIR /workspace
 
-# Entry point runs pi in RPC mode with no extensions
-ENTRYPOINT ["pi", "--mode", "rpc", "--no-extensions"]
+# Entry point runs pi in RPC mode
+# Extensions and skills are auto-discovered from .pi/extensions/ and .pi/skills/
+ENTRYPOINT ["pi", "--mode", "rpc"]

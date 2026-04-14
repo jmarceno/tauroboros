@@ -25,6 +25,9 @@ metadata:
 - The workflow is not progressing and you need to diagnose the bottleneck.
 - You want to verify that a completed task actually made the promised changes.
 - You need to inspect session messages, I/O, or usage statistics.
+- A planning session is not responding or needs to be debugged.
+- Container mode tasks are failing to start or resume properly.
+- A paused run cannot be resumed after server restart.
 
 ## Core Behavior
 
@@ -72,9 +75,13 @@ Key fields to examine:
 | `bestOfNSubstage` | For best-of-n: which phase is active |
 | `reviewActivity` | `idle` or `running`—is review currently active |
 | `isArchived` | Whether task has been archived |
-| `thinkingLevel` | Reasoning level used (default/low/medium/high) |
+| `thinkingLevel` | Default reasoning level (default/low/medium/high) |
+| `planThinkingLevel` | Reasoning level for planning phase |
+| `executionThinkingLevel` | Reasoning level for execution phase |
 | `executionStrategy` | `standard` or `best_of_n` |
 | `smartRepairHints` | Any hints previously provided for repair |
+| `maxReviewRunsOverride` | Per-task override for max review cycles |
+| `jsonParseRetryCount` | Failed JSON parse attempts in review |
 
 ### Step 2: Examine Session Timeline and Messages
 
@@ -87,17 +94,21 @@ curl http://localhost:<port>/api/sessions/<session-id>/timeline
 # Get raw messages (full content) with pagination
 curl "http://localhost:<port>/api/sessions/<session-id>/messages?limit=500&offset=0"
 
-# Get session usage rollup (tokens, cost)
+# Get session usage rollup (tokens, cost, cache)
 curl http://localhost:<port>/api/sessions/<session-id>/usage
 
-# Get session I/O records
+# Get session I/O records with filtering
 curl "http://localhost:<port>/api/sessions/<session-id>/io?limit=500"
+curl "http://localhost:<port>/api/sessions/<session-id>/io?recordType=lifecycle"
 
 # Get all messages for a task (across all its sessions)
 curl http://localhost:<port>/api/tasks/<task-id>/messages
 
 # Get messages for a specific task run
 curl http://localhost:<port>/api/task-runs/<run-id>/messages
+
+# Check server version and compiled status
+curl http://localhost:<port>/api/version
 ```
 
 Timeline entry fields:
@@ -122,10 +133,10 @@ Session message fields:
 | `seq` | Sequence number within session |
 | `sessionId` | Session ID |
 | `taskId` / `taskRunId` | Associated task/run |
-| `role` | Message role |
-| `messageType` | Type of message |
+| `role` | Message role (`user`, `assistant`, `system`, `tool`) |
+| `messageType` | Type of message (`text`, `tool_call`, `tool_result`, `thinking`, `user_prompt`, `assistant_response`, etc.) |
 | `contentJson` | Content as JSON |
-| `eventName` | Event name (e.g., `thinking`, `tool_call`) |
+| `eventName` | Event name (e.g., `thinking`, `tool_call`, `assistant_response`) |
 | `toolName` / `toolArgsJson` / `toolResultJson` | Tool call details |
 | `toolStatus` | Tool execution status |
 | `toolCallId` | Tool call ID for correlation |
@@ -134,6 +145,7 @@ Session message fields:
 | `cacheReadTokens` / `cacheWriteTokens` | Cache token usage |
 | `costTotal` | Cost in USD |
 | `agentName` | Agent name if provided |
+| `modelProvider` / `modelId` | Model information |
 
 ### Step 3: Check Worktree Git State
 
@@ -196,6 +208,37 @@ Available actions:
 | `restore_plan_approval` | Task should return to plan approval review. |
 | `continue_with_more_reviews` | Stuck in review due to limit; allow more review cycles. |
 | `smart` | Let the repair model analyze the situation and decide. Requires `repairModel` to be configured in options. |
+
+## Planning Session Debugging
+
+Planning sessions are interactive chat sessions for task planning:
+
+```bash
+# List active planning sessions
+curl http://localhost:<port>/api/planning/sessions
+
+# Get specific planning session
+curl http://localhost:<port>/api/planning/sessions/<session-id>
+
+# Get planning session messages
+curl http://localhost:<port>/api/planning/sessions/<session-id>/messages
+
+# Close a stuck planning session
+curl -X POST http://localhost:<port>/api/planning/sessions/<session-id>/close
+```
+
+Planning session states:
+- `starting` - Session is initializing
+- `active` - Session is ready for messages
+- `paused` - Session was paused (for resume)
+- `completed` - Session finished normally
+- `failed` - Session encountered an error
+
+Planning sessions support:
+- Context attachments (files, screenshots, other tasks)
+- Model switching mid-conversation
+- Thinking level adjustment
+- Streaming message updates (thinking deltas, text deltas)
 
 ## Smart Repair
 
@@ -280,6 +323,39 @@ It then prompts the configured `repairModel` to decide the best action.
 **Diagnosis:** Task was archived after completion or manual archival.
 
 **Repair:** Tasks cannot be unarchived via API. Create a new task if needed.
+
+### Pattern 8: Planning session is stuck
+
+**Symptoms:** Planning session shows `starting` or `active` but doesn't respond to messages.
+
+**Diagnosis:** Check session messages for errors. Container mode planning sessions may have image preparation issues.
+
+**Repair:** 
+- Check container image status if using container mode
+- Close and recreate the planning session
+- Review session I/O records for startup errors
+
+### Pattern 9: Container resume failed
+
+**Symptoms:** Paused container task fails to resume, or resume creates new work instead of continuing.
+
+**Diagnosis:** Check if original container still exists with `podman ps -a`. Container may have been killed or auto-removed.
+
+**Repair:**
+- If container exists: Check container logs with `podman logs <container-id>`
+- If container gone: Task will recreate container and use continuation prompt
+- For critical resume failures, reset task to backlog
+
+### Pattern 10: Review loop JSON parse failures
+
+**Symptoms:** `jsonParseRetryCount` keeps increasing, review never completes.
+
+**Diagnosis:** Reviewer is outputting malformed JSON. Check `maxJsonParseRetries` in options (default: 5).
+
+**Repair:**
+- Increase `maxJsonParseRetries` in options if reviewer is close but formatting is off
+- Use `smartRepairHints` to tell repair model about JSON formatting issues
+- Reset task with clearer instructions about JSON output format
 
 ## Debugging Best-of-N Tasks
 
@@ -374,6 +450,39 @@ The debug skill operates on the **standalone server with SQLite database** archi
 
    `prompt_templates` / `prompt_template_versions` — Prompt management
 
+## Prompt Template Management
+
+The workflow supports custom prompt templates:
+
+```bash
+# List all prompt templates
+curl http://localhost:<port>/api/prompt-templates
+
+# Get a specific template
+curl http://localhost:<port>/api/prompt-templates/<key>
+
+# Get template version history
+curl http://localhost:<port>/api/prompt-templates/<key>/versions
+
+# Create or update a template
+curl -X POST http://localhost:<port>/api/prompt-templates \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "custom_execution",
+    "name": "Custom Execution Prompt",
+    "description": "My custom execution prompt",
+    "templateText": "You are a coding assistant...",
+    "variables": ["task", "options", "worktreeDir"]
+  }'
+
+# Set active template version
+curl -X POST http://localhost:<port>/api/prompt-templates/<key>/set-active \
+  -H "Content-Type: application/json" \
+  -d '{"version": 2}'
+```
+
+Built-in template keys: `execution`, `planning`, `plan_revision`, `review`, `review_fix`, `commit`, `repair`, `best_of_n_worker`, `best_of_n_reviewer`, `best_of_n_final_applier`
+
 ## Persistence Layout
 
 Database location: `<workspace>/.pi/easy-workflow/tasks.db`
@@ -388,6 +497,29 @@ Session logs are stored in `session_messages` table and available via:
 - `GET /api/tasks/:taskId/messages` — All messages for a task
 - `GET /api/task-runs/:runId/messages` — Messages for a specific run
 
+## Container Mode Debugging
+
+When container isolation is enabled:
+
+```bash
+# Check container image status
+curl http://localhost:<port>/api/container/image-status
+
+# Check if containers are running for paused sessions
+curl http://localhost:<port>/api/runs/<run-id>/paused-state
+```
+
+Container image status values:
+- `not_present` - Image needs to be built/pulled
+- `preparing` - Image is being built or pulled
+- `ready` - Image is ready for use
+- `error` - Image preparation failed
+
+Container resume uses **attachment strategy** (preferred):
+- Preserves filesystem state, environment variables, running processes
+- Uses `podman exec` to reconnect to existing containers
+- Only falls back to recreation if attach fails
+
 ## Workflow Run Management
 
 For debugging workflow-level issues:
@@ -396,18 +528,32 @@ For debugging workflow-level issues:
 # List all workflow runs
 curl http://localhost:<port>/api/runs
 
-# Pause a run
+# Check for any paused runs
+curl http://localhost:<port>/api/runs/paused-state
+
+# Pause a run (preserves state for resume)
 curl -X POST http://localhost:<port>/api/runs/<run-id>/pause
 
-# Resume a run
+# Resume a paused run
 curl -X POST http://localhost:<port>/api/runs/<run-id>/resume
 
-# Stop a run
+# Graceful stop (allows current task to finish)
 curl -X POST http://localhost:<port>/api/runs/<run-id>/stop
+
+# Destructive stop (kills everything, loses data)
+curl -X POST http://localhost:<port>/api/runs/<run-id>/stop \
+  -H "Content-Type: application/json" \
+  -d '{"destructive": true}'
 
 # Archive a completed/failed run
 curl -X DELETE http://localhost:<port>/api/runs/<run-id>
 ```
+
+Pause/Resume behavior:
+- Saves session state to database for resume across server restarts
+- Kills active processes but preserves worktree and context
+- On resume, recreates containers if needed (container mode)
+- Supports both graceful and destructive stop modes
 
 ## Session Management
 
@@ -499,9 +645,14 @@ When debugging a failing task, verify:
 - [ ] `isArchived` is false (archived tasks don't execute)
 - [ ] `requirements` dependencies are satisfied or will be satisfied
 - [ ] `reviewActivity` is `idle` (if `running`, a review is currently in progress)
-- [ ] `thinkingLevel` is appropriate for the task complexity
+- [ ] `thinkingLevel` / `planThinkingLevel` / `executionThinkingLevel` are appropriate
 - [ ] Session messages contain no unhandled errors in `toolStatus`
-- [ ] Token/cost usage in session rollup seems reasonable
+- [ ] Token/cost usage in session rollup seems reasonable (including cache tokens)
+- [ ] `jsonParseRetryCount` is within `maxJsonParseRetries` limit
+- [ ] For container mode: container image status is `ready`
+- [ ] For paused runs: check `/api/runs/paused-state` for resume availability
+- [ ] Planning sessions (if any) show proper state transitions
+- [ ] `maxReviewRunsOverride` is set appropriately if reviews keep failing
 
 ## What to Tell the User
 

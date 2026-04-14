@@ -94,7 +94,7 @@ export class PiRpcProcess {
     const piBin = this.settings?.workflow?.container?.piBin?.trim() || "pi"
     const configuredArgs = this.settings?.workflow?.container?.piArgs
       ? parseArgs(this.settings.workflow.container.piArgs)
-      : ["--mode", "rpc", "--no-extensions"]
+      : ["--mode", "rpc"]
 
     // Add system prompt if provided
     const args = [...configuredArgs]

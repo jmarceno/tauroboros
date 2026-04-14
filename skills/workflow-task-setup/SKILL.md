@@ -66,7 +66,9 @@ Common optional fields:
 | `autoCommit` | Auto-commit on success | `true` |
 | `deleteWorktree` | Remove worktree when task completes, resets, or is marked done. If `false`, worktree is preserved even on failure. | `true` |
 | `requirements` | Array of blocking task ids | `[]` |
-| `thinkingLevel` | Reasoning effort: `default`, `low`, `medium`, `high` | `default` |
+| `thinkingLevel` | Default reasoning level: `default`, `low`, `medium`, `high` | `default` |
+| `planThinkingLevel` | Reasoning level for planning phase only | `default` (inherits from `thinkingLevel`) |
+| `executionThinkingLevel` | Reasoning level for execution phase only | `default` (inherits from `thinkingLevel`) |
 | `executionStrategy` | Execution mode: `standard` or `best_of_n` | `standard` |
 | `bestOfNConfig` | Best-of-N worker/reviewer/final-applier config | `null` unless strategy is `best_of_n` |
 | `skipPermissionAsking` | Skip asking for permissions during execution | `true` |
@@ -157,18 +159,60 @@ Easy Workflow uses a **standalone server with SQLite database** architecture:
 
 1. **Standalone Server** (`src/server/server.ts`) - Runs as a Bun server
    - Provides HTTP API and WebSocket server
-   - Manages SQLite database
-   - Runs the task orchestrator
+   - Manages SQLite database with ACID guarantees
+   - Runs the task orchestrator with pause/resume support
    - Handles workflow runs, sessions, and execution
+   - Supports both native and container isolation modes
 
 2. **Kanban UI** (`src/kanban-vue/`) - Vue 3 + Tailwind CSS + Vite
    - Build output: `src/kanban-vue/dist/`
    - WebSocket live updates
    - 5 kanban columns: template, backlog, executing, review, done
    - 8 modals: Task, Options, Execution Graph, Approve, Revision, Start Single, Session Viewer, Best-of-N Details
+   - Planning Chat modal for interactive task planning
+   - Container Configuration modal for image management
 
 3. **Configuration** (`.pi/settings.json` for PI config)
    - Database location: `<workspace>/.pi/easy-workflow/tasks.db`
+   - Container settings for isolation mode
+   - Skills auto-discovery from `.pi/skills/`
+
+## Planning Chat
+
+Interactive planning sessions allow real-time collaboration with AI:
+
+```bash
+# Create a planning session
+curl -X POST http://localhost:<port>/api/planning/sessions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "systemPrompt": "You are a helpful planning assistant...",
+    "model": "claude-sonnet-4",
+    "thinkingLevel": "medium"
+  }'
+
+# Send a message with context attachments
+curl -X POST http://localhost:<port>/api/planning/sessions/<id>/message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Help me plan this feature...",
+    "contextAttachments": [
+      {"type": "file", "name": "README.md", "content": "..."},
+      {"type": "task", "name": "Related Task", "taskId": "abc123"}
+    ]
+  }'
+
+# Change model mid-conversation
+curl -X POST http://localhost:<port>/api/planning/sessions/<id>/set-model \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-opus-4"}'
+```
+
+Planning sessions support:
+- **Streaming responses**: Real-time thinking and text deltas
+- **Context attachments**: Files, screenshots, and other tasks
+- **Model switching**: Change AI model without losing context
+- **Session persistence**: Reconnect to planning sessions after server restart
 
 ## Persistence Layout
 
@@ -246,14 +290,22 @@ Important keys:
 | `parallel_tasks` | Parallelism limit |
 | `port` | Kanban server port |
 | `thinking_level` | Default thinking level |
+| `plan_thinking_level` | Thinking level for planning phase |
+| `execution_thinking_level` | Thinking level for execution phase |
+| `review_thinking_level` | Thinking level for review phase |
+| `repair_thinking_level` | Thinking level for repair phase |
+| `max_reviews` | Maximum review cycles |
+| `max_json_parse_retries` | Max JSON parse retry attempts (default: 5) |
 | `auto_delete_normal_sessions` | Auto-delete normal sessions |
 | `auto_delete_review_sessions` | Auto-delete review sessions |
 | `show_execution_graph` | Show execution graph in UI |
 | `telegram_bot_token` | Telegram bot token |
 | `telegram_chat_id` | Telegram chat ID |
 | `telegram_notifications_enabled` | Enable Telegram notifications |
-| `max_reviews` | Maximum review cycles |
 | `column_sorts` | JSON column sort preferences |
+| `container_enabled` | Enable container isolation mode |
+| `container_image` | Container image name |
+| `container_auto_prepare` | Auto-build/pull image on startup |
 
 #### `task_runs`
 
@@ -485,7 +537,14 @@ The port is read from the `options` table under the `port` key (default: 3789).
 | `GET` | `/api/sessions/:id/io` | Get session I/O records |
 | `GET` | `/api/task-runs/:id/messages` | Get messages for task run |
 | `POST` | `/api/pi/sessions/:id/events` | Ingest PI session events |
+| `POST` | `/api/tasks/create-and-wait` | Create task and wait for completion |
+| `GET` | `/api/version` | Get server version info |
+| `GET` | `/api/prompt-templates` | List prompt templates |
+| `POST` | `/api/prompt-templates` | Create/update prompt template |
+| `GET` | `/api/planning/sessions` | List planning sessions |
+| `POST` | `/api/planning/sessions` | Create planning session |
 | `GET` | `/api/container/image-status` | Get container image status |
+| `POST` | `/api/container/config` | Update container config |
 | `GET` | `/healthz` | Health check |
 | `GET` | `/ws` | WebSocket endpoint |
 
@@ -502,6 +561,58 @@ If you must write directly to SQLite (standalone server manages this database):
 - when the server receives a `PATCH` that sets `status = backlog` without an explicit `executionPhase`, it resets `executionPhase` to `not_started` and `awaitingPlanApproval` to `false`.
 
 **Note**: The standalone server must be running for the HTTP API to work. If you see connection errors, the server may need to be started with `bun start` from the project root.
+
+## CI/CD Integration
+
+Synchronous task creation for CI/CD pipelines:
+
+```bash
+# Create task and wait for completion
+curl -X POST http://localhost:<port>/api/tasks/create-and-wait \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Run tests",
+    "prompt": "Run the test suite and report results...",
+    "timeoutMs": 600000,
+    "pollIntervalMs": 5000
+  }'
+```
+
+The `create-and-wait` endpoint:
+- Creates a task, starts execution, and polls until completion
+- Returns full task and run details on completion
+- Supports `timeoutMs` (max 2 hours) and `pollIntervalMs` (1-30 seconds)
+- Returns HTTP 408 on timeout with current status
+- Ideal for CI/CD pipelines that need to wait for task completion
+
+## Container Configuration
+
+Container isolation provides process and filesystem isolation:
+
+```bash
+# Check container image status
+curl http://localhost:<port>/api/container/image-status
+
+# Update container configuration
+curl -X POST http://localhost:<port>/api/container/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image": "pi-agent:alpine",
+    "autoPrepare": true,
+    "packages": ["nodejs", "python3"]
+  }'
+
+# Add packages to container
+curl -X POST http://localhost:<port>/api/container/packages \
+  -H "Content-Type: application/json" \
+  -d '{"package": "typescript"}'
+```
+
+Container mode features:
+- **Same-path binding**: Worktree paths are identical inside/outside container
+- **Image preparation**: Build/pull images before first use (not during task execution)
+- **Resume support**: Containers can be reattached on resume after pause
+- **Emergency stop**: Kill all containers immediately if needed
 
 ## Useful Queries
 
@@ -617,7 +728,9 @@ Create a normal backlog task:
   "deleteWorktree": true,
   "skipPermissionAsking": true,
   "requirements": [],
-  "thinkingLevel": "default"
+  "thinkingLevel": "default",
+  "planThinkingLevel": "medium",
+  "executionThinkingLevel": "low"
 }
 ```
 
@@ -682,6 +795,45 @@ Create a best-of-n task:
 - If the user wants reusable scaffolding for future work, create `template` tasks instead of backlog tasks.
 - Keep prompts explicit about files, subsystems, constraints, and verification expectations when those are available in the source.
 
+## Prompt Template Customization
+
+Customize prompts for different execution phases:
+
+```bash
+# List all templates
+curl http://localhost:<port>/api/prompt-templates
+
+# Get a specific template
+curl http://localhost:<port>/api/prompt-templates/execution
+
+# Create custom template
+curl -X POST http://localhost:<port>/api/prompt-templates \
+  -H "Content-Type: application/json" \
+  -d '{
+    "key": "my_custom_execution",
+    "name": "My Custom Execution",
+    "templateText": "You are an expert {{language}} developer...",
+    "variables": ["task", "options", "worktreeDir", "language"]
+  }'
+
+# Set as active
+curl -X POST http://localhost:<port>/api/prompt-templates/my_custom_execution/set-active \
+  -H "Content-Type: application/json" \
+  -d '{"version": 1}'
+```
+
+Built-in template keys:
+- `execution` - Main task execution prompt
+- `planning` - Plan mode planning phase
+- `plan_revision` - Plan mode revision
+- `review` - Review loop
+- `review_fix` - Review fix iteration
+- `commit` - Git commit instructions
+- `repair` - Smart repair analysis
+- `best_of_n_worker` - Best-of-n worker
+- `best_of_n_reviewer` - Best-of-n reviewer
+- `best_of_n_final_applier` - Best-of-n final merge
+
 ## Validation Checklist
 
 Before finishing, verify:
@@ -694,6 +846,10 @@ Before finishing, verify:
 - plan-mode tasks are only used where an approval pause is actually useful
 - `best_of_n` is only used where candidate fan-out/convergence is useful
 - `bestOfNConfig` is valid (workers present, counts > 0, final applier model present, min successful workers <= total workers)
+- `planThinkingLevel` and `executionThinkingLevel` are set appropriately if different from default
+- `maxReviewRunsOverride` is set if task needs more/fewer reviews than global default
+- `maxJsonParseRetries` is appropriate for review complexity
+- Telegram notifications are configured if user wants status updates
 - ordering in `idx` matches the intended flow
 
 ## What to Tell the User

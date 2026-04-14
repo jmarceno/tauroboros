@@ -114,7 +114,7 @@ const settings = {
     container: {
       enabled: useContainer,
       piBin: 'pi',
-      piArgs: '--mode rpc --no-extensions',
+      piArgs: '--mode rpc',
       image: 'pi-agent:alpine',
       imageSource: 'dockerfile',
       dockerfilePath: join(projectDir, 'docker/pi-agent/Dockerfile'),
