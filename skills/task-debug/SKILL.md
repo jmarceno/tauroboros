@@ -423,7 +423,7 @@ The debug skill operates on the **standalone server with SQLite database** archi
 
 1. **Standalone Server** (`src/server/server.ts`)
    - HTTP API on configured port (default 3789)
-   - SQLite database at `.pi/tauroboros/tasks.db`
+    - SQLite database at `.tauroboros/easy-workflow/tasks.db`
    - Message logger captures all session events with token/cost tracking
    - WebSocket server broadcasts real-time updates
 
@@ -452,7 +452,7 @@ The debug skill operates on the **standalone server with SQLite database** archi
 
 ## Persistence Layout
 
-Database location: `<workspace>/.pi/tauroboros/tasks.db`
+Database location: `<workspace>/.tauroboros/easy-workflow/tasks.db`
 
 The storage layer is in `src/db.ts`.
 

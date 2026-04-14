@@ -149,7 +149,7 @@ async function main(): Promise<void> {
     console.log(`  ./tauroboros --help             # Show help`)
     console.log(`  SERVER_PORT=3790 ./tauroboros   # Run on specific port`)
     console.log(`\nThe binary includes all frontend assets and can be run standalone.`)
-    console.log(`Runtime data (database, settings) will be stored in ./.pi/\n`)
+    console.log(`Runtime data (database, settings) will be stored in ./.tauroboros/\n`)
 
     // Optional: Clean up generated file
     await cleanup()

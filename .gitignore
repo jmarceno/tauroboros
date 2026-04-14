@@ -1,5 +1,6 @@
 .pi/*
-.pi/settings.json
+.tauroboros/*
+.tauroboros/settings.json
 .worktrees
 
 .playwright-mcp

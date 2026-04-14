@@ -24,7 +24,7 @@ bun run start
 bun run dev
 ```
 
-Server auto-assigns an available port on first start. The assigned port is saved to `.pi/settings.json` and reused for subsequent runs.
+Server auto-assigns an available port on first start. The assigned port is saved to `.tauroboros/settings.json` and reused for subsequent runs.
 
 ### Port Configuration
 
@@ -32,16 +32,16 @@ The server uses **dynamic port assignment by default** (port 0), which allows ru
 
 **How it works:**
 1. First start: Server auto-assigns an available port (e.g., 49234)
-2. Port is saved to `.pi/settings.json` for persistence
+2. Port is saved to `.tauroboros/settings.json` for persistence
 3. Subsequent starts: Uses the saved port from settings
 
-**Settings file** (`.pi/settings.json`):
+**Settings file** (`.tauroboros/settings.json`):
 ```json
 {
   "workflow": {
     "server": {
       "port": 49234,
-      "dbPath": ".pi/tauroboros/tasks.db"
+      "dbPath": ".tauroboros/easy-workflow/tasks.db"
     }
   }
 }

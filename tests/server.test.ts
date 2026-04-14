@@ -132,7 +132,7 @@ function createTestSettings(mockPiPath: string): InfrastructureSettings {
     workflow: {
       server: {
         port: 0, // Use dynamic port assignment for tests
-        dbPath: ".pi/tauroboros/tasks.db",
+        dbPath: ".tauroboros/easy-workflow/tasks.db",
       },
       runtime: {
         mode: "native",

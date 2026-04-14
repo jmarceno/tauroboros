@@ -72,7 +72,7 @@ bun run scripts/verify-podman.ts
 
 ### 4. Enable Container Mode
 
-Edit `.pi/settings.json`:
+Edit `.tauroboros/settings.json`:
 
 ```json
 {
@@ -112,7 +112,7 @@ The container mounts several directories from your host system using **same-path
 
 ## Configuration
 
-Container settings are configured in `.pi/settings.json`:
+Container settings are configured in `.tauroboros/settings.json`:
 
 ```json
 {
@@ -265,7 +265,7 @@ This will:
 
 If issues arise, you can quickly disable containers:
 
-1. **Global disable** – Edit `.pi/settings.json`:
+1. **Global disable** – Edit `.tauroboros/settings.json`:
    ```json
    {
      "workflow": {

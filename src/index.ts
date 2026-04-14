@@ -41,7 +41,7 @@ async function checkAndPrepareContainer(projectRoot: string): Promise<{
     // Image not found, need to auto-build
     console.log("[tauroboros] Building container image for first run (this may take a minute)...")
 
-    const cacheDir = resolve(projectRoot, ".pi", "tauroboros")
+    const cacheDir = resolve(projectRoot, ".tauroboros", "easy-workflow")
     const imageManager = new ContainerImageManager({
       imageName: "pi-agent:alpine",
       imageSource: "dockerfile",
@@ -101,7 +101,7 @@ export async function main(): Promise<void> {
   
   const args = parseCliArgs(process.argv.slice(2))
 
-  const settingsPath = resolve(projectRoot, ".pi", "settings.json")
+  const settingsPath = resolve(projectRoot, ".tauroboros", "settings.json")
   const isFirstStart = !existsSync(settingsPath)
 
   let settings: InfrastructureSettings

@@ -6,7 +6,7 @@ This project keeps Pi skills local and reproducible inside `tauroboros/`.
 
 - Source of truth (tracked): `skills/<skill-name>/SKILL.md`
 - Pi runtime location (generated): `.pi/skills/<skill-name>/SKILL.md`
-- Pi config (tracked): `.pi/settings.json`
+- Infrastructure config (tracked): `.tauroboros/settings.json`
 
 The runtime directory is generated from source. Core workflow behavior should not depend on global skill installation.
 
@@ -34,7 +34,7 @@ Verifies:
 
 - source skills exist
 - each skill has required frontmatter
-- `.pi/settings.json` is valid and configured for local skills
+- `.tauroboros/settings.json` is valid and configured for local skills
 - `.pi/skills/` is writable
 
 ```bash
@@ -50,19 +50,22 @@ Runs full reproducible setup (`skills:install` + `skills:verify`).
 3. Run `bun run skills:sync` (or `bun run skills:install`).
 4. Run `bun run skills:verify`.
 
-## Pi settings
+## Settings
 
-`.pi/settings.json` is configured with:
+`.tauroboros/settings.json` contains infrastructure configuration including:
 
 - `skills.localPath = "./skills"`
 - `skills.autoLoad = true`
 - `skills.allowGlobal = false`
+- `workflow.server.port` - Server port
+- `workflow.server.dbPath` - Database location
+- `workflow.container.*` - Container isolation settings
 
 This ensures Pi uses project-local skills and avoids global skill drift.
 
 ## Troubleshooting
 
 - **"No skills found"**: ensure each skill folder contains `SKILL.md`.
-- **Settings validation failed**: check `.pi/settings.json` fields and JSON syntax.
+- **Settings validation failed**: check `.tauroboros/settings.json` fields and JSON syntax.
 - **Skill changes not visible**: rerun `bun run skills:install`.
 - **Permission errors writing `.pi/skills`**: ensure the workspace is writable.

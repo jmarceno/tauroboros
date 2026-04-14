@@ -56,7 +56,7 @@ export const DEFAULT_INFRASTRUCTURE_SETTINGS: InfrastructureSettings = {
     workflow: {
     server: {
       port: 0,
-      dbPath: ".pi/tauroboros/tasks.db",
+      dbPath: ".tauroboros/easy-workflow/tasks.db",
     },
     container: {
       enabled: false,
@@ -316,7 +316,7 @@ function validateAndExtractUnknown(
 }
 
 export function loadInfrastructureSettings(projectRoot: string): SettingsLoadResult {
-  const settingsPath = join(projectRoot, ".pi", "settings.json")
+  const settingsPath = join(projectRoot, ".tauroboros", "settings.json")
   const warnings: string[] = []
 
   if (!existsSync(settingsPath)) {
@@ -359,7 +359,7 @@ export function saveInfrastructureSettings(
   projectRoot: string,
   settings: InfrastructureSettings,
 ): void {
-  const settingsPath = join(projectRoot, ".pi", "settings.json")
+  const settingsPath = join(projectRoot, ".tauroboros", "settings.json")
   const content = JSON.stringify(settings, null, 2)
   writeFileSync(settingsPath, content, "utf-8")
 }
@@ -372,7 +372,7 @@ export function ensureInfrastructureSettings(
   projectRoot: string,
   options?: EnsureSettingsOptions,
 ): SettingsLoadResult {
-  const settingsPath = join(projectRoot, ".pi", "settings.json")
+  const settingsPath = join(projectRoot, ".tauroboros", "settings.json")
 
   let result: SettingsLoadResult
 

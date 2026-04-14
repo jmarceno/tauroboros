@@ -134,7 +134,7 @@ export async function validateContainerSetup(
   if (configuredRuntime === "container" && !status.podman) {
     issues.push(
       "Container runtime is configured but Podman is not available. " +
-        "Install Podman or set workflow.container.enabled to false in .pi/settings.json",
+        "Install Podman or set workflow.container.enabled to false in .tauroboros/settings.json",
     )
   }
 

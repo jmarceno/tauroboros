@@ -152,7 +152,7 @@ export class PiContainerManager {
         throw new Error(
           `Container image '${this.imageName}' has not been prepared. ` +
           `The server must prepare the image on startup before containers can be created. ` +
-          `Ensure 'autoPrepare: true' is set in .pi/settings.json or manually prepare the image.`,
+          `Ensure 'autoPrepare: true' is set in .tauroboros/settings.json or manually prepare the image.`,
         )
       }
     }

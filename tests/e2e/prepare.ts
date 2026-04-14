@@ -74,6 +74,7 @@ execSync('git config user.name "Test User"', { cwd: projectDir, stdio: 'ignore' 
 // Create .gitignore before initial commit to exclude runtime files
 writeFileSync(join(projectDir, '.gitignore'), [
   '.pi/',
+  '.tauroboros/',
   'tasks.db',
   'tasks.db-shm',
   'tasks.db-wal',
@@ -85,9 +86,9 @@ writeFileSync(join(projectDir, 'README.md'), '# Test\n');
 execSync('git add .', { cwd: projectDir, stdio: 'ignore' });
 execSync('git commit -m "init"', { cwd: projectDir, stdio: 'ignore' });
 
-// Create .pi directory and settings file
-const piDir = join(projectDir, '.pi');
-mkdirSync(piDir, { recursive: true });
+// Create .tauroboros directory for infrastructure settings
+const tauroborosDir = join(projectDir, '.tauroboros');
+mkdirSync(tauroborosDir, { recursive: true });
 
 const dbPath = join(projectDir, 'tasks.db');
 
@@ -135,7 +136,7 @@ const settings = {
   maxReviews: 0,  // Disable automatic review for reliable E2E tests
 };
 
-writeFileSync(join(piDir, 'settings.json'), JSON.stringify(settings, null, 2));
+writeFileSync(join(tauroborosDir, 'settings.json'), JSON.stringify(settings, null, 2));
 console.log(`[PREPARE] ✓ Settings created${useContainer ? ' with container mode' : ''}`);
 
 // Write the project dir to a marker file

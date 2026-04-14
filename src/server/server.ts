@@ -190,7 +190,7 @@ export class PiKanbanServer {
         imageSource: containerSettings.imageSource,
         dockerfilePath: containerSettings.dockerfilePath,
         registryUrl: containerSettings.registryUrl,
-          cacheDir: join(process.cwd(), ".pi", "tauroboros"),
+          cacheDir: join(process.cwd(), ".tauroboros", "easy-workflow"),
         onStatusChange: (event) => {
           const payload: ImageStatusPayload = {
             status: event.status,
@@ -203,7 +203,7 @@ export class PiKanbanServer {
       })
       console.log("[container] Image manager initialized successfully")
     } else {
-      console.log("[container] Container mode disabled - container features will be unavailable. To enable, set 'workflow.container.enabled' to true in .pi/settings.json and restart the server.")
+      console.log("[container] Container mode disabled - container features will be unavailable. To enable, set 'workflow.container.enabled' to true in .tauroboros/settings.json and restart the server.")
     }
 
     this.planningSessionManager = new PlanningSessionManager(this.db, undefined, opts.settings)
@@ -1651,7 +1651,7 @@ Respond ONLY with the JSON array, no other text.`
         available: !!this.imageManager,
         message: enabled
           ? (this.imageManager ? "Container mode active" : "Container mode enabled but image manager failed to initialize")
-          : "Container mode is disabled. Edit .pi/settings.json and restart the server to enable.",
+          : "Container mode is disabled. Edit .tauroboros/settings.json and restart the server to enable.",
       })
     })
 
@@ -1673,8 +1673,8 @@ Respond ONLY with the JSON array, no other text.`
         const config = {
           version: body.version ?? 1,
           baseImage: body.baseImage ?? "docker.io/alpine:3.19",
-          customDockerfilePath: body.customDockerfilePath ?? ".pi/tauroboros/Dockerfile.custom",
-          generatedDockerfilePath: body.generatedDockerfilePath ?? ".pi/tauroboros/Dockerfile.generated",
+          customDockerfilePath: body.customDockerfilePath ?? ".tauroboros/easy-workflow/Dockerfile.custom",
+          generatedDockerfilePath: body.generatedDockerfilePath ?? ".tauroboros/easy-workflow/Dockerfile.generated",
           packages: body.packages ?? [],
           lastBuild: body.lastBuild ?? null,
         }
@@ -1768,7 +1768,7 @@ Respond ONLY with the JSON array, no other text.`
           imageName: "pi-agent:custom",
           imageSource: "dockerfile",
           dockerfilePath: "docker/pi-agent/Dockerfile",
-        cacheDir: join(process.cwd(), ".pi", "tauroboros"),
+        cacheDir: join(process.cwd(), ".tauroboros", "easy-workflow"),
         })
 
         const config = tempManager.loadContainerConfig(process.cwd())

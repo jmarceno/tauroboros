@@ -110,7 +110,8 @@ export function verifySetup(projectRoot: string = getProjectRoot()): void {
   const skillsSourceDir = resolve(join(projectRoot, "skills"))
   const piDir = resolve(join(projectRoot, ".pi"))
   const piSkillsDir = resolve(join(piDir, "skills"))
-  const settingsPath = resolve(join(piDir, "settings.json"))
+  const tauroborosDir = resolve(join(projectRoot, ".tauroboros"))
+  const settingsPath = resolve(join(tauroborosDir, "settings.json"))
 
   const skills = discoverSkills(skillsSourceDir)
   console.log(`✓ Skills source directory exists (${skills.length} skills found)`)
@@ -136,7 +137,7 @@ export function verifySetup(projectRoot: string = getProjectRoot()): void {
 
   // Report unknown fields
   if (infraResult.unknownFields.length > 0) {
-    console.warn(`⚠️  Unknown fields detected in .pi/settings.json:`)
+    console.warn(`⚠️  Unknown fields detected in .tauroboros/settings.json:`)
     for (const field of infraResult.unknownFields) {
       console.warn(`   - ${field}`)
     }
