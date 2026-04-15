@@ -1999,11 +1999,11 @@ Respond ONLY with the JSON array, no other text.`
         const config = loadContainerConfig(process.cwd())
 
         // Handle profile extension
-        let packagesToAdd = [...profile.packages]
+        let packagesToAdd = [...(profile.packages || [])]
         if (profile.extends) {
           const parentProfile = data.profiles.find((p: { id: string }) => p.id === profile.extends)
           if (parentProfile) {
-            packagesToAdd = [...parentProfile.packages, ...packagesToAdd]
+            packagesToAdd = [...(parentProfile.packages || []), ...packagesToAdd]
           }
         }
 

@@ -4,31 +4,51 @@
       "id": "rust",
       "name": "Rust",
       "description": "Official Rust image with Cargo and build tools",
-      "image": "rust:trixie"
+      "image": "rust:trixie",
+      "packages": [
+        { "name": "rust", "category": "language" },
+        { "name": "cargo", "category": "build-tool" }
+      ]
     },
     {
       "id": "python",
       "name": "Python",
       "description": "Official Python image with pip",
-      "image": "python"
+      "image": "python",
+      "packages": [
+        { "name": "python3", "category": "language" },
+        { "name": "pip", "category": "package-manager" }
+      ]
     },
     {
       "id": "go",
       "name": "Go",
       "description": "Official Go image with compiler and standard tools",
-      "image": "golang:nanoserver-ltsc2025"
+      "image": "golang:nanoserver-ltsc2025",
+      "packages": [
+        { "name": "go", "category": "language" },
+        { "name": "gofmt", "category": "tool" }
+      ]
     },
     {
       "id": "node",
       "name": "Node.js",
       "description": "Official Node.js image with npm",
-      "image": "node:trixie"
+      "image": "node:trixie",
+      "packages": [
+        { "name": "nodejs", "category": "language" },
+        { "name": "npm", "category": "package-manager" }
+      ]
     },
     {
       "id": "elixir",
       "name": "Elixir",
       "description": "Official Elixir image with Erlang/OTP runtime",
-      "image": "elixir:otp-27-slim"
+      "image": "elixir:otp-27-slim",
+      "packages": [
+        { "name": "elixir", "category": "language" },
+        { "name": "mix", "category": "build-tool" }
+      ]
     }
   ]
 }
