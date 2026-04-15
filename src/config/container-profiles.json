@@ -23,6 +23,12 @@
       "name": "Node.js",
       "description": "Official Node.js image with npm",
       "image": "node:trixie"
+    },
+    {
+      "id": "elixir",
+      "name": "Elixir",
+      "description": "Official Elixir image with Erlang/OTP runtime",
+      "image": "elixir:otp-27-slim"
     }
   ]
 }
