@@ -481,3 +481,148 @@ onMounted(async () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.modal-container {
+  background: theme('colors.dark.surface');
+  border: 1px solid theme('colors.dark.border');
+  border-radius: 0.75rem;
+  width: 100%;
+  max-width: 56rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid theme('colors.dark.surface3');
+}
+
+.modal-body {
+  padding: 1.5rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.section {
+  margin-bottom: 1.5rem;
+}
+
+.section:last-child {
+  margin-bottom: 0;
+}
+
+/* Form styles */
+.form-select {
+  background-color: theme('colors.dark.surface2');
+  border: 1px solid theme('colors.dark.surface3');
+  color: theme('colors.dark.text');
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  width: 100%;
+}
+
+.form-select:focus {
+  outline: none;
+  border-color: theme('colors.indigo.500');
+}
+
+.form-textarea {
+  background-color: theme('colors.dark.surface2');
+  border: 1px solid theme('colors.dark.surface3');
+  color: theme('colors.dark.text');
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  width: 100%;
+  resize: vertical;
+}
+
+.form-textarea:focus {
+  outline: none;
+  border-color: theme('colors.indigo.500');
+}
+
+.form-input {
+  background-color: theme('colors.dark.surface2');
+  border: 1px solid theme('colors.dark.surface3');
+  color: theme('colors.dark.text');
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  width: 100%;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: theme('colors.indigo.500');
+}
+
+/* Button styles */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background-color: theme('colors.indigo.600');
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: theme('colors.indigo.500');
+}
+
+.btn-secondary {
+  background-color: theme('colors.dark.surface3');
+  color: theme('colors.dark.text');
+  border-color: theme('colors.dark.surface3');
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: theme('colors.dark.surface2');
+}
+
+.btn-icon {
+  padding: 0.5rem;
+  background-color: transparent;
+  color: theme('colors.dark.text-muted');
+}
+
+.btn-icon:hover:not(:disabled) {
+  color: theme('colors.dark.text');
+}
+</style>
