@@ -17,46 +17,46 @@
 import { test, expect, Page } from '@playwright/test';
 import { execSync } from 'child_process';
 
-// Pre-test check: Container requirements MUST be met
-test.beforeAll(() => {
-  console.log('[TEST SETUP] Verifying container infrastructure...');
-  
-  let hasPodman = false;
-  let hasPiAgentImage = false;
-  
-  try {
-    execSync('podman --version', { stdio: 'pipe' });
-    hasPodman = true;
-    console.log('  ✓ Podman available');
-  } catch {
-    console.error('  ❌ Podman not found');
-  }
-  
-  if (hasPodman) {
-    try {
-      const result = execSync('podman images pi-agent:alpine -q', { encoding: 'utf-8', stdio: 'pipe' });
-      hasPiAgentImage = result.trim().length > 0;
-      if (hasPiAgentImage) {
-        console.log('  ✓ pi-agent:alpine image available');
-      } else {
-        console.error('  ❌ pi-agent:alpine image not found');
-      }
-    } catch {
-      console.error('  ❌ pi-agent:alpine image not found');
-    }
-  }
-  
-  if (!hasPodman || !hasPiAgentImage) {
-    console.error('\n❌ REAL WORKFLOW TEST FAILED: Container infrastructure not available');
-    console.error('   Run: bun run container:setup');
-    throw new Error('Container infrastructure not available. Test cannot proceed.');
-  }
-  
-  console.log('  ✓ All container requirements met\n');
-});
-
 test.describe('REAL Multi-Task Workflow', () => {
   test.setTimeout(600000); // 10 minutes for full workflow
+
+  // Pre-test check: Container requirements MUST be met
+  test.beforeAll(() => {
+    console.log('[TEST SETUP] Verifying container infrastructure...');
+    
+    let hasPodman = false;
+    let hasPiAgentImage = false;
+    
+    try {
+      execSync('podman --version', { stdio: 'pipe' });
+      hasPodman = true;
+      console.log('  ✓ Podman available');
+    } catch {
+      console.error('  ❌ Podman not found');
+    }
+    
+    if (hasPodman) {
+      try {
+        const result = execSync('podman images pi-agent:alpine -q', { encoding: 'utf-8', stdio: 'pipe' });
+        hasPiAgentImage = result.trim().length > 0;
+        if (hasPiAgentImage) {
+          console.log('  ✓ pi-agent:alpine image available');
+        } else {
+          console.error('  ❌ pi-agent:alpine image not found');
+        }
+      } catch {
+        console.error('  ❌ pi-agent:alpine image not found');
+      }
+    }
+    
+    if (!hasPodman || !hasPiAgentImage) {
+      console.error('\n❌ REAL WORKFLOW TEST FAILED: Container infrastructure not available');
+      console.error('   Run: bun run container:setup');
+      throw new Error('Container infrastructure not available. Test cannot proceed.');
+    }
+    
+    console.log('  ✓ All container requirements met\n');
+  });
 
   test.beforeEach(async ({ page }) => {
     // Capture browser console logs
@@ -78,6 +78,29 @@ test.describe('REAL Multi-Task Workflow', () => {
     
     // Configure options for reliable test execution
     await configureTestOptions(page);
+  });
+
+  test.afterEach(async ({ page }) => {
+    // Clean up tasks after each test to ensure isolation
+    console.log('[TEST] Cleaning up test state...');
+    await page.evaluate(async () => {
+      try {
+        // Stop any running workflow first
+        await fetch('/api/stop', { method: 'POST' });
+        await new Promise(r => setTimeout(r, 1000));
+        
+        // Get all tasks and delete them
+        const response = await fetch('/api/tasks');
+        const tasks = await response.json();
+        for (const task of tasks) {
+          await fetch(`/api/tasks/${task.id}`, { method: 'DELETE' });
+        }
+        console.log(`[TEST] Cleaned up ${tasks.length} tasks`);
+      } catch (e) {
+        console.error('Cleanup error:', e);
+      }
+    });
+    await page.waitForTimeout(1000);
   });
 
   /**

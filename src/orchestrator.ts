@@ -1440,7 +1440,8 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
   }
 
   private async runStandardPrompt(taskId: string, task: Task, options: Options, worktreeInfo: WorktreeInfo): Promise<void> {
-    const isContainerMode = this.settings?.workflow?.container?.enabled === true
+    // Container mode is the default - only disabled when explicitly set to false
+    const isContainerMode = this.settings?.workflow?.container?.enabled !== false
     const prompt = this.db.renderPrompt("execution", buildExecutionVariables(task, options, worktreeInfo.directory, { isPlanMode: false }, isContainerMode))
     const execution = await this.runSessionPrompt({
       task,
@@ -1560,7 +1561,8 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       approvalNote ? `Final approval note:\n${approvalNote}` : "",
     ].filter(Boolean).join("\n\n")
 
-    const isContainerMode = this.settings?.workflow?.container?.enabled === true
+    // Container mode is the default - only disabled when explicitly set to false
+    const isContainerMode = this.settings?.workflow?.container?.enabled !== false
     const executionPrompt = this.db.renderPrompt(
       "execution",
       buildExecutionVariables(task, options, worktreeInfo.directory, {

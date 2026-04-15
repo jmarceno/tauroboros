@@ -104,8 +104,11 @@ export function createPiServer(options: CreateServerOptions = {}): {
     projectRoot,
     options.settings,
     (() => {
-      if (!options.settings?.workflow?.container?.enabled) return undefined
-      const containerSettings = options.settings.workflow.container
+      // Container mode is the default - only skip when explicitly disabled
+      if (options.settings?.workflow?.container?.enabled === false) return undefined
+      const containerSettings = options.settings?.workflow?.container ?? {
+        image: "pi-agent:alpine",
+      }
       const containerManager = new PiContainerManager(
         containerSettings.image,
         server.getImageManager() ?? undefined,

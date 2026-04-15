@@ -219,9 +219,15 @@ export class PiKanbanServer {
     this.onResumeRun = opts.onResumeRun ?? null
     this.onStopRun = opts.onStopRun ?? null
 
-    if (opts.settings?.workflow?.container?.enabled) {
-      console.log("[container] Container mode enabled - initializing image manager...")
-      const containerSettings = opts.settings.workflow.container
+    // Container mode is the default - only disabled when explicitly set to false
+    if (opts.settings?.workflow?.container?.enabled !== false) {
+      console.log("[container] Container mode enabled (default) - initializing image manager...")
+      const containerSettings = opts.settings?.workflow?.container ?? {
+        image: "pi-agent:alpine",
+        imageSource: "dockerfile" as const,
+        dockerfilePath: "docker/pi-agent/Dockerfile",
+        registryUrl: null,
+      }
       this.imageManager = new ContainerImageManager({
         imageName: containerSettings.image,
         imageSource: containerSettings.imageSource,
@@ -248,7 +254,7 @@ export class PiKanbanServer {
       )
       console.log("[container] Container manager initialized successfully")
     } else {
-      console.log("[container] Container mode disabled - container features will be unavailable. To enable, set 'workflow.container.enabled' to true in .tauroboros/settings.json and restart the server.")
+      console.log("[container] Container mode explicitly disabled - running in native mode. Tasks will execute directly on the host without container isolation.")
     }
 
     this.planningSessionManager = new PlanningSessionManager(this.db, undefined, opts.settings)
@@ -315,21 +321,38 @@ export class PiKanbanServer {
     if (this.server) return this.server.port
 
     // Prepare container image if autoPrepare is enabled
+    // CRITICAL: If container mode is enabled, image preparation MUST succeed
     if (this.imageManager && this.settings?.workflow?.container?.autoPrepare) {
       try {
         await this.imageManager.prepare()
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        console.error("[server] Failed to prepare container image:", message)
-        // Broadcast error but continue starting server
-        this.broadcast({
-          type: "image_status",
-          payload: {
-            status: "error",
-            message: "Failed to prepare container image",
-            errorMessage: message,
-          },
-        })
+        console.error("[server] CRITICAL: Failed to prepare container image:", message)
+        console.error("[server] Container mode is enabled but image preparation failed. Server cannot start.")
+        throw new Error(
+          `Container mode is enabled but image preparation failed: ${message}. ` +
+            `Fix the issue or disable container mode in .tauroboros/settings.json`
+        )
+      }
+    }
+
+    // CRITICAL: Verify container runtime is available when container mode is enabled
+    if (this.settings?.workflow?.container?.enabled !== false && this.containerManager) {
+      const setupStatus = await this.containerManager.validateSetup()
+      if (!setupStatus.podman) {
+        console.error("[server] CRITICAL: Container mode is enabled but Podman is not available.")
+        console.error("[server] Install Podman or explicitly disable container mode in .tauroboros/settings.json")
+        throw new Error(
+          "Container mode is enabled but Podman is not available. " +
+            "Install Podman or set workflow.container.enabled to false in .tauroboros/settings.json"
+        )
+      }
+      if (!setupStatus.image) {
+        console.error("[server] CRITICAL: Container mode is enabled but container image is not available.")
+        throw new Error(
+          "Container mode is enabled but container image is not available. " +
+            `Build it with: podman build -t ${this.settings?.workflow?.container?.image ?? "pi-agent:alpine"} -f docker/pi-agent/Dockerfile .`
+        )
       }
     }
 
@@ -1849,6 +1872,7 @@ Respond ONLY with the JSON array, no other text.`
     })
 
     // Get container feature availability status
+    // Container mode is the default - only disabled when explicitly set to false
     this.router.get("/api/container/status", ({ json }) => {
       if (!this.settings) {
         throw new Error('Server settings not loaded: cannot determine container status')
@@ -1856,15 +1880,15 @@ Respond ONLY with the JSON array, no other text.`
       if (!this.settings.workflow) {
         throw new Error('Workflow settings not configured: cannot determine container status')
       }
-      const enabled = this.settings.workflow.container?.enabled === true
+      const enabled = this.settings.workflow.container?.enabled !== false
       const hasRunning = this.db.hasRunningWorkflows()
       return json({
         enabled,
         available: this.imageManager !== null,
         hasRunningWorkflows: hasRunning,
         message: enabled
-          ? (this.imageManager ? "Container mode active" : "Container mode enabled but image manager failed to initialize")
-          : "Container mode is disabled. Edit .tauroboros/settings.json and restart the server to enable.",
+          ? (this.imageManager ? "Container mode active (default)" : "Container mode enabled but image manager failed to initialize")
+          : "Container mode is explicitly disabled. Native mode is active - tasks run directly on the host.",
       })
     })
 
@@ -2098,9 +2122,10 @@ Respond ONLY with the JSON array, no other text.`
     // ---- Per-Task Container Image Routes ----
 
     // List all available container images
+    // Container mode is the default - only disabled when explicitly set to false
     this.router.get("/api/container/images", async ({ json }) => {
       try {
-        if (!this.settings?.workflow?.container?.enabled) {
+        if (this.settings?.workflow?.container?.enabled === false) {
           return json({ images: [] })
         }
 
@@ -2185,8 +2210,9 @@ Respond ONLY with the JSON array, no other text.`
         }
 
         // Check if image exists in podman
+        // Container mode is the default - only skip when explicitly disabled
         let availableInPodman = false
-        if (this.settings?.workflow?.container?.enabled) {
+        if (this.settings?.workflow?.container?.enabled !== false) {
           availableInPodman = await this.validateContainerImage(tag)
         }
 

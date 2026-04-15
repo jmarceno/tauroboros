@@ -129,10 +129,36 @@ export async function main(): Promise<void> {
       console.log("[tauroboros] Settings created with container mode enabled")
     }
   } else {
-    // Existing settings - load normally
+    // Existing settings - load and validate
     const result = ensureInfrastructureSettings(projectRoot)
     settings = result.settings
     warnings = result.warnings
+
+    // CRITICAL: If container mode is enabled (default), verify podman is available
+    if (settings.workflow.container.enabled !== false) {
+      console.log("[tauroboros] Validating container runtime availability...")
+      const podmanAvailable = PiContainerManager.isAvailable()
+      if (!podmanAvailable) {
+        console.error("[tauroboros] CRITICAL: Container mode is enabled but Podman is not available.")
+        console.error("[tauroboros] Install Podman or explicitly disable container mode by running with --native flag:")
+        console.error("[tauroboros]   bun run start -- --native")
+        console.error("[tauroboros] Or set workflow.container.enabled to false in .tauroboros/settings.json")
+        process.exit(1)
+      }
+
+      // Also verify image exists
+      const manager = new PiContainerManager()
+      const setupStatus = await manager.validateSetup()
+      if (!setupStatus.image) {
+        console.error("[tauroboros] CRITICAL: Container mode is enabled but container image is not available.")
+        console.error(`[tauroboros] Build it with: podman build -t ${settings.workflow.container.image} -f docker/pi-agent/Dockerfile .`)
+        console.error("[tauroboros] Or disable container mode by running with --native flag:")
+        console.error("[tauroboros]   bun run start -- --native")
+        process.exit(1)
+      }
+
+      console.log("[tauroboros] Container runtime validated successfully")
+    }
   }
 
   // Report any warnings about settings

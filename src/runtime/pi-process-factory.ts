@@ -34,10 +34,12 @@ export type PiRuntimeMode = "native" | "container"
 
 /**
  * Get the configured runtime mode from settings.
+ * Container mode is the default. Mode must be explicitly disabled to use native.
  */
 export function getConfiguredRuntime(settings?: InfrastructureSettings): PiRuntimeMode {
-  if (settings?.workflow?.container?.enabled === true) return "container"
-  return "native" // Default to native
+  // Explicitly check for native mode - container is the default
+  if (settings?.workflow?.container?.enabled === false) return "native"
+  return "container" // Default to container
 }
 
 /**
@@ -60,18 +62,10 @@ export function createPiProcess(
     }
 
     if (!options.session.worktreeDir) {
-      console.warn(
-        "Container runtime requires a worktree directory. Falling back to native runtime.",
+      throw new Error(
+        "Container runtime requires a worktree directory. " +
+          "Task cannot execute outside a container when container mode is enabled."
       )
-      return new PiRpcProcess({
-        db: options.db,
-        session: options.session,
-        onOutput: options.onOutput,
-        onSessionMessage: options.onSessionMessage,
-        settings: options.settings,
-        systemPrompt: options.systemPrompt,
-        disableAutoSessionMessages: options.disableAutoSessionMessages,
-      })
     }
 
     return new ContainerPiProcess({
