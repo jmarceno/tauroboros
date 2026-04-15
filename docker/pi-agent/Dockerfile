@@ -1,7 +1,7 @@
 # Alpine-based Pi Agent Container
 # Uses Alpine Linux with Bun and Pi pre-installed
 
-FROM docker.io/alpine:3.19
+FROM docker.io/alpine:3.23.3
 
 # Install dependencies
 RUN apk add --no-cache \
@@ -11,7 +11,13 @@ RUN apk add --no-cache \
     nodejs \
     npm \
     curl \
-    bash
+    bash \
+    chromium \
+    chromium-chromedriver \
+    nss \
+    freetype \
+    harfbuzz \
+    ttf-freefont
 
 # Install Bun
 RUN curl -fsSL https://bun.sh/install | bash && \
