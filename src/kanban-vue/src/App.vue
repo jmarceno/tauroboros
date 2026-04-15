@@ -14,6 +14,7 @@ import { useMultiSelect } from '@/composables/useMultiSelect'
 import { useSessionUsage } from '@/composables/useSessionUsage'
 import { usePlanningChat } from '@/composables/usePlanningChat'
 import { useWorkflowControl } from '@/composables/useWorkflowControl'
+import { useWorkflowStatus } from '@/composables/useWorkflowStatus'
 
 // Components
 import Sidebar from '@/components/board/Sidebar.vue'
@@ -49,8 +50,9 @@ const ws = useWebSocket()
 const multiSelect = useMultiSelect()
 const sessionUsage = useSessionUsage()
 const planningChat = usePlanningChat()
+const workflowStatus = useWorkflowStatus()
 
-// Workflow control with pause/resume/stop
+  // Workflow control with pause/resume/stop
 const workflowControl = useWorkflowControl(
   (state) => {
     toasts.addLog(`Workflow state: ${state}`, 'info')
@@ -177,6 +179,7 @@ provide('session', session)
 provide('multiSelect', multiSelect)
 provide('sessionUsage', sessionUsage)
 provide('planningChat', planningChat)
+provide('workflowRunning', workflowStatus)
 provide('workflowControl', workflowControl)
 provide('openModal', openModal)
 provide('closeModal', closeModal)
@@ -554,12 +557,8 @@ ws.on('container_build_cancelled', (payload) => {
   toasts.addLog(`Container build #${payload.buildId} cancelled`, 'info')
 })
 
-ws.on('container_profile_applied', (payload) => {
-  toasts.showToast(`Profile applied: ${payload.packagesAdded} packages added`, 'success')
-})
-
-ws.on('container_dockerfile_custom_updated', () => {
-  toasts.addLog('Custom Dockerfile updated', 'info')
+ws.on('container_profile_created', (payload) => {
+  toasts.showToast(`New profile "${payload.name}" created`, 'success')
 })
 
 // Handle orchestration-level events

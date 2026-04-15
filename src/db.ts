@@ -2064,6 +2064,17 @@ export class PiKanbanDB {
     return rows.map(rowToWorkflowRun)
   }
 
+  /**
+   * Check if any workflow is currently running or stopping
+   * Returns true if there's at least one active workflow run
+   */
+  hasRunningWorkflows(): boolean {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) as count FROM workflow_runs WHERE is_archived = 0 AND status IN ('running', 'stopping')"
+    ).get() as { count: number }
+    return row.count > 0
+  }
+
   archiveWorkflowRun(id: string): WorkflowRun | null {
     const run = this.getWorkflowRun(id)
     if (!run) return null

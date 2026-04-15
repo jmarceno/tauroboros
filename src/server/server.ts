@@ -1658,6 +1658,17 @@ Respond ONLY with the JSON array, no other text.`
 
     // ---- Container Configuration Routes ----
 
+    // Get workflow status (to disable build buttons during active runs)
+    this.router.get("/api/workflow/status", ({ json }) => {
+      try {
+        const hasRunning = this.db.hasRunningWorkflows()
+        return json({ hasRunningWorkflows: hasRunning })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to get workflow status: ${message}` }, 500)
+      }
+    })
+
     // Get all container profiles (preset configurations)
     this.router.get("/api/container/profiles", ({ json }) => {
       try {
@@ -1674,99 +1685,66 @@ Respond ONLY with the JSON array, no other text.`
       }
     })
 
+    // Save a new custom profile
+    this.router.post("/api/container/profiles", async ({ req, json, broadcast }) => {
+      try {
+        const body = await req.json()
+        const profile = {
+          id: String(body.id ?? "").trim(),
+          name: String(body.name ?? "").trim(),
+          description: String(body.description ?? "").trim(),
+          image: String(body.image ?? "").trim(),
+          dockerfileTemplate: String(body.dockerfileTemplate ?? "").trim(),
+        }
+
+        if (!profile.id || !profile.name || !profile.dockerfileTemplate) {
+          return json({ error: "Profile id, name, and dockerfileTemplate are required" }, 400)
+        }
+
+        // Validate ID format (alphanumeric and hyphens only)
+        if (!/^[a-z0-9-]+$/.test(profile.id)) {
+          return json({ error: "Profile ID must be lowercase alphanumeric with hyphens only" }, 400)
+        }
+
+        const profilesPath = this.getContainerProfilesPath()
+        let data: { profiles: Array<{ id: string; name: string; description: string; image: string; dockerfileTemplate: string }> }
+
+        if (existsSync(profilesPath)) {
+          const raw = readFileSync(profilesPath, "utf-8")
+          data = JSON.parse(raw)
+        } else {
+          data = { profiles: [] }
+        }
+
+        // Check if ID already exists (don't overwrite existing)
+        const existingIndex = data.profiles.findIndex((p: { id: string }) => p.id === profile.id)
+        if (existingIndex >= 0) {
+          return json({ error: `Profile '${profile.id}' already exists. Use a different ID.` }, 409)
+        }
+
+        data.profiles.push(profile)
+        writeFileSync(profilesPath, JSON.stringify(data, null, 2), "utf-8")
+
+        broadcast({ type: "container_profile_created", payload: profile })
+        return json({ ok: true, profile })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to save profile: ${message}` }, 500)
+      }
+    })
+
     // Get container feature availability status
     this.router.get("/api/container/status", ({ json }) => {
       const enabled = this.settings?.workflow?.container?.enabled ?? false
+      const hasRunning = this.db.hasRunningWorkflows()
       return json({
         enabled,
         available: !!this.imageManager,
+        hasRunningWorkflows: hasRunning,
         message: enabled
           ? (this.imageManager ? "Container mode active" : "Container mode enabled but image manager failed to initialize")
           : "Container mode is disabled. Edit .tauroboros/settings.json and restart the server to enable.",
       })
-    })
-
-    // Get current container configuration
-    this.router.get("/api/container/config", ({ json }) => {
-      try {
-        const config = loadContainerConfig(process.cwd())
-        return json(config)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to load config: ${message}` }, 500)
-      }
-    })
-
-    // Save container configuration
-    this.router.put("/api/container/config", async ({ req, json, broadcast }) => {
-      try {
-        const body = await req.json()
-        const config = {
-          version: body.version ?? 1,
-          baseImage: body.baseImage ?? "docker.io/alpine:3.19",
-          customDockerfilePath: body.customDockerfilePath ?? ".tauroboros/Dockerfile.custom",
-          generatedDockerfilePath: body.generatedDockerfilePath ?? ".tauroboros/Dockerfile.generated",
-          packages: body.packages ?? [],
-          lastBuild: body.lastBuild ?? null,
-        }
-
-        saveContainerConfig(process.cwd(), config)
-
-        broadcast({ type: "container_config_updated", payload: config })
-        return json(config)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to save config: ${message}` }, 500)
-      }
-    })
-
-    // Get installed packages from database
-    this.router.get("/api/container/packages", ({ json }) => {
-      try {
-        const packages = this.db.getContainerPackages()
-        return json({ packages })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to get packages: ${message}` }, 500)
-      }
-    })
-
-    // Add a package
-    this.router.post("/api/container/packages", async ({ req, json, broadcast }) => {
-      try {
-        const body = await req.json()
-        const pkg = {
-          name: String(body.name ?? "").trim(),
-          category: String(body.category ?? "tool"),
-          versionConstraint: body.versionConstraint ? String(body.versionConstraint) : undefined,
-          installOrder: Number(body.installOrder ?? 0),
-          source: String(body.source ?? "manual"),
-        }
-
-        if (!pkg.name) {
-          return json({ error: "Package name is required" }, 400)
-        }
-
-        const added = this.db.addContainerPackage(pkg)
-        broadcast({ type: "container_package_added", payload: added })
-        return json(added, 201)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to add package: ${message}` }, 500)
-      }
-    })
-
-    // Remove a package
-    this.router.delete("/api/container/packages/:name", ({ params, json, broadcast }) => {
-      try {
-        const name = decodeURIComponent(params.name)
-        this.db.removeContainerPackage(name)
-        broadcast({ type: "container_package_removed", payload: { name } })
-        return json({ ok: true })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to remove package: ${message}` }, 500)
-      }
     })
 
     // Validate packages (check if they exist in Alpine repos)
@@ -1791,100 +1769,92 @@ Respond ONLY with the JSON array, no other text.`
       }
     })
 
-    // Get generated Dockerfile preview
-    this.router.get("/api/container/dockerfile", ({ json }) => {
+// Get Dockerfile template for a profile
+    this.router.get("/api/container/dockerfile/:profileId", ({ params, json }) => {
       try {
-        // Create a temporary image manager to generate Dockerfile even when container mode is disabled
-        const tempManager = this.imageManager ?? new ContainerImageManager({
-          imageName: "pi-agent:custom",
-          imageSource: "dockerfile",
-          dockerfilePath: "docker/pi-agent/Dockerfile",
-        cacheDir: join(process.cwd(), ".tauroboros"),
+        const profilesPath = this.getContainerProfilesPath()
+        if (!existsSync(profilesPath)) {
+          return json({ error: "Profiles not found" }, 404)
+        }
+        
+        const raw = readFileSync(profilesPath, "utf-8")
+        const data = JSON.parse(raw)
+        const profile = data.profiles.find((p: { id: string }) => p.id === params.profileId)
+        
+        if (!profile) {
+          return json({ error: `Profile '${params.profileId}' not found` }, 404)
+        }
+        
+        return json({ 
+          dockerfile: profile.dockerfileTemplate,
+          image: profile.image,
+          profile: { id: profile.id, name: profile.name, description: profile.description }
         })
-
-        const config = tempManager.loadContainerConfig(process.cwd())
-        const dockerfile = tempManager.generateDockerfile(config)
-        return json({ dockerfile, config })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to generate Dockerfile: ${message}` }, 500)
+        return json({ error: `Failed to get Dockerfile: ${message}` }, 500)
       }
     })
 
-    // Get custom Dockerfile content
-    this.router.get("/api/container/dockerfile/custom", ({ json }) => {
-      try {
-        const customPath = join(process.cwd(), ".pi", "tauroboros", "Dockerfile.custom")
-        if (!existsSync(customPath)) {
-          // Return empty content with template
-          return json({
-            content: `# Custom Dockerfile - User Editable\n# Add your custom RUN commands here\n# These will be appended to the generated Dockerfile\n\n# Example:\n# RUN echo "Custom configuration" >> /etc/motd\n`,
-            exists: false,
-          })
-        }
-        const content = readFileSync(customPath, "utf-8")
-        return json({ content, exists: true })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to read custom Dockerfile: ${message}` }, 500)
-      }
-    })
+    // Validate packages (check if they exist in Alpine repos)
 
-    // Save custom Dockerfile content
-    this.router.put("/api/container/dockerfile/custom", async ({ req, json, broadcast }) => {
-      try {
-        const body = await req.json()
-        const content = String(body.content ?? "")
-
-        const customDir = join(process.cwd(), ".pi", "tauroboros")
-        const customPath = join(customDir, "Dockerfile.custom")
-
-        if (!existsSync(customDir)) {
-          mkdirSync(customDir, { recursive: true })
-        }
-
-        writeFileSync(customPath, content, "utf-8")
-
-        broadcast({ type: "container_dockerfile_custom_updated", payload: { path: customPath } })
-        return json({ ok: true, path: customPath })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to save custom Dockerfile: ${message}` }, 500)
-      }
-    })
-
-    // Trigger container image build
+    // Trigger container image build with profile
     this.router.post("/api/container/build", async ({ req, json, broadcast }) => {
       try {
         if (!this.imageManager) {
           return json({ error: "Container image manager not available" }, 503)
         }
 
-        const body = await req.json()
-        const config = this.imageManager.loadContainerConfig(process.cwd())
-
-        // Override packages if provided
-        if (body.packages) {
-          config.packages = body.packages
+        // Check if any workflow is running
+        if (this.db.hasRunningWorkflows()) {
+          return json({ error: "Cannot build image while workflow is running. Please stop all workflows first." }, 409)
         }
 
-        const imageTag = body.imageTag ?? `pi-agent:custom-${Date.now()}`
+        const body = await req.json()
+        const profileId = body.profileId ?? "default"
+        const customDockerfile = body.dockerfile ? String(body.dockerfile) : null
+
+        // Load profile
+        const profilesPath = this.getContainerProfilesPath()
+        let dockerfile: string
+        let imageTag = body.imageTag ?? `pi-agent:custom-${Date.now()}`
+
+        if (customDockerfile) {
+          // Use custom Dockerfile provided by user
+          dockerfile = customDockerfile
+        } else if (existsSync(profilesPath)) {
+          const raw = readFileSync(profilesPath, "utf-8")
+          const data = JSON.parse(raw)
+          const profile = data.profiles.find((p: { id: string }) => p.id === profileId)
+          
+          if (!profile) {
+            return json({ error: `Profile '${profileId}' not found` }, 404)
+          }
+          
+          dockerfile = profile.dockerfileTemplate
+          // Use profile image name if not overridden
+          if (!body.imageTag && profile.image) {
+            imageTag = `pi-agent:${profile.id}-${Date.now()}`
+          }
+        } else {
+          return json({ error: "No profiles found and no custom Dockerfile provided" }, 400)
+        }
 
         // Create build record
         const buildId = this.db.createContainerBuild({
           status: "running",
           startedAt: Math.floor(Date.now() / 1000),
-          packagesHash: this.hashPackages(config.packages),
+          packagesHash: this.hashPackages([]), // No packages array anymore
           imageTag,
         })
 
-        broadcast({ type: "container_build_started", payload: { buildId, imageTag, status: "running" } })
+        broadcast({ type: "container_build_started", payload: { buildId, imageTag, status: "running", profileId } })
 
         // Start build in background
         const logs: string[] = []
 
-        this.imageManager.buildCustomImage(
-          config,
+        this.imageManager.buildFromDockerfileContent(
+          dockerfile,
           imageTag,
           {
             onLog: (line) => {
@@ -1905,13 +1875,11 @@ Respond ONLY with the JSON array, no other text.`
               })
 
               if (status.status === "success") {
-                // Update config with last build info
-                config.lastBuild = {
-                  timestamp: new Date().toISOString(),
-                  imageTag,
-                  success: true,
+                // Update settings with the new image tag
+                if (this.settings?.workflow?.container) {
+                  this.settings.workflow.container.image = imageTag
+                  // Save settings would go here if implemented
                 }
-                this.imageManager.saveContainerConfig(process.cwd(), config)
               }
 
               broadcast({
@@ -1936,7 +1904,7 @@ Respond ONLY with the JSON array, no other text.`
           })
         })
 
-        return json({ buildId, status: "running", imageTag })
+        return json({ buildId, status: "running", imageTag, profileId })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         return json({ error: `Failed to start build: ${message}` }, 500)
@@ -1975,77 +1943,6 @@ Respond ONLY with the JSON array, no other text.`
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         return json({ error: `Failed to cancel build: ${message}` }, 500)
-      }
-    })
-
-    // Apply a preset profile
-    this.router.post("/api/container/profiles/:id/apply", async ({ params, req, json, broadcast }) => {
-      try {
-        const profileId = params.id
-        const profilesPath = this.getContainerProfilesPath()
-
-        if (!existsSync(profilesPath)) {
-          return json({ error: "Profiles not found" }, 404)
-        }
-
-        const raw = readFileSync(profilesPath, "utf-8")
-        const data = JSON.parse(raw)
-        const profile = data.profiles.find((p: { id: string }) => p.id === profileId)
-
-        if (!profile) {
-          return json({ error: `Profile '${profileId}' not found` }, 404)
-        }
-
-        const config = loadContainerConfig(process.cwd())
-
-        // Handle profile extension
-        let packagesToAdd = [...(profile.packages || [])]
-        if (profile.extends) {
-          const parentProfile = data.profiles.find((p: { id: string }) => p.id === profile.extends)
-          if (parentProfile) {
-            packagesToAdd = [...(parentProfile.packages || []), ...packagesToAdd]
-          }
-        }
-
-        // Convert to PackageDefinition format
-        const packageDefs = packagesToAdd.map((pkg: { name: string; category: string }, idx: number) => ({
-          name: pkg.name,
-          category: pkg.category,
-          installOrder: config.packages.length + idx,
-        }))
-
-        // Merge with existing packages
-        const existingNames = new Set(config.packages.map(p => p.name))
-        const newPackages = packageDefs.filter((p: { name: string }) => !existingNames.has(p.name))
-        config.packages = [...config.packages, ...newPackages]
-
-        // Save updated config
-        saveContainerConfig(process.cwd(), config)
-
-        // Save to database
-        for (const pkg of newPackages) {
-          this.db.addContainerPackage({
-            name: pkg.name,
-            category: pkg.category,
-            installOrder: pkg.installOrder,
-            source: `profile:${profileId}`,
-          })
-        }
-
-        broadcast({
-          type: "container_profile_applied",
-          payload: { profileId, packagesAdded: newPackages.length, config },
-        })
-
-        return json({
-          ok: true,
-          profileId,
-          packagesAdded: newPackages.length,
-          packages: config.packages,
-        })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to apply profile: ${message}` }, 500)
       }
     })
 

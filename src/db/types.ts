@@ -450,11 +450,8 @@ export interface ContainerProfile {
   id: string
   name: string
   description: string
-  packages: Array<{
-    name: string
-    category: string
-  }>
-  extends?: string
+  image: string
+  dockerfileTemplate: string
 }
 
 export interface PackageValidationResult {

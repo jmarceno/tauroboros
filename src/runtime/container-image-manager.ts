@@ -690,6 +690,87 @@ export class ContainerImageManager {
   }
 
   /**
+   * Build a custom image from raw Dockerfile content
+   */
+  async buildFromDockerfileContent(
+    dockerfileContent: string,
+    imageTag: string,
+    progressHandler?: ContainerBuildProgressHandler
+  ): Promise<ContainerBuildResult> {
+    const logs: string[] = []
+    const dockerfilePath = join(this.options.cacheDir, "Dockerfile.custom-build")
+
+    // Save Dockerfile content
+    try {
+      writeFileSync(dockerfilePath, dockerfileContent, "utf-8")
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      return { success: false, imageTag, logs: [`Failed to save Dockerfile: ${errorMessage}`] }
+    }
+
+    return new Promise((resolve, reject) => {
+      const proc = spawn(
+        "podman",
+        ["build", "-t", imageTag, "-f", dockerfilePath, "."],
+        {
+          cwd: this.options.projectRoot ?? process.cwd(),
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      )
+
+      proc.stdout?.on("data", (data: Buffer) => {
+        const chunk = data.toString()
+        const lines = chunk.split("\n").filter(l => l.trim())
+        for (const line of lines) {
+          logs.push(line)
+          progressHandler?.onLog(line)
+        }
+      })
+
+      proc.stderr?.on("data", (data: Buffer) => {
+        const chunk = data.toString()
+        const lines = chunk.split("\n").filter(l => l.trim())
+        for (const line of lines) {
+          logs.push(line)
+          progressHandler?.onLog(line)
+        }
+      })
+
+      proc.on("close", (code) => {
+        if (code === 0) {
+          progressHandler?.onStatus({
+            status: "success",
+            message: "Build completed successfully",
+            logs,
+            canCancel: false,
+          })
+          resolve({ success: true, imageTag, logs })
+        } else {
+          const errorMessage = `Build failed with exit code ${code}`
+          progressHandler?.onStatus({
+            status: "failed",
+            message: errorMessage,
+            logs,
+            canCancel: false,
+          })
+          resolve({ success: false, imageTag, logs })
+        }
+      })
+
+      proc.on("error", (err) => {
+        const errorMessage = `Failed to spawn podman build: ${err.message}`
+        progressHandler?.onStatus({
+          status: "failed",
+          message: errorMessage,
+          logs,
+          canCancel: false,
+        })
+        resolve({ success: false, imageTag, logs: [...logs, errorMessage] })
+      })
+    })
+  }
+
+  /**
    * Load container configuration from .tauroboros/container-config.json
    * Delegates to the standalone loadContainerConfig function.
    */
