@@ -34,7 +34,6 @@ export interface Task {
   jsonParseRetryCount: number
   maxReviewRunsOverride?: number
   planRevisionCount: number
-  agentOutput?: string
   errorMessage?: string
   sessionId?: string
   sessionUrl?: string
@@ -309,7 +308,6 @@ export type WSMessageType =
   | 'task_run_updated'
   | 'task_candidate_created'
   | 'task_candidate_updated'
-  | 'agent_output'
   | 'image_status'
   | 'error'
   | 'plan_revision_requested'
@@ -408,7 +406,6 @@ export interface UpdateTaskDTO {
   bestOfNConfig?: BestOfNConfig | null
   bestOfNSubstage?: BestOfNSubstage
   reviewCount?: number
-  agentOutput?: string
   errorMessage?: string | null
   completedAt?: number | null
   sessionId?: string | null

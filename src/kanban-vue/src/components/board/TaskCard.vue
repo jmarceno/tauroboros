@@ -41,8 +41,6 @@ const options = inject<ReturnType<typeof useOptions>>('options')!
 const sessionUsage = inject<ReturnType<typeof useSessionUsage>>('sessionUsage')
 const tasksComposable = inject<ReturnType<typeof useTasks>>('tasks')!
 
-const showOutput = ref(false)
-
 const hasLocalSession = computed(() =>
   !!props.task.sessionId &&
   props.task.status !== 'backlog' &&
@@ -52,8 +50,7 @@ const hasLocalSession = computed(() =>
 const isAnomalousReviewTask = computed(() =>
   props.task.status === 'review' &&
   !props.task.awaitingPlanApproval &&
-  props.task.executionStrategy !== 'best_of_n' &&
-  !!(props.task.agentOutput?.trim())
+  props.task.executionStrategy !== 'best_of_n'
 )
 
 const isOrphanExecutingTask = computed(() =>
@@ -71,11 +68,11 @@ const canRepairToDone = computed(() =>
   props.task.status !== 'done' &&
   props.task.executionStrategy !== 'best_of_n' &&
   props.task.awaitingPlanApproval !== true &&
-  !!(props.task.agentOutput?.trim())
+  (props.task.errorMessage !== null || props.task.reviewCount > 0)
 )
 
 const hasPlanOutput = computed(() =>
-  /\[plan\]\s*[\s\S]*?(?=\n\[[a-z0-9-]+\]|$)/.test(props.task.agentOutput || '')
+  props.task.executionPhase === 'plan_complete_waiting_approval'
 )
 
 const showInlineActionBar = computed(() =>
@@ -502,28 +499,6 @@ onUnmounted(() => {
     >
       View Runs
     </button>
-
-    <!-- Collapsible output -->
-    <div v-if="task.agentOutput && (task.status === 'executing' || task.status === 'review' || task.status === 'done' || task.status === 'stuck' || task.status === 'failed')">
-      <button
-        class="text-accent-primary text-xs bg-transparent border-0 cursor-pointer py-1 hover:underline flex items-center gap-1"
-        @click="showOutput = !showOutput"
-      >
-        <svg v-if="showOutput" class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M19 9l-7 7-7-7"/>
-        </svg>
-        <svg v-else class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M9 5l7 7-7 7"/>
-        </svg>
-        Agent Output
-      </button>
-      <div
-        v-if="showOutput"
-        class="text-xs text-dark-text-secondary bg-dark-bg rounded p-2 mt-1.5 max-h-52 overflow-y-auto whitespace-pre-wrap break-words border border-dark-border"
-      >
-        {{ task.agentOutput.slice(-5000) }}
-      </div>
-    </div>
 
     <!-- Cost and tokens badge - always shown -->
     <div v-if="task.sessionId" class="flex items-center gap-2 mt-1 text-xs">

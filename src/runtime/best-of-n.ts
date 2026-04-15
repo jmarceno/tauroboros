@@ -309,8 +309,7 @@ export class BestOfNRunner {
         onOutput: (chunk) => {
           if (!trimText(chunk)) return
           outputChunks.push(chunk)
-          const tagged = appendTaggedOutput(this.deps.db, taskId, `worker-${workerRun.slotIndex}`, chunk)
-          if (tagged) this.deps.broadcast({ type: "agent_output", payload: { taskId, output: tagged } })
+          appendTaggedOutput(this.deps.db, taskId, `worker-${workerRun.slotIndex}`, chunk)
         },
         onSessionCreated: this.deps.onSessionCreated,
       })
@@ -477,8 +476,7 @@ export class BestOfNRunner {
         onOutput: (chunk) => {
           if (!trimText(chunk)) return
           outputChunks.push(chunk)
-          const tagged = appendTaggedOutput(this.deps.db, taskId, "final-applier", chunk)
-          if (tagged) this.deps.broadcast({ type: "agent_output", payload: { taskId, output: tagged } })
+          appendTaggedOutput(this.deps.db, taskId, "final-applier", chunk)
         },
         onSessionCreated: this.deps.onSessionCreated,
       })

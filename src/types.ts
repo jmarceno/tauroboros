@@ -244,7 +244,6 @@ export type WSMessageType =
   | "run_paused"           // NEW: Run was paused
   | "run_resumed"          // NEW: Run was resumed
   | "run_stopped"          // NEW: Run was stopped (with destructive flag)
-  | "agent_output"
   | "error"
   | "task_run_created"
   | "task_run_updated"

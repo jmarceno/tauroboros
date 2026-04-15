@@ -1384,13 +1384,6 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         })
         if (fixSession.responseText.trim()) {
           this.db.appendAgentOutput(taskId, tagOutput(`review-fix-${reviewCount}`, fixSession.responseText))
-          this.broadcast({
-            type: "agent_output",
-            payload: {
-              taskId,
-              output: tagOutput(`review-fix-${reviewCount}`, fixSession.responseText),
-            },
-          })
         }
         this.broadcastTask(taskId)
       }
@@ -1624,13 +1617,6 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       onOutput: (chunk) => {
         if (!chunk.trim()) return
         this.db.appendAgentOutput(input.task.id, `${stripAndNormalize(chunk)}\n`)
-        this.broadcast({
-          type: "agent_output",
-          payload: {
-            taskId: input.task.id,
-            output: `${stripAndNormalize(chunk)}\n`,
-          },
-        })
       },
       onSessionMessage: (message) => {
         this.broadcast({
