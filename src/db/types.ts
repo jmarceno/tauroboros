@@ -256,6 +256,7 @@ export interface CreateTaskInput {
   maxReviewRunsOverride?: number | null
   smartRepairHints?: string | null
   reviewActivity?: "idle" | "running"
+  containerImage?: string
 }
 
 export interface UpdateTaskInput {
@@ -295,6 +296,7 @@ export interface UpdateTaskInput {
   reviewActivity?: "idle" | "running"
   isArchived?: boolean
   archivedAt?: number | null
+  containerImage?: string
 }
 
 export interface PromptRenderResult {

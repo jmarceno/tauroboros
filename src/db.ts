@@ -554,6 +554,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     reviewActivity: row.review_activity === "running" ? "running" : "idle",
     isArchived: Number(row.is_archived ?? 0) === 1,
     archivedAt: row.archived_at === null || row.archived_at === undefined ? null : Number(row.archived_at),
+    containerImage: row.container_image ? String(row.container_image) : undefined,
   }
 }
 
@@ -1403,6 +1404,13 @@ const MIGRATIONS: Migration[] = [
       `ALTER TABLE container_builds ADD COLUMN logs TEXT;`,
     ],
   },
+  {
+    version: 11,
+    description: "Add container_image column to tasks table for per-task image selection",
+    statements: [
+      `ALTER TABLE tasks ADD COLUMN container_image TEXT;`,
+    ],
+  },
 ]
 
 export class PiKanbanDB {
@@ -1477,8 +1485,8 @@ export class PiKanbanDB {
           requirements, agent_output, review_count, created_at, updated_at,
           thinking_level, plan_thinking_level, execution_thinking_level, execution_phase, awaiting_plan_approval, plan_revision_count,
           execution_strategy, best_of_n_config, best_of_n_substage, skip_permission_asking,
-          max_review_runs_override, smart_repair_hints, review_activity, is_archived, archived_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)
+          max_review_runs_override, smart_repair_hints, review_activity, is_archived, archived_at, container_image
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
       `)
       .run(
         taskId,
@@ -1510,6 +1518,7 @@ export class PiKanbanDB {
         input.maxReviewRunsOverride ?? null,
         input.smartRepairHints ?? null,
         input.reviewActivity ?? "idle",
+        input.containerImage ?? null,
       )
 
     return this.getTask(taskId) as Task
@@ -1665,6 +1674,10 @@ export class PiKanbanDB {
     if (input.archivedAt !== undefined) {
       sets.push("archived_at = ?")
       values.push(input.archivedAt)
+    }
+    if (input.containerImage !== undefined) {
+      sets.push("container_image = ?")
+      values.push(input.containerImage ?? null)
     }
 
     if (sets.length === 0) return this.getTask(id)

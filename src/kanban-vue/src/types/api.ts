@@ -44,6 +44,14 @@ export interface Task {
   createdAt: number
   updatedAt: number
   reviewActivity?: 'idle' | 'running'
+  containerImage?: string
+}
+
+export interface ContainerImage {
+  tag: string
+  createdAt: number
+  source: 'build' | 'podman'
+  inUseByTasks: number
 }
 
 export interface BestOfNConfig {
@@ -166,6 +174,14 @@ export interface Options {
   telegramBotToken?: string
   telegramChatId?: string
   columnSorts?: ColumnSortPreferences
+  container?: {
+    enabled?: boolean
+    image?: string
+    imageSource?: string
+    dockerfilePath?: string
+    autoPrepare?: boolean
+    registryUrl?: string
+  }
 }
 
 export interface BranchList {
@@ -365,6 +381,7 @@ export interface CreateTaskDTO {
   executionStrategy?: ExecutionStrategy
   bestOfNConfig?: BestOfNConfig
   bestOfNSubstage?: BestOfNSubstage
+  containerImage?: string
 }
 
 // Extended DTO for create-and-wait endpoint with timeout options
@@ -414,6 +431,7 @@ export interface UpdateTaskDTO {
   executionPhase?: string
   awaitingPlanApproval?: boolean
   maxReviewRunsOverride?: number
+  containerImage?: string
 }
 
 // Planning Chat Types

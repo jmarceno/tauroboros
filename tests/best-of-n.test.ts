@@ -22,6 +22,7 @@ function createTestSettings(mockPiPath: string): InfrastructureSettings {
       ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow,
       container: {
         ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.container,
+        enabled: false,
         piBin: mockPiPath,
         piArgs: "",
       },

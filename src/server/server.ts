@@ -11,6 +11,7 @@ import { PiKanbanDB } from "../db.ts"
 import type { SessionIORecordType, PackageDefinition } from "../db/types.ts"
 import { runStartupRecovery } from "../recovery/startup-recovery.ts"
 import { ContainerImageManager, loadContainerConfig, saveContainerConfig } from "../runtime/container-image-manager.ts"
+import { PiContainerManager } from "../runtime/container-manager.ts"
 import { SmartRepairService, type SmartRepairAction } from "../runtime/smart-repair.ts"
 import { PlanningSessionManager, type ContextAttachment } from "../runtime/planning-session.ts"
 import { sendTelegramNotification } from "../telegram.ts"
@@ -103,7 +104,12 @@ function validateBestOfNConfig(config: unknown): { valid: boolean; error?: strin
     return { valid: false, error: "selectionMode must be pick_best, synthesize, or pick_or_synthesize" }
   }
 
-  const totalWorkers = cfg.workers.reduce((sum: number, slot: any) => sum + Number(slot.count || 0), 0)
+  const totalWorkers = cfg.workers.reduce((sum: number, slot: any) => {
+    if (slot.count === undefined || slot.count === null) {
+      throw new Error(`Worker slot is missing 'count' field: ${JSON.stringify(slot)}`)
+    }
+    return sum + Number(slot.count)
+  }, 0)
   if (typeof cfg.minSuccessfulWorkers !== "number" || cfg.minSuccessfulWorkers < 1 || cfg.minSuccessfulWorkers > totalWorkers) {
     return { valid: false, error: "minSuccessfulWorkers must be between 1 and total worker count" }
   }
@@ -148,6 +154,7 @@ export class PiKanbanServer {
   private readonly defaultPort: number
   private readonly smartRepair: SmartRepairService
   private readonly imageManager?: ContainerImageManager
+  private readonly containerManager?: PiContainerManager
   private readonly settings?: InfrastructureSettings
   private readonly projectRoot: string
   private readonly planningSessionManager: PlanningSessionManager
@@ -233,6 +240,13 @@ export class PiKanbanServer {
         },
       })
       console.log("[container] Image manager initialized successfully")
+
+      // Initialize container manager for image operations
+      this.containerManager = new PiContainerManager(
+        containerSettings.image,
+        this.imageManager,
+      )
+      console.log("[container] Container manager initialized successfully")
     } else {
       console.log("[container] Container mode disabled - container features will be unavailable. To enable, set 'workflow.container.enabled' to true in .tauroboros/settings.json and restart the server.")
     }
@@ -385,8 +399,9 @@ export class PiKanbanServer {
         const content = await readEmbeddedFile(filePath)
         const contentType = getContentType(params.file)
         return new Response(content, { headers: { "Content-Type": contentType } })
-      } catch {
-        return new Response("Failed to read file", { status: 500 })
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        return new Response(`Failed to read file: ${errorMessage}`, { status: 500 })
       }
     })
 
@@ -436,6 +451,14 @@ export class PiKanbanServer {
         if (!valid.valid) return json({ error: valid.error }, 400)
       }
 
+      // Validate container image if provided
+      if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
+        const imageExists = await this.validateContainerImage(String(body.containerImage))
+        if (!imageExists) {
+          return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
+        }
+      }
+
       const task = this.db.createTask({
         id: randomUUID().slice(0, 8),
         name: String(body.name ?? "").trim(),
@@ -457,6 +480,7 @@ export class PiKanbanServer {
         bestOfNConfig: body.bestOfNConfig,
         bestOfNSubstage: body.bestOfNSubstage,
         skipPermissionAsking: body.skipPermissionAsking,
+        containerImage: body.containerImage,
       })
 
       const normalized = normalizeTaskForClient(task, sessionUrlFor)
@@ -492,6 +516,14 @@ export class PiKanbanServer {
       // Validate poll interval (optional, default 2 seconds, min 1s, max 30s)
       const pollIntervalMs = Math.min(Math.max(Number(body.pollIntervalMs) || 2000, 1000), 30000)
 
+      // Validate container image if provided
+      if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
+        const imageExists = await this.validateContainerImage(String(body.containerImage))
+        if (!imageExists) {
+          return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
+        }
+      }
+
       // Create the task
       const task = this.db.createTask({
         id: randomUUID().slice(0, 8),
@@ -514,6 +546,7 @@ export class PiKanbanServer {
         bestOfNConfig: body.bestOfNConfig,
         bestOfNSubstage: body.bestOfNSubstage,
         skipPermissionAsking: body.skipPermissionAsking,
+        containerImage: body.containerImage,
       })
 
       const normalized = normalizeTaskForClient(task, sessionUrlFor)
@@ -638,6 +671,14 @@ export class PiKanbanServer {
         if (!validation.valid) return json({ error: validation.error }, 400)
       }
 
+      // Validate container image if provided
+      if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
+        const imageExists = await this.validateContainerImage(String(body.containerImage))
+        if (!imageExists) {
+          return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
+        }
+      }
+
       if (body?.status === "backlog" && body?.executionPhase === undefined) {
         body.executionPhase = "not_started"
         body.awaitingPlanApproval = false
@@ -747,13 +788,29 @@ export class PiKanbanServer {
     })
 
     this.router.post("/api/start", async ({ json, broadcast }) => {
-      const run = await this.onStart()
-      return json(run)
+      try {
+        const run = await this.onStart()
+        return json(run)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        if (message.includes("invalid container images") || message.includes("not found")) {
+          return json({ error: message }, 409)
+        }
+        return json({ error: message }, 500)
+      }
     })
 
     this.router.post("/api/execution/start", async ({ json }) => {
-      const run = await this.onStart()
-      return json(run)
+      try {
+        const run = await this.onStart()
+        return json(run)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        if (message.includes("invalid container images") || message.includes("not found")) {
+          return json({ error: message }, 409)
+        }
+        return json({ error: message }, 500)
+      }
     })
 
     this.router.post("/api/stop", async ({ json, broadcast }) => {
@@ -781,8 +838,42 @@ export class PiKanbanServer {
       const task = this.db.getTask(params.id)
       if (!task) return json({ error: "Task not found" }, 404)
 
-      const run = await this.onStartSingle(params.id)
-      return json(run)
+      // Proactively validate container image before starting
+      const imageToUse = task.containerImage || this.settings?.workflow?.container?.image
+      if (imageToUse) {
+        const exists = await this.validateContainerImage(imageToUse)
+        if (!exists) {
+          // Log to event system
+          if (task.sessionId) {
+            this.db.createSessionMessage({
+              sessionId: task.sessionId,
+              taskId: task.id,
+              role: "system",
+              messageType: "error",
+              contentJson: {
+                eventType: "image_missing",
+                timestamp: Date.now(),
+                message: `Task start prevented: Container image '${imageToUse}' not found`,
+                recommendation: "Build the image using the Image Builder or select a different image",
+              },
+            })
+          }
+          return json({
+            error: `Cannot start task: Container image '${imageToUse}' not found. Build the image first.`,
+          }, 409)
+        }
+      }
+
+      try {
+        const run = await this.onStartSingle(params.id)
+        return json(run)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        if (message.includes("invalid container images") || message.includes("not found")) {
+          return json({ error: message }, 409)
+        }
+        return json({ error: message }, 500)
+      }
     })
 
     this.router.post("/api/runs/:id/pause", async ({ params, json, broadcast }) => {
@@ -1106,11 +1197,15 @@ export class PiKanbanServer {
         return json({ error: "feedback is required" }, 400)
       }
 
+      if (typeof task.planRevisionCount !== 'number') {
+        throw new Error(`Task ${task.id} has invalid planRevisionCount: expected number, got ${typeof task.planRevisionCount}`)
+      }
+      
       const updated = this.db.updateTask(task.id, {
         status: "backlog",
         awaitingPlanApproval: false,
         executionPhase: "plan_revision_pending",
-        planRevisionCount: (task.planRevisionCount ?? 0) + 1,
+        planRevisionCount: task.planRevisionCount + 1,
         agentOutput: `${task.agentOutput}\n[user-revision-request]\n${body.feedback.trim()}\n`,
       })
 
@@ -1118,7 +1213,7 @@ export class PiKanbanServer {
       const normalized = normalizeTaskForClient(updated, sessionUrlFor)
       broadcast({ type: "task_updated", payload: normalized })
       broadcast({ type: "plan_revision_requested", payload: { taskId: task.id } })
-      const run = await this.onStartSingle(task.id).catch(() => null)
+      const run = await this.onStartSingle(task.id)
       return json({ task: normalized, run })
     })
 
@@ -1131,11 +1226,15 @@ export class PiKanbanServer {
         return json({ error: "feedback is required" }, 400)
       }
 
+      if (typeof task.planRevisionCount !== 'number') {
+        throw new Error(`Task ${task.id} has invalid planRevisionCount: expected number, got ${typeof task.planRevisionCount}`)
+      }
+
       const updated = this.db.updateTask(task.id, {
         status: "backlog",
         awaitingPlanApproval: false,
         executionPhase: "plan_revision_pending",
-        planRevisionCount: (task.planRevisionCount ?? 0) + 1,
+        planRevisionCount: task.planRevisionCount + 1,
         agentOutput: `${task.agentOutput}\n[user-revision-request]\n${body.feedback.trim()}\n`,
       })
 
@@ -1143,7 +1242,7 @@ export class PiKanbanServer {
       const normalized = normalizeTaskForClient(updated, sessionUrlFor)
       broadcast({ type: "task_updated", payload: normalized })
       broadcast({ type: "plan_revision_requested", payload: { taskId: task.id } })
-      const run = await this.onStartSingle(task.id).catch(() => null)
+      const run = await this.onStartSingle(task.id)
       return json({ task: normalized, run })
     })
 
@@ -1577,12 +1676,25 @@ Respond ONLY with the JSON array, no other text.`
         if (tasks && tasks.length > 0) {
           const createdTasks = []
           for (const taskData of tasks) {
+            if (!taskData.name) {
+              throw new Error("Task data missing required field: name")
+            }
+            if (!taskData.prompt) {
+              throw new Error("Task data missing required field: prompt")
+            }
+            const taskStatus = taskData.status as Task["status"]
+            if (!taskStatus) {
+              throw new Error("Task data missing required field: status")
+            }
+            if (!Array.isArray(taskData.requirements)) {
+              throw new Error("Task data missing or invalid field: requirements (must be an array)")
+            }
             const task = this.db.createTask({
               id: randomUUID().slice(0, 8),
               name: taskData.name,
               prompt: taskData.prompt,
-              status: (taskData.status as Task["status"]) || "backlog",
-              requirements: taskData.requirements || [],
+              status: taskStatus,
+              requirements: taskData.requirements,
             })
             createdTasks.push(normalizeTaskForClient(task, sessionUrlFor))
             broadcast({ type: "task_created", payload: normalizeTaskForClient(task, sessionUrlFor) })
@@ -1674,11 +1786,14 @@ Respond ONLY with the JSON array, no other text.`
       try {
         const profilesPath = this.getContainerProfilesPath()
         if (!existsSync(profilesPath)) {
-          return json({ profiles: [] })
+          throw new Error(`Container profiles file not found at ${profilesPath}`)
         }
         const raw = readFileSync(profilesPath, "utf-8")
         const data = JSON.parse(raw)
-        return json({ profiles: data.profiles || [] })
+        if (!Array.isArray(data.profiles)) {
+          throw new Error(`Invalid profiles file: 'profiles' must be an array, got ${typeof data.profiles}`)
+        }
+        return json({ profiles: data.profiles })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         return json({ error: `Failed to load profiles: ${message}` }, 500)
@@ -1735,11 +1850,17 @@ Respond ONLY with the JSON array, no other text.`
 
     // Get container feature availability status
     this.router.get("/api/container/status", ({ json }) => {
-      const enabled = this.settings?.workflow?.container?.enabled ?? false
+      if (!this.settings) {
+        throw new Error('Server settings not loaded: cannot determine container status')
+      }
+      if (!this.settings.workflow) {
+        throw new Error('Workflow settings not configured: cannot determine container status')
+      }
+      const enabled = this.settings.workflow.container?.enabled === true
       const hasRunning = this.db.hasRunningWorkflows()
       return json({
         enabled,
-        available: !!this.imageManager,
+        available: this.imageManager !== null,
         hasRunningWorkflows: hasRunning,
         message: enabled
           ? (this.imageManager ? "Container mode active" : "Container mode enabled but image manager failed to initialize")
@@ -1974,7 +2095,217 @@ Respond ONLY with the JSON array, no other text.`
       }
     })
 
+    // ---- Per-Task Container Image Routes ----
+
+    // List all available container images
+    this.router.get("/api/container/images", async ({ json }) => {
+      try {
+        if (!this.settings?.workflow?.container?.enabled) {
+          return json({ images: [] })
+        }
+
+        // Get images from container_builds table
+        const builds = this.db.getContainerBuilds(100)
+        const buildImages = builds
+          .filter(b => b.imageTag && b.status === "success")
+          .map(b => {
+            if (!b.completedAt && !b.startedAt) {
+              throw new Error(`Build ${b.id} has no completedAt or startedAt timestamp`)
+            }
+            const createdAt = b.completedAt ?? b.startedAt
+            if (!createdAt) {
+              throw new Error(`Build ${b.id} has invalid timestamps: completedAt=${b.completedAt}, startedAt=${b.startedAt}`)
+            }
+            return {
+              tag: b.imageTag!,
+              createdAt,
+              source: "build" as const,
+            }
+          })
+
+        // Get images from podman
+        const podmanImages = await this.getPodmanImages()
+
+        // Create a map of podman images for quick lookup (includes size)
+        const podmanImagesMap = new Map<string, { tag: string; createdAt: number; size: string }>()
+        for (const img of podmanImages) {
+          podmanImagesMap.set(img.tag, img)
+        }
+
+        // Merge and deduplicate
+        const allImages = new Map<string, { tag: string; createdAt: number; source: "build" | "podman"; size?: string }>()
+        
+        for (const img of buildImages) {
+          // Get size from podman if available
+          const podmanImg = podmanImagesMap.get(img.tag)
+          allImages.set(img.tag, { ...img, size: podmanImg?.size })
+        }
+        
+        for (const img of podmanImages) {
+          if (!allImages.has(img.tag)) {
+            allImages.set(img.tag, { ...img, source: "podman" })
+          }
+        }
+
+        // Count tasks using each image (non-done status)
+        const tasks = this.db.getTasks()
+        const imageUsage: Record<string, number> = {}
+        for (const task of tasks) {
+          if (task.containerImage && task.status !== "done") {
+            const currentCount = imageUsage[task.containerImage]
+            if (currentCount === undefined) {
+              imageUsage[task.containerImage] = 1
+            } else {
+              imageUsage[task.containerImage] = currentCount + 1
+            }
+          }
+        }
+
+        const result = Array.from(allImages.values()).map(img => ({
+          ...img,
+          inUseByTasks: imageUsage[img.tag] ?? 0,
+        }))
+
+        return json({ images: result.sort((a, b) => b.createdAt - a.createdAt) })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error("[API /container/images] Error:", message)
+        return json({ error: `Failed to get container images: ${message}` }, 500)
+      }
+    })
+
+    // Validate a container image exists
+    this.router.post("/api/container/validate-image", async ({ req, json }) => {
+      try {
+        const body = await req.json()
+        const tag = String(body?.tag ?? "")
+
+        if (!tag) {
+          return json({ error: "tag is required" }, 400)
+        }
+
+        // Check if image exists in podman
+        let availableInPodman = false
+        if (this.settings?.workflow?.container?.enabled) {
+          availableInPodman = await this.validateContainerImage(tag)
+        }
+
+        // Also check container_builds
+        const builds = this.db.getContainerBuilds(100)
+        const existsInBuilds = builds.some(b => b.imageTag === tag && b.status === "success")
+
+        return json({
+          exists: existsInBuilds || availableInPodman,
+          tag,
+          availableInPodman,
+          availableInBuilds: existsInBuilds,
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Validation failed: ${message}` }, 500)
+      }
+    })
+
+    // Delete a container image
+    this.router.delete("/api/container/images/:tag", async ({ params, json }) => {
+      try {
+        const tag = decodeURIComponent(params.tag)
+        
+        if (!tag) {
+          return json({ error: "tag is required" }, 400)
+        }
+
+        // Check if image is used by any non-done tasks
+        const tasks = this.db.getTasks()
+        const tasksUsing = tasks.filter(t => 
+          t.containerImage === tag && t.status !== "done"
+        )
+
+        if (tasksUsing.length > 0) {
+          return json({
+            success: false,
+            message: `Cannot delete image: used by ${tasksUsing.length} non-done task(s)`,
+            tasksUsing: tasksUsing.map(t => ({ id: t.id, name: t.name })),
+          }, 400)
+        }
+
+        // Check if this is the last available image
+        const allImages = await this.getPodmanImages()
+        const piAgentImages = allImages.filter(img => img.tag.includes("pi-agent"))
+        
+        if (piAgentImages.length <= 1) {
+          return json({
+            success: false,
+            message: "Cannot delete the last available pi-agent image",
+          }, 400)
+        }
+
+        // Delete the image using container manager
+        if (!this.containerManager) {
+          return json({
+            success: false,
+            message: "Container manager not available",
+          }, 503)
+        }
+
+        const result = await this.containerManager.deleteImage(tag)
+
+        if (!result.success) {
+          return json({
+            success: false,
+            message: `Failed to delete image: ${result.error}`,
+          }, 500)
+        }
+
+        return json({
+          success: true,
+          message: `Image ${tag} deleted successfully`,
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Failed to delete image: ${message}` }, 500)
+      }
+    })
+
     // ---- End Container Configuration Routes ----
+  }
+
+  private async getPodmanImages(): Promise<Array<{ tag: string; createdAt: number; size: string }>> {
+    const proc = Bun.spawn(["podman", "images", "--format", "json", "--filter", "reference=*pi-agent*"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const stdout = await new Response(proc.stdout).text()
+    await proc.exited
+
+    const images = JSON.parse(stdout) as Array<{
+      Names?: string[]
+      CreatedAt?: string
+      Size?: string
+    }>
+
+    const result: Array<{ tag: string; createdAt: number; size: string }> = []
+    
+    for (const img of images) {
+      if (!Array.isArray(img.Names)) {
+        throw new Error(`Invalid podman image data: 'Names' must be an array, got ${typeof img.Names}`)
+      }
+      for (const tag of img.Names) {
+        if (!img.CreatedAt) {
+          throw new Error(`Invalid podman image data: 'CreatedAt' is required for image '${tag}'`)
+        }
+        if (!img.Size) {
+          throw new Error(`Invalid podman image data: 'Size' is required for image '${tag}'`)
+        }
+        result.push({
+          tag,
+          createdAt: new Date(img.CreatedAt).getTime(),
+          size: img.Size,
+        })
+      }
+    }
+    
+    return result
   }
 
   private hashPackages(packages: PackageDefinition[]): string {
@@ -1987,5 +2318,34 @@ Respond ONLY with the JSON array, no other text.`
       hash = hash & hash
     }
     return Math.abs(hash).toString(16).slice(0, 8)
+  }
+
+  /**
+   * Validate that a container image exists.
+   * Checks both container_builds table and podman.
+   * @throws Error if tag is empty/whitespace or if validation fails
+   */
+  private async validateContainerImage(tag: string): Promise<boolean> {
+    if (!tag || tag.trim() === "") {
+      throw new Error("Cannot validate container image: tag is empty or whitespace-only")
+    }
+    
+    // Check container_builds table
+    const builds = this.db.getContainerBuilds(100)
+    const existsInBuilds = builds.some(b => b.imageTag === tag && b.status === "success")
+    if (existsInBuilds) return true
+
+    // Check podman if available
+    try {
+      const proc = Bun.spawn(["podman", "image", "exists", tag], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const exitCode = await proc.exited
+      return exitCode === 0
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      throw new Error(`Failed to validate container image '${tag}' via podman: ${errorMessage}`)
+    }
   }
 }

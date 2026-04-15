@@ -2,7 +2,7 @@ import { existsSync } from "fs"
 import { execFileSync } from "child_process"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
-import type { Task } from "../types.ts"
+import { resolveContainerImage, type Task } from "../types.ts"
 import type { TaskRepairAction } from "../task-state.ts"
 import { chooseDeterministicRepairAction } from "../task-state.ts"
 import { buildRepairVariables } from "../prompts/index.ts"
@@ -129,6 +129,8 @@ export class SmartRepairService {
     const promptVars = buildRepairVariables(task, worktreeStatus, sessionHistory, latestOutput)
     const prompt = this.db.renderPrompt("repair", promptVars)
 
+    const repairImageToUse = resolveContainerImage(task, this.settings?.workflow?.container?.image)
+
     const session = await this.sessions.executePrompt({
       taskId: task.id,
       sessionKind: "repair",
@@ -138,6 +140,7 @@ export class SmartRepairService {
       model: options.repairModel,
       thinkingLevel: options.repairThinkingLevel,
       promptText: prompt.renderedText,
+      containerImage: repairImageToUse,
     })
 
     return parseRepairDecision(session.responseText)
@@ -219,17 +222,7 @@ export class SmartRepairService {
       this.db.updateTask(taskId, { smartRepairHints })
     }
 
-    let decision: SmartRepairDecision
-    try {
-      decision = await this.decide(taskId)
-    } catch (error) {
-      const fallback = chooseDeterministicRepairAction(this.db.getTask(taskId) ?? task)
-      decision = {
-        action: fallback.action,
-        reason: `${fallback.reason} (smart repair fallback: ${error instanceof Error ? error.message : String(error)})`,
-      }
-    }
-
+    const decision = await this.decide(taskId)
     const updated = this.applyAction(taskId, decision)
     return { ...decision, task: updated }
   }

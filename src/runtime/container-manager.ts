@@ -915,6 +915,75 @@ export class PiContainerManager {
   }
 
   /**
+   * Check if a specific image exists in Podman.
+   */
+  async checkImageExists(imageName: string): Promise<boolean> {
+    try {
+      await this.execPodman(["image", "exists", imageName])
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * List all available pi-agent images from Podman.
+   */
+  async listImages(): Promise<Array<{
+    tag: string
+    createdAt: number
+    size: string
+  }>> {
+    try {
+      const { stdout } = await this.execPodman([
+        "images",
+        "--format", "json",
+        "--filter", "reference=*pi-agent*"
+      ])
+      
+      const images = JSON.parse(stdout) as Array<{
+        Names?: string[]
+        CreatedAt?: string
+        Size?: string
+        RepoTags?: string[]
+      }>
+      
+      const result: Array<{ tag: string; createdAt: number; size: string }> = []
+      
+      for (const img of images) {
+        const tags = img.Names || img.RepoTags || []
+        for (const tag of tags) {
+          if (tag.includes("pi-agent")) {
+            result.push({
+              tag,
+              createdAt: img.CreatedAt ? new Date(img.CreatedAt).getTime() : Date.now(),
+              size: img.Size || "unknown",
+            })
+          }
+        }
+      }
+      
+      return result.sort((a, b) => b.createdAt - a.createdAt)
+    } catch (err) {
+      console.error("[container-manager] Failed to list images:", err)
+      return []
+    }
+  }
+
+  /**
+   * Delete an image by tag.
+   */
+  async deleteImage(imageName: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.execPodman(["rmi", imageName])
+      return { success: true }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      return { success: false, error: errorMessage }
+    }
+  }
+
+  /**
    * Inspect a container and return its state.
    */
   private async inspectContainer(containerId: string): Promise<{ State: { Status: string; Running: boolean } }> {

@@ -86,6 +86,7 @@ export interface Task {
   reviewActivity: "idle" | "running"
   isArchived: boolean
   archivedAt: number | null
+  containerImage?: string
 }
 
 export interface WorkflowRun {
@@ -406,4 +407,22 @@ export interface SessionUsageRollup {
   cacheWriteTokens: number
   totalTokens: number
   totalCost: number
+}
+
+/**
+ * Resolve the container image to use for a task.
+ * Priority: task-specific image > system default
+ * @throws Error if neither task-specific nor system image is available
+ */
+export function resolveContainerImage(
+  task: Pick<Task, 'containerImage'>,
+  systemImage: string | undefined
+): string {
+  if (task.containerImage) {
+    return task.containerImage
+  }
+  if (systemImage) {
+    return systemImage
+  }
+  throw new Error("No container image available: task has no containerImage set and no system default is configured")
 }

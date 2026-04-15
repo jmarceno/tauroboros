@@ -1,6 +1,6 @@
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
-import type { Task, ThinkingLevel, ReviewResult } from "../types.ts"
+import { resolveContainerImage, type Task, type ThinkingLevel, type ReviewResult } from "../types.ts"
 import { buildReviewVariables } from "../prompts/index.ts"
 import { PiSessionManager } from "./session-manager.ts"
 import { parseStrictJsonObject } from "./strict-json.ts"
@@ -69,6 +69,9 @@ export class PiReviewSessionRunner {
 
   async run(input: RunReviewScratchInput): Promise<RunReviewScratchResult> {
     const rendered = this.db.renderPrompt("review", buildReviewVariables(input.task, input.reviewFilePath))
+    
+    const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
+    
     const response = await this.sessions.executePrompt({
       taskId: input.task.id,
       sessionKind: "review_scratch",
@@ -78,6 +81,7 @@ export class PiReviewSessionRunner {
       model: input.model,
       thinkingLevel: input.thinkingLevel,
       promptText: rendered.renderedText,
+      containerImage: imageToUse,
       onOutput: input.onOutput,
       onSessionCreated: input.onSessionCreated,
     })

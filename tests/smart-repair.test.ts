@@ -63,8 +63,10 @@ function createTestSettings(mockPiPath: string): InfrastructureSettings {
       ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow,
       container: {
         ...DEFAULT_INFRASTRUCTURE_SETTINGS.workflow.container,
+        enabled: false,
         piBin: mockPiPath,
         piArgs: "",
+        image: "pi-agent:alpine",
       },
     },
   }
@@ -158,24 +160,23 @@ describe("smart repair", () => {
     db.close()
   })
 
-  it("falls back to deterministic action when smart repair JSON is malformed", async () => {
-    const root = createTempDir("tauroboros-smart-repair-fallback-")
+  it("throws explicit error when smart repair JSON is malformed", async () => {
+    const root = createTempDir("tauroboros-smart-repair-error-")
     const settings = createTestSettings(createRepairMockPi(root, "malformed"))
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
     const task = db.createTask({
       id: "repair-smart-2",
-      name: "Smart repair fallback task",
-      prompt: "Fallback behavior",
+      name: "Smart repair error task",
+      prompt: "Error behavior",
       status: "executing",
       planmode: false,
     })
 
     const service = new SmartRepairService(db, settings)
-    const result = await service.repair(task.id)
-
-    expect(result.reason.includes("smart repair fallback")).toBe(true)
-    expect(["backlog", "done", "failed", "review", "executing"]).toContain(result.task.status)
+    
+    // Explicit errors: malformed JSON should throw, not fallback
+    await expect(service.repair(task.id)).rejects.toThrow()
     db.close()
   })
 })

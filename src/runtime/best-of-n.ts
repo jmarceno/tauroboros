@@ -5,15 +5,16 @@ import {
   buildBestOfNReviewerVariables,
   buildBestOfNWorkerVariables,
 } from "../prompts/index.ts"
-import type {
-  AggregatedReviewResult,
-  Options,
-  ReviewerOutput,
-  SelectionMode,
-  Task,
-  TaskCandidate,
-  TaskRun,
-  WSMessage,
+import {
+  resolveContainerImage,
+  type AggregatedReviewResult,
+  type Options,
+  type ReviewerOutput,
+  type SelectionMode,
+  type Task,
+  type TaskCandidate,
+  type TaskRun,
+  type WSMessage,
 } from "../types.ts"
 import { parseStrictJsonObject } from "./strict-json.ts"
 import { PiSessionManager } from "./session-manager.ts"
@@ -296,6 +297,8 @@ export class BestOfNRunner {
         buildBestOfNWorkerVariables(task, workerRun.slotIndex, workerRun.model, options.extraPrompt, workerRun.taskSuffix ?? undefined),
       )
       const outputChunks: string[] = []
+      const workerImageToUse = resolveContainerImage(task, this.deps.settings?.workflow?.container?.image)
+      
       const response = await this.sessions.executePrompt({
         taskId,
         taskRunId: workerRun.id,
@@ -306,6 +309,7 @@ export class BestOfNRunner {
         model: workerRun.model,
         thinkingLevel: task.executionThinkingLevel,
         promptText: prompt.renderedText,
+        containerImage: workerImageToUse,
         onOutput: (chunk) => {
           if (!trimText(chunk)) return
           outputChunks.push(chunk)
@@ -390,6 +394,8 @@ export class BestOfNRunner {
         buildBestOfNReviewerVariables(task, candidates, options.extraPrompt, reviewerRun.taskSuffix ?? undefined),
       )
 
+      const reviewerImageToUse = resolveContainerImage(task, this.deps.settings?.workflow?.container?.image)
+
       const response = await this.sessions.executePrompt({
         taskId,
         taskRunId: reviewerRun.id,
@@ -398,6 +404,7 @@ export class BestOfNRunner {
         model: reviewerRun.model,
         thinkingLevel: task.executionThinkingLevel,
         promptText: prompt.renderedText,
+        containerImage: reviewerImageToUse,
         onSessionCreated: this.deps.onSessionCreated,
       })
 
@@ -463,6 +470,8 @@ export class BestOfNRunner {
       )
 
       const outputChunks: string[] = []
+      const finalImageToUse = resolveContainerImage(task, this.deps.settings?.workflow?.container?.image)
+      
       const response = await this.sessions.executePrompt({
         taskId,
         taskRunId: finalRun.id,
@@ -473,6 +482,7 @@ export class BestOfNRunner {
         model: finalRun.model,
         thinkingLevel: task.executionThinkingLevel,
         promptText: prompt.renderedText,
+        containerImage: finalImageToUse,
         onOutput: (chunk) => {
           if (!trimText(chunk)) return
           outputChunks.push(chunk)

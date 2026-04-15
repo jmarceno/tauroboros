@@ -6,7 +6,7 @@ import { buildExecutionVariables, buildPlanningVariables, buildPlanRevisionVaria
 import { getLatestTaggedOutput, getPlanExecutionEligibility } from "./task-state.ts"
 import type { PiKanbanDB } from "./db.ts"
 import type { PiSessionKind, PiWorkflowSession } from "./db/types.ts"
-import type { Options, Task, WSMessage, WorkflowRun } from "./types.ts"
+import { resolveContainerImage, type Options, type Task, type WSMessage, type WorkflowRun } from "./types.ts"
 import { resolveExecutionTasks, getExecutionGraphTasks } from "./execution-plan.ts"
 import { PiSessionManager } from "./runtime/session-manager.ts"
 import { PiReviewSessionRunner } from "./runtime/review-session.ts"
@@ -237,6 +237,24 @@ export class PiOrchestrator {
 
     if (tasks.length === 0) throw new Error("No tasks in backlog")
 
+    // Validate container images for all tasks before starting
+    const imageValidation = await this.validateWorkflowImages(tasks.map(t => t.id))
+    if (!imageValidation.valid) {
+      // Log event for each invalid task before throwing
+      for (const invalid of imageValidation.invalid) {
+        await this.logTaskEvent(invalid.taskId, "execution_blocked", {
+          reason: "missing_container_image",
+          image: invalid.image,
+          message: `Task execution blocked: Container image '${invalid.image}' not found`,
+          recommendation: "Build the image in Image Builder or select a valid image in task settings"
+        })
+      }
+      const details = imageValidation.invalid
+        .map(i => `"${i.taskName}" (${i.taskId}): ${i.image}`)
+        .join("; ")
+      throw new Error(`Cannot start workflow: The following tasks have invalid container images: ${details}. Build the images first.`)
+    }
+
     const run = this.db.createWorkflowRun({
       id: randomUUID().slice(0, 8),
       kind: "all_tasks",
@@ -267,6 +285,24 @@ export class PiOrchestrator {
     if (chain.length === 0) throw new Error("No tasks in backlog")
     const target = this.db.getTask(taskId)
     if (!target) throw new Error("Task not found")
+
+    // Validate container images for all tasks in the chain before starting
+    const imageValidation = await this.validateWorkflowImages(chain.map(t => t.id))
+    if (!imageValidation.valid) {
+      // Log event for each invalid task before throwing
+      for (const invalid of imageValidation.invalid) {
+        await this.logTaskEvent(invalid.taskId, "execution_blocked", {
+          reason: "missing_container_image",
+          image: invalid.image,
+          message: `Task execution blocked: Container image '${invalid.image}' not found`,
+          recommendation: "Build the image in Image Builder or select a valid image in task settings"
+        })
+      }
+      const details = imageValidation.invalid
+        .map(i => `"${i.taskName}" (${i.taskId}): ${i.image}`)
+        .join("; ")
+      throw new Error(`Cannot start workflow: The following tasks have invalid container images: ${details}. Build the images first.`)
+    }
 
     const run = this.db.createWorkflowRun({
       id: randomUUID().slice(0, 8),
@@ -963,7 +999,6 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       thinkingLevel: pausedState.thinkingLevel,
       promptText: continuePrompt,
       isResume: true,
-      isResume: true,
       resumedSessionId: pausedState.sessionId,
       continuationPrompt: continuePrompt,
       // Pass container image for container recreation on resume
@@ -1359,6 +1394,8 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           ? `${fixPromptRendered.renderedText}\n\nReviewer recommended prompt:\n${reviewRun.reviewResult.recommendedPrompt}`
           : fixPromptRendered.renderedText
 
+        const fixImageToUse = resolveContainerImage(currentTask, this.settings?.workflow?.container?.image)
+
         const fixSession = await this.sessionManager.executePrompt({
           taskId,
           sessionKind: "task",
@@ -1368,6 +1405,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           model: currentTask.executionModel !== "default" ? currentTask.executionModel : options.executionModel,
           thinkingLevel: currentTask.executionThinkingLevel,
           promptText: fixPrompt,
+          containerImage: fixImageToUse,
           onSessionCreated: (process, startedSession) => {
             // Track review fix sessions for pause/stop operations
             this.activeSessionProcesses.set(startedSession.id, {
@@ -1586,6 +1624,8 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     let createdSession: PiWorkflowSession | null = null
     let createdProcess: PiRpcProcess | ContainerPiProcess | null = null
 
+    const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
+
     const session = await this.sessionManager.executePrompt({
       taskId: input.task.id,
       sessionKind: input.sessionKind,
@@ -1595,6 +1635,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       model: input.model,
       thinkingLevel: (input.thinkingLevel ?? input.task.thinkingLevel) as import("./types.ts").ThinkingLevel,
       promptText: input.promptText,
+      containerImage: imageToUse,
       onSessionCreated: (process, startedSession) => {
         createdProcess = process
         createdSession = startedSession
@@ -1688,5 +1729,84 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       awaitingPlanApproval: false,
       planRevisionCount: 0,
     })
+  }
+
+  /**
+   * Validate that all container images for the given tasks exist.
+   * Returns an object with valid flag and list of invalid tasks.
+   */
+  async validateWorkflowImages(taskIds: string[]): Promise<{
+    valid: boolean
+    invalid: { taskId: string; taskName: string; image: string }[]
+  }> {
+    const invalid: { taskId: string; taskName: string; image: string }[] = []
+
+    for (const taskId of taskIds) {
+      const task = this.db.getTask(taskId)
+      if (!task) continue
+
+      const imageToCheck = resolveContainerImage(task, this.settings?.workflow?.container?.image)
+
+      if (imageToCheck) {
+        const exists = await this.checkImageExists(imageToCheck)
+        if (!exists) {
+          invalid.push({
+            taskId,
+            taskName: task.name,
+            image: imageToCheck,
+          })
+        }
+      }
+    }
+
+    return { valid: invalid.length === 0, invalid }
+  }
+
+  /**
+   * Check if a container image exists.
+   * Uses the container manager if available, otherwise falls back to podman check.
+   */
+  private async checkImageExists(imageName: string): Promise<boolean> {
+    if (this.containerManager) {
+      return this.containerManager.checkImageExists(imageName)
+    }
+
+    // Fallback: check using podman directly
+    try {
+      const proc = Bun.spawn(["podman", "image", "exists", imageName], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const exitCode = await proc.exited
+      return exitCode === 0
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Log a task event to the session event system.
+   * Used for logging when tasks are blocked due to missing images or other issues.
+   */
+  private async logTaskEvent(
+    taskId: string,
+    eventType: string,
+    data: Record<string, unknown>
+  ): Promise<void> {
+    // Create a system session message for the task
+    const sessionId = this.db.getTask(taskId)?.sessionId
+    if (sessionId) {
+      await this.db.createSessionMessage({
+        sessionId,
+        taskId,
+        role: "system",
+        messageType: "error",
+        contentJson: {
+          eventType,
+          timestamp: Date.now(),
+          ...data
+        },
+      })
+    }
   }
 }

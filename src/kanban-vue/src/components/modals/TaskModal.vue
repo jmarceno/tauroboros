@@ -25,7 +25,6 @@ const modelSearch = inject<ReturnType<typeof useModelSearch>>('modelSearch')!
 const toasts = inject<ReturnType<typeof useToasts>>('toasts')!
 const options = inject<ReturnType<typeof useOptions>>('options')!
 
-// Form state - starts empty, will be populated from backend data ONLY
 const form = ref({
   name: '',
   prompt: '',
@@ -50,13 +49,13 @@ const form = ref({
   bonSelectionMode: 'pick_best' as const,
   bonMinSuccessful: 1,
   bonVerificationCmd: '',
+  containerImage: '',
 })
 
 const bonValidationErrors = ref<string[]>([])
 const isLoading = ref(false)
 const isInitializing = ref(true)
 
-// Computed
 const isViewOnly = computed(() => props.mode === 'view')
 const isDeploy = computed(() => props.mode === 'deploy')
 const isCreate = computed(() => props.mode === 'create')
@@ -77,14 +76,26 @@ const saveButtonText = computed(() => {
 
 const availableBranches = ref<string[]>([])
 const currentBranch = ref<string | null>(null)
+const availableImages = ref<Array<{ tag: string; createdAt: number; source: string; inUseByTasks: number }>>([])
+const defaultImage = ref<string>('')
 
-// Populate form from existing task data
 const populateFormFromTask = (task: Task) => {
   form.value.name = task.name
   form.value.prompt = task.prompt
-  form.value.branch = task.branch || currentBranch.value || availableBranches.value[0] || ''
-  form.value.planModel = task.planModel || ''
-  form.value.executionModel = task.executionModel || ''
+  
+  // Resolve branch: task.branch > currentBranch > availableBranches[0]
+  if (task.branch) {
+    form.value.branch = task.branch
+  } else if (currentBranch.value) {
+    form.value.branch = currentBranch.value
+  } else if (availableBranches.value.length > 0) {
+    form.value.branch = availableBranches.value[0]
+  } else {
+    throw new Error(`Cannot populate form: task '${task.id}' has no branch set and no branches are available`)
+  }
+  
+  form.value.planModel = task.planModel
+  form.value.executionModel = task.executionModel
   form.value.planmode = task.planmode
   form.value.autoApprovePlan = task.autoApprovePlan
   form.value.review = task.review
@@ -96,74 +107,95 @@ const populateFormFromTask = (task: Task) => {
   form.value.planThinkingLevel = task.planThinkingLevel
   form.value.executionThinkingLevel = task.executionThinkingLevel
   form.value.executionStrategy = task.executionStrategy
+  form.value.containerImage = task.containerImage
 
   if (task.executionStrategy === 'best_of_n' && task.bestOfNConfig) {
     form.value.bonWorkers = task.bestOfNConfig.workers.map(w => ({ ...w }))
     form.value.bonReviewers = task.bestOfNConfig.reviewers.map(r => ({ ...r }))
     form.value.bonFinalApplierModel = task.bestOfNConfig.finalApplier.model
-    form.value.bonFinalApplierSuffix = task.bestOfNConfig.finalApplier.taskSuffix || ''
+    form.value.bonFinalApplierSuffix = task.bestOfNConfig.finalApplier.taskSuffix
     form.value.bonSelectionMode = task.bestOfNConfig.selectionMode
     form.value.bonMinSuccessful = task.bestOfNConfig.minSuccessfulWorkers
-    form.value.bonVerificationCmd = task.bestOfNConfig.verificationCommand || ''
+    form.value.bonVerificationCmd = task.bestOfNConfig.verificationCommand
   }
 }
 
-// Populate form for new task from backend options
 const populateFormForNewTask = () => {
   const opts = options.options.value
-  if (!opts) return false
+  if (!opts) {
+    throw new Error('Options not loaded: cannot populate form for new task')
+  }
   
-  form.value.branch = currentBranch.value || availableBranches.value[0] || ''
-  form.value.planModel = opts.planModel || ''
-  form.value.executionModel = opts.executionModel || ''
+  if (!Array.isArray(availableBranches.value)) {
+    throw new Error(`Invalid state: availableBranches must be an array, got ${typeof availableBranches.value}`)
+  }
+  
+  const selectedBranch = currentBranch.value ?? availableBranches.value[0]
+  if (selectedBranch === undefined) {
+    throw new Error('No branch available: cannot populate form for new task')
+  }
+  form.value.branch = selectedBranch
+  
+  if (typeof opts.planModel !== 'string') {
+    throw new Error(`Invalid options: 'planModel' must be a string, got ${typeof opts.planModel}`)
+  }
+  form.value.planModel = opts.planModel
+  
+  if (typeof opts.executionModel !== 'string') {
+    throw new Error(`Invalid options: 'executionModel' must be a string, got ${typeof opts.executionModel}`)
+  }
+  form.value.executionModel = opts.executionModel
+  
   return true
 }
 
-// Initialize the form based on mode
+const loadAvailableImages = async () => {
+  const response = await tasks.api.getContainerImages()
+  if (!Array.isArray(response.images)) {
+    throw new Error(`Invalid response: 'images' must be an array, got ${typeof response.images}`)
+  }
+  availableImages.value = response.images
+  
+  if (options.options.value?.container?.image) {
+    defaultImage.value = options.options.value.container.image
+  }
+}
+
 const initializeForm = async () => {
   isInitializing.value = true
   
-  try {
-    // Load branches first
-    const branchData = await tasks.api.getBranches()
-    availableBranches.value = branchData.branches
-    currentBranch.value = branchData.current
-  } catch {
-    // Use default empty branches
+  const [branchData] = await Promise.all([
+    tasks.api.getBranches(),
+    loadAvailableImages(),
+  ])
+  
+  if (!Array.isArray(branchData.branches)) {
+    throw new Error(`Invalid response: 'branches' must be an array, got ${typeof branchData.branches}`)
   }
+  availableBranches.value = branchData.branches
+  currentBranch.value = branchData.current ?? null
   
   if (props.taskId && (isEdit.value || isViewOnly.value)) {
-    // Edit/view existing task - load from task data
     let task = tasks.getTaskById(props.taskId)
-    // Fallback: fetch from API if not found in local state
     if (!task) {
-      try {
-        task = await tasks.api.getTask(props.taskId)
-      } catch {
-        toasts.showToast('Failed to load task details', 'error')
-      }
+      task = await tasks.api.getTask(props.taskId)
     }
-    if (task) {
-      populateFormFromTask(task)
+    if (!task) {
+      throw new Error(`Task '${props.taskId}' not found`)
     }
+    populateFormFromTask(task)
     isInitializing.value = false
   } else if (props.seedTaskId && isDeploy.value) {
-    // Deploy from template - load from template data
     let seedTask = tasks.getTaskById(props.seedTaskId)
-    // Fallback: fetch from API if not found in local state
     if (!seedTask) {
-      try {
-        seedTask = await tasks.api.getTask(props.seedTaskId)
-      } catch {
-        toasts.showToast('Failed to load template details', 'error')
-      }
+      seedTask = await tasks.api.getTask(props.seedTaskId)
     }
-    if (seedTask) {
-      populateFormFromTask(seedTask)
+    if (!seedTask) {
+      throw new Error(`Template task '${props.seedTaskId}' not found`)
     }
+    populateFormFromTask(seedTask)
     isInitializing.value = false
   } else if (isCreate.value) {
-    // New task - must wait for options to load from backend
     if (!options.options.value) {
       await options.loadOptions()
     }
@@ -182,8 +214,14 @@ const getFallbackBranch = () => {
   if (options.options?.value?.branch && availableBranches.value.includes(options.options.value.branch)) {
     return options.options.value.branch
   }
-  if (currentBranch.value && availableBranches.value.includes(currentBranch.value)) return currentBranch.value
-  return availableBranches.value[0] || ''
+  if (currentBranch.value && availableBranches.value.includes(currentBranch.value)) {
+    return currentBranch.value
+  }
+  const firstBranch = availableBranches.value[0]
+  if (firstBranch === undefined) {
+    throw new Error('No available branches found: cannot determine fallback branch')
+  }
+  return firstBranch
 }
 
 const availableRequirements = computed(() => {
@@ -264,6 +302,7 @@ const save = async () => {
       planThinkingLevel: form.value.planThinkingLevel,
       executionThinkingLevel: form.value.executionThinkingLevel,
       executionStrategy: form.value.executionStrategy,
+      containerImage: form.value.containerImage || undefined,
     }
 
     if (form.value.executionStrategy === 'best_of_n') {
@@ -397,6 +436,27 @@ const closeOnOverlay = (e: MouseEvent) => {
               <option value="standard">Standard</option>
               <option value="best_of_n">Best of N</option>
             </select>
+          </div>
+
+          <!-- Container Image -->
+          <div class="form-group">
+            <div class="label-row">
+              <label>Container Image</label>
+              <span class="help-btn" title="Select the container image for this task. Uses system default if not specified.">?</span>
+            </div>
+            <select v-model="form.containerImage" class="form-select" :disabled="isViewOnly">
+              <option value="">System Default {{ defaultImage ? `(${defaultImage})` : '' }}</option>
+              <option 
+                v-for="img in availableImages" 
+                :key="img.tag" 
+                :value="img.tag"
+              >
+                {{ img.tag }}
+              </option>
+            </select>
+            <div v-if="availableImages.length > 0" class="text-xs text-dark-text-muted mt-1">
+              Build custom images in the Image Builder
+            </div>
           </div>
 
           <!-- Best-of-N Config -->

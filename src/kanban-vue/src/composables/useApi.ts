@@ -4,6 +4,7 @@ import type {
   ModelCatalog, ExecutionGraph, Session, SessionMessage, TaskRun,
   Candidate, BestOfNSummary, ReviewStatus, SessionUsageRollup,
   PlanningPrompt, PlanningPromptVersion, PlanningSession, CreatePlanningSessionDTO,
+  ContainerImage,
 } from '@/types/api'
 
 const API_BASE = import.meta.env.VITE_API_URL || location.origin
@@ -139,6 +140,12 @@ export function useApi() {
 
     // Container
     getContainerImageStatus: () => request('/api/container/image-status'),
+    getContainerImages: () => request<{ images: ContainerImage[] }>('/api/container/images'),
+    deleteContainerImage: (tag: string) => request<{ success: boolean; message: string; tasksUsing?: string[] }>(`/api/container/images/${encodeURIComponent(tag)}`, { method: 'DELETE' }),
+    validateContainerImage: (tag: string) => request<{ exists: boolean; tag: string; availableInPodman: boolean }>('/api/container/validate-image', {
+      method: 'POST',
+      body: JSON.stringify({ tag }),
+    }),
 
     // Planning Chat
     getPlanningPrompt: () => request<PlanningPrompt>('/api/planning/prompt'),

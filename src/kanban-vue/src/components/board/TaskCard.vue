@@ -349,6 +349,14 @@ onUnmounted(() => {
       <span v-if="task.branch" class="task-tag">
         {{ task.branch }}
       </span>
+      <!-- Container Image Tag - always visible if set -->
+      <span
+        v-if="task.containerImage"
+        class="task-tag border-accent-info/30 text-accent-info"
+        :title="'Container Image: ' + task.containerImage"
+      >
+        🐳 {{ task.containerImage }}
+      </span>
       <span
         v-if="task.errorMessage"
         class="task-tag border-accent-danger/30 text-accent-danger"
