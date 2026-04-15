@@ -160,3 +160,30 @@ export async function getIndexHtml(): Promise<string | undefined> {
     return undefined
   }
 }
+
+/**
+ * Check if running from a compiled binary (with embedded assets)
+ */
+export function isCompiledBinary(): boolean {
+  return generatedAssets !== null
+}
+
+/**
+ * Get all config assets for extraction
+ */
+export function getAllConfigAssets(): Array<{ path: string; asset: { contentType: string; isText: boolean; data: string } }> {
+  if (!generatedAssets) {
+    return []
+  }
+  return generatedAssets.getAllConfigAssets()
+}
+
+/**
+ * Get all docker assets for extraction
+ */
+export function getAllDockerAssets(): Array<{ path: string; asset: { contentType: string; isText: boolean; data: string } }> {
+  if (!generatedAssets) {
+    return []
+  }
+  return generatedAssets.getAllDockerAssets()
+}

@@ -6,9 +6,10 @@
  * 1. Binary can start successfully
  * 2. Health endpoint responds correctly
  * 3. Static assets are served correctly (index.html, JS, CSS)
- * 4. API endpoints work
- * 5. WebSocket endpoint is available
- * 6. Different ports work (via SERVER_PORT env var)
+ * 4. API endpoints work (tasks, options, branches, container profiles)
+ * 5. Container profiles endpoint returns profiles correctly (critical for binary mode)
+ * 6. WebSocket endpoint is available
+ * 7. Different ports work (via SERVER_PORT env var)
  */
 
 import { $ } from "bun"
@@ -59,11 +60,12 @@ async function testBinaryExecutable(): Promise<void> {
 }
 
 async function testServerStartAndHealth(): Promise<void> {
-  // Start server
+  // Start server with explicit port
   const proc = spawn([BINARY_PATH], {
     cwd: PROJECT_ROOT,
     stdout: "pipe",
     stderr: "pipe",
+    env: { ...process.env, SERVER_PORT: "3789" }
   })
 
   // Wait for server to start
@@ -90,6 +92,7 @@ async function testStaticAssets(): Promise<void> {
     cwd: PROJECT_ROOT,
     stdout: "pipe",
     stderr: "pipe",
+    env: { ...process.env, SERVER_PORT: "3789" }
   })
 
   await sleep(2000)
@@ -158,6 +161,7 @@ async function testApiEndpoints(): Promise<void> {
     cwd: PROJECT_ROOT,
     stdout: "pipe",
     stderr: "pipe",
+    env: { ...process.env, SERVER_PORT: "3789" }
   })
 
   await sleep(2000)
@@ -191,6 +195,42 @@ async function testApiEndpoints(): Promise<void> {
     const branches = await branchesResponse.json()
     if (!Array.isArray(branches.branches)) {
       throw new Error("Branches API didn't return branches array")
+    }
+  } finally {
+    proc.kill()
+    await sleep(500)
+  }
+}
+
+async function testContainerProfiles(): Promise<void> {
+  const proc = spawn([BINARY_PATH], {
+    cwd: PROJECT_ROOT,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, SERVER_PORT: "3789" }
+  })
+
+  await sleep(2000)
+
+  try {
+    // Test container profiles endpoint - critical for binary mode
+    const response = await fetch("http://localhost:3789/api/container/profiles")
+    if (!response.ok) {
+      throw new Error(`Container profiles API failed with status ${response.status}`)
+    }
+    const data = await response.json()
+    if (!Array.isArray(data.profiles)) {
+      throw new Error("Container profiles API didn't return profiles array")
+    }
+    // In binary mode, profiles should be extracted and available
+    // We expect at least one profile (e.g., "default" or similar)
+    if (data.profiles.length === 0) {
+      throw new Error("Container profiles array is empty - embedded config files may not be loading correctly in binary mode")
+    }
+    // Verify profile structure
+    const firstProfile = data.profiles[0]
+    if (!firstProfile.id || !firstProfile.name) {
+      throw new Error("Container profile missing required fields (id, name)")
     }
   } finally {
     proc.kill()
@@ -250,6 +290,7 @@ async function main(): Promise<void> {
   await runTest("Server starts and health endpoint works", testServerStartAndHealth)
   await runTest("Static assets are served correctly", testStaticAssets)
   await runTest("API endpoints work", testApiEndpoints)
+  await runTest("Container profiles endpoint returns profiles", testContainerProfiles)
   await runTest("Custom port (SERVER_PORT) works", testCustomPort)
 
   // Summary
@@ -283,4 +324,4 @@ if (import.meta.main) {
   void main()
 }
 
-export { runTest, testBinaryExists, testServerStartAndHealth, testStaticAssets }
+export { runTest, testBinaryExists, testServerStartAndHealth, testStaticAssets, testContainerProfiles }

@@ -156,6 +156,36 @@ export class PiKanbanServer {
     return this.imageManager ?? null
   }
 
+  /**
+   * Get the path to container profiles JSON file
+   * Uses extracted config in .tauroboros/config/ if available, falls back to src/config/
+   */
+  private getContainerProfilesPath(): string {
+    // First check extracted location (binary or source mode)
+    const extractedPath = join(this.projectRoot, ".tauroboros", "config", "container-profiles.json")
+    if (existsSync(extractedPath)) {
+      return extractedPath
+    }
+    
+    // Fallback to source location (development mode)
+    return join(__dirname, "..", "config", "container-profiles.json")
+  }
+
+  /**
+   * Get the path to the base Dockerfile
+   * Uses extracted docker files in .tauroboros/docker/ if available, falls back to docker/
+   */
+  private getDockerfilePath(subpath: string = "pi-agent/Dockerfile"): string {
+    // First check extracted location (binary or source mode)
+    const extractedPath = join(this.projectRoot, ".tauroboros", "docker", subpath)
+    if (existsSync(extractedPath)) {
+      return extractedPath
+    }
+    
+    // Fallback to source location (development mode)
+    return join(this.projectRoot, "docker", subpath)
+  }
+
   constructor(
     db: PiKanbanDB,
     opts: {
@@ -190,7 +220,8 @@ export class PiKanbanServer {
         imageSource: containerSettings.imageSource,
         dockerfilePath: containerSettings.dockerfilePath,
         registryUrl: containerSettings.registryUrl,
-          cacheDir: join(process.cwd(), ".tauroboros"),
+        cacheDir: join(this.projectRoot, ".tauroboros"),
+        projectRoot: this.projectRoot,
         onStatusChange: (event) => {
           const payload: ImageStatusPayload = {
             status: event.status,
@@ -1630,7 +1661,7 @@ Respond ONLY with the JSON array, no other text.`
     // Get all container profiles (preset configurations)
     this.router.get("/api/container/profiles", ({ json }) => {
       try {
-        const profilesPath = join(__dirname, "..", "config", "container-profiles.json")
+        const profilesPath = this.getContainerProfilesPath()
         if (!existsSync(profilesPath)) {
           return json({ profiles: [] })
         }
@@ -1951,7 +1982,7 @@ Respond ONLY with the JSON array, no other text.`
     this.router.post("/api/container/profiles/:id/apply", async ({ params, req, json, broadcast }) => {
       try {
         const profileId = params.id
-        const profilesPath = join(__dirname, "..", "config", "container-profiles.json")
+        const profilesPath = this.getContainerProfilesPath()
 
         if (!existsSync(profilesPath)) {
           return json({ error: "Profiles not found" }, 404)

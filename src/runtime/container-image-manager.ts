@@ -85,6 +85,7 @@ export interface ContainerImageManagerOptions {
   dockerfilePath?: string
   registryUrl?: string | null
   cacheDir: string
+  projectRoot?: string
   onStatusChange?: ImageStatusChangeHandler
 }
 
@@ -258,21 +259,36 @@ export class ContainerImageManager {
    * Build the image from Dockerfile with progress reporting.
    */
   private async buildFromDockerfile(): Promise<void> {
-    const dockerfilePath = this.options.dockerfilePath || "docker/pi-agent/Dockerfile"
-    const projectRoot = process.cwd()
-    const fullDockerfilePath = join(projectRoot, dockerfilePath)
-
-    if (!existsSync(fullDockerfilePath)) {
-      throw new Error(`Dockerfile not found at ${fullDockerfilePath}`)
+    const projectRoot = this.options.projectRoot || process.cwd()
+    const dockerfileRelativePath = this.options.dockerfilePath || "docker/pi-agent/Dockerfile"
+    
+    // First check extracted location (binary or source mode)
+    const extractedDockerfilePath = join(projectRoot, ".tauroboros", "docker", "pi-agent", "Dockerfile")
+    // Fallback to source location (development mode)
+    const sourceDockerfilePath = join(projectRoot, dockerfileRelativePath)
+    
+    // Determine which Dockerfile to use
+    let fullDockerfilePath: string
+    let dockerfilePathForBuild: string
+    
+    if (existsSync(extractedDockerfilePath)) {
+      fullDockerfilePath = extractedDockerfilePath
+      // For podman build, we need a path relative to the build context or absolute path
+      dockerfilePathForBuild = ".tauroboros/docker/pi-agent/Dockerfile"
+    } else if (existsSync(sourceDockerfilePath)) {
+      fullDockerfilePath = sourceDockerfilePath
+      dockerfilePathForBuild = dockerfileRelativePath
+    } else {
+      throw new Error(`Dockerfile not found at ${extractedDockerfilePath} or ${sourceDockerfilePath}`)
     }
 
-    console.log(`🔄 Building container image from ${dockerfilePath}...`)
+    console.log(`🔄 Building container image from ${dockerfilePathForBuild}...`)
     console.log(`   This may take a minute on first run...`)
 
     return new Promise((resolve, reject) => {
       const proc = spawn(
         "podman",
-        ["build", "-t", this.options.imageName, "-f", dockerfilePath, "."],
+        ["build", "-t", this.options.imageName, "-f", dockerfilePathForBuild, "."],
         {
           cwd: projectRoot,
           stdio: ["pipe", "pipe", "pipe"],

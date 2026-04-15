@@ -125,6 +125,60 @@ export function extractEmbeddedSkills(projectRoot: string): { count: number; pat
 }
 
 /**
+ * Extract all embedded config files to .tauroboros/config/
+ * Only extracts if not already present (preserves user modifications)
+ */
+export function extractEmbeddedConfig(projectRoot: string): { count: number; paths: string[] } {
+  if (!generatedAssets) {
+    return { count: 0, paths: [] }
+  }
+  
+  const configDir = join(projectRoot, ".tauroboros", "config")
+  ensureDir(configDir)
+  
+  const configAssets = generatedAssets.getAllConfigAssets()
+  const extractedPaths: string[] = []
+  
+  for (const { path, asset } of configAssets) {
+    const targetPath = join(configDir, path)
+    // Only extract if file doesn't exist (preserves user modifications)
+    if (!existsSync(targetPath)) {
+      writeAssetToFile(targetPath, asset)
+      extractedPaths.push(targetPath)
+    }
+  }
+  
+  return { count: extractedPaths.length, paths: extractedPaths }
+}
+
+/**
+ * Extract all embedded docker files to .tauroboros/docker/
+ * Only extracts if not already present (preserves user modifications)
+ */
+export function extractEmbeddedDocker(projectRoot: string): { count: number; paths: string[] } {
+  if (!generatedAssets) {
+    return { count: 0, paths: [] }
+  }
+  
+  const dockerDir = join(projectRoot, ".tauroboros", "docker")
+  ensureDir(dockerDir)
+  
+  const dockerAssets = generatedAssets.getAllDockerAssets()
+  const extractedPaths: string[] = []
+  
+  for (const { path, asset } of dockerAssets) {
+    const targetPath = join(dockerDir, path)
+    // Only extract if file doesn't exist (preserves user modifications)
+    if (!existsSync(targetPath)) {
+      writeAssetToFile(targetPath, asset)
+      extractedPaths.push(targetPath)
+    }
+  }
+  
+  return { count: extractedPaths.length, paths: extractedPaths }
+}
+
+/**
  * Copy resources from source directories (development mode)
  * Used when running from source code instead of compiled binary
  */
@@ -206,6 +260,78 @@ function countFiles(dir: string): number {
 import { readFileSync } from "fs"
 
 /**
+ * Copy config files from source directory (development mode)
+ */
+export function copyConfigFromSource(projectRoot: string): { count: number } {
+  const sourceConfigDir = join(projectRoot, "src", "config")
+  const targetConfigDir = join(projectRoot, ".tauroboros", "config")
+  
+  if (!existsSync(sourceConfigDir)) {
+    return { count: 0 }
+  }
+  
+  ensureDir(targetConfigDir)
+  
+  // Copy only files that don't exist in target (preserves user modifications)
+  const entries = readdirSync(sourceConfigDir)
+  let copiedCount = 0
+  
+  for (const entry of entries) {
+    const sourcePath = join(sourceConfigDir, entry)
+    const targetPath = join(targetConfigDir, entry)
+    
+    const stat = statSync(sourcePath)
+    if (stat.isFile() && !existsSync(targetPath)) {
+      const content = readFileSync(sourcePath)
+      writeFileSync(targetPath, content)
+      copiedCount++
+    }
+  }
+  
+  return { count: copiedCount }
+}
+
+/**
+ * Copy docker files from source directory (development mode)
+ */
+export function copyDockerFromSource(projectRoot: string): { count: number } {
+  const sourceDockerDir = join(projectRoot, "docker")
+  const targetDockerDir = join(projectRoot, ".tauroboros", "docker")
+  
+  if (!existsSync(sourceDockerDir)) {
+    return { count: 0 }
+  }
+  
+  ensureDir(targetDockerDir)
+  
+  // Copy directory recursively, but skip existing files
+  const copyRecursive = (source: string, target: string): number => {
+    ensureDir(target)
+    let count = 0
+    
+    const entries = readdirSync(source)
+    for (const entry of entries) {
+      const sourcePath = join(source, entry)
+      const targetPath = join(target, entry)
+      
+      const stat = statSync(sourcePath)
+      if (stat.isDirectory()) {
+        count += copyRecursive(sourcePath, targetPath)
+      } else if (!existsSync(targetPath)) {
+        const content = readFileSync(sourcePath)
+        writeFileSync(targetPath, content)
+        count++
+      }
+    }
+    
+    return count
+  }
+  
+  const copiedCount = copyRecursive(sourceDockerDir, targetDockerDir)
+  return { count: copiedCount }
+}
+
+/**
  * Main extraction function - handles both binary and source modes
  * Call this at server startup
  */
@@ -213,27 +339,37 @@ export function extractEmbeddedResources(projectRoot: string): {
   mode: "binary" | "source" | "none"
   extensions: number
   skills: number
+  config: number
+  docker: number
 } {
   if (isRunningFromBinary()) {
     // Running from compiled binary - extract embedded resources
     const extResult = extractEmbeddedExtensions(projectRoot)
     const skillResult = extractEmbeddedSkills(projectRoot)
+    const configResult = extractEmbeddedConfig(projectRoot)
+    const dockerResult = extractEmbeddedDocker(projectRoot)
     
     return {
       mode: "binary",
       extensions: extResult.count,
       skills: skillResult.count,
+      config: configResult.count,
+      docker: dockerResult.count,
     }
   } else {
     // Running from source - copy from source directories
     const result = copyResourcesFromSource(projectRoot)
+    const configResult = copyConfigFromSource(projectRoot)
+    const dockerResult = copyDockerFromSource(projectRoot)
     
     // Only return "source" mode if we actually found and copied files
-    if (result.extensions > 0 || result.skills > 0) {
+    if (result.extensions > 0 || result.skills > 0 || configResult.count > 0 || dockerResult.count > 0) {
       return {
         mode: "source",
         extensions: result.extensions,
         skills: result.skills,
+        config: configResult.count,
+        docker: dockerResult.count,
       }
     }
     
@@ -241,6 +377,8 @@ export function extractEmbeddedResources(projectRoot: string): {
       mode: "none",
       extensions: 0,
       skills: 0,
+      config: 0,
+      docker: 0,
     }
   }
 }

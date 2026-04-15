@@ -94,9 +94,9 @@ export async function main(): Promise<void> {
   // This works in both binary mode (extracts embedded) and source mode (copies from source)
   const extractionResult = extractEmbeddedResources(projectRoot)
   if (extractionResult.mode === "binary") {
-    console.log(`[tauroboros] Extracted ${extractionResult.extensions} extensions and ${extractionResult.skills} skills from binary`)
+    console.log(`[tauroboros] Extracted ${extractionResult.extensions} extensions, ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from binary`)
   } else if (extractionResult.mode === "source") {
-    console.log(`[tauroboros] Copied ${extractionResult.extensions} extensions and ${extractionResult.skills} skills from source`)
+    console.log(`[tauroboros] Copied ${extractionResult.extensions} extensions, ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from source`)
   }
   
   const args = parseCliArgs(process.argv.slice(2))
