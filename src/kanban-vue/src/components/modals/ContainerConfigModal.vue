@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, inject, onMounted, watch, onUnmounted } from 'vue'
+import { ref, computed, inject, onMounted } from 'vue'
 import type { useToasts } from '@/composables/useToasts'
 
 interface ContainerProfile {
@@ -33,9 +33,7 @@ const builds = ref<ContainerBuild[]>([])
 const selectedProfileId = ref('')
 const customDockerfile = ref('')
 const originalDockerfile = ref('') // Track if user made edits
-const isLoading = ref(false)
 const isBuilding = ref(false)
-const buildLogs = ref<string[]>([])
 const currentBuildId = ref<number | null>(null)
 const showSaveProfileModal = ref(false)
 const newProfileName = ref('')
@@ -95,15 +93,18 @@ const loadContainerStatus = async () => {
   }
 }
 
-const onProfileSelect = async () => {
-  if (!selectedProfileId.value) {
+const onProfileSelect = async (event: Event) => {
+  const target = event.target as HTMLSelectElement
+  const profileId = target.value
+  
+  if (!profileId) {
     customDockerfile.value = ''
     originalDockerfile.value = ''
     return
   }
 
   try {
-    const response = await fetch(`/api/container/dockerfile/${selectedProfileId.value}`)
+    const response = await fetch(`/api/container/dockerfile/${profileId}`)
     if (!response.ok) throw new Error('Failed to load Dockerfile')
     const data = await response.json()
     customDockerfile.value = data.dockerfile
@@ -125,7 +126,6 @@ const startBuild = async () => {
   }
 
   isBuilding.value = true
-  buildLogs.value = []
   
   try {
     const response = await fetch('/api/container/build', {
@@ -273,194 +273,190 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="modal-overlay" @click.self="emit('close')">
-    <div class="modal-container w-full max-w-4xl">
+  <div class="modal-overlay" @mousedown="emit('close')">
+    <div class="modal w-[min(900px,calc(100vw-40px))]" @mousedown.stop>
       <div class="modal-header">
-        <h2 class="text-lg font-semibold flex items-center gap-2">
-          <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <h2 class="flex items-center gap-2">
+          <svg class="w-5 h-5 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
           </svg>
           Image Builder
         </h2>
-        <button class="btn btn-icon" @click="emit('close')">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <button class="modal-close" @click="emit('close')">×</button>
       </div>
 
-      <!-- Container Status Warning -->
-      <div v-if="!isContainerEnabled" class="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 mx-4 mt-4">
-        <div class="flex items-start gap-3">
-          <svg class="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <div>
-            <h3 class="text-sm font-medium text-yellow-400">Container Mode Disabled</h3>
-            <p class="text-sm text-dark-text-muted mt-1">
-              {{ containerStatus?.message || 'Container mode is not enabled. Edit .tauroboros/settings.json to enable.' }}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <!-- Workflow Running Warning -->
-      <div v-else-if="hasRunningWorkflows" class="bg-red-500/10 border border-red-500/30 rounded-lg p-4 mx-4 mt-4">
-        <div class="flex items-start gap-3">
-          <svg class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <div>
-            <h3 class="text-sm font-medium text-red-400">Workflow Running</h3>
-            <p class="text-sm text-dark-text-muted mt-1">
-              Cannot build container image while a workflow is running. Please stop all workflows first.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div class="modal-body">
-        <div class="space-y-6">
-          <!-- Profile Selector -->
-          <div class="section">
-            <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-              Select Profile
-            </h3>
-            <select 
-              v-model="selectedProfileId" 
-              class="form-select w-full"
-              :disabled="isBuilding"
-              @change="onProfileSelect"
-            >
-              <option value="">-- Select a base profile --</option>
-              <option
-                v-for="profile in profiles"
-                :key="profile.id"
-                :value="profile.id"
-              >
-                {{ profile.name }} - {{ profile.description }}
-              </option>
-            </select>
-            <p class="text-xs text-dark-text-muted mt-2">
-              Select a base profile to pre-populate the Dockerfile. You can edit it below before building.
-            </p>
-          </div>
-
-          <!-- Dockerfile Editor -->
-          <div class="section">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="text-sm font-semibold flex items-center gap-2">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Dockerfile
-                <span v-if="hasUnsavedChanges" class="text-xs text-yellow-400">(modified)</span>
-              </h3>
-              <div class="flex gap-2">
-                <button
-                  v-if="hasUnsavedChanges && selectedProfileId"
-                  class="btn btn-secondary text-xs"
-                  :disabled="isBuilding"
-                  @click="openSaveProfileModal"
-                >
-                  Save as New Profile
-                </button>
-                <button
-                  v-if="hasUnsavedChanges"
-                  class="btn btn-secondary text-xs"
-                  :disabled="isBuilding"
-                  @click="customDockerfile = originalDockerfile"
-                >
-                  Reset
-                </button>
-              </div>
-            </div>
-            <textarea
-              v-model="customDockerfile"
-              class="form-textarea w-full font-mono text-xs"
-              rows="20"
-              :disabled="isBuilding"
-              placeholder="# Select a profile above or write your own Dockerfile here..."
-            />
-            <p class="text-xs text-dark-text-muted mt-2">
-              Edit the Dockerfile directly. Changes are not saved until you click "Save & Build" or "Save as New Profile".
-            </p>
-          </div>
-
-          <!-- Build Button -->
-          <div class="section flex gap-3">
-            <button
-              class="btn btn-primary flex-1 flex items-center justify-center gap-2"
-              :disabled="!canBuild"
-              @click="startBuild"
-            >
-              <svg v-if="isBuilding" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-              {{ buildButtonText }}
-            </button>
-          </div>
-
-          <!-- Build History -->
-          <div class="section">
-            <h3 class="text-sm font-semibold mb-3 flex items-center gap-2">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Build History
-            </h3>
-            <div v-if="builds.length === 0" class="text-sm text-dark-text-muted bg-dark-surface rounded-lg p-4 text-center">
-              No builds yet. Select a profile and click "Save & Build" to create your first image.
-            </div>
-            <div v-else class="space-y-2">
-              <div
-                v-for="build in builds.slice(0, 5)"
-                :key="build.id"
-                class="flex items-center justify-between p-3 bg-dark-surface rounded-lg"
-              >
-                <div class="flex items-center gap-3">
-                  <span :class="formatStatus(build.status).color" class="text-sm font-medium">
-                    {{ formatStatus(build.status).text }}
-                  </span>
-                  <span class="text-sm text-dark-text">{{ build.imageTag }}</span>
-                  <span class="text-xs text-dark-text-muted">{{ formatDate(build.startedAt) }}</span>
-                </div>
-                <div v-if="build.errorMessage" class="text-xs text-red-400">
-                  {{ build.errorMessage }}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Save Profile Modal -->
-      <div v-if="showSaveProfileModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" @click.self="showSaveProfileModal = false">
-        <div class="bg-dark-surface2 rounded-lg p-6 w-full max-w-md mx-4 border border-dark-surface3">
-          <h3 class="text-lg font-semibold mb-4">Save as New Profile</h3>
-          <div class="space-y-4">
+      <div class="modal-body space-y-4">
+        <!-- Container Status Warning -->
+        <div v-if="!isContainerEnabled" class="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+          <div class="flex items-start gap-2">
+            <svg class="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
             <div>
-              <label class="block text-sm font-medium mb-1">Profile Name</label>
+              <h3 class="text-sm font-medium text-yellow-400">Container Mode Disabled</h3>
+              <p class="text-xs text-dark-text-muted mt-1">
+                {{ containerStatus?.message || 'Container mode is not enabled. Edit .tauroboros/settings.json to enable.' }}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Workflow Running Warning -->
+        <div v-else-if="hasRunningWorkflows" class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+          <div class="flex items-start gap-2">
+            <svg class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <h3 class="text-sm font-medium text-red-400">Workflow Running</h3>
+              <p class="text-xs text-dark-text-muted mt-1">
+                Cannot build container image while a workflow is running. Please stop all workflows first.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Profile Selector -->
+        <div class="form-group">
+          <label class="flex items-center gap-2 mb-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+            Select Profile
+          </label>
+          <select 
+            class="form-select"
+            :disabled="isBuilding"
+            @change="onProfileSelect"
+          >
+            <option value="">-- Select a base profile --</option>
+            <option
+              v-for="profile in profiles"
+              :key="profile.id"
+              :value="profile.id"
+            >
+              {{ profile.name }} - {{ profile.description }}
+            </option>
+          </select>
+          <p class="text-xs text-dark-text-muted mt-1">
+            Select a base profile to pre-populate the Dockerfile. You can edit it below before building.
+          </p>
+        </div>
+
+        <!-- Dockerfile Editor -->
+        <div class="form-group">
+          <div class="flex items-center justify-between mb-2">
+            <label class="flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Dockerfile
+              <span v-if="hasUnsavedChanges" class="text-xs text-yellow-400">(modified)</span>
+            </label>
+            <div class="flex gap-2">
+              <button
+                v-if="hasUnsavedChanges && selectedProfileId"
+                class="btn btn-sm"
+                :disabled="isBuilding"
+                @click="openSaveProfileModal"
+              >
+                Save as New Profile
+              </button>
+              <button
+                v-if="hasUnsavedChanges"
+                class="btn btn-sm"
+                :disabled="isBuilding"
+                @click="customDockerfile = originalDockerfile"
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+          <textarea
+            v-model="customDockerfile"
+            class="form-textarea font-mono text-xs"
+            rows="16"
+            :disabled="isBuilding"
+            placeholder="# Select a profile above or write your own Dockerfile here..."
+          />
+          <p class="text-xs text-dark-text-muted mt-1">
+            Edit the Dockerfile directly. Changes are not saved until you click "Save & Build" or "Save as New Profile".
+          </p>
+        </div>
+
+        <!-- Build Button -->
+        <div class="flex gap-2">
+          <button
+            class="btn btn-primary flex-1 flex items-center justify-center gap-2"
+            :disabled="!canBuild"
+            @click="startBuild"
+          >
+            <svg v-if="isBuilding" class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
+            <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+            </svg>
+            {{ buildButtonText }}
+          </button>
+        </div>
+
+        <!-- Build History -->
+        <div>
+          <label class="flex items-center gap-2 mb-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Build History
+          </label>
+          <div v-if="builds.length === 0" class="text-sm text-dark-text-muted bg-dark-surface rounded-lg p-3 text-center">
+            No builds yet. Select a profile and click "Save & Build" to create your first image.
+          </div>
+          <div v-else class="space-y-2">
+            <div
+              v-for="build in builds.slice(0, 5)"
+              :key="build.id"
+              class="flex items-center justify-between p-2 bg-dark-surface rounded-lg text-sm"
+            >
+              <div class="flex items-center gap-2">
+                <span :class="formatStatus(build.status).color" class="font-medium">
+                  {{ formatStatus(build.status).text }}
+                </span>
+                <span class="text-dark-text">{{ build.imageTag }}</span>
+                <span class="text-xs text-dark-text-muted">{{ formatDate(build.startedAt) }}</span>
+              </div>
+              <div v-if="build.errorMessage" class="text-xs text-red-400">
+                {{ build.errorMessage }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Save Profile Modal (nested) -->
+      <div v-if="showSaveProfileModal" class="modal-overlay" style="z-index: 1001;" @mousedown="showSaveProfileModal = false">
+        <div class="modal w-[min(400px,calc(100vw-40px))]" @mousedown.stop>
+          <div class="modal-header">
+            <h2>Save as New Profile</h2>
+            <button class="modal-close" @click="showSaveProfileModal = false">×</button>
+          </div>
+          <div class="modal-body space-y-3">
+            <div class="form-group">
+              <label>Profile Name</label>
               <input
                 v-model="newProfileName"
                 type="text"
-                class="form-input w-full"
+                class="form-input"
                 placeholder="My Custom Profile"
               />
             </div>
-            <div>
-              <label class="block text-sm font-medium mb-1">Profile ID</label>
+            <div class="form-group">
+              <label>Profile ID</label>
               <input
                 v-model="newProfileId"
                 type="text"
-                class="form-input w-full font-mono text-sm"
+                class="form-input font-mono text-xs"
                 placeholder="my-custom-profile"
               />
               <p class="text-xs text-dark-text-muted mt-1">
@@ -468,11 +464,11 @@ onMounted(async () => {
               </p>
             </div>
           </div>
-          <div class="flex gap-3 mt-6">
-            <button class="btn btn-secondary flex-1" @click="showSaveProfileModal = false">
+          <div class="modal-footer">
+            <button class="btn" @click="showSaveProfileModal = false">
               Cancel
             </button>
-            <button class="btn btn-primary flex-1" @click="saveAsNewProfile">
+            <button class="btn btn-primary" @click="saveAsNewProfile">
               Save Profile
             </button>
           </div>
@@ -481,148 +477,3 @@ onMounted(async () => {
     </div>
   </div>
 </template>
-
-<style scoped>
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  padding: 1rem;
-}
-
-.modal-container {
-  background: theme('colors.dark.surface');
-  border: 1px solid theme('colors.dark.border');
-  border-radius: 0.75rem;
-  width: 100%;
-  max-width: 56rem;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  max-height: 90vh;
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid theme('colors.dark.surface3');
-}
-
-.modal-body {
-  padding: 1.5rem;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.section {
-  margin-bottom: 1.5rem;
-}
-
-.section:last-child {
-  margin-bottom: 0;
-}
-
-/* Form styles */
-.form-select {
-  background-color: theme('colors.dark.surface2');
-  border: 1px solid theme('colors.dark.surface3');
-  color: theme('colors.dark.text');
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
-  font-size: 0.875rem;
-  width: 100%;
-}
-
-.form-select:focus {
-  outline: none;
-  border-color: theme('colors.indigo.500');
-}
-
-.form-textarea {
-  background-color: theme('colors.dark.surface2');
-  border: 1px solid theme('colors.dark.surface3');
-  color: theme('colors.dark.text');
-  padding: 0.75rem;
-  border-radius: 0.5rem;
-  font-size: 0.875rem;
-  width: 100%;
-  resize: vertical;
-}
-
-.form-textarea:focus {
-  outline: none;
-  border-color: theme('colors.indigo.500');
-}
-
-.form-input {
-  background-color: theme('colors.dark.surface2');
-  border: 1px solid theme('colors.dark.surface3');
-  color: theme('colors.dark.text');
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
-  font-size: 0.875rem;
-  width: 100%;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: theme('colors.indigo.500');
-}
-
-/* Button styles */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  transition: all 0.15s ease;
-  border: 1px solid transparent;
-  cursor: pointer;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background-color: theme('colors.indigo.600');
-  color: white;
-}
-
-.btn-primary:hover:not(:disabled) {
-  background-color: theme('colors.indigo.500');
-}
-
-.btn-secondary {
-  background-color: theme('colors.dark.surface3');
-  color: theme('colors.dark.text');
-  border-color: theme('colors.dark.surface3');
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background-color: theme('colors.dark.surface2');
-}
-
-.btn-icon {
-  padding: 0.5rem;
-  background-color: transparent;
-  color: theme('colors.dark.text-muted');
-}
-
-.btn-icon:hover:not(:disabled) {
-  color: theme('colors.dark.text');
-}
-</style>
