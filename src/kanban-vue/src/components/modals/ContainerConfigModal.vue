@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, inject, onMounted } from 'vue'
+import { ref, computed, inject, onMounted, watch } from 'vue'
 import type { useToasts } from '@/composables/useToasts'
 
 interface ContainerProfile {
@@ -18,6 +18,7 @@ interface ContainerBuild {
   packagesHash: string | null
   errorMessage: string | null
   imageTag: string | null
+  logs: string | null
 }
 
 const emit = defineEmits<{
@@ -38,11 +39,47 @@ const currentBuildId = ref<number | null>(null)
 const showSaveProfileModal = ref(false)
 const newProfileName = ref('')
 const newProfileId = ref('')
+const selectedBuildForLogs = ref<ContainerBuild | null>(null)
 
 // Container feature availability
 const containerStatus = ref<{ enabled: boolean; available: boolean; hasRunningWorkflows: boolean; message: string } | null>(null)
 const isContainerEnabled = computed(() => containerStatus.value?.enabled ?? false)
 const hasRunningWorkflows = computed(() => workflowRunning.hasRunningWorkflows?.value ?? false)
+
+// Watchers to ensure values never become undefined (prevents .trim() errors)
+watch(customDockerfile, (value) => {
+  if (value === undefined || value === null) {
+    customDockerfile.value = ''
+  }
+}, { immediate: true })
+
+watch(selectedProfileId, (value) => {
+  if (value === undefined || value === null) {
+    selectedProfileId.value = ''
+  }
+})
+
+// Watch for profile selection changes and load Dockerfile
+watch(selectedProfileId, async (profileId) => {
+  if (!profileId) {
+    customDockerfile.value = ''
+    originalDockerfile.value = ''
+    return
+  }
+
+  try {
+    const response = await fetch(`/api/container/dockerfile/${profileId}`)
+    if (!response.ok) throw new Error('Failed to load Dockerfile')
+    const data = await response.json()
+    const dockerfile = data.dockerfile || ''
+    customDockerfile.value = dockerfile
+    originalDockerfile.value = dockerfile
+  } catch (error) {
+    toasts.showToast('Failed to load Dockerfile template', 'error')
+    customDockerfile.value = ''
+    originalDockerfile.value = ''
+  }
+})
 
 // Computed
 const selectedProfile = computed(() => {
@@ -90,27 +127,6 @@ const loadContainerStatus = async () => {
     containerStatus.value = await response.json()
   } catch (error) {
     containerStatus.value = { enabled: false, available: false, hasRunningWorkflows: false, message: 'Failed to load status' }
-  }
-}
-
-const onProfileSelect = async (event: Event) => {
-  const target = event.target as HTMLSelectElement
-  const profileId = target.value
-  
-  if (!profileId) {
-    customDockerfile.value = ''
-    originalDockerfile.value = ''
-    return
-  }
-
-  try {
-    const response = await fetch(`/api/container/dockerfile/${profileId}`)
-    if (!response.ok) throw new Error('Failed to load Dockerfile')
-    const data = await response.json()
-    customDockerfile.value = data.dockerfile
-    originalDockerfile.value = data.dockerfile
-  } catch (error) {
-    toasts.showToast('Failed to load Dockerfile template', 'error')
   }
 }
 
@@ -243,6 +259,10 @@ const saveAsNewProfile = async () => {
   }
 }
 
+const resetDockerfile = () => {
+  customDockerfile.value = originalDockerfile.value || ''
+}
+
 const formatDate = (timestamp: number | null) => {
   if (!timestamp) return '-'
   return new Date(timestamp * 1000).toLocaleString()
@@ -259,8 +279,43 @@ const formatStatus = (status: string) => {
   return statusMap[status] || { text: status, color: 'text-gray-400' }
 }
 
+const viewBuildLogs = (build: ContainerBuild) => {
+  selectedBuildForLogs.value = build
+}
+
+const closeBuildLogs = () => {
+  selectedBuildForLogs.value = null
+}
+
+// Truncate error message for display in list
+const truncateError = (errorMessage: string | null, maxLength: number = 100): string => {
+  if (!errorMessage) return ''
+  const lines = errorMessage.split('\n')
+  const firstLine = lines[0]
+  if (firstLine.length > maxLength) {
+    return firstLine.slice(0, maxLength) + '...'
+  }
+  return firstLine
+}
+
+// Reset form state when modal opens
+const resetFormState = () => {
+  selectedProfileId.value = ''
+  customDockerfile.value = ''
+  originalDockerfile.value = ''
+  isBuilding.value = false
+  currentBuildId.value = null
+  showSaveProfileModal.value = false
+  newProfileName.value = ''
+  newProfileId.value = ''
+  selectedBuildForLogs.value = null
+}
+
 // Initialize
 onMounted(async () => {
+  // Reset state first to prevent stale data issues
+  resetFormState()
+  
   await Promise.all([
     loadContainerStatus(),
     loadProfiles(),
@@ -325,9 +380,9 @@ onMounted(async () => {
             Select Profile
           </label>
           <select 
+            v-model="selectedProfileId"
             class="form-select"
             :disabled="isBuilding"
-            @change="onProfileSelect"
           >
             <option value="">-- Select a base profile --</option>
             <option
@@ -366,7 +421,7 @@ onMounted(async () => {
                 v-if="hasUnsavedChanges"
                 class="btn btn-sm"
                 :disabled="isBuilding"
-                @click="customDockerfile = originalDockerfile"
+                @click="resetDockerfile"
               >
                 Reset
               </button>

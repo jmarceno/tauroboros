@@ -424,6 +424,7 @@ export interface ContainerBuild {
   packagesHash: string | null
   errorMessage: string | null
   imageTag: string | null
+  logs: string | null
 }
 
 export interface ContainerConfig {
@@ -464,6 +465,7 @@ export interface ContainerBuildResult {
   success: boolean
   imageTag: string
   logs: string[]
+  errorMessage?: string
 }
 
 export interface CreateContainerPackageInput {
@@ -479,6 +481,7 @@ export interface ContainerBuildStatus {
   progress?: number
   message: string
   logs: string[]
+  errorMessage?: string
   canCancel: boolean
 }
 

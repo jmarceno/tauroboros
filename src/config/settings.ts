@@ -59,7 +59,7 @@ export const DEFAULT_INFRASTRUCTURE_SETTINGS: InfrastructureSettings = {
       dbPath: ".tauroboros/tasks.db",
     },
     container: {
-      enabled: false,
+      enabled: true,
       piBin: "pi",
       piArgs: "--mode rpc",
       image: "pi-agent:alpine",

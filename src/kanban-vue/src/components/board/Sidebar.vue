@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject } from 'vue'
+import { computed, inject, ref, type Ref, type ComputedRef } from 'vue'
 import type { WorkflowRun } from '@/types/api'
 import type { useTasks } from '@/composables/useTasks'
 import { useVersion } from '@/composables/useVersion'
@@ -18,6 +18,10 @@ const props = defineProps<{
   isPaused?: boolean
   activeRunId?: string | null
 }>()
+
+// Container status from app-level provider
+const containerStatus = inject<{ containerStatus: Ref<{ enabled: boolean; available: boolean; hasRunningWorkflows: boolean; message: string } | null>; isContainerEnabled: ComputedRef<boolean>; loadContainerStatus: () => Promise<void> } | null>('containerStatus', null)
+const isContainerEnabled = computed(() => containerStatus?.isContainerEnabled?.value ?? false)
 
 const emit = defineEmits<{
   toggleExecution: []
@@ -191,7 +195,12 @@ const freeSlots = computed(() => props.parallelTasks - props.consumedSlots)
           <span class="sidebar-label">Options</span>
         </button>
 
-        <button class="sidebar-btn" @click="emit('openContainerConfig')">
+        <button
+          :class="['sidebar-btn', { 'opacity-50 cursor-not-allowed': !isContainerEnabled }]"
+          :disabled="!isContainerEnabled"
+          :title="isContainerEnabled ? 'Container configuration' : 'Container mode is disabled. Enable it in .tauroboros/settings.json'"
+          @click="emit('openContainerConfig')"
+        >
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="4" y="4" width="16" height="16" rx="2"/>
             <path d="M4 12h16M12 4v16"/>

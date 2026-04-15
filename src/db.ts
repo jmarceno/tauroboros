@@ -1396,6 +1396,13 @@ const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_workflow_runs_indicators_id ON workflow_runs_indicators(id);`,
     ],
   },
+  {
+    version: 10,
+    description: "Add logs column to container_builds for storing build output",
+    statements: [
+      `ALTER TABLE container_builds ADD COLUMN logs TEXT;`,
+    ],
+  },
 ]
 
 export class PiKanbanDB {
@@ -3319,19 +3326,19 @@ export class PiKanbanDB {
 
   // ---- Container Builds ----
 
-  createContainerBuild(input: { status: ContainerBuild["status"]; startedAt: number; packagesHash?: string; imageTag?: string }): number {
+  createContainerBuild(input: { status: ContainerBuild["status"]; startedAt: number; packagesHash?: string; imageTag?: string; logs?: string }): number {
     const result = this.db
       .prepare(
         `
-        INSERT INTO container_builds (status, started_at, packages_hash, image_tag)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO container_builds (status, started_at, packages_hash, image_tag, logs)
+        VALUES (?, ?, ?, ?, ?)
         `
       )
-      .run(input.status, input.startedAt, input.packagesHash ?? null, input.imageTag ?? null)
+      .run(input.status, input.startedAt, input.packagesHash ?? null, input.imageTag ?? null, input.logs ?? null)
     return Number(result.lastInsertRowid)
   }
 
-  updateContainerBuild(id: number, input: { status?: ContainerBuild["status"]; completedAt?: number; errorMessage?: string }): ContainerBuild | null {
+  updateContainerBuild(id: number, input: { status?: ContainerBuild["status"]; completedAt?: number; errorMessage?: string; logs?: string }): ContainerBuild | null {
     const sets: string[] = []
     const values: any[] = []
 
@@ -3346,6 +3353,10 @@ export class PiKanbanDB {
     if (input.errorMessage !== undefined) {
       sets.push("error_message = ?")
       values.push(input.errorMessage)
+    }
+    if (input.logs !== undefined) {
+      sets.push("logs = ?")
+      values.push(input.logs)
     }
 
     if (sets.length === 0) return this.getContainerBuild(id)
@@ -3816,5 +3827,6 @@ function rowToContainerBuild(row: Record<string, unknown>): ContainerBuild {
     packagesHash: row.packages_hash ? String(row.packages_hash) : null,
     errorMessage: row.error_message ? String(row.error_message) : null,
     imageTag: row.image_tag ? String(row.image_tag) : null,
+    logs: row.logs ? String(row.logs) : null,
   }
 }

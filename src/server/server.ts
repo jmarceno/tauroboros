@@ -1852,6 +1852,7 @@ Respond ONLY with the JSON array, no other text.`
 
         // Start build in background
         const logs: string[] = []
+        let lastDbUpdate = Date.now()
 
         this.imageManager.buildFromDockerfileContent(
           dockerfile,
@@ -1859,7 +1860,15 @@ Respond ONLY with the JSON array, no other text.`
           {
             onLog: (line) => {
               logs.push(line)
-              // Send periodic updates
+              const now = Date.now()
+              // Save logs to database every 5 seconds or every 50 lines
+              if (now - lastDbUpdate > 5000 || logs.length % 50 === 0) {
+                this.db.updateContainerBuild(buildId, {
+                  logs: logs.join("\n"),
+                })
+                lastDbUpdate = now
+              }
+              // Send periodic WebSocket updates
               if (logs.length % 10 === 0) {
                 broadcast({
                   type: "container_build_progress",
@@ -1869,9 +1878,13 @@ Respond ONLY with the JSON array, no other text.`
             },
             onStatus: (status) => {
               const finalStatus = status.status === "success" ? "success" : status.status === "failed" ? "failed" : "running"
+              const allLogs = status.logs.join("\n")
+              
               this.db.updateContainerBuild(buildId, {
                 status: finalStatus,
                 completedAt: Math.floor(Date.now() / 1000),
+                logs: allLogs,
+                errorMessage: status.errorMessage ?? null,
               })
 
               if (status.status === "success") {
@@ -1884,19 +1897,34 @@ Respond ONLY with the JSON array, no other text.`
 
               broadcast({
                 type: "container_build_completed",
-                payload: { buildId, status: finalStatus, logs, imageTag },
+                payload: { 
+                  buildId, 
+                  status: finalStatus, 
+                  logs: status.logs, 
+                  imageTag,
+                  error: status.errorMessage,
+                },
               })
             },
             isCancelled: () => false,
           }
         ).then((result) => {
-          // Final update will be handled by onStatus callback
+          // Final update is handled by onStatus callback
+          // But ensure logs are saved even if onStatus wasn't called properly
+          if (result.logs.length > 0) {
+            this.db.updateContainerBuild(buildId, {
+              logs: result.logs.join("\n"),
+              errorMessage: result.errorMessage ?? null,
+            })
+          }
         }).catch((error) => {
           const message = error instanceof Error ? error.message : String(error)
+          const allLogs = logs.join("\n")
           this.db.updateContainerBuild(buildId, {
             status: "failed",
             completedAt: Math.floor(Date.now() / 1000),
             errorMessage: message,
+            logs: allLogs,
           })
           broadcast({
             type: "container_build_completed",

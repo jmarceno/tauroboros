@@ -52,6 +52,19 @@ const sessionUsage = useSessionUsage()
 const planningChat = usePlanningChat()
 const workflowStatus = useWorkflowStatus()
 
+// Container status
+const containerStatus = ref<{ enabled: boolean; available: boolean; hasRunningWorkflows: boolean; message: string } | null>(null)
+const isContainerEnabled = computed(() => containerStatus.value?.enabled ?? false)
+
+const loadContainerStatus = async () => {
+  try {
+    const response = await fetch('/api/container/status')
+    containerStatus.value = await response.json()
+  } catch {
+    containerStatus.value = { enabled: false, available: false, hasRunningWorkflows: false, message: 'Failed to load status' }
+  }
+}
+
   // Workflow control with pause/resume/stop
 const workflowControl = useWorkflowControl(
   (state) => {
@@ -181,6 +194,7 @@ provide('sessionUsage', sessionUsage)
 provide('planningChat', planningChat)
 provide('workflowRunning', workflowStatus)
 provide('workflowControl', workflowControl)
+provide('containerStatus', { containerStatus, isContainerEnabled, loadContainerStatus })
 provide('openModal', openModal)
 provide('closeModal', closeModal)
 provide('highlightedRunId', highlightedRunId)
@@ -594,6 +608,9 @@ onMounted(async () => {
   await modelSearch.loadModels()
   await runsComposable.loadRuns()
   await tasksComposable.loadTasks()
+
+  // Load container status to determine if container features should be enabled
+  await loadContainerStatus()
 
   // Phase 3: Connect tasks to runs composable for stale run detection
   runsComposable.setTasksRef(tasksComposable.tasks.value)

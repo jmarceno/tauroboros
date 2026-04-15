@@ -698,6 +698,7 @@ export class ContainerImageManager {
     progressHandler?: ContainerBuildProgressHandler
   ): Promise<ContainerBuildResult> {
     const logs: string[] = []
+    const errorLogs: string[] = []
     const dockerfilePath = join(this.options.cacheDir, "Dockerfile.custom-build")
 
     // Save Dockerfile content
@@ -705,7 +706,8 @@ export class ContainerImageManager {
       writeFileSync(dockerfilePath, dockerfileContent, "utf-8")
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
-      return { success: false, imageTag, logs: [`Failed to save Dockerfile: ${errorMessage}`] }
+      const finalLogs = [`Failed to save Dockerfile: ${errorMessage}`]
+      return { success: false, imageTag, logs: finalLogs }
     }
 
     return new Promise((resolve, reject) => {
@@ -732,6 +734,7 @@ export class ContainerImageManager {
         const lines = chunk.split("\n").filter(l => l.trim())
         for (const line of lines) {
           logs.push(line)
+          errorLogs.push(line)
           progressHandler?.onLog(line)
         }
       })
@@ -746,26 +749,47 @@ export class ContainerImageManager {
           })
           resolve({ success: true, imageTag, logs })
         } else {
-          const errorMessage = `Build failed with exit code ${code}`
+          // Build detailed error message with all available information
+          const errorDetails: string[] = []
+          errorDetails.push(`Build failed with exit code ${code}`)
+          
+          if (errorLogs.length > 0) {
+            errorDetails.push("\n--- STDERR OUTPUT ---")
+            errorDetails.push(...errorLogs.slice(-50)) // Last 50 error lines
+          }
+          
+          // Include last few lines of stdout for context
+          const lastLogs = logs.slice(-30)
+          if (lastLogs.length > 0) {
+            errorDetails.push("\n--- LAST OUTPUT LINES ---")
+            errorDetails.push(...lastLogs)
+          }
+          
+          const detailedErrorMessage = errorDetails.join("\n")
+          
           progressHandler?.onStatus({
             status: "failed",
-            message: errorMessage,
+            message: `Build failed with exit code ${code}`,
             logs,
+            errorMessage: detailedErrorMessage,
             canCancel: false,
           })
-          resolve({ success: false, imageTag, logs })
+          resolve({ success: false, imageTag, logs, errorMessage: detailedErrorMessage })
         }
       })
 
       proc.on("error", (err) => {
-        const errorMessage = `Failed to spawn podman build: ${err.message}`
+        const spawnError = `Failed to spawn podman build: ${err.message}`
+        const fullLogs = [...logs, spawnError]
+        
         progressHandler?.onStatus({
           status: "failed",
-          message: errorMessage,
-          logs,
+          message: spawnError,
+          logs: fullLogs,
+          errorMessage: err.stack || err.message,
           canCancel: false,
         })
-        resolve({ success: false, imageTag, logs: [...logs, errorMessage] })
+        resolve({ success: false, imageTag, logs: fullLogs, errorMessage: err.stack || err.message })
       })
     })
   }

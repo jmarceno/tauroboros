@@ -22,17 +22,7 @@ const BIN_OUTPUT = join(PROJECT_ROOT, "tauroboros")
 console.log("🔨 TaurOboros Compile Script")
 console.log("===================================\n")
 
-// Check if kanban-vue/dist exists and has content
-function checkKanbanBuild(): boolean {
-  if (!existsSync(DIST_DIR)) {
-    return false
-  }
-  const indexHtml = join(DIST_DIR, "index.html")
-  const assetsDir = join(DIST_DIR, "assets")
-  return existsSync(indexHtml) && existsSync(assetsDir)
-}
-
-// Build kanban-vue if needed
+// Build kanban-vue frontend
 async function buildKanban(): Promise<void> {
   console.log("📦 Building kanban-vue frontend...")
   
@@ -125,13 +115,9 @@ async function main(): Promise<void> {
   const startTime = Date.now()
   
   try {
-    // Step 1: Check/build kanban-vue
-    if (!checkKanbanBuild()) {
-      console.log("⚠️  Kanban dist not found or incomplete")
-      await buildKanban()
-    } else {
-      console.log("✓ Kanban build found\n")
-    }
+    // Step 1: Always rebuild kanban-vue to ensure fresh assets
+    console.log("📦 Building kanban-vue frontend...")
+    await buildKanban()
 
     // Step 2: Generate version info
     await generateVersion()
@@ -166,4 +152,4 @@ if (import.meta.main) {
   void main()
 }
 
-export { buildKanban, compileBinary, checkKanbanBuild, generateEmbeddedAssets, generateVersion }
+export { buildKanban, compileBinary, generateEmbeddedAssets, generateVersion }
