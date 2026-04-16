@@ -8,6 +8,7 @@ import {
 } from "./container-manager.ts"
 import { BASE_IMAGES } from "../config/base-images.ts"
 import { projectPiEventToSessionMessage } from "./message-projection.ts"
+import { MessageStreamer } from "./message-streamer.ts"
 import type { PiEventListener, ExtensionUIRequestHandler } from "./pi-process.ts"
 import type { PiRpcRequest, PiRpcResponse } from "./pi-rpc.ts"
 
@@ -67,6 +68,7 @@ export class ContainerPiProcess {
   private abortController: AbortController | null = null
   private existingContainerId: string | null = null
   private containerImage: string | null = null
+  private messageStreamer: MessageStreamer | null = null
 
   constructor(args: {
     db: PiKanbanDB
@@ -90,6 +92,16 @@ export class ContainerPiProcess {
     this.systemPrompt = args.systemPrompt
     this.existingContainerId = args.existingContainerId ?? null
     this.containerImage = args.containerImage ?? null
+
+    if (!this.disableAutoSessionMessages) {
+      this.messageStreamer = new MessageStreamer(
+        this.db,
+        this.session.id,
+        this.session.taskId,
+        this.session.taskRunId,
+        this.onSessionMessage
+      )
+    }
   }
 
   /**
@@ -567,16 +579,20 @@ this.abortController = new AbortController()
 
     // Project to session messages (unless disabled)
     if (!this.disableAutoSessionMessages) {
-      const message = projectPiEventToSessionMessage({
-        event: parsed,
-        sessionId: this.session.id,
-        taskId: this.session.taskId,
-        taskRunId: this.session.taskRunId,
-      })
-      if (message.contentJson && Object.keys(message.contentJson).length > 0) {
-        const createdMessage = this.db.createSessionMessage(message)
-        if (createdMessage && this.onSessionMessage) {
-          this.onSessionMessage(createdMessage)
+      const isStreamEvent = this.messageStreamer?.handleEvent(parsed) ?? false
+      
+      if (!isStreamEvent) {
+        const message = projectPiEventToSessionMessage({
+          event: parsed,
+          sessionId: this.session.id,
+          taskId: this.session.taskId,
+          taskRunId: this.session.taskRunId,
+        })
+        if (message.contentJson && Object.keys(message.contentJson).length > 0) {
+          const createdMessage = this.db.createSessionMessage(message)
+          if (createdMessage && this.onSessionMessage) {
+            this.onSessionMessage(createdMessage)
+          }
         }
       }
     }
