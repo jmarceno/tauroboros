@@ -18,7 +18,10 @@ const PROJECT_ROOT = resolve(__dirname, '../..');
 // Container mode is ALWAYS enabled for E2E tests
 const useContainer = true;
 
-console.log(`[PREPARE] Setting up test environment${useContainer ? ' with container mode' : ''}...`);
+// Mock LLM mode - uses mock server instead of real API calls (default: true for e2e tests)
+const useMockLLM = process.env.USE_MOCK_LLM !== 'false';
+
+console.log(`[PREPARE] Setting up test environment${useContainer ? ' with container mode' : ''}${useMockLLM ? ' with mock LLM' : ''}...`);
 console.log(`[PREPARE] Project root: ${PROJECT_ROOT}`);
 
 // Clean up any previous test projects
@@ -41,7 +44,7 @@ console.log(`[PREPARE] Created: ${projectDir}`);
 
 // Copy the entire project structure
 console.log('[PREPARE] Copying project files...');
-const itemsToCopy = ['src', 'docker', 'skills', 'package.json', 'bun.lock', 'bunfig.toml'];
+const itemsToCopy = ['src', 'docker', 'skills', 'mock-llm-server', 'package.json', 'bun.lock', 'bunfig.toml'];
 for (const item of itemsToCopy) {
   const src = join(PROJECT_ROOT, item);
   const dest = join(projectDir, item);
@@ -134,6 +137,54 @@ const settings = {
 
 writeFileSync(join(tauroborosDir, 'settings.json'), JSON.stringify(settings, null, 2));
 console.log(`[PREPARE] ✓ Settings created${useContainer ? ' with container mode' : ''}`);
+
+// Start mock LLM server if enabled
+if (useMockLLM) {
+  console.log('[PREPARE] Starting mock LLM server...');
+
+  const { MockServerManager } = await import('../../src/runtime/mock-server-manager.ts');
+  const mockServer = new MockServerManager(9999);
+
+  try {
+    const mockLlmServerPath = join(PROJECT_ROOT, 'mock-llm-server');
+    await mockServer.start(mockLlmServerPath);
+    console.log('[PREPARE] ✓ Mock LLM server started on port 9999');
+
+    // Generate models.json for the mock server
+    const agentDir = join(tauroborosDir, 'agent');
+    mkdirSync(agentDir, { recursive: true });
+
+    const modelsJson = {
+      providers: {
+        fake: {
+          baseUrl: 'http://localhost:9999/v1',
+          apiKey: 'fake-key-not-used',
+          api: 'openai-completions',
+          models: [
+            {
+              id: 'fake-model',
+              name: 'Fake Model',
+              reasoning: false,
+              input: ['text'],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 128000,
+              maxTokens: 4096,
+            },
+          ],
+        },
+      },
+    };
+
+    writeFileSync(join(agentDir, 'models.json'), JSON.stringify(modelsJson, null, 2));
+    console.log('[PREPARE] ✓ models.json created for mock LLM');
+
+    // Write mock server port to marker file for cleanup
+    const mockServerMarker = join(tmpdir(), 'pi-e2e-mock-server');
+    writeFileSync(mockServerMarker, JSON.stringify({ port: 9999, pid: process.pid }));
+  } catch (err) {
+    console.error('[PREPARE] ✗ Failed to start mock LLM server:', err);
+  }
+}
 
 // Write the project dir to a marker file
 const markerFile = join(tmpdir(), 'pi-e2e-current-project');

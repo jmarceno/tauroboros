@@ -25,7 +25,12 @@
     "container:setup": "./scripts/setup-e2e-tests.sh",
     "container:verify": "bun run scripts/verify-podman.ts",
     "container:cleanup": "./scripts/cleanup-gvisor.sh",
-    "container:build": "podman build -t pi-agent:alpine -f docker/pi-agent/Dockerfile ."
+    "container:build": "podman build -t pi-agent:alpine -f docker/pi-agent/Dockerfile .",
+    "mock-llm-server:build": "cd mock-llm-server && npm install && npm run build",
+    "mock-llm-server:start": "cd mock-llm-server && npm start",
+    "mock-llm-server:dev": "cd mock-llm-server && npm run dev",
+    "test:e2e:mock": "USE_MOCK_LLM=true bun run test:e2e",
+    "container:build:mock": "cd mock-llm-server && podman build -t mock-llm-server:latest ."
   },
   "devDependencies": {
     "@playwright/test": "^1.51.0",

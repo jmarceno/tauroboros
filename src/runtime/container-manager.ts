@@ -1,6 +1,9 @@
 import { spawn, execSync } from "child_process"
 import { randomUUID } from "crypto"
 import { ContainerImageManager, type ImageStatusChangeHandler } from "./container-image-manager.ts"
+import { MockServerManager } from "./mock-server-manager.ts"
+import * as path from "path"
+import * as fs from "fs"
 
 export { ContainerImageManager, type ImageStatusChangeHandler }
 
@@ -13,6 +16,7 @@ export interface ContainerConfig {
   cpuCount?: number
   memoryMb?: number
   imageName?: string
+  useMockLLM?: boolean
 }
 
 export interface ContainerProcess {
@@ -97,6 +101,7 @@ export class PiContainerManager {
   private readonly imageName: string
   private readonly containers = new Map<string, ContainerProcess>()
   private imageManager?: ContainerImageManager
+  private mockServerManager?: MockServerManager
 
   constructor(
     imageName = "pi-agent:alpine",
@@ -104,6 +109,55 @@ export class PiContainerManager {
   ) {
     this.imageName = imageName
     this.imageManager = imageManager
+  }
+
+  setMockServerManager(manager: MockServerManager): void {
+    this.mockServerManager = manager
+  }
+
+  getMockServerManager(): MockServerManager | undefined {
+    return this.mockServerManager
+  }
+
+  async startMockServerIfNeeded(config: ContainerConfig): Promise<number | null> {
+    if (config.useMockLLM && this.mockServerManager) {
+      const port = 9999
+      const mockLlmServerPath = path.join(process.cwd(), 'mock-llm-server')
+      await this.mockServerManager.start(mockLlmServerPath)
+      return port
+    }
+    return null
+  }
+
+  async generateModelsJson(containerId: string, mockPort: number, repoRoot: string, useHostNetwork: boolean = false): Promise<void> {
+    const modelsJson = {
+      providers: {
+        fake: {
+          baseUrl: `http://localhost:${mockPort}/v1`,
+          apiKey: 'fake-key-not-used',
+          api: 'openai-completions',
+          models: [
+            {
+              id: 'fake-model',
+              name: 'Fake Model',
+              reasoning: false,
+              input: ['text'],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 128000,
+              maxTokens: 4096,
+            },
+          ],
+        },
+      },
+    }
+
+    const tauroborosDir = path.join(repoRoot, '.tauroboros')
+    const piDir = path.join(tauroborosDir, 'agent')
+    const modelsJsonPath = path.join(piDir, 'models.json')
+
+    fs.mkdirSync(piDir, { recursive: true })
+    fs.writeFileSync(modelsJsonPath, JSON.stringify(modelsJson, null, 2))
+    console.log(`[container-manager] Generated models.json at ${modelsJsonPath}`)
   }
 
   /**
@@ -180,6 +234,15 @@ export class PiContainerManager {
     // Verify image was prepared at server startup - no fallback build during task execution
     this.verifyImageReady()
 
+    // Start mock LLM server if needed and generate models.json
+    const mockPort = await this.startMockServerIfNeeded(config)
+    if (mockPort !== null) {
+      await this.generateModelsJson(imageName, mockPort, config.repoRoot)
+    }
+
+    // Use host network when mock LLM is enabled so container can reach mock server on localhost
+    const networkMode = config.useMockLLM ? "host" : (config.networkMode || "bridge")
+
     const mounts = createVolumeMounts(config.worktreeDir, config.repoRoot)
 
     // Build mount arguments for podman
@@ -227,7 +290,7 @@ export class PiContainerManager {
     ]
 
     // Network
-    const networkArgs = ["--network", config.networkMode || "bridge"]
+    const networkArgs = ["--network", networkMode]
 
     // Build the podman run command (without -d for proper stdin handling)
     const podmanArgs = [

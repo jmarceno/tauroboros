@@ -80,6 +80,7 @@ if (testProjectDir) {
     env: {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
+      USE_MOCK_LLM: process.env.USE_MOCK_LLM !== 'false' ? 'true' : 'false',
     },
   };
   
