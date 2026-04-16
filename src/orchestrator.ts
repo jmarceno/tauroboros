@@ -479,7 +479,30 @@ export class PiOrchestrator {
       }
     }
 
-    // 4. Clear any paused states for all sessions in this run
+    // 4. Delete any custom container images used by tasks in this run
+    // Custom images (pi-agent:custom-*, pi-agent:${profile}-*) are built for specific
+    // workflows and should be cleaned up when the workflow is destroyed.
+    if (this.containerManager) {
+      const defaultImage = this.settings?.workflow?.container?.image || "pi-agent:alpine"
+      for (const taskId of run.taskOrder) {
+        const task = this.db.getTask(taskId)
+        if (task?.containerImage && task.containerImage !== defaultImage) {
+          // Only delete custom-tagged images, never the default base image
+          if (this.isCustomImage(task.containerImage)) {
+            try {
+              console.log(`[orchestrator] Deleting custom container image: ${task.containerImage}`)
+              await this.containerManager.deleteImage(task.containerImage)
+              this.db.updateTask(taskId, { containerImage: null })
+            } catch (error) {
+              const msg = error instanceof Error ? error.message : String(error)
+              console.warn(`[orchestrator] Failed to delete custom image ${task.containerImage}: ${msg}`)
+            }
+          }
+        }
+      }
+    }
+
+    // 5. Clear any paused states for all sessions in this run
     for (const taskId of run.taskOrder) {
       const task = this.db.getTask(taskId)
       if (task?.sessionId) {
@@ -487,7 +510,7 @@ export class PiOrchestrator {
       }
     }
 
-    // 5. Mark all incomplete tasks as failed
+    // 6. Mark all incomplete tasks as failed
     for (const taskId of run.taskOrder) {
       const task = this.db.getTask(taskId)
       if (task && (task.status === "executing" || task.status === "review")) {
@@ -501,7 +524,7 @@ export class PiOrchestrator {
       }
     }
 
-    // 6. Update run status
+    // 7. Update run status
     const updated = this.db.updateWorkflowRun(runId, {
       status: "failed",
       stopRequested: true,
@@ -512,7 +535,7 @@ export class PiOrchestrator {
       this.broadcast({ type: "run_updated", payload: updated })
     }
 
-    // 7. Reset orchestrator state if this was the current run
+    // 8. Reset orchestrator state if this was the current run
     if (this.currentRunId === runId) {
       this.running = false
       this.shouldStop = false
@@ -1791,6 +1814,24 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     } catch {
       return false
     }
+  }
+
+  /**
+   * Check if a container image is a "custom" image that was built for a specific workflow.
+   * Custom images follow naming patterns like:
+   *   - pi-agent:custom-{timestamp}
+   *   - pi-agent:{profileId}-{timestamp}
+   *
+   * The default base image "pi-agent:alpine" is NOT considered custom and should never be deleted.
+   */
+  private isCustomImage(imageName: string): boolean {
+    if (!imageName) return false
+    // Never delete the default base image
+    if (imageName === "pi-agent:alpine") return false
+    // Custom images have a timestamp suffix after the colon
+    // Match patterns like: pi-agent:custom-1234567890 or pi-agent:profile-1234567890
+    const customPattern = /^pi-agent:[a-zA-Z]+-\d+$/
+    return customPattern.test(imageName)
   }
 
   /**

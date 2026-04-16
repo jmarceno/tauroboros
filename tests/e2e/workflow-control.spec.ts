@@ -186,6 +186,25 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
       attempts++;
     }
     
+    // Final cleanup: prune any orphaned custom images from this test session
+    // This ensures tests don't leave custom container images behind
+    try {
+      const result = execSync(
+        'podman images --format "{{.Repository}}:{{.Tag}}" | grep "pi-agent:" | grep -v "pi-agent:alpine" || true',
+        { encoding: 'utf-8', stdio: 'pipe' }
+      );
+      const images = result.trim().split('\n').filter(img => img.startsWith('pi-agent:') && !img.includes('alpine'));
+      if (images.length > 0) {
+        console.log(`[TEST CLEANUP] Found ${images.length} orphaned custom images, cleaning up...`);
+        for (const img of images) {
+          try {
+            execSync(`podman rmi -f ${img}`, { stdio: 'pipe' });
+            console.log(`[TEST CLEANUP] Removed image: ${img}`);
+          } catch {}
+        }
+      }
+    } catch {}
+
     console.log('[TEST CLEANUP] Complete');
   });
 
