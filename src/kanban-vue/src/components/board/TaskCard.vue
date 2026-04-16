@@ -23,7 +23,7 @@ const multiSelect = inject<ReturnType<typeof import('@/composables/useMultiSelec
 const emit = defineEmits<{
   open: []
   deploy: []
-  openSession: []
+  openTaskSessions: [taskId: string]
   approvePlan: []
   requestRevision: []
   startSingle: []
@@ -292,7 +292,7 @@ onUnmounted(() => {
       <span
         :class="['task-title', { 'cursor-pointer hover:text-accent-primary': hasLocalSession }]"
         :title="task.name"
-        @click="hasLocalSession ? emit('openSession') : undefined"
+        @click="hasLocalSession ? emit('openTaskSessions', task.id) : undefined"
       >
         {{ task.name }}
       </span>

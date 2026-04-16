@@ -32,7 +32,7 @@ const emit = defineEmits<{
   openTemplateModal: []
   openTaskModal: []
   deployTemplate: [id: string]
-  openSession: [id: string]
+  openTaskSessions: [id: string]
   approvePlan: [id: string]
   requestRevision: [id: string]
   startSingle: [id: string]
@@ -126,7 +126,7 @@ const handleDrop = (e: DragEvent) => {
         :is-highlighted="isTaskInRun?.(task.id, highlightedRunId) ?? false"
         @open="() => emit('openTask', task.id)"
         @deploy="() => emit('deployTemplate', task.id)"
-        @open-session="() => emit('openSession', task.sessionId!)"
+        @open-task-sessions="() => emit('openTaskSessions', task.id)"
         @approve-plan="() => emit('approvePlan', task.id)"
         @request-revision="() => emit('requestRevision', task.id)"
         @start-single="() => emit('startSingle', task.id)"

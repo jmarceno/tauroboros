@@ -32,6 +32,7 @@ import ApproveModal from '@/components/modals/ApproveModal.vue'
 import RevisionModal from '@/components/modals/RevisionModal.vue'
 import StartSingleModal from '@/components/modals/StartSingleModal.vue'
 import SessionModal from '@/components/modals/SessionModal.vue'
+import TaskSessionsModal from '@/components/modals/TaskSessionsModal.vue'
 import BestOfNDetailModal from '@/components/modals/BestOfNDetailModal.vue'
 import BatchEditModal from '@/components/modals/BatchEditModal.vue'
 import PlanningPromptModal from '@/components/modals/PlanningPromptModal.vue'
@@ -809,7 +810,7 @@ window.addEventListener('hashchange', () => {
         @open-template-modal="openModal('task', { mode: 'create', createStatus: 'template' })"
         @open-task-modal="openModal('task', { mode: 'create', createStatus: 'backlog' })"
         @deploy-template="(id: string) => openModal('task', { mode: 'deploy', seedTaskId: id })"
-        @open-session="(id: string) => openModal('session', { sessionId: id })"
+        @open-task-sessions="(id: string) => openModal('taskSessions', { taskId: id })"
         @approve-plan="(id: string) => openModal('approve', { taskId: id })"
         @request-revision="(id: string) => openModal('revision', { taskId: id })"
         @start-single="(id: string) => openModal('startSingle', { taskId: id })"
@@ -953,6 +954,12 @@ window.addEventListener('hashchange', () => {
           history.pushState(null, '', location.pathname + location.search)
         }
       }"
+    />
+
+    <TaskSessionsModal
+      v-if="activeModal === 'taskSessions'"
+      :task-id="modalData.taskId as string"
+      @close="closeModal"
     />
 
     <BestOfNDetailModal

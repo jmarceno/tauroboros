@@ -23,7 +23,7 @@ const emit = defineEmits<{
   openTemplateModal: []
   openTaskModal: []
   deployTemplate: [id: string]
-  openSession: [id: string]
+  openTaskSessions: [id: string]
   approvePlan: [id: string]
   requestRevision: [id: string]
   startSingle: [id: string]
@@ -138,7 +138,7 @@ const columnColors: Record<string, string> = {
           @open-template-modal="emit('openTemplateModal')"
           @open-task-modal="emit('openTaskModal')"
           @deploy-template="(id) => emit('deployTemplate', id)"
-          @open-session="(id) => emit('openSession', id)"
+          @open-task-sessions="(id) => emit('openTaskSessions', id)"
           @approve-plan="(id) => emit('approvePlan', id)"
           @request-revision="(id) => emit('requestRevision', id)"
           @start-single="(id) => emit('startSingle', id)"
