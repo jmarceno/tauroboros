@@ -2,7 +2,7 @@
 /**
  * Generate embedded assets module for compiled binary
  * 
- * This script reads all files from kanban-vue/dist, extensions/, and skills/
+ * This script reads all files from kanban-react/dist, extensions/, and skills/
  * and generates a TypeScript module that exports them as data URIs or strings 
  * that can be served directly or extracted to the filesystem.
  */

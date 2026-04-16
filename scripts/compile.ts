@@ -4,7 +4,7 @@
  * Creates a single executable binary using Bun's compile feature
  * 
  * This script:
- * 1. Builds the kanban-vue frontend if needed
+ * 1. Builds the kanban-react frontend if needed
  * 2. Generates embedded-assets.ts with all static files inlined
  * 3. Compiles the application into a single binary
  */
@@ -14,33 +14,33 @@ import { existsSync } from "fs"
 import { resolve, join } from "path"
 
 const PROJECT_ROOT = resolve(import.meta.dir, "..")
-const KANBAN_VUE_DIR = join(PROJECT_ROOT, "src", "kanban-vue")
-const DIST_DIR = join(KANBAN_VUE_DIR, "dist")
+const KANBAN_REACT_DIR = join(PROJECT_ROOT, "src", "kanban-react")
+const DIST_DIR = join(KANBAN_REACT_DIR, "dist")
 const GENERATED_ASSETS_FILE = join(PROJECT_ROOT, "src", "server", "generated-assets.ts")
 const BIN_OUTPUT = join(PROJECT_ROOT, "tauroboros")
 
 console.log("🔨 TaurOboros Compile Script")
 console.log("===================================\n")
 
-// Build kanban-vue frontend
+// Build kanban-react frontend
 async function buildKanban(): Promise<void> {
-  console.log("📦 Building kanban-vue frontend...")
+  console.log("📦 Building kanban-react frontend...")
   
-  const packageJsonPath = join(KANBAN_VUE_DIR, "package.json")
+  const packageJsonPath = join(KANBAN_REACT_DIR, "package.json")
   if (!existsSync(packageJsonPath)) {
-    throw new Error(`package.json not found at ${KANBAN_VUE_DIR}`)
+    throw new Error(`package.json not found at ${KANBAN_REACT_DIR}`)
   }
 
   // Install dependencies
   console.log("  → Installing npm dependencies...")
-  const installResult = await $`cd ${KANBAN_VUE_DIR} && npm install`.quiet()
+  const installResult = await $`cd ${KANBAN_REACT_DIR} && npm install`.quiet()
   if (installResult.exitCode !== 0) {
     throw new Error(`npm install failed: ${installResult.stderr}`)
   }
 
   // Build the frontend
   console.log("  → Building with Vite...")
-  const buildResult = await $`cd ${KANBAN_VUE_DIR} && npm run build`.quiet()
+  const buildResult = await $`cd ${KANBAN_REACT_DIR} && npm run build`.quiet()
   if (buildResult.exitCode !== 0) {
     throw new Error(`npm run build failed: ${buildResult.stderr}`)
   }
@@ -115,8 +115,8 @@ async function main(): Promise<void> {
   const startTime = Date.now()
   
   try {
-    // Step 1: Always rebuild kanban-vue to ensure fresh assets
-    console.log("📦 Building kanban-vue frontend...")
+    // Step 1: Always rebuild kanban-react to ensure fresh assets
+    console.log("📦 Building kanban-react frontend...")
     await buildKanban()
 
     // Step 2: Generate version info
