@@ -109,6 +109,24 @@ function extractUsage(event: Record<string, unknown>, message: Record<string, un
     return asRecord(message.usage)
   }
 
+  const assistantEvent = asRecord(event.assistantMessageEvent)
+  if (Object.keys(assistantEvent).length > 0) {
+    const assistantUsage = asRecord(assistantEvent.usage)
+    if (Object.keys(assistantUsage).length > 0) {
+      return assistantUsage
+    }
+  }
+
+  const eventUsage = asRecord(event.usage)
+  if (Object.keys(eventUsage).length > 0) {
+    return eventUsage
+  }
+
+  const partialUsage = asRecord(partial.usage)
+  if (Object.keys(partialUsage).length > 0) {
+    return partialUsage
+  }
+
   return {}
 }
 

@@ -1400,17 +1400,28 @@ export class PiKanbanServer {
       }
 
       if (eventType === "message") {
+        const eventMessage = body?.message ?? {}
+        const usage = eventMessage.usage ?? body?.usage ?? {}
+        const cost = usage.cost ?? {}
+
         const message = this.db.createSessionMessage({
           sessionId: session.id,
           taskId: session.taskId,
           taskRunId: session.taskRunId,
-          role: body?.role ?? "assistant",
+          role: body?.role ?? eventMessage.role ?? "assistant",
           eventName: body?.eventName ?? body?.type ?? null,
           messageType: body?.messageType ?? "text",
           contentJson: body?.contentJson ?? { text: String(body?.text ?? "") },
-          modelProvider: body?.modelProvider ?? null,
-          modelId: body?.modelId ?? null,
+          modelProvider: body?.modelProvider ?? eventMessage.provider ?? null,
+          modelId: body?.modelId ?? eventMessage.model ?? null,
           agentName: body?.agentName ?? null,
+          promptTokens: typeof usage.input === "number" ? usage.input : null,
+          completionTokens: typeof usage.output === "number" ? usage.output : null,
+          cacheReadTokens: typeof usage.cacheRead === "number" ? usage.cacheRead : null,
+          cacheWriteTokens: typeof usage.cacheWrite === "number" ? usage.cacheWrite : null,
+          totalTokens: typeof usage.totalTokens === "number" ? usage.totalTokens : null,
+          costJson: Object.keys(cost).length > 0 ? cost : null,
+          costTotal: typeof cost.total === "number" ? cost.total : null,
           rawEventJson: body,
         })
         this.db.appendSessionIO({
