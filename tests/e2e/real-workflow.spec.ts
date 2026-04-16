@@ -314,6 +314,22 @@ test.describe('REAL Multi-Task Workflow', () => {
   }
 
   /**
+   * Helper: Get task error message via API (for debugging only)
+   */
+  async function getTaskErrorFromAPI(page: Page, taskName: string): Promise<string | null> {
+    return await page.evaluate(async (name) => {
+      try {
+        const response = await fetch('/api/tasks');
+        const tasks = await response.json();
+        const task = tasks.find((t: any) => t.name === name);
+        return task?.errorMessage || null;
+      } catch (e) {
+        return null;
+      }
+    }, taskName);
+  }
+
+  /**
    * Helper: Get task status from UI ONLY
    * 
    * Checks the task card's data-task-status attribute first,
@@ -475,7 +491,8 @@ End of Log`,
       if (anyFailed) {
         console.log('\n[TEST] Task failure detected:');
         for (const taskName of taskNames) {
-          console.log(`  ${taskName}: ${taskStatuses[taskName]}`);
+          const errorMsg = await getTaskErrorFromAPI(page, taskName);
+          console.log(`  ${taskName}: ${taskStatuses[taskName]}${errorMsg ? ` - Error: ${errorMsg}` : ''}`);
         }
         throw new Error('Task workflow failed - tasks did not complete successfully');
       }

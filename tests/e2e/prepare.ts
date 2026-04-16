@@ -127,13 +127,9 @@ const settings = {
       portRangeEnd: 40000,
     },
   },
-  // Model configuration for reliable test execution
-  planModel: 'default',
-  executionModel: 'default', 
-  reviewModel: 'default',
-  repairModel: 'default',
+  // Model configuration - will be set via API in the test
   branch: 'master',
-  maxReviews: 0,  // Disable automatic review for reliable E2E tests
+  maxReviews: 2,  // Enable reviews for E2E tests (tasks can override with maxReviewRunsOverride)
 };
 
 writeFileSync(join(tauroborosDir, 'settings.json'), JSON.stringify(settings, null, 2));
