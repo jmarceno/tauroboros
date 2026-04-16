@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
+import { BASE_IMAGES } from "./base-images.ts"
 
 export interface SkillsSettings {
   localPath: string
@@ -62,7 +63,7 @@ export const DEFAULT_INFRASTRUCTURE_SETTINGS: InfrastructureSettings = {
       enabled: true,
       piBin: "pi",
       piArgs: "--mode rpc",
-      image: "pi-agent:alpine",
+      image: BASE_IMAGES.piAgent,
       imageSource: "dockerfile",
       dockerfilePath: "docker/pi-agent/Dockerfile",
       registryUrl: null,

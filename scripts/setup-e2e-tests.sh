@@ -1,6 +1,6 @@
 #!/bin/bash
 # Podman Setup Script (without gVisor)
-# Pure Podman container isolation using standard Alpine-based image
+# Pure Podman container isolation using Ubuntu-based image
 
 set -e
 
@@ -49,9 +49,9 @@ fi
 cd "$PROJECT_ROOT"
 
 # Build with podman
-podman build -t pi-agent:alpine -f docker/pi-agent/Dockerfile .
+podman build -t pi-agent:latest -f docker/pi-agent/Dockerfile .
 
-echo -e "${GREEN}✓ Podman image 'pi-agent:alpine' built successfully${NC}"
+echo -e "${GREEN}✓ Podman image 'pi-agent:latest' built successfully${NC}"
 echo ""
 
 # =============================================================================
@@ -59,7 +59,7 @@ echo ""
 # =============================================================================
 echo "Step 3: Testing container runtime..."
 
-if podman run --rm pi-agent:alpine pi --version 2>/dev/null; then
+if podman run --rm pi-agent:latest pi --version 2>/dev/null; then
     echo -e "${GREEN}✓ Container runtime test passed${NC}"
     CONTAINER_TEST_PASSED=true
 else
@@ -79,7 +79,7 @@ echo "Podman version:"
 podman --version
 echo ""
 echo "pi-agent image:"
-podman images pi-agent:alpine --format "  Repository: {{.Repository}}\n  Tag: {{.Tag}}\n  Size: {{.Size}}"
+podman images pi-agent:latest --format "  Repository: {{.Repository}}\n  Tag: {{.Tag}}\n  Size: {{.Size}}"
 echo ""
 
 # =============================================================================
@@ -95,7 +95,7 @@ echo "========================================="
 echo ""
 echo "Configuration:"
 echo "  - Container engine: Podman"
-echo "  - Image: pi-agent:alpine"
+echo "  - Image: pi-agent:latest"
 echo "  - Isolation: Standard container boundaries"
 echo ""
 echo "To enable container mode, set in your .env file:"

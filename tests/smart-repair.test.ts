@@ -5,6 +5,7 @@ import { join } from "path"
 import { PiKanbanDB } from "../src/db.ts"
 import { SmartRepairService } from "../src/runtime/smart-repair.ts"
 import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
+import { BASE_IMAGES } from "../src/config/base-images.ts"
 
 const tempDirs: string[] = []
 
@@ -66,7 +67,7 @@ function createTestSettings(mockPiPath: string): InfrastructureSettings {
         enabled: false,
         piBin: mockPiPath,
         piArgs: "",
-        image: "pi-agent:alpine",
+        image: BASE_IMAGES.piAgent,
       },
     },
   }

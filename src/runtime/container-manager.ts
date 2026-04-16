@@ -2,6 +2,7 @@ import { spawn, execSync } from "child_process"
 import { randomUUID } from "crypto"
 import { ContainerImageManager, type ImageStatusChangeHandler } from "./container-image-manager.ts"
 import { MockServerManager } from "./mock-server-manager.ts"
+import { BASE_IMAGES } from "../config/base-images.ts"
 import * as path from "path"
 import * as fs from "fs"
 
@@ -94,7 +95,7 @@ export function createVolumeMounts(
 /**
  * Container Manager using pure Podman (without gVisor)
  * 
- * Uses a minimal Alpine-based image with Bun and Pi pre-installed.
+ * Uses an Ubuntu-based image with Bun and Pi pre-installed.
  * Provides filesystem and port isolation through standard container boundaries.
  */
 export class PiContainerManager {
@@ -104,7 +105,7 @@ export class PiContainerManager {
   private mockServerManager?: MockServerManager
 
   constructor(
-    imageName = "pi-agent:alpine",
+    imageName = BASE_IMAGES.piAgent,
     imageManager?: ContainerImageManager,
   ) {
     this.imageName = imageName

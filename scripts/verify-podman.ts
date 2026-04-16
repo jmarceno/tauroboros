@@ -5,6 +5,7 @@
  */
 
 import { PiContainerManager } from "../src/runtime/container-manager.ts"
+import { BASE_IMAGES } from "../src/config/base-images.ts"
 
 console.log("=========================================")
 console.log("TaurOboros - Container Setup Verification")
@@ -26,10 +27,10 @@ async function verify() {
 
   // Image check
   if (status.image) {
-    console.log("✓ pi-agent:alpine image is available")
+    console.log(`✓ ${BASE_IMAGES.piAgent} image is available`)
   } else {
-    console.log("✗ pi-agent:alpine image not found")
-    console.log("  Run: podman build -t pi-agent:alpine -f docker/pi-agent/Dockerfile .")
+    console.log(`✗ ${BASE_IMAGES.piAgent} image not found`)
+    console.log(`  Run: podman build -t ${BASE_IMAGES.piAgent} -f docker/pi-agent/Dockerfile .`)
   }
 
   // Errors

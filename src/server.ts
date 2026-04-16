@@ -6,6 +6,7 @@ import { PiKanbanDB } from "./db.ts"
 import { PiKanbanServer } from "./server/server.ts"
 import { PiOrchestrator } from "./orchestrator.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
+import { BASE_IMAGES } from "./config/base-images.ts"
 
 export interface CreateServerOptions {
   dbPath?: string
@@ -107,7 +108,7 @@ export function createPiServer(options: CreateServerOptions = {}): {
       // Container mode is the default - only skip when explicitly disabled
       if (options.settings?.workflow?.container?.enabled === false) return undefined
       const containerSettings = options.settings?.workflow?.container ?? {
-        image: "pi-agent:alpine",
+        image: BASE_IMAGES.piAgent,
       }
       const containerManager = new PiContainerManager(
         containerSettings.image,

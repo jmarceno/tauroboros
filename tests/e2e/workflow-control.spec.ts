@@ -19,6 +19,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import { execSync } from 'child_process';
+import { BASE_IMAGES } from '../../src/config/base-images.ts';
 
 test.beforeAll(() => {
   console.log('[TEST SETUP] Verifying container infrastructure...');
@@ -33,7 +34,7 @@ test.beforeAll(() => {
   
   if (hasPodman) {
     try {
-      const result = execSync('podman images pi-agent:alpine -q', { encoding: 'utf-8', stdio: 'pipe' });
+      const result = execSync(`podman images ${BASE_IMAGES.piAgent} -q`, { encoding: 'utf-8', stdio: 'pipe' });
       hasPiAgentImage = result.trim().length > 0;
     } catch {}
   }
@@ -190,7 +191,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     // This ensures tests don't leave custom container images behind
     try {
       const result = execSync(
-        'podman images --format "{{.Repository}}:{{.Tag}}" | grep "pi-agent:" | grep -v "pi-agent:alpine" || true',
+        'podman images --format "{{.Repository}}:{{.Tag}}" | grep "pi-agent:" | grep -v "${BASE_IMAGES.piAgent}" || true',
         { encoding: 'utf-8', stdio: 'pipe' }
       );
       const images = result.trim().split('\n').filter(img => img.startsWith('pi-agent:') && !img.includes('alpine'));

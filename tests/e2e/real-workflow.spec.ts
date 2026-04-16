@@ -16,6 +16,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import { execSync } from 'child_process';
+import { BASE_IMAGES } from '../../src/config/base-images.ts';
 
 test.describe('REAL Multi-Task Workflow', () => {
   test.setTimeout(600000); // 10 minutes for full workflow
@@ -37,15 +38,15 @@ test.describe('REAL Multi-Task Workflow', () => {
     
     if (hasPodman) {
       try {
-        const result = execSync('podman images pi-agent:alpine -q', { encoding: 'utf-8', stdio: 'pipe' });
+        const result = execSync(`podman images ${BASE_IMAGES.piAgent} -q`, { encoding: 'utf-8', stdio: 'pipe' });
         hasPiAgentImage = result.trim().length > 0;
         if (hasPiAgentImage) {
-          console.log('  ✓ pi-agent:alpine image available');
+          console.log(`  ✓ ${BASE_IMAGES.piAgent} image available`);
         } else {
-          console.error('  ❌ pi-agent:alpine image not found');
+          console.error(`  ❌ ${BASE_IMAGES.piAgent} image not found`);
         }
       } catch {
-        console.error('  ❌ pi-agent:alpine image not found');
+        console.error(`  ❌ ${BASE_IMAGES.piAgent} image not found`);
       }
     }
     

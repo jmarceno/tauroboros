@@ -5,6 +5,7 @@ import type { SessionMessage } from "../types.ts"
 import { ContainerPiProcess } from "./container-pi-process.ts"
 import type { PiContainerManager } from "./container-manager.ts"
 import { PiRpcProcess } from "./pi-process.ts"
+import { BASE_IMAGES } from "../config/base-images.ts"
 
 export interface UnifiedPiProcessOptions {
   db: PiKanbanDB
@@ -135,7 +136,7 @@ export async function validateContainerSetup(
   if (configuredRuntime === "container" && !status.image) {
     issues.push(
       `Container runtime is configured but the image is not available. ` +
-        `Build it with: podman build -t ${settings?.workflow?.container?.image ?? "pi-agent:alpine"} -f docker/pi-agent/Dockerfile .`,
+        `Build it with: podman build -t ${settings?.workflow?.container?.image ?? BASE_IMAGES.piAgent} -f docker/pi-agent/Dockerfile .`,
     )
   }
 

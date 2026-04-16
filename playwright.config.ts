@@ -3,6 +3,7 @@ import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { BASE_IMAGES } from './src/config/base-images.ts';
 
 // Check container requirements for real workflow test
 const isRealWorkflowTest = process.env.TEST_TYPE === 'real-workflow';
@@ -20,17 +21,17 @@ if (isRealWorkflowTest) {
   
   if (hasPodman) {
     try {
-      const result = execSync('podman images pi-agent:alpine -q', { encoding: 'utf-8', stdio: 'pipe' });
+      const result = execSync(`podman images ${BASE_IMAGES.piAgent} -q`, { encoding: 'utf-8', stdio: 'pipe' });
       hasPiAgentImage = result.trim().length > 0;
     } catch (err) {
-      console.debug(`[playwright.config] pi-agent:alpine image not found:`, err);
+      console.debug(`[playwright.config] ${BASE_IMAGES.piAgent} image not found:`, err);
     }
   }
   
   if (!hasPodman || !hasPiAgentImage) {
     console.error('❌ REAL WORKFLOW TEST FAILED: Container infrastructure not available');
     if (!hasPodman) console.error('   - Podman not found');
-    if (!hasPiAgentImage) console.error('   - pi-agent:alpine image not found');
+    if (!hasPiAgentImage) console.error(`   - ${BASE_IMAGES.piAgent} image not found`);
     console.error('   Run: bun run container:setup');
     process.exit(1);
   }

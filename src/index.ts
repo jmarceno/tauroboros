@@ -5,6 +5,7 @@ import { createPiServer, findProjectRoot } from "./server.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
 import { ContainerImageManager } from "./runtime/container-image-manager.ts"
 import { extractEmbeddedResources } from "./resource-extractor.ts"
+import { BASE_IMAGES } from "./config/base-images.ts"
 
 interface CliArgs {
   native: boolean
@@ -43,7 +44,7 @@ async function checkAndPrepareContainer(projectRoot: string): Promise<{
 
     const cacheDir = resolve(projectRoot, ".tauroboros")
     const imageManager = new ContainerImageManager({
-      imageName: "pi-agent:alpine",
+      imageName: BASE_IMAGES.piAgent,
       imageSource: "dockerfile",
       dockerfilePath: "docker/pi-agent/Dockerfile",
       cacheDir,

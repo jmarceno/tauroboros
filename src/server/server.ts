@@ -3,6 +3,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from "fs"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import type { InfrastructureSettings } from "../config/settings.ts"
+import { BASE_IMAGES } from "../config/base-images.ts"
 import { buildExecutionGraph, getExecutionGraphTasks } from "../execution-plan.ts"
 import { discoverPiModels } from "../pi/model-discovery.ts"
 import { isTaskAwaitingPlanApproval } from "../task-state.ts"
@@ -223,7 +224,7 @@ export class PiKanbanServer {
     if (opts.settings?.workflow?.container?.enabled !== false) {
       console.log("[container] Container mode enabled (default) - initializing image manager...")
       const containerSettings = opts.settings?.workflow?.container ?? {
-        image: "pi-agent:alpine",
+        image: BASE_IMAGES.piAgent,
         imageSource: "dockerfile" as const,
         dockerfilePath: "docker/pi-agent/Dockerfile",
         registryUrl: null,
@@ -351,7 +352,7 @@ export class PiKanbanServer {
         console.error("[server] CRITICAL: Container mode is enabled but container image is not available.")
         throw new Error(
           "Container mode is enabled but container image is not available. " +
-            `Build it with: podman build -t ${this.settings?.workflow?.container?.image ?? "pi-agent:alpine"} -f docker/pi-agent/Dockerfile .`
+            `Build it with: podman build -t ${this.settings?.workflow?.container?.image ?? BASE_IMAGES.piAgent} -f docker/pi-agent/Dockerfile .`
         )
       }
     }

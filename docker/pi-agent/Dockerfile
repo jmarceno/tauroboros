@@ -1,55 +1,52 @@
-# Alpine-based Pi Agent Container
-# Uses Alpine Linux with Bun and Pi pre-installed
+# Debian-based Pi Agent Container
+# Uses Debian trixie-slim with Bun and Pi pre-installed
 
-FROM docker.io/alpine:3.23.3
+FROM debian:trixie-slim
 
-# Install dependencies
-RUN apk add --no-cache \
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PI_OFFLINE=1
+ENV HOME=/root
+
+RUN apt-get update && apt-get install -y \
     git \
     openssh-client \
-    ca-certificates \
-    nodejs \
-    npm \
     curl \
     bash \
+    unzip \
+    ca-certificates \
+    gnupg \
     chromium \
-    chromium-chromedriver \
-    nss \
-    freetype \
-    harfbuzz \
-    ttf-freefont
+    nodejs \
+    npm \
+    libglib2.0-0 \
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2t64 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2t64 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Install Bun
 RUN curl -fsSL https://bun.sh/install | bash && \
     mv /root/.bun/bin/bun /usr/local/bin/bun && \
     ln -s /usr/local/bin/bun /usr/local/bin/bunx
 
-# Install pi globally
 RUN npm install -g @mariozechner/pi-coding-agent
 
-# Set up root home directory
-ENV HOME=/root
 RUN mkdir -p /root
-
-# Create .pi directory for pi configuration
 RUN mkdir -p /root/.pi
-
-# Prevent pi from auto-installing packages at runtime.
-# Packages listed in ~/.pi/agent/settings.json (mounted from host)
-# would trigger npm install on every container start since --rm makes
-# containers ephemeral. With PI_OFFLINE=1, pi skips missing packages
-# instead of trying to install them.
-ENV PI_OFFLINE=1
-
-# Ensure /tmp exists and is writable
 RUN mkdir -p /tmp && chmod 1777 /tmp
-
-# Create workspace directory
 RUN mkdir -p /workspace
 
-# Default working directory (overridden at runtime)
 WORKDIR /workspace
 
-# Entry point runs pi in RPC mode
-# Extensions and skills are auto-discovered from .pi/extensions/ and .pi/skills/
 ENTRYPOINT ["pi", "--mode", "rpc"]

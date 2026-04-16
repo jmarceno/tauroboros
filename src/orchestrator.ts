@@ -2,6 +2,7 @@ import { randomUUID } from "crypto"
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "fs"
 import { join } from "path"
 import type { InfrastructureSettings } from "./config/settings.ts"
+import { BASE_IMAGES } from "./config/base-images.ts"
 import { buildExecutionVariables, buildPlanningVariables, buildPlanRevisionVariables, buildCommitVariables, buildReviewFixVariables } from "./prompts/index.ts"
 import { getLatestTaggedOutput, getPlanExecutionEligibility } from "./task-state.ts"
 import type { PiKanbanDB } from "./db.ts"
@@ -483,7 +484,7 @@ export class PiOrchestrator {
     // Custom images (pi-agent:custom-*, pi-agent:${profile}-*) are built for specific
     // workflows and should be cleaned up when the workflow is destroyed.
     if (this.containerManager) {
-      const defaultImage = this.settings?.workflow?.container?.image || "pi-agent:alpine"
+      const defaultImage = this.settings?.workflow?.container?.image || BASE_IMAGES.piAgent
       for (const taskId of run.taskOrder) {
         const task = this.db.getTask(taskId)
         if (task?.containerImage && task.containerImage !== defaultImage) {
@@ -1822,12 +1823,12 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
    *   - pi-agent:custom-{timestamp}
    *   - pi-agent:{profileId}-{timestamp}
    *
-   * The default base image "pi-agent:alpine" is NOT considered custom and should never be deleted.
+   * The default base image is NOT considered custom and should never be deleted.
    */
   private isCustomImage(imageName: string): boolean {
     if (!imageName) return false
     // Never delete the default base image
-    if (imageName === "pi-agent:alpine") return false
+    if (imageName === BASE_IMAGES.piAgent) return false
     // Custom images have a timestamp suffix after the colon
     // Match patterns like: pi-agent:custom-1234567890 or pi-agent:profile-1234567890
     const customPattern = /^pi-agent:[a-zA-Z]+-\d+$/

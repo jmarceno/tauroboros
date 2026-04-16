@@ -5,6 +5,7 @@ import { tmpdir } from "os"
 import { join } from "path"
 import { createPiServer } from "../src/server.ts"
 import type { InfrastructureSettings } from "../src/config/settings.ts"
+import { BASE_IMAGES } from "../src/config/base-images.ts"
 
 const tempDirs: string[] = []
 
@@ -141,7 +142,7 @@ function createTestSettings(mockPiPath: string): InfrastructureSettings {
       },
       container: {
         enabled: false,
-        image: "pi-agent:alpine",
+        image: BASE_IMAGES.piAgent,
         memoryMb: 512,
         cpuCount: 1,
         portRangeStart: 30000,

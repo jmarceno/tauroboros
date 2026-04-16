@@ -6,6 +6,7 @@ import {
   type ContainerConfig,
   type ContainerProcess,
 } from "./container-manager.ts"
+import { BASE_IMAGES } from "../config/base-images.ts"
 import { projectPiEventToSessionMessage } from "./message-projection.ts"
 import type { PiEventListener, ExtensionUIRequestHandler } from "./pi-process.ts"
 import type { PiRpcRequest, PiRpcResponse } from "./pi-rpc.ts"
@@ -100,7 +101,7 @@ export class ContainerPiProcess {
     // Determine container configuration from settings or resume parameters
     const containerSettings = this.settings?.workflow?.container
     // Use containerImage from resume if provided, otherwise fall back to settings
-    const imageName = this.containerImage || containerSettings?.image || "pi-agent:alpine"
+    const imageName = this.containerImage || containerSettings?.image || BASE_IMAGES.piAgent
     const runtime = "runc" // Always use runc now, removed gVisor dependency
     const memoryMb = containerSettings?.memoryMb || 512
     const cpuCount = containerSettings?.cpuCount || 1

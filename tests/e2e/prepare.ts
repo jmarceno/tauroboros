@@ -10,6 +10,7 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { BASE_IMAGES } from '../../src/config/base-images.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = resolve(__filename, '..');
@@ -119,7 +120,7 @@ const settings = {
       enabled: useContainer,
       piBin: 'pi',
       piArgs: '--mode rpc',
-      image: 'pi-agent:alpine',
+      image: BASE_IMAGES.piAgent,
       imageSource: 'dockerfile',
       dockerfilePath: join(projectDir, 'docker/pi-agent/Dockerfile'),
       registryUrl: null,
