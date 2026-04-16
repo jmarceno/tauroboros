@@ -237,6 +237,8 @@ export class PiOrchestrator {
 
     if (tasks.length === 0) throw new Error("No tasks in backlog")
 
+    console.log(`[orchestrator] startAll: ${tasks.length} tasks to execute: ${tasks.map(t => `${t.name}(${t.id})`).join(', ')}`)
+
     // Validate container images for all tasks before starting
     const imageValidation = await this.validateWorkflowImages(tasks.map(t => t.id))
     if (!imageValidation.valid) {
@@ -1067,6 +1069,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
 
         await this.executeTask(task, this.db.getOptions())
         executedTaskIds.add(taskId)
+        console.log(`[orchestrator] executeTask COMPLETE: ${task.name}(${task.id}), all executed: ${executedTaskIds.size}`)
       }
 
       // Only mark as completed if we weren't paused
@@ -1118,9 +1121,12 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     const eligibility = getPlanExecutionEligibility(task)
     if (!eligibility.ok) throw new Error(`Task state is invalid: ${eligibility.reason}`)
 
+    console.log(`[orchestrator] executeTask START: ${task.name}(${task.id}), requirements: ${task.requirements.length > 0 ? task.requirements.join(', ') : 'none'}`)
+
     for (const depId of task.requirements) {
       const dep = this.db.getTask(depId)
       if (dep && dep.status !== "done") {
+        console.log(`[orchestrator] executeTask BLOCKED: ${task.name}(${task.id}) - dependency "${dep.name}"(${depId}) status is ${dep.status}`)
         throw new Error(`Dependency "${dep.name}" is not done (status: ${dep.status})`)
       }
     }
@@ -1680,6 +1686,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
   private broadcastTask(taskId: string): void {
     const updated = this.db.getTask(taskId)
     if (!updated) return
+    console.log(`[orchestrator] broadcastTask: ${updated.name}(${taskId}) status=${updated.status}`)
     this.broadcast({ type: "task_updated", payload: updated })
   }
 

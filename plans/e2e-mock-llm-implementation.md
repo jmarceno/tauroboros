@@ -724,7 +724,7 @@ podman run -d -p 9999:9999 mock-llm-server:latest
 
 ## Implementation Phases
 
-### Phase 1: Mock Server Core (Day 1)
+### Phase 1: Mock Server Core
 
 - [ ] Create `mock-llm-server/` TypeScript project structure
 - [ ] Implement LangChain-based response generation with FakeListChatModel
@@ -733,26 +733,19 @@ podman run -d -p 9999:9999 mock-llm-server:latest
 - [ ] Implement `/v1/models` and `/health` endpoints
 - [ ] Test server standalone locally
 
-### Phase 2: Container/Process Integration (Day 2)
+### Phase 2: Container/Process Integration
 
 - [ ] Create `MockServerManager` class for process management
 - [ ] Add `startMockServerIfNeeded()` to container manager
 - [ ] Implement `generateModelsJson()` for container config
 - [ ] Test mock server starts with e2e tests
 
-### Phase 3: End-to-End Flow (Day 3)
+### Phase 3: End-to-End Flow
 
 - [ ] Verify pi connects to mock server via models.json
 - [ ] Test full e2e flow with mock responses
 - [ ] Tune response content based on test behavior
 - [ ] Verify no real API calls are made
-
-### Phase 4: CI Integration (Day 4)
-
-- [ ] Add mock server startup to CI pipeline
-- [ ] Test in GitHub Actions environment
-- [ ] Verify deterministic test behavior
-- [ ] Document usage
 
 ---
 

@@ -125,32 +125,27 @@ test.describe('REAL Multi-Task Workflow', () => {
 
   /**
    * Helper: Approve execution graph modal to continue execution
-   * Waits up to 15 seconds for the modal to appear, then clicks Confirm & Start.
+   * Waits up to 2 seconds for the modal to appear, then clicks Confirm & Start.
    */
   async function approveExecutionGraphModal(page: Page) {
     try {
-      // First check if any modal overlay exists
-      const anyModal = page.locator('.modal-overlay');
-      const modalCount = await anyModal.count().catch(() => 0);
-      console.log(`[TEST] Found ${modalCount} modal overlays`);
-      
       const modal = page.locator('.modal-overlay').filter({ hasText: /Execution Graph/ });
-      await modal.waitFor({ state: 'visible', timeout: 15000 }).catch(() => null);
-      
+      await modal.waitFor({ state: 'visible', timeout: 2000 }).catch(() => null);
+
       if (!(await modal.isVisible().catch(() => false))) {
-        console.log('[TEST] Execution graph modal not visible after 15s');
+        console.log('[TEST] Execution graph modal not visible after 2s');
         return false;
       }
-      
+
       console.log('[TEST] Execution graph modal is visible');
       const confirmButton = modal.locator('button').filter({ hasText: 'Confirm & Start' }).first();
-      await confirmButton.waitFor({ state: 'visible', timeout: 5000 }).catch(() => null);
-      
+      await confirmButton.waitFor({ state: 'visible', timeout: 2000 }).catch(() => null);
+
       if (!(await confirmButton.isVisible().catch(() => false))) {
         console.log('[TEST] Confirm & Start button not visible');
         return false;
       }
-      
+
       console.log('[TEST] Clicking Confirm & Start button');
       await confirmButton.click();
       await page.waitForTimeout(1500);
@@ -172,23 +167,23 @@ test.describe('REAL Multi-Task Workflow', () => {
     autoApprovePlan?: boolean;
     review?: boolean;
     requirements?: string[];
-  }): Promise<string> {
+  }): Promise<{ name: string; id: string }> {
     // Click the "+ Add Task" button in backlog column
     const backlogColumn = page.locator('[data-status="backlog"]');
     await expect(backlogColumn).toBeVisible({ timeout: 10000 });
-    
+
     const addTaskButton = backlogColumn.locator('button.add-task-btn, button:has-text("+ Add Task")').first();
     await expect(addTaskButton).toBeVisible({ timeout: 10000 });
     await addTaskButton.click();
-    
+
     // Wait for task modal to open and initialize
     await page.waitForSelector('.modal-overlay', { timeout: 10000 });
     await page.waitForSelector('input[placeholder="Task name"]', { timeout: 10000 });
-    
+
     // Wait for modal initialization - critical for branches to load
     // The modal's initializeForm() runs on mount and fetches branches asynchronously
     await page.waitForTimeout(2000);
-    
+
     // Wait for branch select to be visible and have options loaded
     const branchGroup = page.locator('.modal-overlay .form-group').filter({ hasText: /Branch/ });
     const branchSelect = branchGroup.locator('select.form-select').first();
@@ -198,12 +193,12 @@ test.describe('REAL Multi-Task Workflow', () => {
       const count = await branchSelect.locator('option:not([value=""])').count();
       return count;
     }, { timeout: 10000 }).toBeGreaterThan(0);
-    
+
     // Fill in the task name
     const nameInput = page.locator('input[placeholder="Task name"]');
     await expect(nameInput).toBeVisible({ timeout: 5000 });
     await nameInput.fill(data.name);
-    
+
     // Fill in the prompt using the MarkdownEditor (ProseMirror contenteditable)
     // The prompt editor is a tiptap/ProseMirror rich text editor, not a textarea
     const promptEditor = page.locator('.markdown-editor-content .ProseMirror').first();
@@ -222,7 +217,7 @@ test.describe('REAL Multi-Task Workflow', () => {
         }
       }
     }
-    
+
     // Configure plan mode if requested
     if (data.planmode) {
       const planModeCheckbox = page.getByRole('checkbox', { name: 'Plan Mode' });
@@ -231,7 +226,7 @@ test.describe('REAL Multi-Task Workflow', () => {
         if (!isChecked) await planModeCheckbox.check();
       }
     }
-    
+
     // Configure auto-approve plan if requested
     if (data.autoApprovePlan) {
       const autoApproveCheckbox = page.getByRole('checkbox', { name: 'Auto-approve plan' });
@@ -240,7 +235,7 @@ test.describe('REAL Multi-Task Workflow', () => {
         if (!isChecked) await autoApproveCheckbox.check();
       }
     }
-    
+
     // Configure review if requested
     if (data.review !== undefined) {
       const reviewCheckbox = page.getByRole('checkbox', { name: 'Review' });
@@ -253,7 +248,7 @@ test.describe('REAL Multi-Task Workflow', () => {
         }
       }
     }
-    
+
     // Set requirements if provided
     if (data.requirements && data.requirements.length > 0) {
       const requirementsSection = page.locator('.form-group').filter({ hasText: 'Requirements' });
@@ -264,53 +259,64 @@ test.describe('REAL Multi-Task Workflow', () => {
         }
       }
     }
-    
+
     // Click Save button (filter to exclude "Save Template")
     const saveButton = page.locator('button.btn-primary').filter({ hasText: /^Save$/ }).first();
     await expect(saveButton).toBeVisible({ timeout: 5000 });
-    
+
     // Capture response from save action
-    const saveResponsePromise = page.waitForResponse(resp => 
+    const saveResponsePromise = page.waitForResponse(resp =>
       resp.url().includes('/api/tasks') && resp.request().method() === 'POST',
       { timeout: 10000 }
     );
-    
+
     await saveButton.click();
-    
-    // Wait for the API response
+
+    // Wait for the API response and extract task ID
     const saveResponse = await saveResponsePromise;
     console.log(`[UI] Save response status: ${saveResponse.status()}`);
     if (!saveResponse.ok()) {
       const body = await saveResponse.text();
       console.log(`[UI] Save error: ${body}`);
+      throw new Error(`Failed to create task: ${body}`);
     }
-    
+
+    // Extract task ID from response
+    let taskId = '';
+    try {
+      const responseData = await saveResponse.json();
+      taskId = responseData.id || '';
+      console.log(`[UI] Created task ID: ${taskId}`);
+    } catch {
+      console.log('[UI] Could not parse task ID from response');
+    }
+
     // Wait for modal to close via WebSocket update
     await page.waitForTimeout(3000);
-    
+
     // WORKAROUND: Reload page to force task load from database
     // This works around the Vue reactivity issue with WebSocket updates
     await page.reload();
     await page.waitForTimeout(3000);
-    
+
     // Wait for tasks to load (check total count in sidebar)
     await expect.poll(async () => {
       const totalText = await page.locator('.stat-card .stat-value').first().textContent();
       const total = parseInt(totalText || '0', 10);
       return total;
     }, { timeout: 15000 }).toBeGreaterThan(0);
-    
+
     // Additional wait for Vue to render
     await page.waitForTimeout(2000);
-    
+
     // Verify task appears in UI
     const taskCard = page.locator('.task-card').filter({ hasText: data.name }).first();
     await expect(taskCard).toBeVisible({ timeout: 15000 });
-    
-    console.log(`[UI] Created task: ${data.name}`);
-    
-    // Return the task name for UI-based verification
-    return data.name;
+
+    console.log(`[UI] Created task: ${data.name} (ID: ${taskId})`);
+
+    // Return both name and ID for dependency setup
+    return { name: data.name, id: taskId };
   }
 
   /**
@@ -380,41 +386,41 @@ test.describe('REAL Multi-Task Workflow', () => {
     await page.waitForTimeout(2000);
   }
 
-  test('3-task chained workflow executes successfully', async ({ page }) => {
+test('3-task chained workflow executes successfully', async ({ page }) => {
     console.log('\n[TEST] ==========================================================');
     console.log('[TEST] REAL 3-TASK WORKFLOW');
     console.log('[TEST] ==========================================================\n');
 
     // STEP 1: Create Task 1 (Foundation)
-    const task1Name = 'Task 1: Create Base File';
-    await createTaskViaUI(page, {
-      name: task1Name,
+    const task1 = await createTaskViaUI(page, {
+      name: 'Task 1: Create Base File',
       prompt: `Create a file named 'workflow_result.txt' with content:
 Workflow Execution Log
-====================
+===================
 Task 1: Base created
 Status: COMPLETE`,
       planmode: true,
       autoApprovePlan: true,
       review: true,
     });
+    console.log(`[TEST] Created Task 1: ${task1.name} (ID: ${task1.id})`);
 
     // STEP 2: Create Task 2 (depends on Task 1)
-    const task2Name = 'Task 2: Extend Base File';
-    await createTaskViaUI(page, {
-      name: task2Name,
+    const task2 = await createTaskViaUI(page, {
+      name: 'Task 2: Extend Base File',
       prompt: `Read workflow_result.txt and append:
 Task 2: Extended successfully
 Status: COMPLETE`,
       planmode: true,
       autoApprovePlan: true,
       review: true,
+      requirements: [task1.id], // Task 2 depends on Task 1
     });
+    console.log(`[TEST] Created Task 2: ${task2.name} (ID: ${task2.id})`);
 
     // STEP 3: Create Task 3 (depends on Task 2)
-    const task3Name = 'Task 3: Finalize File';
-    await createTaskViaUI(page, {
-      name: task3Name,
+    const task3 = await createTaskViaUI(page, {
+      name: 'Task 3: Finalize File',
       prompt: `Read workflow_result.txt, verify content, append:
 Task 3: Workflow completed
 Status: DONE
@@ -422,9 +428,11 @@ End of Log`,
       planmode: true,
       autoApprovePlan: true,
       review: true,
+      requirements: [task2.id], // Task 3 depends on Task 2
     });
+    console.log(`[TEST] Created Task 3: ${task3.name} (ID: ${task3.id})`);
 
-    console.log('[TEST] ✓ All 3 tasks created via UI\n');
+    console.log('[TEST] ✓ All 3 tasks created via UI with dependencies\n');
 
     // Wait for tasks to be fully loaded in the UI before starting workflow
     // The groupedTasks computed property needs time to populate after page reloads
@@ -437,16 +445,16 @@ End of Log`,
 
     // STEP 5: Monitor execution via UI
     console.log('[TEST] Monitoring workflow execution...');
-    
+
     // Approve execution graph modal if shown
     await approveExecutionGraphModal(page);
-    
-    const taskNames = [task1Name, task2Name, task3Name];
-    
+
+    const taskNames = [task1.name, task2.name, task3.name];
+
     const taskStatuses: Record<string, string> = {
-      [task1Name]: 'backlog',
-      [task2Name]: 'backlog',
-      [task3Name]: 'backlog',
+      [task1.name]: 'backlog',
+      [task2.name]: 'backlog',
+      [task3.name]: 'backlog',
     };
 
     const maxWaitTime = 480000; // 8 minutes
@@ -525,18 +533,20 @@ End of Log`,
     console.log('[TEST] Testing dependency order enforcement...');
 
     // Create Task A
-    const taskAName = 'Step A: Foundation';
-    await createTaskViaUI(page, {
-      name: taskAName,
+    const taskA = await createTaskViaUI(page, {
+      name: 'Step A: Foundation',
       prompt: 'Create a file step_order.txt with "Step A executed"',
     });
 
     // Create Task B with dependency on A
-    const taskBName = 'Step B: Build';
-    await createTaskViaUI(page, {
-      name: taskBName,
+    const taskB = await createTaskViaUI(page, {
+      name: 'Step B: Build',
       prompt: 'Append "Step B executed" to step_order.txt',
+      requirements: [taskA.id], // Task B depends on Task A
     });
+
+    const taskAName = taskA.name;
+    const taskBName = taskB.name;
 
     // Wait for tasks to be fully loaded in the UI before starting workflow
     await page.waitForTimeout(3000);
