@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import { useVersion } from '@/hooks'
 import type { ControlState } from '@/types'
 
@@ -30,7 +30,7 @@ interface SidebarProps {
   isContainerEnabled?: boolean
 }
 
-export function Sidebar({
+export const Sidebar = memo(function Sidebar({
   consumedSlots,
   parallelTasks,
   isConnected,
@@ -226,4 +226,4 @@ export function Sidebar({
       </div>
     </aside>
   )
-}
+})

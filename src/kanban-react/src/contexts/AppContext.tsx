@@ -3,7 +3,7 @@ import type {
   Task, WorkflowRun, Session, SessionMessage,
   BestOfNSummary, ColumnSortPreferences, Options,
   ModelCatalog, Toast, LogEntry, ControlState,
-  TaskRunContext, PlanningPrompt, ChatSession,
+  TaskRunContext, PlanningPrompt, ChatSession, SessionUsageRollup,
 } from '@/types'
 
 // Tasks context type
@@ -209,6 +209,21 @@ interface ContainerStatusContextType {
   loadContainerStatus: () => Promise<void>
 }
 
+// Session usage context type
+interface SessionUsageContextType {
+  usageCache: Record<string, SessionUsageRollup>
+  isLoading: boolean
+  error: string | null
+  activeSessionIds: Set<string>
+  loadSessionUsage: (sessionId: string, forceRefresh?: boolean) => Promise<SessionUsageRollup | null>
+  getCachedUsage: (sessionId: string) => SessionUsageRollup | null
+  clearCache: () => void
+  startWatching: (sessionId: string) => void
+  stopWatching: (sessionId: string) => void
+  formatTokenCount: (count: number) => string
+  formatCost: (cost: number) => string
+}
+
 // Create contexts
 export const TasksContext = createContext<TasksContextType | undefined>(undefined)
 export const RunsContext = createContext<RunsContextType | undefined>(undefined)
@@ -222,6 +237,7 @@ export const MultiSelectContext = createContext<MultiSelectContextType | undefin
 export const PlanningChatContext = createContext<PlanningChatContextType | undefined>(undefined)
 export const ModalContext = createContext<ModalContextType | undefined>(undefined)
 export const ContainerStatusContext = createContext<ContainerStatusContextType | undefined>(undefined)
+export const SessionUsageContext = createContext<SessionUsageContextType | undefined>(undefined)
 
 // Export hook functions
 export function useTasksContext() {
@@ -293,5 +309,11 @@ export function useModalContext() {
 export function useContainerStatusContext() {
   const context = useContext(ContainerStatusContext)
   if (!context) throw new Error('useContainerStatusContext must be used within ContainerStatusProvider')
+  return context
+}
+
+export function useSessionUsageContext() {
+  const context = useContext(SessionUsageContext)
+  if (!context) throw new Error('useSessionUsageContext must be used within SessionUsageProvider')
   return context
 }

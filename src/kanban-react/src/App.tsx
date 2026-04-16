@@ -4,13 +4,13 @@ import {
   TasksContext, RunsContext, OptionsContext, ToastContext,
   ModelSearchContext, SessionContext, WebSocketContext,
   WorkflowControlContext, MultiSelectContext, PlanningChatContext,
-  ModalContext, ContainerStatusContext,
+  ModalContext, ContainerStatusContext, SessionUsageContext,
 } from '@/contexts/AppContext'
 import {
   useTasks, useRuns, useOptions, useToasts,
   useModelSearch, useSession, useWebSocket,
   useWorkflowControl, useMultiSelect, usePlanningChat,
-  useDragDrop, useKeyboard,
+  useDragDrop, useKeyboard, useSessionUsage,
 } from '@/hooks'
 import type { Task, TaskStatus, WorkflowRun } from '@/types'
 
@@ -62,6 +62,7 @@ function App() {
   const wsHook = useWebSocket()
   const multiSelectHook = useMultiSelect()
   const planningChatHook = usePlanningChat()
+  const sessionUsageHook = useSessionUsage()
 
   // Workflow control
   const workflowControl = useWorkflowControl(
@@ -257,6 +258,12 @@ function App() {
     isModalOpen: () => isAnyModalOpen,
   })
 
+  const tasksRef = useRef(tasksHook.tasks)
+  tasksRef.current = tasksHook.tasks
+
+  const runsRef = useRef(runsHook.runs)
+  runsRef.current = runsHook.runs
+
   // WebSocket handlers
   useEffect(() => {
     const unsubscribers: (() => void)[] = []
@@ -264,16 +271,16 @@ function App() {
     unsubscribers.push(wsHook.on('task_created', async (payload) => {
       const task = payload as Task
       if (!task || !task.id) return
-      const existingTask = tasksHook.getTaskById(task.id)
+      const existingTask = tasksRef.current.find(t => t.id === task.id)
       if (existingTask) return
-      tasksHook.setTasks([...tasksHook.tasks, task])
+      tasksHook.setTasks([...tasksRef.current, task])
       toastsHook.addLog(`Task created: ${task.name} (status: ${task.status || 'undefined'})`, 'info')
     }))
 
     unsubscribers.push(wsHook.on('task_updated', async (payload) => {
       const task = payload as Task
-      const idx = tasksHook.tasks.findIndex(t => t.id === task.id)
-      const prev = idx >= 0 ? tasksHook.tasks[idx] : null
+      const idx = tasksRef.current.findIndex(t => t.id === task.id)
+      const prev = idx >= 0 ? tasksRef.current[idx] : null
 
       if (prev && task.updatedAt && prev.updatedAt && task.updatedAt < prev.updatedAt) {
         console.log(`[WebSocket] Skipping stale task_updated for ${task.name}`)
@@ -283,9 +290,9 @@ function App() {
       const mergedTask = prev ? { ...prev, ...task } : task
 
       if (idx >= 0) {
-        tasksHook.setTasks(tasksHook.tasks.map((t, i) => i === idx ? mergedTask : t))
+        tasksHook.setTasks(tasksRef.current.map((t, i) => i === idx ? mergedTask : t))
       }
-      runsHook.setTasksRef(tasksHook.tasks)
+      runsHook.setTasksRef(tasksRef.current)
 
       if (!prev || prev.status !== task.status) {
         if (task.status === 'executing') toastsHook.addLog(`Task started: ${task.name}`, 'info')
@@ -302,26 +309,26 @@ function App() {
 
     unsubscribers.push(wsHook.on('task_deleted', (payload) => {
       const { id } = payload as { id: string }
-      const task = tasksHook.getTaskById(id)
+      const task = tasksRef.current.find(t => t.id === id)
       tasksHook.removeBonSummary(id)
-      tasksHook.setTasks(tasksHook.tasks.filter(t => t.id !== id))
-      runsHook.setTasksRef(tasksHook.tasks.filter(t => t.id !== id))
+      tasksHook.setTasks(tasksRef.current.filter(t => t.id !== id))
+      runsHook.setTasksRef(tasksRef.current.filter(t => t.id !== id))
       toastsHook.addLog(`Task deleted: ${task?.name || id}`, 'info')
     }))
 
     unsubscribers.push(wsHook.on('task_archived', (payload) => {
       const { id } = payload as { id: string }
-      const task = tasksHook.getTaskById(id)
+      const task = tasksRef.current.find(t => t.id === id)
       tasksHook.removeBonSummary(id)
-      tasksHook.setTasks(tasksHook.tasks.filter(t => t.id !== id))
-      runsHook.setTasksRef(tasksHook.tasks.filter(t => t.id !== id))
+      tasksHook.setTasks(tasksRef.current.filter(t => t.id !== id))
+      runsHook.setTasksRef(tasksRef.current.filter(t => t.id !== id))
       toastsHook.addLog(`Task archived: ${task?.name || id}`, 'info')
     }))
 
     unsubscribers.push(wsHook.on('task_reordered', () => {
       toastsHook.addLog('Task order updated', 'info')
-      tasksHook.loadTasks().then(() => {
-        runsHook.setTasksRef(tasksHook.tasks)
+      tasksHook.loadTasks().then((data) => {
+        runsHook.setTasksRef(data || tasksRef.current)
       })
     }))
 
@@ -353,28 +360,28 @@ function App() {
       const data = payload as { runId: string }
       toastsHook.showToast('Workflow paused', 'info')
       toastsHook.addLog(`Workflow paused: ${data.runId}`, 'info')
-      workflowControl.updateStateFromRuns(runsHook.runs)
+      workflowControl.updateStateFromRuns(runsRef.current)
     }))
 
     unsubscribers.push(wsHook.on('execution_resumed', (payload) => {
       const data = payload as { runId: string }
       toastsHook.showToast('Workflow resumed', 'success')
       toastsHook.addLog(`Workflow resumed: ${data.runId}`, 'success')
-      workflowControl.updateStateFromRuns(runsHook.runs)
+      workflowControl.updateStateFromRuns(runsRef.current)
     }))
 
     unsubscribers.push(wsHook.on('run_paused', (payload) => {
       const data = payload as { runId: string }
       toastsHook.showToast('Workflow run paused', 'info')
       toastsHook.addLog(`Workflow run paused: ${data.runId}`, 'info')
-      workflowControl.updateStateFromRuns(runsHook.runs)
+      workflowControl.updateStateFromRuns(runsRef.current)
     }))
 
     unsubscribers.push(wsHook.on('run_resumed', (payload) => {
       const data = payload as { runId: string }
       toastsHook.showToast('Workflow run resumed', 'success')
       toastsHook.addLog(`Workflow run resumed: ${data.runId}`, 'success')
-      workflowControl.updateStateFromRuns(runsHook.runs)
+      workflowControl.updateStateFromRuns(runsRef.current)
     }))
 
     unsubscribers.push(wsHook.on('run_stopped', (payload) => {
@@ -388,9 +395,9 @@ function App() {
     unsubscribers.push(wsHook.on('session_started', (payload) => {
       const data = payload as Session
       if (data.taskId && data.id) {
-        const idx = tasksHook.tasks.findIndex(t => t.id === data.taskId)
+        const idx = tasksRef.current.findIndex(t => t.id === data.taskId)
         if (idx >= 0) {
-          const updatedTasks = [...tasksHook.tasks]
+          const updatedTasks = [...tasksRef.current]
           updatedTasks[idx] = {
             ...updatedTasks[idx],
             sessionId: data.id,
@@ -628,7 +635,8 @@ function App() {
                       <PlanningChatContext.Provider value={planningChatHook}>
                         <ModalContext.Provider value={{ activeModal, modalData, openModal, closeModal, closeTopmostModal }}>
                           <ContainerStatusContext.Provider value={{ containerStatus, isContainerEnabled, loadContainerStatus }}>
-                            <div className="app-layout bg-dark-bg text-dark-text">
+                            <SessionUsageContext.Provider value={sessionUsageHook}>
+                              <div className="app-layout bg-dark-bg text-dark-text">
                               <Sidebar
                                 consumedSlots={consumedSlotsValue}
                                 parallelTasks={parallelTasksValue}
@@ -950,7 +958,8 @@ function App() {
                               />
 
                               <ChatContainer />
-                            </div>
+                              </div>
+                            </SessionUsageContext.Provider>
                           </ContainerStatusContext.Provider>
                         </ModalContext.Provider>
                       </PlanningChatContext.Provider>

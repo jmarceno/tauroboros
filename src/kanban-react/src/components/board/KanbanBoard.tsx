@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, memo } from 'react'
 import type { Task, TaskStatus, BestOfNSummary } from '@/types'
 import { KanbanColumn } from './KanbanColumn'
 import type { useDragDrop } from '@/hooks/useDragDrop'
@@ -65,7 +65,7 @@ const columnColors: Record<string, string> = {
   done: 'text-column-done',
 }
 
-export function KanbanBoard({
+export const KanbanBoard = memo(function KanbanBoard({
   tasks,
   bonSummaries,
   getTaskRunColor,
@@ -170,4 +170,4 @@ export function KanbanBoard({
       </div>
     </div>
   )
-}
+})

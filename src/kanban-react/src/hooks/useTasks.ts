@@ -63,6 +63,7 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
       const data = await api.getTasks()
       setTasks(data)
       await refreshBonSummaries(data)
+      return data
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -182,7 +183,7 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
     })
   }, [])
 
-  return {
+  const contextValue = useMemo(() => ({
     tasks,
     setTasks: setTasksDirectly,
     groupedTasks,
@@ -204,5 +205,12 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
     repairTask,
     startSingleTask,
     removeBonSummary,
-  }
+  }), [
+    tasks, setTasksDirectly, groupedTasks, bonSummaries, isLoading, error,
+    getTaskById, getTaskName, loadTasks, refreshBonSummaries, createTask, updateTask,
+    deleteTask, reorderTask, archiveAllDone, resetTask, approvePlan, requestPlanRevision,
+    repairTask, startSingleTask, removeBonSummary
+  ])
+
+  return contextValue
 }

@@ -5,6 +5,7 @@ import { useApi } from './useApi'
 
 export function useModelSearch() {
   const api = useApi()
+  const getModels = api.getModels
   const [catalog, setCatalog] = useState<ModelCatalog>({ providers: [] })
   const [searchIndex, setSearchIndex] = useState<ModelEntry[]>([])
   const [fuse, setFuse] = useState<Fuse<ModelEntry> | null>(null)
@@ -50,7 +51,7 @@ export function useModelSearch() {
     setIsLoading(true)
     setError(null)
     try {
-      const data = await api.getModels()
+      const data = await getModels()
       if (data.error) {
         throw new Error(data.error)
       }
@@ -63,7 +64,7 @@ export function useModelSearch() {
     } finally {
       setIsLoading(false)
     }
-  }, [api, rebuildIndex])
+  }, [getModels, rebuildIndex])
 
   const getSuggestions = useCallback((query: string, limit = 12): ModelEntry[] => {
     const q = query?.trim() || ''
@@ -120,7 +121,9 @@ export function useModelSearch() {
 
   useEffect(() => {
     loadModels()
-  }, [loadModels])
+    // Only run once on mount - loadModels has stable references via useCallback
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return {
     catalog,

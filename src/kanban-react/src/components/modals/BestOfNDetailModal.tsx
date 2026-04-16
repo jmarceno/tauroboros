@@ -13,6 +13,10 @@ export function BestOfNDetailModal({ taskId, onClose }: BestOfNDetailModalProps)
   const tasks = useTasksContext()
   const api = useApi()
   const toasts = useToastContext()
+  const showToast = toasts.showToast
+  const getBestOfNSummary = api.getBestOfNSummary
+  const getTaskRuns = api.getTaskRuns
+  const getTaskCandidates = api.getTaskCandidates
   const [summary, setSummary] = useState<BestOfNSummary | null>(null)
   const [taskRuns, setTaskRuns] = useState<TaskRun[]>([])
   const [candidates, setCandidates] = useState<Candidate[]>([])
@@ -21,25 +25,28 @@ export function BestOfNDetailModal({ taskId, onClose }: BestOfNDetailModalProps)
   const task = tasks.getTaskById(taskId)
 
   useEffect(() => {
+    let cancelled = false
     const loadData = async () => {
       setIsLoading(true)
       try {
         const [summaryData, runsData, candidatesData] = await Promise.all([
-          api.getBestOfNSummary(taskId),
-          api.getTaskRuns(taskId),
-          api.getTaskCandidates(taskId),
+          getBestOfNSummary(taskId),
+          getTaskRuns(taskId),
+          getTaskCandidates(taskId),
         ])
+        if (cancelled) return
         setSummary(summaryData)
         setTaskRuns(runsData)
         setCandidates(candidatesData)
       } catch (e) {
-        toasts.showToast('Failed to load details', 'error')
+        if (!cancelled) showToast('Failed to load details', 'error')
       } finally {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false)
       }
     }
     loadData()
-  }, [taskId, api, toasts])
+    return () => { cancelled = true }
+  }, [taskId, getBestOfNSummary, getTaskRuns, getTaskCandidates, showToast])
 
   return (
     <ModalWrapper title={`Best-of-N: ${task?.name || taskId}`} onClose={onClose} size="lg">

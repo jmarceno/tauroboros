@@ -124,7 +124,7 @@ export function ContainerConfigModal({ isOpen, onClose }: ContainerConfigModalPr
     } finally {
       setIsLoadingTasksUsing(false)
     }
-  }, [api])
+  }, [])
 
   useEffect(() => {
     if (!isOpen) return

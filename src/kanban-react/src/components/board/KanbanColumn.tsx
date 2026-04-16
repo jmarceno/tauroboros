@@ -1,6 +1,7 @@
 import { TaskCard } from './TaskCard'
 import type { Task, TaskStatus, BestOfNSummary } from '@/types'
 import type { useDragDrop } from '@/hooks/useDragDrop'
+import { memo } from 'react'
 
 interface KanbanColumnProps {
   status: TaskStatus
@@ -37,17 +38,7 @@ interface KanbanColumnProps {
   onContinueReviews: (id: string) => void
 }
 
-const sortOptions = [
-  { value: 'manual', label: 'Manual' },
-  { value: 'name-asc', label: 'Name (A-Z)' },
-  { value: 'name-desc', label: 'Name (Z-A)' },
-  { value: 'created-asc', label: 'Created (oldest)' },
-  { value: 'created-desc', label: 'Created (newest)' },
-  { value: 'updated-asc', label: 'Updated (oldest)' },
-  { value: 'updated-desc', label: 'Updated (newest)' },
-]
-
-export function KanbanColumn({
+export const KanbanColumn = memo(function KanbanColumn({
   status,
   title,
   helpText,
@@ -86,41 +77,45 @@ export function KanbanColumn({
   return (
     <div
       className={`kanban-column ${isDragOver ? 'drag-over' : ''}`}
+      data-status={status}
       onDragOver={(e) => dragDrop.handleDragOver(status, e)}
       onDragLeave={dragDrop.handleDragLeave}
       onDrop={(e) => dragDrop.handleDrop(status, e)}
     >
       <div className="kanban-column-header">
-        <div className="kanban-column-title">
-          <span className={iconColor} dangerouslySetInnerHTML={{ __html: iconSvg }} />
+        <div className={`kanban-column-title ${iconColor}`}>
+          <span dangerouslySetInnerHTML={{ __html: iconSvg }} />
           <span>{title}</span>
-          <span className="kanban-column-count" title={helpText}>
-            {tasks.length}
+          <button
+            className="help-btn"
+            title={helpText}
+            aria-label={`${title} column help`}
+          >
+            ?
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <select
+            value={currentSort}
+            onChange={(e) => onChangeSort(e.target.value)}
+            className="text-xs bg-dark-input border border-dark-border rounded px-1.5 py-0.5 cursor-pointer outline-none"
+            title="Sort tasks"
+          >
+            <option value="manual">Manual</option>
+            <option value="name-asc">Name ↑</option>
+            <option value="name-desc">Name ↓</option>
+            <option value="created-asc">Created ↑</option>
+            <option value="created-desc">Created ↓</option>
+            <option value="updated-asc">Updated ↑</option>
+            <option value="updated-desc">Updated ↓</option>
+          </select>
+          <span className="kanban-column-count">
+            {tasks?.length ?? 0}
           </span>
         </div>
-        <select
-          value={currentSort}
-          onChange={(e) => onChangeSort(e.target.value)}
-          className="text-xs bg-dark-bg border border-dark-border rounded px-2 py-1"
-        >
-          {sortOptions.map(opt => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
       </div>
 
       <div className="kanban-column-body">
-        {status === 'template' && (
-          <button className="add-task-btn" onClick={onOpenTemplateModal}>
-            + Add Template
-          </button>
-        )}
-        {status === 'backlog' && (
-          <button className="add-task-btn" onClick={onOpenTaskModal}>
-            + Add Task
-          </button>
-        )}
-
         {tasks.map(task => (
           <TaskCard
             key={task.id}
@@ -128,16 +123,15 @@ export function KanbanColumn({
             bonSummary={bonSummaries[task.id]}
             runColor={getTaskRunColor(task.id)}
             isLocked={isTaskMutationLocked(task.id)}
-            isDragging={dragDrop.dragTaskId === task.id}
-            isMultiSelecting={isMultiSelecting}
+            canDrag={status === 'backlog' && !isTaskMutationLocked(task.id) && currentSort === 'manual'}
+            dragDrop={dragDrop}
             isSelected={getIsSelected?.(task.id) || false}
+            isMultiSelecting={isMultiSelecting}
             isHighlighted={highlightedRunId ? isTaskInRun?.(task.id, highlightedRunId) || false : false}
-            onDragStart={() => dragDrop.handleDragStart(task.id)}
-            onDragEnd={dragDrop.handleDragEnd}
-            onClick={() => onOpenTask(task.id)}
+            onOpen={() => onOpenTask(task.id)}
             onDeploy={() => onDeployTemplate(task.id)}
-            onOpenSessions={() => onOpenTaskSessions(task.id)}
-            onApprove={() => onApprovePlan(task.id)}
+            onOpenTaskSessions={() => onOpenTaskSessions(task.id)}
+            onApprovePlan={() => onApprovePlan(task.id)}
             onRequestRevision={() => onRequestRevision(task.id)}
             onStartSingle={() => onStartSingle(task.id)}
             onRepair={(action) => onRepairTask(task.id, action)}
@@ -150,12 +144,30 @@ export function KanbanColumn({
           />
         ))}
 
-        {status === 'done' && tasks.length > 0 && (
-          <button className="add-task-btn mt-2" onClick={onArchiveAllDone}>
-            Archive All Done
+        {/* Add buttons at the end */}
+        {status === 'template' && (
+          <button
+            className="add-task-btn flex items-center justify-center gap-2"
+            onClick={onOpenTemplateModal}
+            title="Add Template"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Add Template
+          </button>
+        )}
+        {status === 'backlog' && (
+          <button className="add-task-btn" onClick={onOpenTaskModal}>
+            + Add Task
+          </button>
+        )}
+        {status === 'done' && (tasks?.length ?? 0) > 0 && (
+          <button className="add-task-btn mt-auto" onClick={onArchiveAllDone}>
+            Archive All
           </button>
         )}
       </div>
     </div>
   )
-}
+})

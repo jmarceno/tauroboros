@@ -5,6 +5,7 @@ import { usePlanningChat } from '@/hooks/usePlanningChat'
 import { useApi } from '@/hooks/useApi'
 import { useOptions } from '@/hooks/useOptions'
 import { useModelSearch } from '@/hooks/useModelSearch'
+import { useModalContext } from '@/contexts/AppContext'
 import { ChatPanel } from './ChatPanel'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
@@ -17,6 +18,7 @@ export function ChatContainer() {
   const api = useApi()
   const options = useOptions()
   const modelSearch = useModelSearch()
+  const { openModal } = useModalContext()
 
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH)
   const [isResizing, setIsResizing] = useState(false)
@@ -29,10 +31,6 @@ export function ChatContainer() {
 
   const resizeStartX = useRef(0)
   const resizeStartWidth = useRef(0)
-
-  const openModal = useCallback((name: string, data?: Record<string, unknown>) => {
-    console.warn('openModal not provided, planning prompt editor will not work:', name, data)
-  }, [])
 
   useEffect(() => {
     const savedWidth = localStorage.getItem('chatPanelWidth')

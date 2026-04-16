@@ -6,6 +6,7 @@ const POLL_INTERVAL = 3000 // 3 seconds
 
 export function useSessionUsage() {
   const api = useApi()
+  const getSessionUsage = api.getSessionUsage
   const [usageCache, setUsageCache] = useState<Record<string, SessionUsageRollup>>({})
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -18,7 +19,7 @@ export function useSessionUsage() {
     pollIntervalRef.current = setInterval(async () => {
       for (const sessionId of activeSessionIds) {
         try {
-          const usage = await api.getSessionUsage(sessionId)
+          const usage = await getSessionUsage(sessionId)
           setUsageCache(prev => ({ ...prev, [sessionId]: usage }))
           lastFetchTimeRef.current[sessionId] = Date.now()
         } catch {
@@ -26,7 +27,7 @@ export function useSessionUsage() {
         }
       }
     }, POLL_INTERVAL)
-  }, [api, activeSessionIds])
+  }, [getSessionUsage, activeSessionIds])
 
   const stopPolling = useCallback(() => {
     if (pollIntervalRef.current) {
@@ -64,15 +65,19 @@ export function useSessionUsage() {
     const lastFetch = lastFetchTimeRef.current[sessionId] || 0
     const isFresh = Date.now() - lastFetch < POLL_INTERVAL
     
-    if (!forceRefresh && usageCache[sessionId] && isFresh) {
-      return usageCache[sessionId]
+    // Check cache without using it as dependency
+    if (!forceRefresh) {
+      const cached = usageCache[sessionId]
+      if (cached && isFresh) {
+        return cached
+      }
     }
 
     setIsLoading(true)
     setError(null)
     
     try {
-      const usage = await api.getSessionUsage(sessionId)
+      const usage = await getSessionUsage(sessionId)
       setUsageCache(prev => ({ ...prev, [sessionId]: usage }))
       lastFetchTimeRef.current[sessionId] = Date.now()
       return usage
@@ -82,7 +87,7 @@ export function useSessionUsage() {
     } finally {
       setIsLoading(false)
     }
-  }, [api, usageCache])
+  }, [getSessionUsage])
 
   const getCachedUsage = useCallback((sessionId: string): SessionUsageRollup | null => {
     return usageCache[sessionId] || null

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import type { Options } from '@/types'
 import { useApi } from './useApi'
 
@@ -14,6 +14,7 @@ export function useOptions() {
     try {
       const data = await api.getOptions()
       setOptions(data)
+      return data
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -35,7 +36,7 @@ export function useOptions() {
     return await api.stopExecution()
   }, [api])
 
-  return {
+  const contextValue = useMemo(() => ({
     options,
     isLoading,
     error,
@@ -44,5 +45,7 @@ export function useOptions() {
     updateOptions: saveOptions,
     startExecution,
     stopExecution,
-  }
+  }), [options, isLoading, error, loadOptions, saveOptions, startExecution, stopExecution])
+
+  return contextValue
 }

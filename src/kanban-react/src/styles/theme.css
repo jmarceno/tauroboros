@@ -292,6 +292,46 @@
     @apply w-4 h-4 flex-shrink-0;
   }
 
+  /* Warning button style (for pause) */
+  .sidebar-btn.warning {
+    border-color: #ffc107;
+    color: #ffc107;
+  }
+
+  .sidebar-btn.warning:hover {
+    background: rgba(255, 193, 7, 0.1);
+  }
+
+  /* Danger button style (for destructive stop) */
+  .sidebar-btn.danger {
+    border-color: #ff6b6b;
+    color: #ff6b6b;
+  }
+
+  .sidebar-btn.danger:hover {
+    background: rgba(255, 107, 107, 0.1);
+  }
+
+  /* Version section at bottom */
+  .version-section {
+    @apply mt-auto pt-4;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    flex-shrink: 0;
+  }
+
+  .version-display {
+    font-size: 10px;
+    color: rgba(140, 140, 154, 0.6);
+    text-align: center;
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    letter-spacing: 0.025em;
+  }
+
+  /* Action group for related buttons */
+  .action-group {
+    @apply flex flex-col gap-2 mb-2;
+  }
+
   /* Toggle Button */
   .toggle-btn {
     @apply w-7 h-7 flex items-center justify-center bg-transparent border-none text-dark-text-secondary cursor-pointer rounded transition-colors;

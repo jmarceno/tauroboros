@@ -7,11 +7,12 @@ export function useVersion() {
   const [error, setError] = useState<string | null>(null)
 
   const api = useApi()
+  const getVersion = api.getVersion
 
   useEffect(() => {
     const loadVersion = async () => {
       try {
-        const response = await api.getVersion()
+        const response = await getVersion()
         setVersion(response.displayVersion)
       } catch {
         setError('Failed to load version')
@@ -20,7 +21,7 @@ export function useVersion() {
       }
     }
     loadVersion()
-  }, [api])
+  }, [getVersion])
 
   return { version, loading, error }
 }

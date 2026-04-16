@@ -87,6 +87,7 @@ interface PlanningPromptModalProps {
 
 export function PlanningPromptModal({ onClose }: PlanningPromptModalProps) {
   const api = useApi()
+  const getPlanningPrompt = api.getPlanningPrompt
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -116,11 +117,13 @@ export function PlanningPromptModal({ onClose }: PlanningPromptModalProps) {
     : false
 
   useEffect(() => {
+    let cancelled = false
     const loadPrompt = async () => {
       setIsLoading(true)
       setError(null)
       try {
-        const prompt = await api.getPlanningPrompt()
+        const prompt = await getPlanningPrompt()
+        if (cancelled) return
         setPromptData(prompt)
         setEditedPrompt({
           name: prompt.name,
@@ -128,14 +131,15 @@ export function PlanningPromptModal({ onClose }: PlanningPromptModalProps) {
           promptText: prompt.promptText,
         })
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to load planning prompt')
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load planning prompt')
         console.error('Failed to load planning prompt:', e)
       } finally {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false)
       }
     }
     loadPrompt()
-  }, [api])
+    return () => { cancelled = true }
+  }, [getPlanningPrompt])
 
   const savePrompt = async () => {
     if (!hasChanges || !promptData) return

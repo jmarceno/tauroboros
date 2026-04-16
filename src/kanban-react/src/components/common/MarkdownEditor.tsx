@@ -29,6 +29,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorRef, MarkdownEditorProps>
             levels: [1, 2, 3],
           },
           codeBlock: false,
+          link: false, // StarterKit includes Link, disable to use custom config
         }),
         Link.configure({
           openOnClick: false,

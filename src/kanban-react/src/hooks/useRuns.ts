@@ -133,7 +133,7 @@ export function useRuns() {
     setTasksRef(tasks)
   }, [])
 
-  return {
+  const contextValue = useMemo(() => ({
     runs,
     activeRuns,
     staleRuns,
@@ -155,5 +155,12 @@ export function useRuns() {
     archiveRun,
     updateRunFromWebSocket,
     removeRun,
-  }
+  }), [
+    runs, activeRuns, staleRuns, hasStaleRuns, consumedRunSlots, isLoading, error,
+    setTasksReference, isStaleRun, getTaskRunLock, isTaskMutationLocked, getTaskRunColor,
+    isTaskInRun, getRunProgressLabel, loadRuns, pauseRun, resumeRun, stopRun, archiveRun,
+    updateRunFromWebSocket, removeRun
+  ])
+
+  return contextValue
 }
