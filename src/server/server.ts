@@ -25,9 +25,9 @@ import { VERSION, COMMIT_HASH, DISPLAY_VERSION, IS_COMPILED } from "./version.ts
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// Static file serving paths - Vue kanban only
-const KANBAN_VUE_DIST = join(__dirname, "..", "kanban-vue", "dist")
-const KANBAN_VUE_INDEX = join(KANBAN_VUE_DIST, "index.html")
+// Static file serving paths - React kanban
+const KANBAN_DIST = join(__dirname, "..", "kanban-react", "dist")
+const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
 const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "autoCommit", "deleteWorktree", "skipPermissionAsking"] as const
 
@@ -412,10 +412,10 @@ export class PiKanbanServer {
       return new Response("index.html not found", { status: 404 })
     })
 
-    // Static file serving for kanban-vue assets
+    // Static file serving for kanban-react assets
     // Using Bun.file() which works with both regular files and embedded files in compiled binaries
     this.router.get("/assets/:file", async ({ params }) => {
-      const filePath = join(KANBAN_VUE_DIST, "assets", params.file)
+      const filePath = join(KANBAN_DIST, "assets", params.file)
       if (!(await embeddedFileExists(filePath))) {
         return new Response("Not found", { status: 404 })
       }

@@ -12,8 +12,8 @@ import { existsSync, readdirSync, statSync, readFileSync } from "fs"
 import { resolve, join, relative } from "path"
 
 const PROJECT_ROOT = resolve(import.meta.dir, "..")
-const KANBAN_VUE_DIR = join(PROJECT_ROOT, "src", "kanban-vue")
-const DIST_DIR = join(KANBAN_VUE_DIR, "dist")
+const KANBAN_DIR = join(PROJECT_ROOT, "src", "kanban-react")
+const DIST_DIR = join(KANBAN_DIR, "dist")
 const ASSETS_DIR = join(DIST_DIR, "assets")
 const OUTPUT_FILE = join(PROJECT_ROOT, "src", "server", "generated-assets.ts")
 
@@ -166,8 +166,8 @@ function generateAssetsModule(allFiles: AssetFile[]): string {
   lines.push("")
   lines.push("// Convenience accessors")
   lines.push("export function getEmbeddedAsset(path: string): EmbeddedAsset | undefined {")
-  lines.push("  // Normalize path - remove leading /kanban-vue/dist if present")
-  lines.push('  const normalized = path.replace(/^\\/kanban-vue\\/dist/, "")')
+  lines.push("  // Normalize path - remove leading /kanban-react/dist if present")
+  lines.push('  const normalized = path.replace(/^\\/kanban-react\\/dist/, "")')
   lines.push("  return embeddedAssets.get(normalized)")
   lines.push("}")
   lines.push("")
@@ -244,8 +244,8 @@ async function main(): Promise<void> {
     console.log("⚠️  Kanban dist not found, building first...")
     
     // Install and build
-    await $`cd ${KANBAN_VUE_DIR} && npm install`.quiet()
-    await $`cd ${KANBAN_VUE_DIR} && npm run build`.quiet()
+    await $`cd ${KANBAN_DIR} && npm install`.quiet()
+    await $`cd ${KANBAN_DIR} && npm run build`.quiet()
   }
   
   const allFiles: AssetFile[] = []

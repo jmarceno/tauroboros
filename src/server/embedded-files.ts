@@ -12,9 +12,9 @@ import { fileURLToPath } from "url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// Static file serving paths - Vue kanban only
-export const KANBAN_VUE_DIST = join(__dirname, "..", "kanban-vue", "dist")
-export const KANBAN_VUE_INDEX = join(KANBAN_VUE_DIST, "index.html")
+// Static file serving paths - React kanban
+export const KANBAN_DIST = join(__dirname, "..", "kanban-react", "dist")
+export const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
 // Try to import generated assets (will be available in compiled binary)
 let generatedAssets: typeof import("./generated-assets.ts") | null = null
@@ -30,7 +30,7 @@ try {
 
 /**
  * Extract asset key from full path
- * Converts "/path/to/kanban-vue/dist/assets/file.js" → "/assets/file.js"
+ * Converts "/path/to/kanban-react/dist/assets/file.js" → "/assets/file.js"
  */
 function extractAssetKey(path: string): string | null {
   // Look for /assets/ in the path
@@ -155,7 +155,7 @@ export async function getIndexHtml(): Promise<string | undefined> {
   
   // Fallback to filesystem
   try {
-    return await Bun.file(KANBAN_VUE_INDEX).text()
+    return await Bun.file(KANBAN_INDEX).text()
   } catch {
     return undefined
   }
