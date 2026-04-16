@@ -90,6 +90,7 @@ export function useApi() {
 
     // Task metadata
     getTaskRuns: (id: string) => request<TaskRun[]>(`/api/tasks/${id}/runs`),
+    getTaskSessions: (id: string) => request<Session[]>(`/api/tasks/${id}/sessions`),
     getTaskCandidates: (id: string) => request<Candidate[]>(`/api/tasks/${id}/candidates`),
     getBestOfNSummary: (id: string) => request<BestOfNSummary>(`/api/tasks/${id}/best-of-n-summary`),
     getReviewStatus: (id: string) => request<ReviewStatus>(`/api/tasks/${id}/review-status`),

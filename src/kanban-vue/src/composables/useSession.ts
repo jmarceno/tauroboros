@@ -68,7 +68,10 @@ export function useSession() {
   }
 
   const addMessage = (message: SessionMessage) => {
-    const existingIdx = messages.value.findIndex(m => m.id === message.id)
+    const existingIdx = messages.value.findIndex(m =>
+      m.id === message.id ||
+      (m.messageId && m.messageId === message.messageId)
+    )
     if (existingIdx >= 0) {
       messages.value[existingIdx] = message
     } else {

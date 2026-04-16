@@ -15,15 +15,6 @@ const emit = defineEmits<{
 const api = useApi()
 const sessionUsage = useSessionUsage()
 
-interface SessionData {
-  id: string
-  session: Session | null
-  messages: SessionMessage[]
-  taskRun: TaskRun | null
-  isLoading: boolean
-  error: string | null
-}
-
 const task = ref<Task | null>(null)
 const taskRuns = ref<TaskRun[]>([])
 const sessions = ref<Map<string, SessionData>>(new Map())
@@ -31,26 +22,25 @@ const activeSessionId = ref<string | null>(null)
 const timelineRef = ref<HTMLElement | null>(null)
 const showUsageDetails = ref<Record<string, boolean>>({})
 
-const loadToken = ref(0)
+const sessionLoadTokens = ref<Map<string, number>>(new Map())
 
 onMounted(async () => {
-  const token = ++loadToken.value
-
   try {
-    const [taskData, runsData] = await Promise.all([
+    const [taskData, sessionsData, runsData] = await Promise.all([
       api.getTask(props.taskId),
+      api.getTaskSessions(props.taskId),
       api.getTaskRuns(props.taskId)
     ])
-
-    if (token !== loadToken.value) return
 
     task.value = taskData
     taskRuns.value = runsData
 
     const sessionIds: string[] = []
 
-    if (taskData.sessionId) {
-      sessionIds.push(taskData.sessionId)
+    for (const session of sessionsData) {
+      if (!sessionIds.includes(session.id)) {
+        sessionIds.push(session.id)
+      }
     }
 
     for (const run of runsData) {
@@ -60,16 +50,17 @@ onMounted(async () => {
     }
 
     for (const sessionId of sessionIds) {
+      const sessionFromApi = sessionsData.find(s => s.id === sessionId)
       sessions.value.set(sessionId, {
         id: sessionId,
-        session: null,
+        session: sessionFromApi || null,
         messages: [],
         taskRun: runsData.find(r => r.sessionId === sessionId) || null,
         isLoading: true,
         error: null
       })
       sessionUsage.startWatching(sessionId)
-      loadSessionData(sessionId)
+      loadSessionMessages(sessionId)
     }
 
     if (sessionIds.length > 0) {
@@ -80,20 +71,17 @@ onMounted(async () => {
   }
 })
 
-const loadSessionData = async (sessionId: string) => {
-  const token = ++loadToken.value
+const loadSessionMessages = async (sessionId: string) => {
+  const token = (sessionLoadTokens.value.get(sessionId) || 0) + 1
+  sessionLoadTokens.value.set(sessionId, token)
   const sessionData = sessions.value.get(sessionId)
   if (!sessionData) return
 
   try {
-    const [session, messages] = await Promise.all([
-      api.getSession(sessionId),
-      api.getSessionMessages(sessionId, 1000)
-    ])
+    const messages = await api.getSessionMessages(sessionId, 1000)
 
-    if (token !== loadToken.value) return
+    if (token !== sessionLoadTokens.value.get(sessionId)) return
 
-    sessionData.session = session
     sessionData.messages = messages.sort((a, b) => {
       const ta = Number(a.timestamp || 0)
       const tb = Number(b.timestamp || 0)
@@ -102,7 +90,7 @@ const loadSessionData = async (sessionId: string) => {
     })
     sessionData.isLoading = false
   } catch (e) {
-    if (token !== loadToken.value) return
+    if (token !== sessionLoadTokens.value.get(sessionId)) return
     sessionData.error = e instanceof Error ? e.message : String(e)
     sessionData.isLoading = false
   }

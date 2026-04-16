@@ -1066,6 +1066,11 @@ export class PiKanbanServer {
       return json(this.db.getTaskRuns(params.id).map((run) => normalizeTaskRunForClient(run, sessionUrlFor)))
     })
 
+    this.router.get("/api/tasks/:id/sessions", ({ params, json }) => {
+      if (!this.db.getTask(params.id)) return json({ error: "Task not found" }, 404)
+      return json(this.db.getWorkflowSessionsByTask(params.id))
+    })
+
     this.router.get("/api/tasks/:id/candidates", ({ params, json }) => {
       if (!this.db.getTask(params.id)) return json({ error: "Task not found" }, 404)
       return json(this.db.getTaskCandidates(params.id))

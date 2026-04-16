@@ -461,9 +461,9 @@ ws.on('session_started', (payload) => {
 })
 
 ws.on('session_message_created', (payload) => {
-  const msg = payload as { sessionId: string }
+  const msg = payload as SessionMessage
   if (msg.sessionId === session.sessionId) {
-    session.addMessage(msg as unknown as Session)
+    session.addMessage(msg)
   }
 })
 
