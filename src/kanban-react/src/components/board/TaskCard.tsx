@@ -211,15 +211,16 @@ export const TaskCard = memo(function TaskCard({
     lastUpdate ? getUpdateAgeClass(lastUpdate) : null,
   [lastUpdate])
 
-  // Format usage data
-  const hasUsageData = usageData && (usageData.totalCost > 0 || usageData.totalTokens > 0)
+  // Format usage data - show for all non-backlog/non-template tasks with session
+  // even if token count is 0 (e.g., freshly started executing tasks)
+  const hasUsageData = usageData !== null
   const formattedTokens = useMemo(() =>
-    hasUsageData ? formatTokenCount(usageData!.totalTokens) : '',
-  [hasUsageData, usageData])
+    usageData ? formatTokenCount(usageData.totalTokens) : '',
+  [usageData])
 
   const formattedCost = useMemo(() =>
-    hasUsageData ? formatCost(usageData!.totalCost) : '',
-  [hasUsageData, usageData])
+    usageData ? formatCost(usageData.totalCost) : '',
+  [usageData])
 
   const isAnomalousReviewTask = useMemo(() =>
     task.status === 'review' &&

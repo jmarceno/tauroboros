@@ -36,6 +36,7 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
   const prevMessageCountRef = useRef(0)
   const lastActiveSessionIdRef = useRef<string | null>(null)
   const usageLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const loadedTaskIdRef = useRef<string | null>(null)
   const task = tasks.getTaskById(taskId)
 
   // Keep ref in sync with state to avoid stale closures
@@ -94,7 +95,12 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
     }
   }, [api])
 
+  // Load sessions data only once per taskId to prevent flickering
   useEffect(() => {
+    // Skip if we've already loaded for this taskId
+    if (loadedTaskIdRef.current === taskId) return
+    loadedTaskIdRef.current = taskId
+
     let cancelled = false
     const sessionIdsToCleanup: string[] = []
 
@@ -121,21 +127,36 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
           }
         }
 
-        const initialSessionsMap = new Map<string, SessionData>()
+        // Merge with existing sessions to preserve loaded messages
+        setSessions(prev => {
+          const next = new Map(prev)
 
-        for (const sessionId of sessionIds) {
-          const sessionFromApi = sessionsData.find(s => s.id === sessionId)
-          initialSessionsMap.set(sessionId, {
-            id: sessionId,
-            session: sessionFromApi || null,
-            messages: [],
-            taskRun: runsData.find(r => r.sessionId === sessionId) || null,
-            isLoading: true,
-            error: null
-          })
-          sessionUsage.startWatching(sessionId)
-          sessionIdsToCleanup.push(sessionId)
-        }
+          for (const sessionId of sessionIds) {
+            const sessionFromApi = sessionsData.find(s => s.id === sessionId)
+            const existing = next.get(sessionId)
+
+            // Only create new entry if doesn't exist, preserve existing messages
+            if (!existing) {
+              next.set(sessionId, {
+                id: sessionId,
+                session: sessionFromApi || null,
+                messages: [],
+                taskRun: runsData.find(r => r.sessionId === sessionId) || null,
+                isLoading: true,
+                error: null
+              })
+            } else {
+              // Update metadata but preserve messages and loading state
+              next.set(sessionId, {
+                ...existing,
+                session: sessionFromApi || existing.session,
+                taskRun: runsData.find(r => r.sessionId === sessionId) || existing.taskRun,
+              })
+            }
+          }
+
+          return next
+        })
 
         // Validate that activeSessionId still exists in new session list
         const currentActiveId = activeSessionIdRef.current
@@ -154,10 +175,18 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
           hasInitiallySetActiveSessionRef.current = true
         }
 
-        setSessions(initialSessionsMap)
-
+        // Load messages for sessions that don't have them yet
         for (const sessionId of sessionIds) {
-          loadSessionMessages(sessionId)
+          const existing = sessions.get(sessionId)
+          if (!existing || existing.messages.length === 0) {
+            loadSessionMessages(sessionId)
+          }
+        }
+
+        // Start watching all sessions
+        for (const sessionId of sessionIds) {
+          sessionUsage.startWatching(sessionId)
+          sessionIdsToCleanup.push(sessionId)
         }
       } catch (e) {
         const errorMsg = e instanceof Error ? e.message : String(e)
@@ -173,7 +202,7 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
       sessionIdsToCleanup.forEach(id => sessionUsage.stopWatching(id))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, api, loadSessionMessages])
+  }, [taskId]) // Only depend on taskId - use ref to prevent re-runs
 
   // Smart scroll: only scroll when message count increases for the active session
   useEffect(() => {

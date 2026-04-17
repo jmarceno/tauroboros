@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { ModalWrapper } from '../common/ModalWrapper'
 import { useTasksContext, useToastContext, useModelSearchContext } from '@/contexts/AppContext'
 import { useApi } from '@/hooks/useApi'
@@ -101,24 +101,31 @@ export function BatchEditModal({ taskIds, onClose }: BatchEditModalProps) {
 
   const [isLoading, setIsLoading] = useState(false)
 
-  const getCommonValue = useCallback(<K extends keyof Task>(tasks: Task[], key: K): Task[K] | undefined => {
-    if (tasks.length === 0) return undefined
-    const first = tasks[0][key]
-    for (let i = 1; i < tasks.length; i++) {
-      if (tasks[i][key] !== first) return undefined
-    }
-    return first
-  }, [])
+  // Ref to track if we've initialized the form to prevent flickering
+  const hasInitializedRef = useRef(false)
 
-  const allSame = useCallback(<K extends keyof Task>(tasks: Task[], key: K): boolean => {
-    if (tasks.length <= 1) return true
-    const first = tasks[0][key]
-    return tasks.every(t => t[key] === first)
-  }, [])
-
+  // Compute initial form state from selected tasks - only once on mount using ref
   useEffect(() => {
+    if (hasInitializedRef.current) return
+    hasInitializedRef.current = true
+
     const selectedTasks = tasks.tasks.filter(t => taskIds.includes(t.id))
     if (selectedTasks.length === 0) return
+
+    const getCommonValue = <K extends keyof Task>(selected: Task[], key: K): Task[K] | undefined => {
+      if (selected.length === 0) return undefined
+      const first = selected[0][key]
+      for (let i = 1; i < selected.length; i++) {
+        if (selected[i][key] !== first) return undefined
+      }
+      return first
+    }
+
+    const allSame = <K extends keyof Task>(selected: Task[], key: K): boolean => {
+      if (selected.length <= 1) return true
+      const first = selected[0][key]
+      return selected.every(t => t[key] === first)
+    }
 
     const newForm: FormState = {
       status: UNCHANGED(),
@@ -201,7 +208,8 @@ export function BatchEditModal({ taskIds, onClose }: BatchEditModalProps) {
     }
 
     setForm(newForm)
-  }, [taskIds, tasks.tasks, getCommonValue, allSame])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Empty deps - only run once on mount
 
   useEffect(() => {
     setBranchesLoading(true)
