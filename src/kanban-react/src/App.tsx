@@ -64,7 +64,7 @@ function App() {
   const multiSelectHook = useMultiSelect()
   const planningChatHook = usePlanningChat(wsHook)
   const sessionUsageHook = useSessionUsage()
-  const taskLastUpdateHook = useTaskLastUpdate()
+  const taskLastUpdateHook = useTaskLastUpdate(wsHook)
 
   // Workflow control
   const workflowControl = useWorkflowControl(

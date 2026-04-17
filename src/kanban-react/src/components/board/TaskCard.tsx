@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useCallback, memo } from 'react'
+import { useEffect, useMemo, useCallback, memo, useState, useRef } from 'react'
 import type { Task, BestOfNSummary } from '@/types'
 import type { useDragDrop } from '@/hooks/useDragDrop'
-import { useOptionsContext, useTasksContext, useSessionUsageContext, useTaskLastUpdateContext } from '@/contexts/AppContext'
-import { useTaskSessionUsage } from '@/hooks/useTaskSessionUsage'
+import { useOptionsContext, useTasksContext } from '@/contexts/AppContext'
+import { useApi } from '@/hooks/useApi'
 
 interface TaskCardProps {
   task: Task
@@ -27,6 +27,143 @@ interface TaskCardProps {
   onArchive: (e: React.MouseEvent) => void
   onViewRuns: () => void
   onContinueReviews: () => void
+}
+
+// Hook for lazy loading session data only when card is visible
+function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
+  const api = useApi()
+  const [isVisible, setIsVisible] = useState(false)
+  const [usageData, setUsageData] = useState<{ totalTokens: number; totalCost: number } | null>(null)
+  const [lastUpdate, setLastUpdate] = useState<number | null>(null)
+  const observerRef = useRef<IntersectionObserver | null>(null)
+  const cardRef = useRef<HTMLDivElement | null>(null)
+  const hasLoadedRef = useRef(false)
+
+  // Set up intersection observer
+  useEffect(() => {
+    if (!cardRef.current || !hasSession) return
+
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setIsVisible(true)
+        }
+      },
+      { threshold: 0.1, rootMargin: '100px' }
+    )
+
+    observerRef.current.observe(cardRef.current)
+
+    return () => {
+      observerRef.current?.disconnect()
+    }
+  }, [hasSession])
+
+  // Load data when card becomes visible
+  useEffect(() => {
+    if (!isVisible || !taskId || hasLoadedRef.current) return
+
+    hasLoadedRef.current = true
+
+    // Load session usage data
+    const loadUsage = async () => {
+      try {
+        const sessions = await api.getTaskSessions(taskId)
+        let totalTokens = 0
+        let totalCost = 0
+
+        // Load usage for each session with concurrency control
+        const usagePromises = sessions.map(async (session) => {
+          try {
+            const usage = await api.getSessionUsage(session.id)
+            return usage
+          } catch {
+            return null
+          }
+        })
+
+        const usages = await Promise.all(usagePromises)
+        usages.forEach((usage) => {
+          if (usage) {
+            totalTokens += usage.totalTokens
+            totalCost += usage.totalCost
+          }
+        })
+
+        setUsageData({ totalTokens, totalCost })
+      } catch {
+        // Silently fail
+      }
+    }
+
+    // Load last update timestamp
+    const loadLastUpdate = async () => {
+      try {
+        const response = await fetch(`/api/tasks/${taskId}/last-update`)
+        if (response.ok) {
+          const data = await response.json() as { lastUpdateAt: number | null }
+          if (data.lastUpdateAt !== null) {
+            setLastUpdate(data.lastUpdateAt)
+          }
+        }
+      } catch {
+        // Silently fail
+      }
+    }
+
+    // Execute both requests
+    loadUsage()
+    loadLastUpdate()
+  }, [isVisible, taskId, api])
+
+  return { cardRef, usageData, lastUpdate }
+}
+
+// Format helpers
+function formatRelativeTime(timestamp: number): string {
+  const diffMs = Date.now() - timestamp * 1000
+  const diffSec = Math.floor(diffMs / 1000)
+
+  if (diffSec < 10) return 'just now'
+  if (diffSec < 60) return `${diffSec}s ago`
+
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin}m ago`
+
+  const diffHour = Math.floor(diffMin / 60)
+  if (diffHour < 24) return `${diffHour}h ago`
+
+  const diffDay = Math.floor(diffHour / 24)
+  return `${diffDay}d ago`
+}
+
+function getUpdateAgeClass(timestamp: number): string {
+  const diffMs = Date.now() - timestamp * 1000
+  const diffMin = Math.floor(diffMs / 60000)
+
+  if (diffMin < 2) return 'recent'
+  if (diffMin < 30) return 'medium'
+  return 'old'
+}
+
+function formatTokenCount(count: number): string {
+  if (count >= 1000000) {
+    return (count / 1000000).toFixed(1) + 'M'
+  } else if (count >= 1000) {
+    return (count / 1000).toFixed(1) + 'k'
+  }
+  return count.toString()
+}
+
+function formatCost(cost: number): string {
+  if (cost >= 1) {
+    return '$' + cost.toFixed(2)
+  } else if (cost >= 0.01) {
+    return '$' + cost.toFixed(3)
+  } else if (cost > 0) {
+    return '$' + cost.toFixed(4)
+  }
+  return '$0'
 }
 
 export const TaskCard = memo(function TaskCard({
@@ -55,11 +192,6 @@ export const TaskCard = memo(function TaskCard({
 }: TaskCardProps) {
   const { options } = useOptionsContext()
   const { tasks } = useTasksContext()
-  const sessionUsage = useSessionUsageContext()
-  const taskLastUpdate = useTaskLastUpdateContext()
-
-  // Get aggregated usage across all task sessions
-  const taskUsage = useTaskSessionUsage(task.id)
 
   const hasLocalSession = useMemo(() =>
     !!task.sessionId &&
@@ -67,30 +199,27 @@ export const TaskCard = memo(function TaskCard({
     task.status !== 'template'
   , [task.sessionId, task.status])
 
-  // Start/stop watching current session usage (for real-time updates)
-  useEffect(() => {
-    if (task.sessionId) {
-      sessionUsage.startWatching(task.sessionId)
-      sessionUsage.loadSessionUsage(task.sessionId)
-    }
-    return () => {
-      if (task.sessionId) {
-        sessionUsage.stopWatching(task.sessionId)
-      }
-    }
-  }, [task.sessionId, sessionUsage])
+  // Lazy load session data only when card is visible
+  const { cardRef, usageData, lastUpdate } = useLazySessionData(task.id, hasLocalSession)
 
-  // Load last update timestamp when task has a session
-  useEffect(() => {
-    if (task.id && hasLocalSession) {
-      taskLastUpdate.loadLastUpdate(task.id)
-    }
-  }, [task.id, hasLocalSession, taskLastUpdate])
+  // Format last update
+  const lastUpdateFormatted = useMemo(() =>
+    lastUpdate ? formatRelativeTime(lastUpdate) : null,
+  [lastUpdate])
 
-  // Get last update timestamp for this task
-  const lastUpdateTimestamp = taskLastUpdate.getLastUpdate(task.id)
-  const lastUpdateFormatted = lastUpdateTimestamp ? taskLastUpdate.formatLastUpdate(lastUpdateTimestamp) : null
-  const lastUpdateAgeClass = lastUpdateTimestamp ? taskLastUpdate.getUpdateAgeClass(lastUpdateTimestamp) : null
+  const lastUpdateAgeClass = useMemo(() =>
+    lastUpdate ? getUpdateAgeClass(lastUpdate) : null,
+  [lastUpdate])
+
+  // Format usage data
+  const hasUsageData = usageData && (usageData.totalCost > 0 || usageData.totalTokens > 0)
+  const formattedTokens = useMemo(() =>
+    hasUsageData ? formatTokenCount(usageData!.totalTokens) : '',
+  [hasUsageData, usageData])
+
+  const formattedCost = useMemo(() =>
+    hasUsageData ? formatCost(usageData!.totalCost) : '',
+  [hasUsageData, usageData])
 
   const isAnomalousReviewTask = useMemo(() =>
     task.status === 'review' &&
@@ -191,9 +320,6 @@ export const TaskCard = memo(function TaskCard({
     }
   }, [task.status])
 
-  // Determine if we have usage data to display
-  const hasUsageData = taskUsage.totalCost > 0 || taskUsage.totalTokens > 0
-
   const handleDragStart = useCallback((e: React.DragEvent) => {
     if (!canDrag) return
     dragDrop.handleDragStart(task.id)
@@ -254,6 +380,7 @@ export const TaskCard = memo(function TaskCard({
 
   return (
     <div
+      ref={cardRef}
       className={`task-card ${isSelected ? 'dragging' : ''} ${isHighlighted ? 'highlighted' : ''}`}
       data-task-id={task.id}
       data-task-status={task.status}
@@ -502,15 +629,15 @@ export const TaskCard = memo(function TaskCard({
         <div className="flex items-center gap-2 mt-1 text-xs">
           <span
             className="px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full text-dark-text-secondary flex items-center gap-1"
-            title={`${taskUsage.formattedTokens} tokens across all sessions`}
+            title={`${formattedTokens} tokens across all sessions`}
           >
-            💰 {taskUsage.formattedCost}
+            💰 {formattedCost}
           </span>
           <span
             className="px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full text-dark-text-muted"
             title="Total tokens across all sessions"
           >
-            🪙 {taskUsage.formattedTokens}
+            🪙 {formattedTokens}
           </span>
         </div>
       )}
@@ -520,7 +647,7 @@ export const TaskCard = memo(function TaskCard({
         <div className="flex items-center gap-2 mt-1 text-xs">
           <span
             className={`px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full flex items-center gap-1 task-last-update-badge ${lastUpdateAgeClass}`}
-            title={`Last message received at ${new Date(lastUpdateTimestamp! * 1000).toLocaleString()}`}
+            title={`Last message received at ${new Date(lastUpdate! * 1000).toLocaleString()}`}
           >
             🕐 {lastUpdateFormatted}
           </span>
