@@ -9,7 +9,7 @@
  * All interactions are via Web UI only.
  */
 
-import { test, expect, Page } from '@playwright/test';
+import { test, expect, Page } from "@playwright/test';
 
 test.describe('Drag-Drop Code Style Restrictions', () => {
   test.beforeEach(async ({ page }) => {

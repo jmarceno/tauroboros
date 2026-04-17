@@ -20,7 +20,7 @@ function nowUnix(): number {
 
 /**
  * Utility to manage streaming message events (text_delta, thinking_delta)
- * and prevent duplicate persistence in the database. It buffers deltas 
+ * and prevent duplicate persistence in the database. It buffers deltas
  * and only persists fully formed messages.
  */
 export class MessageStreamer {
@@ -63,18 +63,18 @@ export class MessageStreamer {
   }
 
   /**
-   * Handles an event. Returns true if the event was processed as a streaming event 
+   * Handles an event. Returns true if the event was processed as a streaming event
    * (meaning it should NOT be passed to default persistence logic).
    */
   handleEvent(event: Record<string, unknown>): boolean {
     this.initSeqIfNeeded()
-    
+
     const eventType = event.type as string
 
     if (eventType === "message_update") {
       const msgEvent = event.assistantMessageEvent as Record<string, unknown> | undefined
       const msgEventType = msgEvent?.type as string
-      
+
       if (!msgEventType) return true // Handled (prevent raw persistence)
 
       if (!this.streamingState) {
@@ -98,7 +98,7 @@ export class MessageStreamer {
         if (delta) {
           state.hasThinking = true
           state.thinkingBuffer += delta
-          
+
           if (this.onSessionMessage) {
             this.onSessionMessage({
               id: state.seq,
@@ -111,10 +111,10 @@ export class MessageStreamer {
               role: "assistant",
               eventName: "assistant_thinking",
               messageType: "thinking",
-              contentJson: { 
-                thinking: state.thinkingBuffer, 
+              contentJson: {
+                thinking: state.thinkingBuffer,
                 streaming: true,
-                isThinking: true 
+                isThinking: true
               },
             } as SessionMessage)
           }
@@ -127,7 +127,7 @@ export class MessageStreamer {
         if (delta) {
           state.hasText = true
           state.textBuffer += delta
-          
+
           if (this.onSessionMessage) {
             const textId = state.hasThinking ? state.seq + 1 : state.seq
             this.onSessionMessage({
@@ -141,10 +141,10 @@ export class MessageStreamer {
               role: "assistant",
               eventName: "assistant_response",
               messageType: "assistant_response",
-              contentJson: { 
-                text: state.textBuffer, 
+              contentJson: {
+                text: state.textBuffer,
                 streaming: true,
-                isThinking: false 
+                isThinking: false
               },
             } as SessionMessage)
           }
@@ -186,10 +186,10 @@ export class MessageStreamer {
         role: "assistant",
         eventName: "assistant_thinking",
         messageType: "thinking",
-        contentJson: { 
-          thinking: state.thinkingBuffer, 
+        contentJson: {
+          thinking: state.thinkingBuffer,
           streaming: false,
-          isThinking: true 
+          isThinking: true
         },
       }
       const persistedThinking = this.db.createSessionMessage(thinkingMessageInput)
@@ -211,10 +211,10 @@ export class MessageStreamer {
         role: "assistant",
         eventName: "assistant_response",
         messageType: "assistant_response",
-        contentJson: { 
-          text: state.textBuffer, 
+        contentJson: {
+          text: state.textBuffer,
           streaming: false,
-          isThinking: false 
+          isThinking: false
         },
       }
       const persistedText = this.db.createSessionMessage(textMessageInput)

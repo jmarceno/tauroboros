@@ -182,7 +182,7 @@ export class PiKanbanServer {
     if (existsSync(extractedPath)) {
       return extractedPath
     }
-    
+
     // Fallback to source location (development mode)
     return join(__dirname, "..", "config", "container-profiles.json")
   }
@@ -197,7 +197,7 @@ export class PiKanbanServer {
     if (existsSync(extractedPath)) {
       return extractedPath
     }
-    
+
     // Fallback to source location (development mode)
     return join(this.projectRoot, "docker", subpath)
   }
@@ -529,12 +529,12 @@ export class PiKanbanServer {
 
       const normalized = normalizeTaskForClient(task, sessionUrlFor)
       broadcast({ type: "task_created", payload: normalized })
-      
+
       // Include warning if invalid dependencies were removed
       if (removedDeps.length > 0) {
-        return json({ 
-          ...normalized, 
-          warning: `Invalid dependencies auto-removed: ${removedDeps.join(', ')}` 
+        return json({
+          ...normalized,
+          warning: `Invalid dependencies auto-removed: ${removedDeps.join(', ')}`
         }, 201)
       }
       return json(normalized, 201)
@@ -985,12 +985,12 @@ export class PiKanbanServer {
         }
 
         const result = await this.onStopRun(params.id, { destructive })
-        
+
         // Ensure we always have a valid result
         if (!result || !result.run) {
           return json({ error: "Failed to stop run - no result from orchestrator" }, 500)
         }
-        
+
         if (destructive) {
           broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
         }
@@ -1055,7 +1055,7 @@ export class PiKanbanServer {
       // including those whose dependencies will be satisfied during this run
       const allTasks = this.db.getTasks()
       const validTaskIds = new Set(allTasks.map(t => t.id))
-      
+
       // Check for tasks with invalid dependencies and collect warnings
       const dependencyWarnings: string[] = []
       for (const task of allTasks) {
@@ -1064,10 +1064,10 @@ export class PiKanbanServer {
           dependencyWarnings.push(`Task "${task.name}" has invalid dependencies: ${invalidDeps.join(', ')} (auto-removed)`)
         }
       }
-      
+
       const allExecutable = getExecutionGraphTasks(allTasks)
       if (allExecutable.length === 0) {
-        return json({ 
+        return json({
           error: "No tasks in backlog",
           warnings: dependencyWarnings.length > 0 ? dependencyWarnings : undefined
         }, 400)
@@ -1076,7 +1076,7 @@ export class PiKanbanServer {
       const options = this.db.getOptions()
       // Pass the full task set to buildExecutionGraph
       const graph = buildExecutionGraph(allTasks, options.parallelTasks)
-      
+
       // Add dependency warnings to the response if any exist
       if (dependencyWarnings.length > 0) {
         graph.warnings = dependencyWarnings
@@ -1279,7 +1279,7 @@ export class PiKanbanServer {
       if (typeof task.planRevisionCount !== 'number') {
         throw new Error(`Task ${task.id} has invalid planRevisionCount: expected number, got ${typeof task.planRevisionCount}`)
       }
-      
+
       const updated = this.db.updateTask(task.id, {
         status: "backlog",
         awaitingPlanApproval: false,
@@ -1578,7 +1578,7 @@ export class PiKanbanServer {
 
       const body = await req.json()
       const planningSession = this.planningSessionManager.getSession(params.id)
-      
+
       if (!planningSession) {
         return json(createApiError("Planning session not active", ErrorCode.PLANNING_SESSION_NOT_ACTIVE), 400)
       }
@@ -1650,21 +1650,21 @@ export class PiKanbanServer {
       }
 
       const body = await req.json()
-      
+
       // Validate thinking level if provided
       if (body.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
         return json(createApiError("Invalid thinkingLevel. Allowed values: default, low, medium, high", ErrorCode.INVALID_THINKING_LEVEL), 400)
       }
-      
+
       const planningSession = this.planningSessionManager.getSession(params.id)
-      
+
       if (!planningSession || !planningSession.isActive()) {
         return json(createApiError("Planning session not active", ErrorCode.PLANNING_SESSION_NOT_ACTIVE), 400)
       }
 
       try {
         await planningSession.setModel(body.model)
-        
+
         // Also update thinking level if provided
         if (body.thinkingLevel && body.thinkingLevel !== "default") {
           await planningSession.setThinkingLevel(body.thinkingLevel)
@@ -1690,11 +1690,11 @@ export class PiKanbanServer {
       }
 
       const body = await req.json()
-      
+
       try {
         // Get the server port for API access
         const serverPort = this.getPort()
-        
+
         // Use Pi to create tasks from the conversation
         const planningSession = this.planningSessionManager.getSession(params.id)
         if (!planningSession) {
@@ -1726,10 +1726,10 @@ Please confirm when you've created the tasks, and provide a summary of what was 
         await planningSession.sendMessage({
           content: taskSetupPrompt,
         })
-        
+
         // If user provided tasks directly, use those (legacy support)
         const tasks = body.tasks as Array<{ name: string; prompt: string; status?: string; requirements?: string[] }> | undefined
-        
+
         if (tasks && tasks.length > 0) {
           const createdTasks = []
           for (const taskData of tasks) {
@@ -1955,16 +1955,16 @@ Please confirm when you've created the tasks, and provide a summary of what was 
         if (!existsSync(profilesPath)) {
           return json({ error: "Profiles not found" }, 404)
         }
-        
+
         const raw = readFileSync(profilesPath, "utf-8")
         const data = JSON.parse(raw)
         const profile = data.profiles.find((p: { id: string }) => p.id === params.profileId)
-        
+
         if (!profile) {
           return json({ error: `Profile '${params.profileId}' not found` }, 404)
         }
-        
-        return json({ 
+
+        return json({
           dockerfile: profile.dockerfileTemplate,
           image: profile.image,
           profile: { id: profile.id, name: profile.name, description: profile.description }
@@ -2005,11 +2005,11 @@ Please confirm when you've created the tasks, and provide a summary of what was 
           const raw = readFileSync(profilesPath, "utf-8")
           const data = JSON.parse(raw)
           const profile = data.profiles.find((p: { id: string }) => p.id === profileId)
-          
+
           if (!profile) {
             return json({ error: `Profile '${profileId}' not found` }, 404)
           }
-          
+
           dockerfile = profile.dockerfileTemplate
           // Use profile image name if not overridden
           if (!body.imageTag && profile.image) {
@@ -2058,7 +2058,7 @@ Please confirm when you've created the tasks, and provide a summary of what was 
             onStatus: (status) => {
               const finalStatus = status.status === "success" ? "success" : status.status === "failed" ? "failed" : "running"
               const allLogs = status.logs.join("\n")
-              
+
               this.db.updateContainerBuild(buildId, {
                 status: finalStatus,
                 completedAt: Math.floor(Date.now() / 1000),
@@ -2076,10 +2076,10 @@ Please confirm when you've created the tasks, and provide a summary of what was 
 
               broadcast({
                 type: "container_build_completed",
-                payload: { 
-                  buildId, 
-                  status: finalStatus, 
-                  logs: status.logs, 
+                payload: {
+                  buildId,
+                  status: finalStatus,
+                  logs: status.logs,
                   imageTag,
                   error: status.errorMessage,
                 },
@@ -2193,13 +2193,13 @@ Please confirm when you've created the tasks, and provide a summary of what was 
 
         // Merge and deduplicate
         const allImages = new Map<string, { tag: string; createdAt: number; source: "build" | "podman"; size?: string }>()
-        
+
         for (const img of buildImages) {
           // Get size from podman if available
           const podmanImg = podmanImagesMap.get(img.tag)
           allImages.set(img.tag, { ...img, size: podmanImg?.size })
         }
-        
+
         for (const img of podmanImages) {
           if (!allImages.has(img.tag)) {
             allImages.set(img.tag, { ...img, source: "podman" })
@@ -2270,14 +2270,14 @@ Please confirm when you've created the tasks, and provide a summary of what was 
     this.router.delete("/api/container/images/:tag", async ({ params, json }) => {
       try {
         const tag = decodeURIComponent(params.tag)
-        
+
         if (!tag) {
           return json({ error: "tag is required" }, 400)
         }
 
         // Check if image is used by any non-done tasks
         const tasks = this.db.getTasks()
-        const tasksUsing = tasks.filter(t => 
+        const tasksUsing = tasks.filter(t =>
           t.containerImage === tag && t.status !== "done"
         )
 
@@ -2292,7 +2292,7 @@ Please confirm when you've created the tasks, and provide a summary of what was 
         // Check if this is the last available image
         const allImages = await this.getPodmanImages()
         const piAgentImages = allImages.filter(img => img.tag.includes("pi-agent"))
-        
+
         if (piAgentImages.length <= 1) {
           return json({
             success: false,
@@ -2345,7 +2345,7 @@ Please confirm when you've created the tasks, and provide a summary of what was 
     }>
 
     const result: Array<{ tag: string; createdAt: number; size: string }> = []
-    
+
     for (const img of images) {
       if (!Array.isArray(img.Names)) {
         throw new Error(`Invalid podman image data: 'Names' must be an array, got ${typeof img.Names}`)
@@ -2364,7 +2364,7 @@ Please confirm when you've created the tasks, and provide a summary of what was 
         })
       }
     }
-    
+
     return result
   }
 
@@ -2389,7 +2389,7 @@ Please confirm when you've created the tasks, and provide a summary of what was 
     if (!tag || tag.trim() === "") {
       throw new Error("Cannot validate container image: tag is empty or whitespace-only")
     }
-    
+
     // Check container_builds table
     const builds = this.db.getContainerBuilds(100)
     const existsInBuilds = builds.some(b => b.imageTag === tag && b.status === "success")

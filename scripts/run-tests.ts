@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Run unit tests (excluding E2E tests)
- * 
+ *
  * E2E tests use Playwright and are run separately with: bun run test:e2e
  */
 

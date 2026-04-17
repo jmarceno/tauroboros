@@ -45,7 +45,7 @@ function pullResponseText(result: Record<string, unknown>): string {
 
 /**
  * PiRpcProcess - Event-driven RPC client for pi CLI
- * 
+ *
  * Architecture:
  * - Commands sent with unique string IDs
  * - Responses match commands by ID
@@ -129,7 +129,7 @@ export class PiRpcProcess {
     })
 
     this.abortController = new AbortController()
-    
+
     this.captureStdout()
     this.captureStderr()
   }
@@ -450,7 +450,7 @@ export class PiRpcProcess {
     // Project to session messages (unless disabled for planning sessions)
     if (!this.disableAutoSessionMessages) {
       const isStreamEvent = this.messageStreamer?.handleEvent(parsed) ?? false
-      
+
       if (!isStreamEvent) {
         const message = projectPiEventToSessionMessage({
           event: parsed,
@@ -472,7 +472,7 @@ export class PiRpcProcess {
         }
       }
     }
-    
+
     // Always call onOutput for response text
     const text = pullResponseText(parsed)
     if (text && this.onOutput) {

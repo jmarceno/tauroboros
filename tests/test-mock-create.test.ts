@@ -6,7 +6,7 @@ import { tmpdir } from "os"
 describe("Mock Creation Test", () => {
   it("should create a working mock", async () => {
     const root = mkdtempSync(join(tmpdir(), "test-"))
-    
+
     // Copy the exact mock from gap2 test
     const filePath = join(root, "mock-pi.js")
     const mockScript = `#!/usr/bin/env bun
@@ -61,11 +61,11 @@ rl.on("line", (line) => {
 `
     writeFileSync(filePath, mockScript, "utf-8")
     chmodSync(filePath, 0o755)
-    
+
     // Read it back and verify
     const content = readFileSync(filePath, "utf-8")
     console.log("Mock file created, length:", content.length)
-    
+
     // Test it by spawning
     const proc = Bun.spawn({
       cmd: ["bun", filePath],
@@ -73,23 +73,23 @@ rl.on("line", (line) => {
       stdout: "pipe",
       stderr: "pipe",
     })
-    
+
     // Send a test request
     proc.stdin.write('{"id":"req_1","type":"initialize"}\n')
-    
+
     // Read response
     const reader = proc.stdout.getReader()
     const result = await reader.read()
     const response = new TextDecoder().decode(result.value)
     console.log("Response:", response)
-    
+
     proc.kill()
-    
+
     const parsed = JSON.parse(response.trim())
     expect(parsed.type).toBe("response")
     expect(parsed.success).toBe(true)
     expect(parsed.command).toBe("initialize")
-    
+
     rmSync(root, { recursive: true, force: true })
   })
 })

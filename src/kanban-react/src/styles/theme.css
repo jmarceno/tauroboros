@@ -409,6 +409,19 @@
     box-shadow: 0 0 6px theme('colors.accent.primary');
   }
 
+  /* Log Panel Resize Handle */
+  .log-panel-resize-handle {
+    @apply absolute left-0 right-0 top-0 h-1 cursor-ns-resize z-50;
+    background: transparent;
+    transition: background 0.15s;
+  }
+
+  .log-panel-resize-handle:hover,
+  .log-panel-resize-handle:active {
+    background: theme('colors.accent.primary');
+    box-shadow: 0 0 6px theme('colors.accent.primary');
+  }
+
   /* Chat Toggle Button */
   .chat-toggle {
     @apply fixed top-1/2 -translate-y-1/2 right-0 flex flex-col items-center gap-1.5 p-4 px-2.5 bg-accent-primary text-dark-bg border-none cursor-pointer z-30 font-semibold text-xs rounded-l-lg;

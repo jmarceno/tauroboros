@@ -69,9 +69,9 @@ export class PiReviewSessionRunner {
 
   async run(input: RunReviewScratchInput): Promise<RunReviewScratchResult> {
     const rendered = this.db.renderPrompt("review", buildReviewVariables(input.task, input.reviewFilePath))
-    
+
     const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
-    
+
     const response = await this.sessions.executePrompt({
       taskId: input.task.id,
       sessionKind: "review_scratch",

@@ -1,22 +1,22 @@
 /**
  * E2E Test: REAL Multi-Task Workflow via Web UI ONLY
- * 
+ *
  * This is THE definitive end-to-end test that exercises the entire system.
- * 
+ *
  * Requirements:
  * - Container mode MUST be active (real pi-agent containers)
  * - 3 tasks with chained dependencies
  * - Plan mode + auto-approve
  * - Review enabled
- * 
-  * 
+ *
+  *
  * CRITICAL: This test uses ONLY Web UI interactions - no API calls except
  * for initial test configuration.
  */
 
-import { test, expect, Page } from '@playwright/test';
-import { execSync } from 'child_process';
-import { BASE_IMAGES } from '../../src/config/base-images.ts';
+import { test, expect, Page } from "@playwright/test';
+import { execSync } from "child_process';
+import { BASE_IMAGES } from "../../src/config/base-images.ts';
 
 test.describe('REAL Multi-Task Workflow', () => {
   test.setTimeout(600000); // 10 minutes for full workflow
@@ -24,10 +24,10 @@ test.describe('REAL Multi-Task Workflow', () => {
   // Pre-test check: Container requirements MUST be met
   test.beforeAll(() => {
     console.log('[TEST SETUP] Verifying container infrastructure...');
-    
+
     let hasPodman = false;
     let hasPiAgentImage = false;
-    
+
     try {
       execSync('podman --version', { stdio: 'pipe' });
       hasPodman = true;
@@ -35,7 +35,7 @@ test.describe('REAL Multi-Task Workflow', () => {
     } catch {
       console.error('  ❌ Podman not found');
     }
-    
+
     if (hasPodman) {
       try {
         const result = execSync(`podman images ${BASE_IMAGES.piAgent} -q`, { encoding: 'utf-8', stdio: 'pipe' });
@@ -49,13 +49,13 @@ test.describe('REAL Multi-Task Workflow', () => {
         console.error(`  ❌ ${BASE_IMAGES.piAgent} image not found`);
       }
     }
-    
+
     if (!hasPodman || !hasPiAgentImage) {
       console.error('\n❌ REAL WORKFLOW TEST FAILED: Container infrastructure not available');
       console.error('   Run: bun run container:setup');
       throw new Error('Container infrastructure not available. Test cannot proceed.');
     }
-    
+
     console.log('  ✓ All container requirements met\n');
   });
 
@@ -67,16 +67,16 @@ test.describe('REAL Multi-Task Workflow', () => {
     page.on('pageerror', err => {
       console.log(`[BROWSER ERROR] ${err.message}`);
     });
-    
+
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     // Give Vue app time to mount
     await page.waitForTimeout(2000);
-    
+
     // Debug: Check initial task count
     const initialCount = await page.locator('.task-card').count();
     console.log(`[TEST] Initial task count: ${initialCount}`);
-    
+
     // Configure options for reliable test execution
     await configureTestOptions(page);
   });
@@ -89,7 +89,7 @@ test.describe('REAL Multi-Task Workflow', () => {
         // Stop any running workflow first
         await fetch('/api/stop', { method: 'POST' });
         await new Promise(r => setTimeout(r, 1000));
-        
+
         // Get all tasks and delete them
         const response = await fetch('/api/tasks');
         const tasks = await response.json();
@@ -338,12 +338,12 @@ test.describe('REAL Multi-Task Workflow', () => {
 
   /**
    * Helper: Get task status from UI ONLY
-   * 
+   *
    * Checks the task card's data-task-status attribute first,
    * then falls back to checking which column contains the task.
    * Note: "stuck" and "failed" tasks appear in the "review" column visually,
    * so we check the card's data-task-status attribute for accurate status.
-   * 
+   *
    * STRICT REQUIREMENT: NO API calls - Web UI only
    */
   async function getTaskStatusFromUI(page: Page, taskName: string): Promise<string> {
@@ -353,19 +353,19 @@ test.describe('REAL Multi-Task Workflow', () => {
       const status = await taskCard.getAttribute('data-task-status');
       if (status) return status;
     }
-    
+
     // Fallback: check which column the task appears in
     const columns = ['template', 'backlog', 'executing', 'review', 'code-style', 'done'];
-    
+
     for (const column of columns) {
       const columnElement = page.locator(`[data-status="${column}"]`);
       const taskInColumn = columnElement.locator(`text=${taskName}`).first();
-      
+
       if (await taskInColumn.isVisible().catch(() => false)) {
         return column;
       }
     }
-    
+
     return 'unknown';
   }
 
@@ -375,14 +375,14 @@ test.describe('REAL Multi-Task Workflow', () => {
   async function startWorkflowViaUI(page: Page) {
     const startButton = page.locator('button').filter({ hasText: 'Start Workflow' }).first();
     await expect(startButton).toBeVisible({ timeout: 10000 });
-    
+
     // Check if button is enabled
     const isDisabled = await startButton.isDisabled().catch(() => false);
     console.log(`[UI] Start Workflow button disabled: ${isDisabled}`);
-    
+
     await startButton.click();
     console.log('[UI] Start Workflow clicked');
-    
+
     // Wait for either the modal to appear or execution to start
     await page.waitForTimeout(2000);
   }
@@ -465,14 +465,14 @@ End of Log`,
 
     while (Date.now() - startTime < maxWaitTime) {
       let statusChanged = false;
-      
+
       // Approve execution graph modal if shown (during monitoring)
       await approveExecutionGraphModal(page);
-      
+
       // Check each task's status via UI
       for (const taskName of taskNames) {
         const newStatus = await getTaskStatusFromUI(page, taskName);
-        
+
         if (newStatus !== taskStatuses[taskName]) {
           console.log(`[TEST] ${taskName}: ${taskStatuses[taskName]} -> ${newStatus}`);
           taskStatuses[taskName] = newStatus;

@@ -27,9 +27,9 @@ describe("CodeStyleSessionRunner", () => {
     it("should create its own PiSessionManager when no external manager is provided", () => {
       const root = createTempDir("tauroboros-codestyle-ctor-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       const runner = new CodeStyleSessionRunner(db, DEFAULT_INFRASTRUCTURE_SETTINGS)
-      
+
       expect(runner).toBeDefined()
       db.close()
     })
@@ -37,17 +37,17 @@ describe("CodeStyleSessionRunner", () => {
     it("should use external PiSessionManager when provided", () => {
       const root = createTempDir("tauroboros-codestyle-ctor-external-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       // Create external session manager
       const externalManager = new PiSessionManager(db)
-      
+
       const runner = new CodeStyleSessionRunner(
         db,
         DEFAULT_INFRASTRUCTURE_SETTINGS,
         undefined,
         externalManager
       )
-      
+
       expect(runner).toBeDefined()
       db.close()
     })
@@ -55,9 +55,9 @@ describe("CodeStyleSessionRunner", () => {
     it("should work without settings (undefined settings)", () => {
       const root = createTempDir("tauroboros-codestyle-ctor-no-settings-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       const runner = new CodeStyleSessionRunner(db, undefined)
-      
+
       expect(runner).toBeDefined()
       db.close()
     })
@@ -67,7 +67,7 @@ describe("CodeStyleSessionRunner", () => {
     it("should execute code style check and return success result", async () => {
       const root = createTempDir("tauroboros-codestyle-success-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       // Create a mock session manager that returns successful response
       const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
         const session = db.createWorkflowSession({
@@ -117,7 +117,7 @@ describe("CodeStyleSessionRunner", () => {
       expect(result.responseText).toBe("Code style check passed. All files comply with the style guidelines.")
       expect(result.sessionId).toBe("test-session-1")
       expect(result.errorMessage).toBeUndefined()
-      
+
       // Verify the session manager was called with correct parameters
       expect(mockExecutePrompt).toHaveBeenCalledTimes(1)
       const callArg = mockExecutePrompt.mock.calls[0][0] as {
@@ -131,19 +131,19 @@ describe("CodeStyleSessionRunner", () => {
       expect(callArg.sessionKind).toBe("task_run_reviewer")
       expect(callArg.model).toBe("anthropic/claude-sonnet-4-20250514")
       expect(callArg.thinkingLevel).toBe("default")
-      
+
       db.close()
     })
 
     it("should use custom code style prompt when provided", async () => {
       const root = createTempDir("tauroboros-codestyle-custom-prompt-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       let capturedPrompt: string | undefined
       const mockExecutePrompt = mock(async (input: unknown): Promise<ExecuteSessionPromptResult> => {
         const execInput = input as { promptText: string }
         capturedPrompt = execInput.promptText
-        
+
         const session = db.createWorkflowSession({
           id: "test-session-2",
           taskId: "task-2",
@@ -189,23 +189,23 @@ describe("CodeStyleSessionRunner", () => {
       await runner.run(input)
 
       expect(capturedPrompt).toBe(customPrompt)
-      
+
       // Verify high thinking level is passed through
       const callArg = mockExecutePrompt.mock.calls[0][0] as { thinkingLevel: string }
       expect(callArg.thinkingLevel).toBe("high")
-      
+
       db.close()
     })
 
     it("should fall back to DEFAULT_CODE_STYLE_PROMPT when codeStylePrompt is empty", async () => {
       const root = createTempDir("tauroboros-codestyle-default-prompt-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       let capturedPrompt: string | undefined
       const mockExecutePrompt = mock(async (input: unknown): Promise<ExecuteSessionPromptResult> => {
         const execInput = input as { promptText: string }
         capturedPrompt = execInput.promptText
-        
+
         const session = db.createWorkflowSession({
           id: "test-session-3",
           taskId: "task-3",
@@ -252,14 +252,14 @@ describe("CodeStyleSessionRunner", () => {
       expect(capturedPrompt).toBe(DEFAULT_CODE_STYLE_PROMPT)
       expect(capturedPrompt).toContain("code style enforcement")
       expect(capturedPrompt).toContain("STANDARD RULES")
-      
+
       db.close()
     })
 
     it("should call onOutput callback when provided", async () => {
       const root = createTempDir("tauroboros-codestyle-callbacks-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       const onOutputMock = mock((chunk: string) => {
         console.log(`Output: ${chunk}`)
       })
@@ -270,7 +270,7 @@ describe("CodeStyleSessionRunner", () => {
 
       const mockExecutePrompt = mock(async (input: unknown): Promise<ExecuteSessionPromptResult> => {
         const execInput = input as { onOutput?: (chunk: string) => void; onSessionCreated?: () => void }
-        
+
         // Simulate calling the callbacks
         if (execInput.onOutput) {
           execInput.onOutput("Processing files...")
@@ -278,7 +278,7 @@ describe("CodeStyleSessionRunner", () => {
         if (execInput.onSessionCreated) {
           execInput.onSessionCreated({} as unknown as import("../src/runtime/pi-process.ts").PiRpcProcess, {} as unknown as import("../src/db/types.ts").PiWorkflowSession)
         }
-        
+
         const session = db.createWorkflowSession({
           id: "test-session-callbacks",
           taskId: "task-callbacks",
@@ -325,25 +325,25 @@ describe("CodeStyleSessionRunner", () => {
       await runner.run(input)
 
       // The callbacks should be passed through to executePrompt
-      const callArg = mockExecutePrompt.mock.calls[0][0] as { 
+      const callArg = mockExecutePrompt.mock.calls[0][0] as {
         onOutput?: (chunk: string) => void
         onSessionCreated?: () => void
       }
       expect(callArg.onOutput).toBe(onOutputMock)
       expect(callArg.onSessionCreated).toBe(onSessionCreatedMock)
-      
+
       db.close()
     })
 
     it("should use container image from settings when task has no specific image", async () => {
       const root = createTempDir("tauroboros-codestyle-image-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       let capturedImage: string | null | undefined
       const mockExecutePrompt = mock(async (input: unknown): Promise<ExecuteSessionPromptResult> => {
         const execInput = input as { containerImage?: string | null }
         capturedImage = execInput.containerImage
-        
+
         const session = db.createWorkflowSession({
           id: "test-session-image",
           taskId: "task-image",
@@ -399,7 +399,7 @@ describe("CodeStyleSessionRunner", () => {
       await runner.run(input)
 
       expect(capturedImage).toBe("custom-image:v1")
-      
+
       db.close()
     })
   })
@@ -408,7 +408,7 @@ describe("CodeStyleSessionRunner", () => {
     it("should return failure when session status is not completed", async () => {
       const root = createTempDir("tauroboros-codestyle-failure-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
         const session = db.createWorkflowSession({
           id: "test-session-fail",
@@ -422,7 +422,7 @@ describe("CodeStyleSessionRunner", () => {
           status: "failed",
           errorMessage: "Code style violations found",
         })
-        
+
         return {
           session,
           responseText: "Issues found: trailing whitespace in file.ts",
@@ -463,14 +463,14 @@ describe("CodeStyleSessionRunner", () => {
       expect(result.responseText).toBe("Issues found: trailing whitespace in file.ts")
       expect(result.sessionId).toBe("test-session-fail")
       expect(result.errorMessage).toBe("Code style violations found")
-      
+
       db.close()
     })
 
     it("should handle throw from session manager", async () => {
       const root = createTempDir("tauroboros-codestyle-throw-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
         throw new Error("Session execution failed: connection timeout")
       })
@@ -505,14 +505,14 @@ describe("CodeStyleSessionRunner", () => {
 
       // Should throw the error from session manager
       await expect(runner.run(input)).rejects.toThrow("Session execution failed: connection timeout")
-      
+
       db.close()
     })
 
     it("should handle unknown session status gracefully", async () => {
       const root = createTempDir("tauroboros-codestyle-unknown-status-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
         const session = db.createWorkflowSession({
           id: "test-session-unknown",
@@ -521,7 +521,7 @@ describe("CodeStyleSessionRunner", () => {
           cwd: root,
           status: "active", // Non-completed, non-failed status
         })
-        
+
         return {
           session,
           responseText: "Session still active",
@@ -563,7 +563,7 @@ describe("CodeStyleSessionRunner", () => {
       expect(result.responseText).toBe("Session still active")
       expect(result.sessionId).toBe("test-session-unknown")
       expect(result.errorMessage).toBeUndefined()
-      
+
       db.close()
     })
   })
@@ -572,11 +572,11 @@ describe("CodeStyleSessionRunner", () => {
     it("should pass all required parameters to session manager", async () => {
       const root = createTempDir("tauroboros-codestyle-params-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       const capturedParams: unknown[] = []
       const mockExecutePrompt = mock(async (input: unknown): Promise<ExecuteSessionPromptResult> => {
         capturedParams.push(input)
-        
+
         const session = db.createWorkflowSession({
           id: "test-session-params",
           taskId: "task-params",
@@ -621,7 +621,7 @@ describe("CodeStyleSessionRunner", () => {
       await runner.run(input)
 
       expect(mockExecutePrompt).toHaveBeenCalledTimes(1)
-      
+
       const params = capturedParams[0] as {
         taskId: string
         sessionKind: string
@@ -633,7 +633,7 @@ describe("CodeStyleSessionRunner", () => {
         promptText: string
         containerImage?: string | null
       }
-      
+
       expect(params.taskId).toBe("task-params")
       expect(params.sessionKind).toBe("task_run_reviewer")
       expect(params.cwd).toBe(root)
@@ -642,7 +642,7 @@ describe("CodeStyleSessionRunner", () => {
       expect(params.model).toBe("openai/gpt-4")
       expect(params.thinkingLevel).toBe("low")
       expect(params.promptText).toBe("Custom prompt")
-      
+
       db.close()
     })
   })
@@ -651,7 +651,7 @@ describe("CodeStyleSessionRunner", () => {
     it("should return result with all required fields on success", async () => {
       const root = createTempDir("tauroboros-codestyle-result-success-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
         const session = db.createWorkflowSession({
           id: "session-success",
@@ -701,25 +701,25 @@ describe("CodeStyleSessionRunner", () => {
       expect(result).toHaveProperty("responseText")
       expect(result).toHaveProperty("sessionId")
       expect(result).toHaveProperty("errorMessage")
-      
+
       // Verify types
       expect(typeof result.success).toBe("boolean")
       expect(typeof result.responseText).toBe("string")
       expect(typeof result.sessionId).toBe("string")
-      
+
       // On success, errorMessage should be undefined
       expect(result.success).toBe(true)
       expect(result.errorMessage).toBeUndefined()
       expect(result.responseText).toBe("All code style checks passed successfully!")
       expect(result.sessionId).toBe("session-success")
-      
+
       db.close()
     })
 
     it("should return result with all required fields on failure", async () => {
       const root = createTempDir("tauroboros-codestyle-result-failure-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
-      
+
       const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
         const session = db.createWorkflowSession({
           id: "session-failure",
@@ -732,7 +732,7 @@ describe("CodeStyleSessionRunner", () => {
           status: "failed",
           errorMessage: "Trailing whitespace detected in 3 files",
         })
-        
+
         return {
           session,
           responseText: "Code style issues found",
@@ -774,13 +774,13 @@ describe("CodeStyleSessionRunner", () => {
       expect(result).toHaveProperty("responseText")
       expect(result).toHaveProperty("sessionId")
       expect(result).toHaveProperty("errorMessage")
-      
+
       // On failure
       expect(result.success).toBe(false)
       expect(result.errorMessage).toBe("Trailing whitespace detected in 3 files")
       expect(result.responseText).toBe("Code style issues found")
       expect(result.sessionId).toBe("session-failure")
-      
+
       db.close()
     })
   })

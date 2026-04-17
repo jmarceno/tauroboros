@@ -39,19 +39,19 @@ rl.on("line", (line) => {
   try { request = JSON.parse(line) } catch { return }
   const id = request?.id
   const type = request?.type
-  
+
   // Handle set_model command
   if (type === "set_model") {
     console.log(JSON.stringify({ id, type: "response", command: "set_model", success: true, data: { provider: request.provider, id: request.modelId } }))
     return
   }
-  
+
   // Handle set_thinking_level command
   if (type === "set_thinking_level") {
     console.log(JSON.stringify({ id, type: "response", command: "set_thinking_level", success: true }))
     return
   }
-  
+
   // Handle prompt command - returns immediately, then sends events
   if (type === "prompt") {
     // Send success response first
@@ -63,43 +63,43 @@ rl.on("line", (line) => {
     console.log(JSON.stringify({ type: "agent_end" }))
     return
   }
-  
+
   // Handle get_messages command
   if (type === "get_messages") {
-    console.log(JSON.stringify({ 
-      id, 
-      type: "response", 
-      command: "get_messages", 
-      success: true, 
-      data: { 
+    console.log(JSON.stringify({
+      id,
+      type: "response",
+      command: "get_messages",
+      success: true,
+      data: {
         messages: [
           { role: "user", text: "test prompt" },
           { role: "assistant", text: "Local session viewer execution output" }
-        ] 
-      } 
+        ]
+      }
     }))
     return
   }
-  
+
   // Handle get_state command
   if (type === "get_state") {
-    console.log(JSON.stringify({ 
-      id, 
-      type: "response", 
-      command: "get_state", 
-      success: true, 
-      data: { 
+    console.log(JSON.stringify({
+      id,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
         isStreaming: false,
         messageCount: 2,
         thinkingLevel: "medium",
         steeringMode: "all",
         followUpMode: "all",
         autoCompactionEnabled: false
-      } 
+      }
     }))
     return
   }
-  
+
   // Default response for unknown commands
   console.log(JSON.stringify({ id, type: "response", command: type || "unknown", success: true, data: {} }))
 })

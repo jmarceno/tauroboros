@@ -51,14 +51,14 @@ export function useSessionUsage() {
     // Use cached data if fresh (less than 3 seconds old) and not forcing refresh
     const lastFetch = lastFetchTime.value[sessionId] || 0
     const isFresh = Date.now() - lastFetch < POLL_INTERVAL
-    
+
     if (!forceRefresh && usageCache.value[sessionId] && isFresh) {
       return usageCache.value[sessionId]
     }
 
     isLoading.value = true
     error.value = null
-    
+
     try {
       const usage = await api.getSessionUsage(sessionId)
       usageCache.value[sessionId] = usage

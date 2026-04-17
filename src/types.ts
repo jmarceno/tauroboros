@@ -326,14 +326,14 @@ export interface ReviewResult {
 
 // Session message logging types
 export type MessageRole = "user" | "assistant" | "system" | "tool"
-export type MessageType = 
-  | "text" 
-  | "tool_call" 
-  | "tool_result" 
-  | "error" 
+export type MessageType =
+  | "text"
+  | "tool_call"
+  | "tool_result"
+  | "error"
   | "step_start"
-  | "step_finish" 
-  | "session_start" 
+  | "step_finish"
+  | "session_start"
   | "session_end"
   | "session_status"
   | "thinking"

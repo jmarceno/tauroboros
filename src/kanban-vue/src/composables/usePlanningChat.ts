@@ -44,10 +44,10 @@ export function usePlanningChat() {
 
   // Track pending messages per session for auto-retry
   const pendingMessages = new Map<string, PendingMessage[]>()
-  
+
   // Track if a reconnect is in progress per session to prevent race conditions
   const reconnectingSessions = new Set<string>()
-  
+
   // Track sending state per session for race condition prevention
   const sendingSessions = new Set<string>()
 
@@ -131,8 +131,8 @@ export function usePlanningChat() {
    * This handles the actual send/retry flow without optimistic UI updates.
    */
   const attemptSendMessage = async (
-    sessionId: string, 
-    content: string, 
+    sessionId: string,
+    content: string,
     attachments?: ContextAttachment[],
     isRetry = false
   ): Promise<void> => {
@@ -148,7 +148,7 @@ export function usePlanningChat() {
 
     // Mark as sending
     sendingSessions.add(sessionId)
-    
+
     if (!isRetry) {
       session.isSending = true
       session.error = null
@@ -158,14 +158,14 @@ export function usePlanningChat() {
 
     try {
       await api.sendPlanningMessage(backendSessionId, content, attachments)
-      
+
       // Success - clear sending state
       sendingSessions.delete(sessionId)
       session.isSending = false
       session.error = null
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : 'Failed to send message'
-      
+
       // Check if the error indicates session is not active
       const isSessionNotActive = isErrorCode(e, ErrorCode.PLANNING_SESSION_NOT_ACTIVE) ||
         detectErrorCodeFromMessage(errorMsg) === ErrorCode.PLANNING_SESSION_NOT_ACTIVE
@@ -186,7 +186,7 @@ export function usePlanningChat() {
         }
 
         reconnectingSessions.add(sessionId)
-        
+
         // Set reconnecting state
         session.isReconnecting = true
         session.error = 'Session not active. Reconnecting automatically...'
@@ -198,16 +198,16 @@ export function usePlanningChat() {
             model: session.session.model,
             thinkingLevel: session.session.thinkingLevel as ThinkingLevel | undefined,
           })
-          
+
           reconnectingSessions.delete(sessionId)
-          
+
           session.session = reconnectedSession
           session.isReconnecting = false
           session.error = null
 
           // Retry sending the message after successful reconnect
           await api.sendPlanningMessage(reconnectedSession.id, content, attachments)
-          
+
           // Success after retry - clear sending state
           sendingSessions.delete(sessionId)
           session.isSending = false
@@ -215,7 +215,7 @@ export function usePlanningChat() {
           // Process any queued messages
           const pending = pendingMessages.get(sessionId) || []
           pendingMessages.delete(sessionId)
-          
+
           for (const queuedMsg of pending) {
             await attemptSendMessage(sessionId, queuedMsg.content, queuedMsg.attachments, true)
           }
@@ -223,7 +223,7 @@ export function usePlanningChat() {
           // Reconnect failed - clear all states and re-throw
           reconnectingSessions.delete(sessionId)
           sendingSessions.delete(sessionId)
-          
+
           const reconnectErrorMsg = reconnectError instanceof Error ? reconnectError.message : 'Failed to reconnect session'
           session.error = `Session not active. Reconnect failed: ${reconnectErrorMsg}`
           session.isReconnecting = false
@@ -258,7 +258,7 @@ export function usePlanningChat() {
 
     // If session is not active, queue the message and trigger reconnect first
     const isSessionNotActive = !session.session || session.error?.includes('not active')
-    
+
     if (isSessionNotActive || session.isReconnecting) {
       // Queue the message
       const pending = pendingMessages.get(sessionId) || []
@@ -318,16 +318,16 @@ export function usePlanningChat() {
         model,
         thinkingLevel,
       })
-      
+
       reconnectingSessions.delete(sessionId)
-      
+
       session.session = reconnectedSession
       session.isLoading = false
       session.isReconnecting = false
       return reconnectedSession
     } catch (e) {
       reconnectingSessions.delete(sessionId)
-      
+
       session.error = e instanceof Error ? e.message : 'Failed to reconnect session'
       session.isLoading = false
       session.isReconnecting = false
@@ -371,12 +371,12 @@ export function usePlanningChat() {
       if (session.session?.id) {
         api.closePlanningSession(session.session.id).catch(console.error)
       }
-      
+
       // Clean up refs
       pendingMessages.delete(sessionId)
       reconnectingSessions.delete(sessionId)
       sendingSessions.delete(sessionId)
-      
+
       sessions.value.splice(idx, 1)
     }
 
@@ -401,17 +401,17 @@ export function usePlanningChat() {
     const session = sessions.value.find(s => s.id === sessionId)
     if (!session) return
 
-    const existingIdx = session.messages.findIndex(m => 
-      m.id === message.id || 
+    const existingIdx = session.messages.findIndex(m =>
+      m.id === message.id ||
       (m.messageId && m.messageId === message.messageId)
     )
-    
+
     if (existingIdx >= 0) {
       session.messages[existingIdx] = message
     } else {
       session.messages.push(message)
     }
-    
+
     session.messages.sort((a, b) => {
       const sa = Number(a.seq || 0)
       const sb = Number(b.seq || 0)

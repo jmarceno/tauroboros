@@ -41,7 +41,7 @@ export function useApi() {
         let errorMessage = `Request failed (${res.status})`
         let errorCode: string | undefined
         let errorDetails: Record<string, unknown> | undefined
-        
+
         try {
           const parsed = JSON.parse(text) as ApiError
           if (parsed?.error) errorMessage = parsed.error
@@ -51,7 +51,7 @@ export function useApi() {
         } catch {
           errorMessage = text || errorMessage
         }
-        
+
         throw new ApiErrorResponse(errorMessage, res.status, errorCode, errorDetails)
       }
       return res.status === 204 ? undefined as T : res.json()
@@ -207,14 +207,14 @@ export function useApi() {
     }),
     getPlanningSessionMessages: (id: string, limit = 500) => request<SessionMessage[]>(`/api/planning/sessions/${id}/messages?limit=${limit}`),
     getPlanningSessionTimeline: (id: string) => request(`/api/planban/sessions/${id}/timeline`),
-    
+
     // Send message to planning session
     sendPlanningMessage: (id: string, content: string, contextAttachments?: Array<{ type: 'file' | 'screenshot' | 'task'; name: string; content?: string; filePath?: string; taskId?: string }>) =>
       request<{ ok: boolean }>(`/api/planning/sessions/${id}/messages`, {
         method: 'POST',
         body: JSON.stringify({ content, contextAttachments }),
       }),
-    
+
     createTasksFromPlanning: (id: string, tasks?: Array<{ name: string; prompt: string; status?: string; requirements?: string[] }>) =>
       request<{ tasks?: Task[]; count?: number; message?: string }>(`/api/planning/sessions/${id}/create-tasks`, {
         method: 'POST',

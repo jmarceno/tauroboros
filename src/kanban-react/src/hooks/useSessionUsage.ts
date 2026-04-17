@@ -64,7 +64,7 @@ export function useSessionUsage() {
   const loadSessionUsage = useCallback(async (sessionId: string, forceRefresh = false): Promise<SessionUsageRollup | null> => {
     const lastFetch = lastFetchTimeRef.current[sessionId] || 0
     const isFresh = Date.now() - lastFetch < POLL_INTERVAL
-    
+
     // Check cache without using it as dependency
     if (!forceRefresh) {
       const cached = usageCache[sessionId]
@@ -75,7 +75,7 @@ export function useSessionUsage() {
 
     setIsLoading(true)
     setError(null)
-    
+
     try {
       const usage = await getSessionUsage(sessionId)
       setUsageCache(prev => ({ ...prev, [sessionId]: usage }))

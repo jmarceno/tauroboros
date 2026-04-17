@@ -90,7 +90,7 @@ async function createInitialSettings(
 
 export async function main(): Promise<void> {
   const projectRoot = findProjectRoot()
-  
+
   // Extract embedded resources (extensions and skills) to .pi/
   // This works in both binary mode (extracts embedded) and source mode (copies from source)
   const extractionResult = extractEmbeddedResources(projectRoot)
@@ -99,7 +99,7 @@ export async function main(): Promise<void> {
   } else if (extractionResult.mode === "source") {
     console.log(`[tauroboros] Copied ${extractionResult.extensions} extensions, ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from source`)
   }
-  
+
   const args = parseCliArgs(process.argv.slice(2))
 
   const settingsPath = resolve(projectRoot, ".tauroboros", "settings.json")

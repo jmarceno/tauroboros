@@ -45,10 +45,10 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
 
   // Track pending messages per session for auto-retry
   const pendingMessagesRef = useRef<Map<string, PendingMessage[]>>(new Map())
-  
+
   // Track if a reconnect is in progress per session to prevent race conditions
   const reconnectingRef = useRef<Set<string>>(new Set())
-  
+
   // Track sending state per session for race condition prevention
   const sendingRef = useRef<Set<string>>(new Set())
 
@@ -106,15 +106,15 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
         thinkingLevel: thinkingLevel as ThinkingLevel | undefined,
       })
 
-      setSessions(prev => prev.map(s => 
-        s.id === sessionId 
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId
           ? { ...s, session: planningSession, isLoading: false }
           : s
       ))
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : 'Failed to create session'
-      setSessions(prev => prev.map(s => 
-        s.id === sessionId 
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId
           ? { ...s, error: errorMsg, isLoading: false }
           : s
       ))
@@ -126,8 +126,8 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
    * This handles the actual send/retry flow without optimistic UI updates.
    */
   const attemptSendMessage = useCallback(async (
-    sessionId: string, 
-    content: string, 
+    sessionId: string,
+    content: string,
     attachments?: ContextAttachment[],
     isRetry = false
   ): Promise<void> => {
@@ -148,10 +148,10 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
 
     // Mark as sending
     sendingRef.current.add(sessionId)
-    
+
     if (!isRetry) {
-      setSessions(prev => prev.map(s => 
-        s.id === sessionId 
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId
           ? { ...s, isSending: true, error: null }
           : s
       ))
@@ -161,17 +161,17 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
 
     try {
       await api.sendPlanningMessage(backendSessionId, content, attachments)
-      
+
       // Success - clear sending state
       sendingRef.current.delete(sessionId)
-      setSessions(prev => prev.map(s => 
-        s.id === sessionId 
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId
           ? { ...s, isSending: false, error: null }
           : s
       ))
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : 'Failed to send message'
-      
+
       // Check if the error indicates session is not active
       const isSessionNotActive = isErrorCode(e, ErrorCode.PLANNING_SESSION_NOT_ACTIVE) ||
         detectErrorCodeFromMessage(errorMsg) === ErrorCode.PLANNING_SESSION_NOT_ACTIVE
@@ -192,10 +192,10 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
         }
 
         reconnectingRef.current.add(sessionId)
-        
+
         // Set reconnecting state
-        setSessions(prev => prev.map(s => 
-          s.id === sessionId 
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId
             ? { ...s, isReconnecting: true, error: 'Session not active. Reconnecting automatically...', isSending: false }
             : s
         ))
@@ -206,23 +206,23 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
             model: session.session.model,
             thinkingLevel: session.session.thinkingLevel,
           })
-          
+
           reconnectingRef.current.delete(sessionId)
 
           // Update session with reconnected state
-          setSessions(prev => prev.map(s => 
-            s.id === sessionId 
+          setSessions(prev => prev.map(s =>
+            s.id === sessionId
               ? { ...s, session: reconnectedSession, isReconnecting: false, error: null }
               : s
           ))
 
           // Retry sending the message after successful reconnect
           await api.sendPlanningMessage(reconnectedSession.id, content, attachments)
-          
+
           // Success after retry - clear sending state
           sendingRef.current.delete(sessionId)
-          setSessions(prev => prev.map(s => 
-            s.id === sessionId 
+          setSessions(prev => prev.map(s =>
+            s.id === sessionId
               ? { ...s, isSending: false, error: null }
               : s
           ))
@@ -230,7 +230,7 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
           // Process any queued messages
           const pending = pendingMessagesRef.current.get(sessionId) || []
           pendingMessagesRef.current.delete(sessionId)
-          
+
           for (const queuedMsg of pending) {
             await attemptSendMessage(sessionId, queuedMsg.content, queuedMsg.attachments, true)
           }
@@ -238,10 +238,10 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
           // Reconnect failed - clear all states and throw
           reconnectingRef.current.delete(sessionId)
           sendingRef.current.delete(sessionId)
-          
+
           const reconnectErrorMsg = reconnectError instanceof Error ? reconnectError.message : 'Failed to reconnect session'
-          setSessions(prev => prev.map(s => 
-            s.id === sessionId 
+          setSessions(prev => prev.map(s =>
+            s.id === sessionId
               ? { ...s, isReconnecting: false, error: `Session not active. Reconnect failed: ${reconnectErrorMsg}`, isSending: false }
               : s
           ))
@@ -250,8 +250,8 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
       } else {
         // Other errors - clear sending state and throw
         sendingRef.current.delete(sessionId)
-        setSessions(prev => prev.map(s => 
-          s.id === sessionId 
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId
             ? { ...s, error: errorMsg, isSending: false }
             : s
         ))
@@ -283,7 +283,7 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
 
     // If session is not active, queue the message and trigger reconnect first
     const isSessionNotActive = !session.session || session.error?.includes('not active')
-    
+
     if (isSessionNotActive || session.isReconnecting) {
       // Queue the message
       const pending = pendingMessagesRef.current.get(sessionId) || []
@@ -314,8 +314,8 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
 
     try {
       await api.setPlanningSessionModel(session.session.id, model, thinkingLevel)
-      setSessions(prev => prev.map(s => 
-        s.id === sessionId 
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId
           ? { ...s, session: s.session ? { ...s.session, model, thinkingLevel } : null }
           : s
       ))
@@ -338,9 +338,9 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
     }
 
     reconnectingRef.current.add(sessionId)
-    
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId 
+
+    setSessions(prev => prev.map(s =>
+      s.id === sessionId
         ? { ...s, isLoading: true, isReconnecting: true, error: null }
         : s
     ))
@@ -350,21 +350,21 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
         model,
         thinkingLevel,
       })
-      
+
       reconnectingRef.current.delete(sessionId)
-      
-      setSessions(prev => prev.map(s => 
-        s.id === sessionId 
+
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId
           ? { ...s, session: reconnectedSession, isLoading: false, isReconnecting: false }
           : s
       ))
       return reconnectedSession
     } catch (e) {
       reconnectingRef.current.delete(sessionId)
-      
+
       const errorMsg = e instanceof Error ? e.message : 'Failed to reconnect session'
-      setSessions(prev => prev.map(s => 
-        s.id === sessionId 
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId
           ? { ...s, error: errorMsg, isLoading: false, isReconnecting: false }
           : s
       ))
@@ -388,16 +388,16 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
 
   const switchToSession = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId)
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId 
+    setSessions(prev => prev.map(s =>
+      s.id === sessionId
         ? { ...s, isMinimized: false }
         : s
     ))
   }, [])
 
   const minimizeSession = useCallback((sessionId: string) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId 
+    setSessions(prev => prev.map(s =>
+      s.id === sessionId
         ? { ...s, isMinimized: true }
         : s
     ))
@@ -409,26 +409,26 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
       if (session?.session?.id) {
         api.closePlanningSession(session.session.id).catch(console.error)
       }
-      
+
       // Clean up refs
       pendingMessagesRef.current.delete(sessionId)
       reconnectingRef.current.delete(sessionId)
       sendingRef.current.delete(sessionId)
-      
+
       // Update active session ID if needed
       if (activeSessionId === sessionId) {
         const remainingVisible = prev.filter(s => s.id !== sessionId && !s.isMinimized)
         const nextActiveId = remainingVisible.length > 0 ? remainingVisible[0].id : null
         setActiveSessionId(nextActiveId)
       }
-      
+
       return prev.filter(s => s.id !== sessionId)
     })
   }, [api, activeSessionId])
 
   const renameSession = useCallback((sessionId: string, newName: string) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId 
+    setSessions(prev => prev.map(s =>
+      s.id === sessionId
         ? { ...s, name: newName }
         : s
     ))
@@ -439,16 +439,16 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
       if (s.id !== sessionId) return s
 
       // Check for exact duplicate by ID or messageId
-      const existingIdx = s.messages.findIndex(m => 
-        m.id === message.id || 
+      const existingIdx = s.messages.findIndex(m =>
+        m.id === message.id ||
         (m.messageId && m.messageId === message.messageId)
       )
-      
+
       // If exact match found, update it (server confirmation replacing optimistic)
       if (existingIdx >= 0) {
         return { ...s, messages: s.messages.map((m, i) => i === existingIdx ? message : m) }
       }
-      
+
       // Check for optimistic message to replace (same content, role, similar timestamp)
       if (message.role === 'user' && message.messageType === 'user_prompt') {
         const messageText = (message.contentJson as { text?: string })?.text || ''
@@ -459,16 +459,16 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
           const timeDiff = Math.abs(Number(m.timestamp || 0) - Number(message.timestamp || 0))
           return mText === messageText && timeDiff < 30
         })
-        
+
         if (optimisticIdx >= 0) {
           // Replace optimistic with server-confirmed message
           return { ...s, messages: s.messages.map((m, i) => i === optimisticIdx ? message : m) }
         }
       }
-      
+
       // New message - add it
       let newMessages = [...s.messages, message]
-      
+
       newMessages.sort((a, b) => {
         const sa = Number((a as unknown as { seq?: number }).seq || 0)
         const sb = Number((b as unknown as { seq?: number }).seq || 0)
@@ -509,24 +509,24 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
   }, [api])
 
   const handlePlanningSessionCreated = useCallback((data: PlanningSession) => {
-    setSessions(prev => prev.map(s => 
-      s.session?.id === data.id 
+    setSessions(prev => prev.map(s =>
+      s.session?.id === data.id
         ? { ...s, session: data }
         : s
     ))
   }, [])
 
   const handlePlanningSessionUpdated = useCallback((data: PlanningSession) => {
-    setSessions(prev => prev.map(s => 
-      s.session?.id === data.id 
+    setSessions(prev => prev.map(s =>
+      s.session?.id === data.id
         ? { ...s, session: s.session ? { ...s.session, ...data } : null }
         : s
     ))
   }, [])
 
   const handlePlanningSessionClosed = useCallback((data: { id: string }) => {
-    setSessions(prev => prev.map(s => 
-      s.session?.id === data.id 
+    setSessions(prev => prev.map(s =>
+      s.session?.id === data.id
         ? { ...s, session: s.session ? { ...s.session, status: 'completed', finishedAt: Date.now() } : null }
         : s
     ))

@@ -99,10 +99,10 @@ export async function runStartupRecovery(args: {
   // This allows users to resume after server restart
   const pausedRuns = listPausedRunStates(db)
   const pausedSessions = listPausedSessions(db)
-  
+
   if (pausedRuns.length > 0 || pausedSessions.length > 0) {
     log(`Found ${pausedRuns.length} paused run(s) and ${pausedSessions.length} paused session(s) in database`)
-    
+
     for (const pauseState of pausedRuns) {
       const run = db.getWorkflowRun(pauseState.runId)
       if (run && run.status === "paused") {
@@ -126,7 +126,7 @@ export async function runStartupRecovery(args: {
       }
     }
   }
-  
+
   // Fallback: Check for legacy file-based paused state
   if (hasPausedRunState()) {
     const pauseState = loadPausedRunState()
