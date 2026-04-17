@@ -7,6 +7,7 @@ export * from "./review-session.ts"
 export * from "./best-of-n.ts"
 export * from "./smart-repair.ts"
 export * from "./strict-json.ts"
+export * from "./codestyle-session.ts"
 
 // Container/gVisor isolation exports (using Podman)
 export * from "./container-manager.ts"
