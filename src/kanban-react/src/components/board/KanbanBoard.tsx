@@ -17,7 +17,7 @@ interface KanbanBoardProps {
   onOpenTask: (id: string, e?: React.MouseEvent) => void
   onOpenTemplateModal: () => void
   onOpenTaskModal: () => void
-  onDeployTemplate: (id: string) => void
+  onDeployTemplate: (id: string, e: React.MouseEvent) => void
   onOpenTaskSessions: (id: string) => void
   onApprovePlan: (id: string) => void
   onRequestRevision: (id: string) => void

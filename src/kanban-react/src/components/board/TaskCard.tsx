@@ -14,7 +14,7 @@ interface TaskCardProps {
   isMultiSelecting?: boolean
   isHighlighted?: boolean
   onOpen: (e?: React.MouseEvent) => void
-  onDeploy: () => void
+  onDeploy: (e: React.MouseEvent) => void
   onOpenTaskSessions: () => void
   onApprovePlan: () => void
   onRequestRevision: () => void
@@ -358,8 +358,8 @@ export const TaskCard = memo(function TaskCard({
           {task.status === 'template' && (
             <button
               className="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-primary transition-colors"
-              title="Deploy to Backlog"
-              onClick={(e) => { e.stopPropagation(); onDeploy(); }}
+              title="Deploy to Backlog (Ctrl+click for instant, Ctrl+Shift+click to delete after)"
+              onClick={(e) => { e.stopPropagation(); onDeploy(e); }}
             >
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M5 10l7-7m0 0l7 7m-7-7v18"/>

@@ -731,7 +731,38 @@ function App() {
                                   }}
                                   onOpenTemplateModal={() => openModal('task', { mode: 'create', createStatus: 'template' })}
                                   onOpenTaskModal={() => openModal('task', { mode: 'create', createStatus: 'backlog' })}
-                                  onDeployTemplate={(id: string) => openModal('task', { mode: 'deploy', seedTaskId: id })}
+                                  onDeployTemplate={(id: string, e: React.MouseEvent) => {
+                                    const ctrlHeld = e.ctrlKey || e.metaKey
+                                    const shiftHeld = e.shiftKey
+
+                                    if (!ctrlHeld) {
+                                      // Normal flow - open modal for editing
+                                      openModal('task', { mode: 'deploy', seedTaskId: id })
+                                      return
+                                    }
+
+                                    // CTRL held - deploy immediately without modal
+                                    const template = tasksHook.getTaskById(id)
+                                    if (!template) return
+
+                                    // Create task data from template (exclude id, idx, status, timestamps)
+                                    const { id: _, idx, status, createdAt, updatedAt, completedAt, sessionId, sessionUrl, ...templateData } = template
+
+                                    tasksHook.createTask({ ...templateData, status: 'backlog' })
+                                      .then(() => {
+                                        toastsHook.showToast('Template deployed', 'success')
+
+                                        // CTRL+SHIFT - also delete the template after deployment
+                                        if (shiftHeld) {
+                                          return tasksHook.deleteTask(id).then(() => {
+                                            toastsHook.showToast('Template deleted after deployment', 'success')
+                                          })
+                                        }
+                                      })
+                                      .catch(e => {
+                                        toastsHook.showToast(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+                                      })
+                                  }}
                                   onOpenTaskSessions={(id: string) => openModal('taskSessions', { taskId: id })}
                                   onApprovePlan={(id: string) => openModal('approve', { taskId: id })}
                                   onRequestRevision={(id: string) => openModal('revision', { taskId: id })}
