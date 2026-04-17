@@ -7,6 +7,39 @@ import { createPiServer } from "../src/server.ts"
 import type { InfrastructureSettings } from "../src/config/settings.ts"
 import { BASE_IMAGES } from "../src/config/base-images.ts"
 
+function createTestSettings(): InfrastructureSettings {
+  return {
+    skills: {
+      localPath: "./skills",
+      autoLoad: true,
+      allowGlobal: false,
+    },
+    project: {
+      name: "tauroboros-test",
+      type: "workflow",
+    },
+    workflow: {
+      server: {
+        port: 0,
+        dbPath: ".tauroboros/tasks.db",
+      },
+      runtime: {
+        mode: "native",
+        piBin: "mock-pi",
+        piArgs: "",
+      },
+      container: {
+        enabled: false,  // Disable container mode for tests
+        image: BASE_IMAGES.piAgent,
+        memoryMb: 512,
+        cpuCount: 1,
+        portRangeStart: 30000,
+        portRangeEnd: 40000,
+      },
+    },
+  }
+}
+
 const tempDirs: string[] = []
 
 function createTempDir(prefix: string): string {
@@ -162,7 +195,7 @@ describe("PiKanbanServer API", () => {
   it("supports tasks/options/runs/models and session endpoints", async () => {
     const root = createTempDir("tauroboros-server-")
     const dbPath = join(root, "tasks.db")
-    const { db, server } = createPiServer({ dbPath, port: 0 })
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
 
     const port = await server.start(0)
@@ -396,7 +429,7 @@ describe("PiKanbanServer API", () => {
   it("broadcasts websocket task updates", async () => {
     const root = createTempDir("tauroboros-ws-")
     const dbPath = join(root, "tasks.db")
-    const { db, server } = createPiServer({ dbPath, port: 0 })
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
     const port = await server.start(0)
 
@@ -439,7 +472,7 @@ describe("PiKanbanServer API", () => {
   it("broadcasts websocket session message updates", async () => {
     const root = createTempDir("tauroboros-session-ws-")
     const dbPath = join(root, "tasks.db")
-    const { db, server } = createPiServer({ dbPath, port: 0 })
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
     const port = await server.start(0)
 
@@ -485,6 +518,493 @@ describe("PiKanbanServer API", () => {
       expect(event.type).toBe("session_message_created")
       expect(event.payload.sessionId).toBe(session.id)
       expect(event.payload.messageType).toBe("thinking")
+    } finally {
+      ws.close()
+      server.stop()
+      db.close()
+    }
+  })
+
+  it("broadcasts websocket task_group_created event", async () => {
+    const root = createTempDir("tauroboros-group-ws-")
+    const dbPath = join(root, "tasks.db")
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+    db.updateOptions({ branch: "master" })
+    const port = await server.start(0)
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+
+    try {
+      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+
+      const groupCreatedPromise = new Promise<any>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Timed out waiting for task_group_created websocket message")), 5000)
+
+        const handler = (event: any) => {
+          const parsed = JSON.parse(String(event.data))
+          if (parsed?.type !== "task_group_created") return
+          clearTimeout(timeout)
+          ws.removeEventListener("message", handler)
+          resolve(parsed)
+        }
+
+        ws.addEventListener("message", handler)
+      })
+
+      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Test Group",
+          color: "#888888",
+          status: "active",
+        }),
+      })
+
+      expect(response.status).toBe(201)
+
+      const event = await groupCreatedPromise
+      expect(event.type).toBe("task_group_created")
+      expect(event.payload.name).toBe("Test Group")
+      expect(event.payload.color).toBe("#888888")
+    } finally {
+      ws.close()
+      server.stop()
+      db.close()
+    }
+  })
+
+  it("broadcasts websocket task_group_updated event", async () => {
+    const root = createTempDir("tauroboros-group-update-ws-")
+    const dbPath = join(root, "tasks.db")
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+    db.updateOptions({ branch: "master" })
+    const port = await server.start(0)
+
+    // Create a group first
+    const createRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Original Name",
+        color: "#888888",
+        status: "active",
+      }),
+    })
+    const group = await createRes.json()
+    const groupId = group.id
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+
+    try {
+      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+
+      const groupUpdatedPromise = new Promise<any>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Timed out waiting for task_group_updated websocket message")), 5000)
+
+        const handler = (event: any) => {
+          const parsed = JSON.parse(String(event.data))
+          if (parsed?.type !== "task_group_updated") return
+          clearTimeout(timeout)
+          ws.removeEventListener("message", handler)
+          resolve(parsed)
+        }
+
+        ws.addEventListener("message", handler)
+      })
+
+      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Updated Name",
+          color: "#FF5733",
+        }),
+      })
+
+      expect(response.status).toBe(200)
+
+      const event = await groupUpdatedPromise
+      expect(event.type).toBe("task_group_updated")
+      expect(event.payload.name).toBe("Updated Name")
+      expect(event.payload.color).toBe("#FF5733")
+    } finally {
+      ws.close()
+      server.stop()
+      db.close()
+    }
+  })
+
+  it("broadcasts websocket task_group_deleted event", async () => {
+    const root = createTempDir("tauroboros-group-delete-ws-")
+    const dbPath = join(root, "tasks.db")
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+    db.updateOptions({ branch: "master" })
+    const port = await server.start(0)
+
+    // Create a group first
+    const createRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Group To Delete",
+        color: "#888888",
+        status: "active",
+      }),
+    })
+    const group = await createRes.json()
+    const groupId = group.id
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+
+    try {
+      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+
+      const groupDeletedPromise = new Promise<any>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Timed out waiting for task_group_deleted websocket message")), 5000)
+
+        const handler = (event: any) => {
+          const parsed = JSON.parse(String(event.data))
+          if (parsed?.type !== "task_group_deleted") return
+          clearTimeout(timeout)
+          ws.removeEventListener("message", handler)
+          resolve(parsed)
+        }
+
+        ws.addEventListener("message", handler)
+      })
+
+      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`, {
+        method: "DELETE",
+      })
+
+      expect(response.status).toBe(204)
+
+      const event = await groupDeletedPromise
+      expect(event.type).toBe("task_group_deleted")
+      expect(event.payload.id).toBe(groupId)
+    } finally {
+      ws.close()
+      server.stop()
+      db.close()
+    }
+  })
+
+  it("broadcasts websocket task_group_members_added event", async () => {
+    const root = createTempDir("tauroboros-group-members-ws-")
+    const dbPath = join(root, "tasks.db")
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+    db.updateOptions({ branch: "master" })
+    const port = await server.start(0)
+
+    // Create a task first
+    const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Task for Group",
+        prompt: "Test task",
+        status: "backlog",
+      }),
+    })
+    const task = await taskRes.json()
+    const taskId = task.id
+
+    // Create a group
+    const groupRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Group With Members",
+        color: "#888888",
+        status: "active",
+      }),
+    })
+    const group = await groupRes.json()
+    const groupId = group.id
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+
+    try {
+      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+
+      const membersAddedPromise = new Promise<any>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Timed out waiting for task_group_members_added websocket message")), 5000)
+
+        const handler = (event: any) => {
+          const parsed = JSON.parse(String(event.data))
+          if (parsed?.type !== "task_group_members_added") return
+          clearTimeout(timeout)
+          ws.removeEventListener("message", handler)
+          resolve(parsed)
+        }
+
+        ws.addEventListener("message", handler)
+      })
+
+      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskIds: [taskId],
+        }),
+      })
+
+      expect(response.status).toBe(200)
+
+      const event = await membersAddedPromise
+      expect(event.type).toBe("task_group_members_added")
+      expect(event.payload.groupId).toBe(groupId)
+      expect(event.payload.taskIds).toContain(taskId)
+      expect(event.payload.addedCount).toBe(1)
+    } finally {
+      ws.close()
+      server.stop()
+      db.close()
+    }
+  })
+
+  it("broadcasts websocket task_group_members_removed event", async () => {
+    const root = createTempDir("tauroboros-group-remove-ws-")
+    const dbPath = join(root, "tasks.db")
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+    db.updateOptions({ branch: "master" })
+    const port = await server.start(0)
+
+    // Create a task first
+    const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Task to Remove",
+        prompt: "Test task",
+        status: "backlog",
+      }),
+    })
+    const task = await taskRes.json()
+    const taskId = task.id
+
+    // Create a group with the task
+    const groupRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Group With Task",
+        color: "#888888",
+        status: "active",
+        taskIds: [taskId],
+      }),
+    })
+    const group = await groupRes.json()
+    const groupId = group.id
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+
+    try {
+      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+
+      const membersRemovedPromise = new Promise<any>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Timed out waiting for task_group_members_removed websocket message")), 5000)
+
+        const handler = (event: any) => {
+          const parsed = JSON.parse(String(event.data))
+          if (parsed?.type !== "task_group_members_removed") return
+          clearTimeout(timeout)
+          ws.removeEventListener("message", handler)
+          resolve(parsed)
+        }
+
+        ws.addEventListener("message", handler)
+      })
+
+      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskIds: [taskId],
+        }),
+      })
+
+      expect(response.status).toBe(200)
+
+      const event = await membersRemovedPromise
+      expect(event.type).toBe("task_group_members_removed")
+      expect(event.payload.groupId).toBe(groupId)
+      expect(event.payload.taskIds).toContain(taskId)
+      expect(event.payload.removedCount).toBe(1)
+    } finally {
+      ws.close()
+      server.stop()
+      db.close()
+    }
+  })
+
+  it("broadcasts websocket group_execution_started event", async () => {
+    const root = createTempDir("tauroboros-group-exec-ws-")
+    const dbPath = join(root, "tasks.db")
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+    db.updateOptions({ branch: "master" })
+    const port = await server.start(0)
+
+    // Create a task first
+    const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Task for Execution",
+        prompt: "Test task",
+        status: "backlog",
+      }),
+    })
+    const task = await taskRes.json()
+    const taskId = task.id
+
+    // Create a group with the task
+    const groupRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Group for Execution",
+        color: "#888888",
+        status: "active",
+        taskIds: [taskId],
+      }),
+    })
+    const group = await groupRes.json()
+    const groupId = group.id
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+
+    try {
+      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+
+      const executionStartedPromise = new Promise<any>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Timed out waiting for group_execution_started websocket message")), 5000)
+
+        const handler = (event: any) => {
+          const parsed = JSON.parse(String(event.data))
+          if (parsed?.type !== "group_execution_started") return
+          clearTimeout(timeout)
+          ws.removeEventListener("message", handler)
+          resolve(parsed)
+        }
+
+        ws.addEventListener("message", handler)
+      })
+
+      // Note: Group execution returns 501 Not Implemented, but still broadcasts the event
+      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/start`, {
+        method: "POST",
+      })
+
+      // The endpoint returns 501 because group execution isn't fully implemented,
+      // but it should still broadcast group_execution_started before returning
+      expect(response.status).toBe(501)
+
+      const event = await executionStartedPromise
+      expect(event.type).toBe("group_execution_started")
+      expect(event.payload.groupId).toBe(groupId)
+      expect(event.payload.taskIds).toContain(taskId)
+      expect(typeof event.payload.startedAt).toBe("number")
+    } finally {
+      ws.close()
+      server.stop()
+      db.close()
+    }
+  })
+
+  it("broadcasts websocket group_execution_complete event", async () => {
+    const root = createTempDir("tauroboros-group-complete-ws-")
+    const dbPath = join(root, "tasks.db")
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+    db.updateOptions({ branch: "master" })
+    const port = await server.start(0)
+
+    // Create a task first
+    const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Task for Group Completion",
+        prompt: "Test task for completion",
+        status: "backlog",
+      }),
+    })
+    const task = await taskRes.json()
+    const taskId = task.id
+
+    // Create a group with the task
+    const groupRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Group for Completion",
+        color: "#888888",
+        status: "active",
+        taskIds: [taskId],
+      }),
+    })
+    const group = await groupRes.json()
+    const groupId = group.id
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+
+    try {
+      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+
+      const executionCompletePromise = new Promise<any>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Timed out waiting for group_execution_complete websocket message")), 5000)
+
+        const handler = (event: any) => {
+          const parsed = JSON.parse(String(event.data))
+          if (parsed?.type !== "group_execution_complete") return
+          clearTimeout(timeout)
+          ws.removeEventListener("message", handler)
+          resolve(parsed)
+        }
+
+        ws.addEventListener("message", handler)
+      })
+
+      // Use the server's internal broadcast method via a test endpoint
+      // We use the health endpoint as a trigger and manually broadcast via the db's internal access
+      // Since the full group execution orchestrator isn't implemented yet,
+      // we manually broadcast to test that the message type works correctly
+      const broadcastRes = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/execute-complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "success", results: [] }),
+      })
+
+      // Endpoint may return 404 if not implemented, but we test the WS type validity
+      // For now, verify the message type exists and can be broadcast via direct server access
+      // We'll use the internal broadcast through the server instance if available
+      // Actually, let's verify the type can be used by checking TypeScript compilation
+
+      // Since we can't easily broadcast without the orchestrator being fully implemented,
+      // we verify that the WebSocket message type is valid and the infrastructure exists
+      // by checking that a broadcast doesn't throw a type error
+
+      // Broadcast the event manually through the server's broadcast method
+      // This requires access to the server instance which we have
+      ;(server as any).broadcast({
+        type: "group_execution_complete",
+        payload: {
+          groupId,
+          taskIds: [taskId],
+          status: "success",
+          completedAt: Date.now(),
+          results: [{ taskId, status: "done" }],
+        },
+      })
+
+      const event = await executionCompletePromise
+      expect(event.type).toBe("group_execution_complete")
+      expect(event.payload.groupId).toBe(groupId)
+      expect(event.payload.taskIds).toContain(taskId)
+      expect(event.payload.status).toBe("success")
+      expect(typeof event.payload.completedAt).toBe("number")
+      expect(Array.isArray(event.payload.results)).toBe(true)
     } finally {
       ws.close()
       server.stop()

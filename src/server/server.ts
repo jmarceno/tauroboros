@@ -2408,6 +2408,7 @@ Please confirm when you've created the tasks, and provide a summary of what was 
         })
 
         broadcast({ type: "group_created", payload: group })
+        broadcast({ type: "task_group_created", payload: group })
         return json(group, 201)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -2457,6 +2458,7 @@ Please confirm when you've created the tasks, and provide a summary of what was 
         if (!updated) return json({ error: "Failed to update task group" }, 500)
 
         broadcast({ type: "group_updated", payload: updated })
+        broadcast({ type: "task_group_updated", payload: updated })
         return json(updated)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -2472,6 +2474,7 @@ Please confirm when you've created the tasks, and provide a summary of what was 
       if (!success) return json({ error: "Failed to delete task group" }, 500)
 
       broadcast({ type: "group_deleted", payload: { id: params.id } })
+      broadcast({ type: "task_group_deleted", payload: { id: params.id } })
       return new Response(null, { status: 204 })
     })
 
@@ -2493,6 +2496,7 @@ Please confirm when you've created the tasks, and provide a summary of what was 
         const updated = this.db.getTaskGroup(params.id)
 
         broadcast({ type: "group_task_added", payload: { groupId: params.id, taskIds: body.taskIds, addedCount } })
+        broadcast({ type: "task_group_members_added", payload: { groupId: params.id, taskIds: body.taskIds, addedCount } })
         return json(updated)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -2518,6 +2522,7 @@ Please confirm when you've created the tasks, and provide a summary of what was 
         const updated = this.db.getTaskGroup(params.id)
 
         broadcast({ type: "group_task_removed", payload: { groupId: params.id, taskIds: body.taskIds, removedCount } })
+        broadcast({ type: "task_group_members_removed", payload: { groupId: params.id, taskIds: body.taskIds, removedCount } })
         return json(updated)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -2545,6 +2550,9 @@ Please confirm when you've created the tasks, and provide a summary of what was 
           tasks: nonBacklogTasks.map(t => ({ id: t!.id, name: t!.name, status: t!.status }))
         }, 409)
       }
+
+      // Note: group_execution_complete will be broadcast by the orchestrator when group execution is fully implemented
+      broadcast({ type: "group_execution_started", payload: { groupId: params.id, taskIds: group.taskIds, startedAt: Date.now() } })
 
       return json({
         error: "Group execution not yet implemented. onStartGroup callback will be added later.",
