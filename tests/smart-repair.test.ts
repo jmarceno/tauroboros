@@ -158,9 +158,6 @@ describe("smart repair", () => {
     const sessions = db.getWorkflowSessionsByTask(task.id)
     const repairSession = sessions.find((session) => session.sessionKind === "repair")
     expect(repairSession).toBeDefined()
-    const io = db.getSessionIO(repairSession!.id)
-    expect(io.some((record) => record.recordType === "rpc_command")).toBe(true)
-    expect(io.some((record) => record.recordType === "rpc_response")).toBe(true)
     db.close()
   })
 

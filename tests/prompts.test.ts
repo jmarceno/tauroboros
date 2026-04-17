@@ -212,7 +212,6 @@ describe("prompt renderer helpers", () => {
 describe("prompt template seeds", () => {
   it("renders all core workflow template keys from the database", () => {
     const db = createTempDb()
-    db.createWorkflowSession({ id: "session-all", sessionKind: "task", cwd: "/tmp/work" })
 
     const task = createTask()
     const renderInputs: Array<{ key: string; variables: Record<string, unknown> }> = [
@@ -296,15 +295,10 @@ describe("prompt template seeds", () => {
       const rendered = db.renderPromptAndCapture({
         key: input.key,
         variables: input.variables,
-        sessionId: "session-all",
       })
       expect(rendered.template.key).toBe(input.key)
       expect(rendered.renderedText.length).toBeGreaterThan(20)
     }
-
-    const promptLogs = db.getSessionIOByType("session-all", "prompt_rendered")
-    expect(promptLogs.length).toBe(renderInputs.length)
-    expect(promptLogs.every((record) => typeof record.payloadText === "string" && record.payloadText.length > 0)).toBe(true)
 
     db.close()
   })

@@ -141,14 +141,6 @@ describe("PiOrchestrator standard execution", () => {
 
     const sessions = db.getWorkflowSessionsByTask(task.id)
     expect(sessions.length).toBeGreaterThanOrEqual(2)
-    const io = db.getSessionIO(sessions[0]!.id)
-    expect(io.some((record) => record.recordType === "rpc_command")).toBe(true)
-    expect(io.some((record) => record.recordType === "rpc_response")).toBe(true)
-    expect(io.some((record) => record.recordType === "rpc_event")).toBe(true)
-    expect(io.some((record) => record.recordType === "stderr_chunk")).toBe(true)
-    expect(io.some((record) => record.recordType === "lifecycle")).toBe(true)
-    expect(io.some((record) => record.recordType === "prompt_rendered")).toBe(true)
-    expect(io.some((record) => record.recordType === "snapshot")).toBe(true)
 
     db.close()
   })

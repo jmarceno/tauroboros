@@ -1,12 +1,10 @@
 export { PiKanbanDB } from "../db.ts"
 export type {
-  AppendSessionIOInput,
   CreateTaskCandidateInput,
   CreateTaskRunInput,
   CreatePiWorkflowSessionInput,
   CreateTaskInput,
   CreateWorkflowRunInput,
-  GetSessionIOOptions,
   PiSessionKind,
   PiSessionStatus,
   PiWorkflowSession,
@@ -15,9 +13,6 @@ export type {
   PromptTemplate,
   PromptTemplateKey,
   PromptTemplateVersion,
-  SessionIORecord,
-  SessionIORecordType,
-  SessionIOStream,
   SessionUsageRollup,
   SessionMessageQueryOptions,
   UpdateTaskCandidateInput,

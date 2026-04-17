@@ -253,17 +253,6 @@ if (process instanceof ContainerPiProcess) {
         }, 30_000)
       }
 
-      this.db.appendSessionIO({
-        sessionId: session.id,
-        stream: "server",
-        recordType: "prompt_rendered",
-        payloadJson: {
-          sessionKind: input.sessionKind,
-          promptLength: input.promptText.length,
-        },
-        payloadText: input.promptText,
-      })
-
       // Send prompt and collect all events until completion
       const events = await process.promptAndWait(input.promptText, 600_000) // 10 min timeout
 
@@ -295,16 +284,7 @@ if (process instanceof ContainerPiProcess) {
         }
       }
 
-      // Final snapshot
-      const finalSnapshot = await process.send({ type: "get_messages" }, 30_000).catch(() => null)
-      if (finalSnapshot) {
-        this.db.appendSessionIO({
-          sessionId: session.id,
-          stream: "server",
-          recordType: "snapshot",
-          payloadJson: finalSnapshot,
-        })
-      }
+      // Final snapshot - we no longer store this
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.db.updateWorkflowSession(session.id, {

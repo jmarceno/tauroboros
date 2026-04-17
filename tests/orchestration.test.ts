@@ -160,13 +160,6 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     expect(sessionsA.length).toBeGreaterThan(0)
     expect(sessionsB.length).toBeGreaterThan(0)
 
-    const ioA = db.getSessionIO(sessionsA[0]!.id)
-    const ioB = db.getSessionIO(sessionsB[0]!.id)
-    expect(ioA.some((record) => record.recordType === "rpc_command")).toBe(true)
-    expect(ioB.some((record) => record.recordType === "rpc_command")).toBe(true)
-    expect(ioA.some((record) => record.recordType === "prompt_rendered")).toBe(true)
-    expect(ioB.some((record) => record.recordType === "prompt_rendered")).toBe(true)
-
     db.close()
   })
 })

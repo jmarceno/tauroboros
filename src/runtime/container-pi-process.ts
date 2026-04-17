@@ -142,19 +142,8 @@ export class ContainerPiProcess {
           this.db.updateWorkflowSession(this.session.id, {
             status: "active",
           })
-          this.db.appendSessionIO({
-            sessionId: this.session.id,
-            stream: "server",
-            recordType: "lifecycle",
-            payloadJson: {
-              type: "container_attached",
-              containerId: this.containerProcess.containerId,
-              image: imageName,
-              runtime,
-            },
-          })
 
-this.abortController = new AbortController()
+          this.abortController = new AbortController()
           this.captureStdout()
           this.captureStderr()
 
@@ -185,17 +174,6 @@ this.abortController = new AbortController()
 
     this.db.updateWorkflowSession(this.session.id, {
       status: "active",
-    })
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "server",
-      recordType: "lifecycle",
-      payloadJson: {
-        type: "container_started",
-        containerId: this.containerProcess.containerId,
-        image: imageName,
-        runtime,
-      },
     })
 
     this.abortController = new AbortController()
@@ -238,14 +216,6 @@ this.abortController = new AbortController()
     const id = `req_${++this.requestId}`
     const payload: PiRpcRequest = { ...command, id }
     const line = `${JSON.stringify(payload)}\n`
-
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "stdin",
-      recordType: "rpc_command",
-      payloadJson: payload,
-      payloadText: JSON.stringify(payload),
-    })
 
     // Write to container stdin
     const writer = this.containerProcess.stdin.getWriter()
@@ -385,14 +355,6 @@ this.abortController = new AbortController()
       status: "completed",
       finishedAt: Math.floor(Date.now() / 1000),
     })
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "server",
-      recordType: "lifecycle",
-      payloadJson: {
-        type: "container_stopped",
-      },
-    })
   }
 
   /**
@@ -444,15 +406,6 @@ this.abortController = new AbortController()
       finishedAt: Math.floor(Date.now() / 1000),
       exitCode: -1,
       exitSignal: signal,
-    })
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "server",
-      recordType: "lifecycle",
-      payloadJson: {
-        type: "container_force_killed",
-        signal,
-      },
     })
   }
 
@@ -515,16 +468,6 @@ this.abortController = new AbortController()
     const isResponse = parsed.type === "response" && id !== null
     const isExtensionUIRequest =
       parsed.type === "extension_ui_request" && id !== null
-
-    // Record in database first
-    const recordType = isResponse ? "rpc_response" : "rpc_event"
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "stdout",
-      recordType,
-      payloadJson: parsed,
-      payloadText: line,
-    })
 
     if (isResponse && id && this.pending.has(id)) {
       const pending = this.pending.get(id)!
@@ -627,7 +570,6 @@ this.abortController = new AbortController()
           this.consumeStderrLines()
         }
         if (this.stderrBuffer.trim() && !signal.aborted) {
-          this.persistStderr(this.stderrBuffer.trim())
           this.stderrBuffer = ""
         }
       } finally {
@@ -645,17 +587,6 @@ this.abortController = new AbortController()
       const line = this.stderrBuffer.slice(0, newlineIdx).trim()
       this.stderrBuffer = this.stderrBuffer.slice(newlineIdx + 1)
       if (!line) continue
-      this.persistStderr(line)
     }
-  }
-
-  private persistStderr(line: string): void {
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "stderr",
-      recordType: "stderr_chunk",
-      payloadText: line,
-      payloadJson: { line },
-    })
   }
 }

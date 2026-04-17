@@ -127,16 +127,6 @@ export class PiRpcProcess {
       status: "active",
       processPid: this.proc.pid,
     })
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "server",
-      recordType: "lifecycle",
-      payloadJson: {
-        type: "process_started",
-        pid: this.proc.pid,
-        command: [piBin, ...configuredArgs],
-      },
-    })
 
     this.abortController = new AbortController()
     
@@ -173,14 +163,6 @@ export class PiRpcProcess {
     const id = `req_${++this.requestId}`
     const payload = { ...command, id }
     const line = `${JSON.stringify(payload)}\n`
-
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "stdin",
-      recordType: "rpc_command",
-      payloadJson: payload,
-      payloadText: JSON.stringify(payload),
-    })
 
     await this.proc.stdin.write(line)
 
@@ -306,15 +288,6 @@ export class PiRpcProcess {
       finishedAt: Math.floor(Date.now() / 1000),
       exitCode,
     })
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "server",
-      recordType: "lifecycle",
-      payloadJson: {
-        type: "process_exited",
-        exitCode,
-      },
-    })
   }
 
   /**
@@ -370,15 +343,6 @@ export class PiRpcProcess {
       finishedAt: Math.floor(Date.now() / 1000),
       exitCode: -1,
       exitSignal: signal,
-    })
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "server",
-      recordType: "lifecycle",
-      payloadJson: {
-        type: "process_force_killed",
-        signal,
-      },
     })
   }
 
@@ -440,16 +404,6 @@ export class PiRpcProcess {
     const id = typeof parsed.id === "string" ? parsed.id : null
     const isResponse = parsed.type === "response" && id !== null
     const isExtensionUIRequest = parsed.type === "extension_ui_request" && id !== null
-
-    // Record in database first (before handling response which might return early)
-    const recordType = isResponse ? "rpc_response" : "rpc_event"
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "stdout",
-      recordType,
-      payloadJson: parsed,
-      payloadText: line,
-    })
 
     if (isResponse && id && this.pending.has(id)) {
       const pending = this.pending.get(id)!
@@ -560,17 +514,6 @@ export class PiRpcProcess {
       const line = this.stderrBuffer.slice(0, newlineIdx).trim()
       this.stderrBuffer = this.stderrBuffer.slice(newlineIdx + 1)
       if (!line) continue
-      this.persistStderr(line)
     }
-  }
-
-  private persistStderr(line: string): void {
-    this.db.appendSessionIO({
-      sessionId: this.session.id,
-      stream: "stderr",
-      recordType: "stderr_chunk",
-      payloadText: line,
-      payloadJson: { line },
-    })
   }
 }

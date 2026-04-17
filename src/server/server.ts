@@ -9,7 +9,7 @@ import { discoverPiModels } from "../pi/model-discovery.ts"
 import { isTaskAwaitingPlanApproval } from "../task-state.ts"
 import type { BestOfNConfig, ImageStatusPayload, Task, TaskRun, ThinkingLevel, WSMessage, SessionMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
-import type { SessionIORecordType, PackageDefinition } from "../db/types.ts"
+import type { PackageDefinition } from "../db/types.ts"
 import { runStartupRecovery } from "../recovery/startup-recovery.ts"
 import { ContainerImageManager, loadContainerConfig, saveContainerConfig } from "../runtime/container-image-manager.ts"
 import { PiContainerManager } from "../runtime/container-manager.ts"
@@ -1410,16 +1410,6 @@ export class PiKanbanServer {
       return json(this.db.getSessionUsageRollup(params.id))
     })
 
-    this.router.get("/api/sessions/:id/io", ({ params, url, json }) => {
-      const session = this.db.getWorkflowSession(params.id)
-      if (!session) return json({ error: "Session not found" }, 404)
-
-      const limit = Number(url.searchParams.get("limit") ?? 500)
-      const offset = Number(url.searchParams.get("offset") ?? 0)
-      const recordType = url.searchParams.get("recordType") as SessionIORecordType | null
-      return json(this.db.getSessionIO(params.id, { limit, offset, ...(recordType ? { recordType } : {}) }))
-    })
-
     this.router.get("/api/tasks/:id/messages", ({ params, json }) => json(this.db.getSessionMessageViewsByTask(params.id)))
     this.router.get("/api/task-runs/:id/messages", ({ params, json }) => json(this.db.getSessionMessageViewsByTaskRun(params.id)))
 
@@ -1436,12 +1426,6 @@ export class PiKanbanServer {
           processPid: typeof body?.processPid === "number" ? body.processPid : session.processPid,
           piSessionId: typeof body?.piSessionId === "string" ? body.piSessionId : session.piSessionId,
           piSessionFile: typeof body?.piSessionFile === "string" ? body.piSessionFile : session.piSessionFile,
-        })
-        this.db.appendSessionIO({
-          sessionId: session.id,
-          stream: "server",
-          recordType: "lifecycle",
-          payloadJson: { type: "session_started", ...body },
         })
         if (updated?.taskId) {
           this.db.updateTask(updated.taskId, {
@@ -1478,13 +1462,6 @@ export class PiKanbanServer {
           costTotal: typeof cost.total === "number" ? cost.total : null,
           rawEventJson: body,
         })
-        this.db.appendSessionIO({
-          sessionId: session.id,
-          stream: "stdout",
-          recordType: "rpc_event",
-          payloadJson: body,
-          payloadText: typeof body?.text === "string" ? body.text : null,
-        })
         broadcast({ type: "session_message_created", payload: message })
         return json({ ok: true, message })
       }
@@ -1493,12 +1470,6 @@ export class PiKanbanServer {
         const updated = this.db.updateWorkflowSession(session.id, {
           status: body?.status ?? session.status,
           errorMessage: body?.errorMessage ?? session.errorMessage,
-        })
-        this.db.appendSessionIO({
-          sessionId: session.id,
-          stream: "server",
-          recordType: "lifecycle",
-          payloadJson: { type: "session_status", ...body },
         })
         broadcast({ type: "session_status_changed", payload: updated ?? session })
         return json({ ok: true })
@@ -1511,12 +1482,6 @@ export class PiKanbanServer {
           exitCode: body?.exitCode ?? null,
           exitSignal: body?.exitSignal ?? null,
           errorMessage: body?.errorMessage ?? null,
-        })
-        this.db.appendSessionIO({
-          sessionId: session.id,
-          stream: "server",
-          recordType: "lifecycle",
-          payloadJson: { type: "session_completed", ...body },
         })
         broadcast({ type: "session_completed", payload: updated ?? session })
         return json({ ok: true })

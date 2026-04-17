@@ -189,10 +189,6 @@ describe("PiOrchestrator best-of-n execution", () => {
     expect(sessions.some((session) => session.sessionKind === "task_run_reviewer")).toBe(true)
     expect(sessions.some((session) => session.sessionKind === "task_run_final_applier")).toBe(true)
 
-    const firstSessionIo = db.getSessionIO(sessions[0]!.id)
-    expect(firstSessionIo.some((record) => record.recordType === "rpc_command")).toBe(true)
-    expect(firstSessionIo.some((record) => record.recordType === "rpc_response" || record.recordType === "rpc_event")).toBe(true)
-
     db.close()
   })
 

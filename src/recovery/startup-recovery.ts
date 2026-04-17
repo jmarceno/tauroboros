@@ -91,15 +91,6 @@ export async function runStartupRecovery(args: {
       errorMessage: "Server restarted during execution",
       finishedAt: recoveryStartedAt,
     })
-    db.appendSessionIO({
-      sessionId: session.id,
-      stream: "server",
-      recordType: "lifecycle",
-      payloadJson: {
-        type: "startup_recovery_session_failed",
-        reason: "Server restarted during execution",
-      },
-    })
     log(`Marked orphaned session ${session.id} as failed`)
   }
 

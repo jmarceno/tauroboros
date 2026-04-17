@@ -27,13 +27,11 @@ import {
 export type TaskStatusChangeListener = (taskId: string, oldStatus: TaskStatus, newStatus: TaskStatus) => void
 import { runMigrations, type Migration } from "./db/migrations.ts"
 import type {
-  AppendSessionIOInput,
   CreateTaskCandidateInput,
   CreateTaskRunInput,
   CreatePiWorkflowSessionInput,
   CreateTaskInput,
   CreateWorkflowRunInput,
-  GetSessionIOOptions,
   PiSessionStatus,
   PiWorkflowSession,
   PlanningPrompt,
@@ -43,9 +41,6 @@ import type {
   PromptTemplate,
   PromptTemplateKey,
   PromptTemplateVersion,
-  SessionIORecord,
-  SessionIORecordType,
-  SessionIOStream,
   SessionMessageQueryOptions,
   UpdateTaskCandidateInput,
   UpdateTaskRunInput,
@@ -652,19 +647,6 @@ function rowToWorkflowSession(row: Record<string, unknown>): PiWorkflowSession {
   }
 }
 
-function rowToSessionIORecord(row: Record<string, unknown>): SessionIORecord {
-  return {
-    id: Number(row.id),
-    sessionId: String(row.session_id),
-    seq: Number(row.seq),
-    stream: String(row.stream) as SessionIOStream,
-    recordType: String(row.record_type) as SessionIORecordType,
-    payloadJson: parseJSON<Record<string, unknown> | null>(row.payload_json, null),
-    payloadText: row.payload_text ? String(row.payload_text) : null,
-    createdAt: Number(row.created_at ?? 0),
-  }
-}
-
 function rowToSessionMessage(row: Record<string, unknown>): SessionMessage {
   return {
     id: Number(row.id),
@@ -1003,25 +985,6 @@ const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_status ON workflow_sessions(status);`,
       `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_task_status ON workflow_sessions(task_id, status);`,
       `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_pi_session ON workflow_sessions(pi_session_id);`,
-      `
-      CREATE TABLE IF NOT EXISTS session_io (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        seq INTEGER NOT NULL,
-        stream TEXT NOT NULL,
-        record_type TEXT NOT NULL,
-        payload_json TEXT,
-        payload_text TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        FOREIGN KEY(session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE,
-        UNIQUE(session_id, seq)
-      );
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_session_io_session_id ON session_io(session_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_session_io_session_seq ON session_io(session_id, seq);`,
-      `CREATE INDEX IF NOT EXISTS idx_session_io_record_type ON session_io(record_type);`,
-      `CREATE INDEX IF NOT EXISTS idx_session_io_created_at ON session_io(created_at);`,
-      `CREATE INDEX IF NOT EXISTS idx_session_io_payload_type ON session_io(record_type, created_at);`,
       `
       CREATE TABLE IF NOT EXISTS session_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2360,86 +2323,6 @@ export class PiKanbanDB {
     return this.getWorkflowSession(id)
   }
 
-  // ---- raw session capture ----
-
-  appendSessionIO(input: AppendSessionIOInput): SessionIORecord {
-    const nextSeq = input.seq ?? this.getLatestSessionSeq(input.sessionId) + 1
-    const createdAt = input.createdAt ?? nowUnix()
-
-    const result = this.db
-      .prepare(`
-        INSERT INTO session_io (
-          session_id, seq, stream, record_type, payload_json, payload_text, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `)
-      .run(
-        input.sessionId,
-        nextSeq,
-        input.stream,
-        input.recordType,
-        input.payloadJson ? JSON.stringify(input.payloadJson) : null,
-        input.payloadText ?? null,
-        createdAt,
-      )
-
-    const row = this.db.prepare("SELECT * FROM session_io WHERE id = ?").get(result.lastInsertRowid) as Record<string, unknown>
-    return rowToSessionIORecord(row)
-  }
-
-  getSessionIO(sessionId: string, options: GetSessionIOOptions = {}): SessionIORecord[] {
-    const limit = options.limit ?? 500
-    const offset = options.offset ?? 0
-
-    if (options.recordType) {
-      const rows = this.db
-        .prepare(
-          `
-          SELECT * FROM session_io
-          WHERE session_id = ? AND record_type = ?
-          ORDER BY seq ASC
-          LIMIT ? OFFSET ?
-          `,
-        )
-        .all(sessionId, options.recordType, limit, offset) as Record<string, unknown>[]
-      return rows.map(rowToSessionIORecord)
-    }
-
-    const rows = this.db
-      .prepare(
-        `
-        SELECT * FROM session_io
-        WHERE session_id = ?
-        ORDER BY seq ASC
-        LIMIT ? OFFSET ?
-        `,
-      )
-      .all(sessionId, limit, offset) as Record<string, unknown>[]
-    return rows.map(rowToSessionIORecord)
-  }
-
-  getSessionIOByType(sessionId: string, recordType: SessionIORecordType): SessionIORecord[] {
-    return this.getSessionIO(sessionId, { recordType })
-  }
-
-  getLatestSessionSeq(sessionId: string): number {
-    const row = this.db.prepare("SELECT COALESCE(MAX(seq), 0) AS max_seq FROM session_io WHERE session_id = ?").get(sessionId) as { max_seq: number }
-    return row.max_seq ?? 0
-  }
-
-  getSessionSnapshot(sessionId: string): SessionIORecord | null {
-    const row = this.db
-      .prepare(
-        `
-        SELECT * FROM session_io
-        WHERE session_id = ? AND record_type = 'snapshot'
-        ORDER BY seq DESC
-        LIMIT 1
-        `,
-      )
-      .get(sessionId) as Record<string, unknown> | null
-    return row ? rowToSessionIORecord(row) : null
-  }
-
   private getNextSessionMessageSeq(sessionId: string): number {
     const row = this.db
       .prepare("SELECT COALESCE(MAX(seq), 0) AS max_seq FROM session_messages WHERE session_id = ?")
@@ -3061,22 +2944,7 @@ export class PiKanbanDB {
     if (input.key == null) {
       throw new Error(`Prompt render key is required but was not provided`)
     }
-    const rendered = this.renderPrompt(input.key, input.variables)
-    if (input.sessionId) {
-      this.appendSessionIO({
-        sessionId: input.sessionId,
-        stream: input.stream ?? "server",
-        recordType: "prompt_rendered",
-        payloadJson: {
-          templateKey: rendered.template.key,
-          templateId: rendered.template.id,
-          renderedLength: rendered.renderedText.length,
-          variables: input.variables,
-        },
-        payloadText: rendered.renderedText,
-      })
-    }
-    return rendered
+    return this.renderPrompt(input.key, input.variables)
   }
 
   // ---- low-level helpers ----

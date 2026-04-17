@@ -117,44 +117,6 @@ export interface UpdatePiWorkflowSessionInput {
   errorMessage?: string | null
 }
 
-export type SessionIOStream = "stdin" | "stdout" | "stderr" | "server"
-
-export type SessionIORecordType =
-  | "rpc_command"
-  | "rpc_response"
-  | "rpc_event"
-  | "stderr_chunk"
-  | "lifecycle"
-  | "snapshot"
-  | "prompt_rendered"
-
-export interface SessionIORecord {
-  id: number
-  sessionId: string
-  seq: number
-  stream: SessionIOStream
-  recordType: SessionIORecordType
-  payloadJson: Record<string, unknown> | null
-  payloadText: string | null
-  createdAt: number
-}
-
-export interface AppendSessionIOInput {
-  sessionId: string
-  seq?: number
-  stream: SessionIOStream
-  recordType: SessionIORecordType
-  payloadJson?: Record<string, unknown> | null
-  payloadText?: string | null
-  createdAt?: number
-}
-
-export interface GetSessionIOOptions {
-  offset?: number
-  limit?: number
-  recordType?: SessionIORecordType
-}
-
 export type PromptTemplateKey =
   | "execution"
   | "planning"
@@ -309,8 +271,6 @@ export interface PromptRenderResult {
 export interface PromptRenderAndCaptureInput {
   key: PromptTemplateKey | string
   variables?: Record<string, unknown>
-  sessionId?: string
-  stream?: SessionIOStream
 }
 
 export interface CreateTaskRunInput {

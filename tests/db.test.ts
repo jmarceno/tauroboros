@@ -128,59 +128,6 @@ describe("PiKanbanDB", () => {
     db.close()
   })
 
-  it("supports workflow sessions and first-class raw session capture", () => {
-    const { db } = createTempDb()
-
-    db.createTask({
-      id: "task-raw",
-      name: "raw capture",
-      prompt: "capture session streams",
-    })
-
-    const session = db.createWorkflowSession({
-      id: "session-1",
-      taskId: "task-raw",
-      sessionKind: "task",
-      cwd: "/tmp/work",
-      model: "default",
-    })
-    expect(session.status).toBe("starting")
-
-    const first = db.appendSessionIO({
-      sessionId: "session-1",
-      stream: "stdin",
-      recordType: "rpc_command",
-      payloadJson: { method: "run", params: { prompt: "hello" } },
-    })
-    const second = db.appendSessionIO({
-      sessionId: "session-1",
-      stream: "stdout",
-      recordType: "rpc_response",
-      payloadJson: { id: 1, ok: true },
-    })
-    const snapshot = db.appendSessionIO({
-      sessionId: "session-1",
-      stream: "server",
-      recordType: "snapshot",
-      payloadJson: { status: "active" },
-    })
-
-    expect(first.seq).toBe(1)
-    expect(second.seq).toBe(2)
-    expect(snapshot.seq).toBe(3)
-    expect(db.getLatestSessionSeq("session-1")).toBe(3)
-
-    const snapshotRecord = db.getSessionSnapshot("session-1")
-    expect(snapshotRecord?.recordType).toBe("snapshot")
-    expect(snapshotRecord?.payloadJson?.status).toBe("active")
-
-    const stdoutOnly = db.getSessionIOByType("session-1", "rpc_response")
-    expect(stdoutOnly.length).toBe(1)
-    expect(stdoutOnly[0]?.stream).toBe("stdout")
-
-    db.close()
-  })
-
   it("supports normalized session message storage", () => {
     const { db } = createTempDb()
 
@@ -365,14 +312,8 @@ describe("PiKanbanDB", () => {
     db.close()
   })
 
-  it("renders prompt templates and captures rendered prompts in session_io", () => {
+  it("renders prompt templates", () => {
     const { db } = createTempDb()
-
-    db.createWorkflowSession({
-      id: "session-prompt",
-      sessionKind: "task",
-      cwd: "/tmp/work",
-    })
 
     const rendered = db.renderPromptAndCapture({
       key: "execution",
@@ -383,17 +324,10 @@ describe("PiKanbanDB", () => {
         user_guidance_block: "",
         additional_context_block: "",
       },
-      sessionId: "session-prompt",
     })
 
     expect(rendered.renderedText.includes("Do work")).toBe(true)
     expect(rendered.renderedText.includes("Implement now")).toBe(true)
-
-    const capture = db.getSessionIOByType("session-prompt", "prompt_rendered")
-    expect(capture.length).toBe(1)
-    expect(capture[0]?.payloadJson?.templateKey).toBe("execution")
-    expect(capture[0]?.payloadJson?.renderedLength).toBe(rendered.renderedText.length)
-    expect(capture[0]?.payloadText).toBe(rendered.renderedText)
 
     const beforeVersions = db.getPromptTemplateVersions("execution").length
     db.upsertPromptTemplate({
