@@ -352,6 +352,7 @@ export type WSMessageType =
   | 'container_build_progress'
   | 'container_build_completed'
   | 'container_build_cancelled'
+  | 'container_profile_created'
   | 'container_profile_applied'
 
 export interface WSMessage {
