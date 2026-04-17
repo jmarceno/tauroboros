@@ -60,6 +60,39 @@ describe("PiKanbanDB", () => {
     db.close()
   })
 
+  it("codeStyleReview defaults to false on tasks and can be updated", () => {
+    const { db } = createTempDb()
+
+    // Create a task without specifying codeStyleReview
+    const task = db.createTask({
+      id: "task-csr-1",
+      name: "Code Style Review Test Task",
+      prompt: "Test code style review field",
+      status: "backlog",
+    })
+
+    // Verify default is false
+    expect(task.codeStyleReview).toBe(false)
+
+    // Verify persistence
+    const reloaded = db.getTask("task-csr-1")
+    expect(reloaded?.codeStyleReview).toBe(false)
+
+    // Update to true
+    const updated = db.updateTask("task-csr-1", { codeStyleReview: true })
+    expect(updated?.codeStyleReview).toBe(true)
+
+    // Verify persistence after update
+    const reloadedAfterUpdate = db.getTask("task-csr-1")
+    expect(reloadedAfterUpdate?.codeStyleReview).toBe(true)
+
+    // Update back to false
+    const reset = db.updateTask("task-csr-1", { codeStyleReview: false })
+    expect(reset?.codeStyleReview).toBe(false)
+
+    db.close()
+  })
+
   it("supports task and workflow run storage", () => {
     const { db } = createTempDb()
 
