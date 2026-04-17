@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { ModalWrapper } from '../common/ModalWrapper'
 import { useTasksContext, useToastContext, useModelSearchContext } from '@/contexts/AppContext'
 import { useApi } from '@/hooks/useApi'
+import { HelpButton } from '../common/HelpButton'
 import type { ThinkingLevel, TaskStatus, Task } from '@/types'
 
 interface BatchEditModalProps {
@@ -462,10 +463,10 @@ export function BatchEditModal({ taskIds, onClose }: BatchEditModalProps) {
               type="button"
               className="btn btn-sm"
               onClick={() => handleClear('maxReviewRunsOverride')}
-              title="Clear override (use default)"
             >
               Clear
             </button>
+            <HelpButton tooltip="Clear override (use default)" />
           </div>
           <p className="text-xs text-dark-text-muted mt-1">
             Leave empty to keep current, 0 to clear override, or set a value.

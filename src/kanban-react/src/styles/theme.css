@@ -717,6 +717,31 @@
     @apply text-dark-text border-dark-text-muted;
   }
 
+  /* Tooltip Components */
+  .tooltip-container {
+    @apply relative inline-flex;
+  }
+
+  .tooltip {
+    @apply absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1.5
+           bg-dark-surface2 border border-dark-border rounded-md shadow-lg
+           text-xs text-dark-text whitespace-normal max-w-[200px] z-50
+           opacity-0 pointer-events-none transition-opacity duration-200;
+  }
+
+  .tooltip-container:hover .tooltip {
+    @apply opacity-100;
+  }
+
+  /* Tooltip arrow */
+  .tooltip::after {
+    content: '';
+    @apply absolute top-full left-1/2 -translate-x-1/2;
+    border-width: 5px;
+    border-style: solid;
+    border-color: theme('colors.dark.surface2') transparent transparent transparent;
+  }
+
   .form-select {
     @apply form-input cursor-pointer appearance-none bg-no-repeat;
     background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236a6a80' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");

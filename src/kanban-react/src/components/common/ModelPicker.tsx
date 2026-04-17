@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { ModelEntry } from '@/types'
 import { useModelSearch } from '@/hooks'
+import { HelpButton } from './HelpButton'
 
 interface ModelPickerProps {
   modelValue: string
@@ -84,7 +85,7 @@ export function ModelPicker({ modelValue, label, help, disabled, onUpdate }: Mod
     <div className="form-group" ref={containerRef}>
       <div className="label-row">
         <label>{label}</label>
-        {help && <span className="help-btn" title={help}>?</span>}
+        {help && <HelpButton tooltip={help} />}
       </div>
       <div className="relative">
         <input

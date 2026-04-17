@@ -8,7 +8,7 @@ interface ToastContainerProps {
 
 export function ToastContainer({ toasts, bottomOffset, onRemove }: ToastContainerProps) {
   return (
-    <div 
+    <div
       className="fixed right-4 z-50 flex flex-col gap-2"
       style={{ bottom: bottomOffset }}
     >

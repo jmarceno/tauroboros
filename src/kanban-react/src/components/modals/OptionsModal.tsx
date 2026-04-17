@@ -3,6 +3,7 @@ import { useOptionsContext, useToastContext } from '@/contexts/AppContext'
 import { useApi } from '@/hooks'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
+import { HelpButton } from '../common/HelpButton'
 import type { Options, ThinkingLevel } from '@/types'
 
 interface OptionsModalProps {
@@ -127,7 +128,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group">
               <div className="label-row">
                 <label>Default Branch</label>
-                <span className="help-btn" title="Default git branch for new tasks when a task-specific branch is not selected.">?</span>
+                <HelpButton tooltip="Default git branch for new tasks when a task-specific branch is not selected." />
               </div>
               {branchesError && (
                 <div className="text-xs text-red-400 mb-1">Error loading branches: {branchesError}</div>
@@ -215,7 +216,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group">
               <div className="label-row">
                 <label>Pre-execution Command</label>
-                <span className="help-btn" title="Command to run before task execution begins, such as installing dependencies or preparing the workspace.">?</span>
+                <HelpButton tooltip="Command to run before task execution begins, such as installing dependencies or preparing the workspace." />
               </div>
               <input
                 type="text"
@@ -230,7 +231,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group">
               <div className="label-row">
                 <label>Parallel Tasks</label>
-                <span className="help-btn" title="Maximum number of tasks the workflow should execute at the same time.">?</span>
+                <HelpButton tooltip="Maximum number of tasks the workflow should execute at the same time." />
               </div>
               <input
                 type="number"
@@ -246,7 +247,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group">
               <div className="label-row">
                 <label>Maximum Review Runs</label>
-                <span className="help-btn" title="Maximum number of review cycles for a task before it gets stuck. Can be overridden per-task.">?</span>
+                <HelpButton tooltip="Maximum number of review cycles for a task before it gets stuck. Can be overridden per-task." />
               </div>
               <input
                 type="number"
@@ -262,7 +263,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group">
               <div className="label-row">
                 <label>Maximum JSON Parse Retries</label>
-                <span className="help-btn" title="Maximum consecutive retries when a review response fails JSON parsing before marking task as stuck. Resets when a valid JSON response is received.">?</span>
+                <HelpButton tooltip="Maximum consecutive retries when a review response fails JSON parsing before marking task as stuck. Resets when a valid JSON response is received." />
               </div>
               <input
                 type="number"
@@ -278,7 +279,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group">
               <div className="label-row">
                 <label>Session Cleanup (global)</label>
-                <span className="help-btn" title="Automatically delete TaurOboros sessions after task/review runs finish. Enable only if you do not need session history for debugging.">?</span>
+                <HelpButton tooltip="Automatically delete TaurOboros sessions after task/review runs finish. Enable only if you do not need session history for debugging." />
               </div>
               <div className="checkbox-group">
                 <label className="checkbox-item">
@@ -316,7 +317,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group">
               <div className="label-row">
                 <label>Commit Prompt <span className="text-dark-text-muted font-normal">({`{{`}base_ref{`}}`} will be replaced at runtime)</span></label>
-                <span className="help-btn" title="Instructions used when the workflow asks the agent to prepare a git commit. Use {{base_ref}} anywhere you want the current base branch inserted automatically.">?</span>
+                <HelpButton tooltip="Instructions used when the workflow asks the agent to prepare a git commit. Use {{base_ref}} anywhere you want the current base branch inserted automatically." />
               </div>
               <textarea
                 className="form-textarea font-mono text-xs"
@@ -331,7 +332,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group">
               <div className="label-row">
                 <label>Code Style Prompt</label>
-                <span className="help-btn" title="Instructions for code style enforcement. The agent will review code and apply fixes to comply with these rules. Uses the Review Model."></span>
+                <HelpButton tooltip="Instructions for code style enforcement. The agent will review code and apply fixes to comply with these rules. Uses the Review Model." />
               </div>
               <textarea
                 className="form-textarea font-mono text-xs"
@@ -346,7 +347,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group">
               <div className="label-row">
                 <label>Extra Prompt <span className="text-dark-text-muted font-normal">(added to every prompt)</span></label>
-                <span className="help-btn" title="Additional instructions that will be appended to every task prompt sent to the agent.">?</span>
+                <HelpButton tooltip="Additional instructions that will be appended to every task prompt sent to the agent." />
               </div>
               <textarea
                 className="form-textarea font-mono text-xs"
@@ -361,7 +362,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group border border-dark-surface3 rounded-lg p-3">
               <div className="label-row">
                 <label>Telegram Notifications</label>
-                <span className="help-btn" title="Send a Telegram message when a task changes state. Leave both fields empty to disable notifications.">?</span>
+                <HelpButton tooltip="Send a Telegram message when a task changes state. Leave both fields empty to disable notifications." />
               </div>
               <label className="checkbox-item mb-2">
                 <input

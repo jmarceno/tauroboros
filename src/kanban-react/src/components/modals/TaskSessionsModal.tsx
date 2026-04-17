@@ -136,24 +136,24 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
           sessionUsage.startWatching(sessionId)
           sessionIdsToCleanup.push(sessionId)
         }
-        
+
         // Validate that activeSessionId still exists in new session list
         const currentActiveId = activeSessionIdRef.current
         let newActiveId: string | null = currentActiveId
-        
+
         if (currentActiveId && !sessionIds.includes(currentActiveId)) {
           newActiveId = sessionIds[0] || null
           setActiveSessionId(newActiveId)
           hasInitiallySetActiveSessionRef.current = false
         }
-        
+
         // Only auto-select first session on initial load, not on refresh
         if (!hasInitiallySetActiveSessionRef.current && sessionIds.length > 0) {
           newActiveId = sessionIds[0]
           setActiveSessionId(newActiveId)
           hasInitiallySetActiveSessionRef.current = true
         }
-        
+
         setSessions(initialSessionsMap)
 
         for (const sessionId of sessionIds) {
@@ -179,17 +179,17 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
   useEffect(() => {
     const activeSession = activeSessionId ? sessions.get(activeSessionId) : null
     const currentCount = activeSession?.messages.length || 0
-    
+
     // Only scroll if message count actually increased (new messages arrived)
     if (currentCount > prevMessageCountRef.current && timelineRef.current) {
       requestAnimationFrame(() => {
-        timelineRef.current?.scrollTo({ 
-          top: timelineRef.current.scrollHeight, 
-          behavior: 'smooth' 
+        timelineRef.current?.scrollTo({
+          top: timelineRef.current.scrollHeight,
+          behavior: 'smooth'
         })
       })
     }
-    
+
     prevMessageCountRef.current = currentCount
   }, [sessions, activeSessionId])
 
@@ -197,12 +197,12 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
   useEffect(() => {
     // Skip if session hasn't actually changed
     if (activeSessionId === lastActiveSessionIdRef.current) return
-    
+
     // Clear any pending usage load
     if (usageLoadTimeoutRef.current) {
       clearTimeout(usageLoadTimeoutRef.current)
     }
-    
+
     if (activeSessionId) {
       // Debounce usage load to prevent duplicate requests during rapid tab switches
       usageLoadTimeoutRef.current = setTimeout(() => {
@@ -212,7 +212,7 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
     } else {
       lastActiveSessionIdRef.current = null
     }
-    
+
     return () => {
       if (usageLoadTimeoutRef.current) {
         clearTimeout(usageLoadTimeoutRef.current)
@@ -486,7 +486,7 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
                           <div className={`text-xs leading-relaxed whitespace-pre-wrap break-words ${group.isThinking ? 'text-dark-text-muted italic' : 'text-dark-text'} ${group.isError ? 'text-red-400' : ''}`}>
                             {group.text || '(no text content)'}
                           </div>
-                          {((group.toolArgsJson !== null && group.toolArgsJson !== undefined) || 
+                          {((group.toolArgsJson !== null && group.toolArgsJson !== undefined) ||
                             (group.toolResultJson !== null && group.toolResultJson !== undefined)) && (
                             <details className="mt-2 text-xs text-dark-text-muted">
                               <summary className="cursor-pointer">Tool payload</summary>

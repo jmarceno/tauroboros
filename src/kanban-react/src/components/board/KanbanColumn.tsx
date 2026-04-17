@@ -1,4 +1,5 @@
 import { TaskCard } from './TaskCard'
+import { HelpButton } from '../common/HelpButton'
 import type { Task, TaskStatus, BestOfNSummary } from '@/types'
 import type { useDragDrop } from '@/hooks/useDragDrop'
 import { memo } from 'react'
@@ -86,13 +87,7 @@ export const KanbanColumn = memo(function KanbanColumn({
         <div className={`kanban-column-title ${iconColor}`}>
           <span dangerouslySetInnerHTML={{ __html: iconSvg }} />
           <span>{title}</span>
-          <button
-            className="help-btn"
-            title={helpText}
-            aria-label={`${title} column help`}
-          >
-            ?
-          </button>
+          <HelpButton tooltip={helpText} aria-label={`${title} column help`} />
         </div>
         <div className="flex items-center gap-2">
           <select

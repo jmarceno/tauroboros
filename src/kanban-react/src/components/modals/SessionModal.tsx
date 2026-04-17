@@ -11,10 +11,10 @@ export function SessionModal({ sessionId, onClose }: SessionModalProps) {
   const sessionCtx = useSessionContext()
   const toasts = useToastContext()
   const loadedSessionIdRef = useRef<string | null>(null)
-  
+
   // Use messages directly from context - no local state needed
   const { messages, isLoading, error } = sessionCtx
-  
+
   // Memoize sorted messages to prevent unnecessary re-renders
   const sortedMessages = useMemo(() => {
     return [...messages].sort((a, b) => {
@@ -37,7 +37,7 @@ export function SessionModal({ sessionId, onClose }: SessionModalProps) {
 
   // Show loading state when initially loading or when session doesn't match
   const showLoading = isLoading && loadedSessionIdRef.current === sessionId && messages.length === 0
-  
+
   // Show error state
   const showError = error && !isLoading
 
