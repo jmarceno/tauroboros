@@ -227,17 +227,21 @@ export function ChatPanel({
           <ChatMessage key={message.id || index} message={message} />
         ))}
 
-        {(session.isLoading || session.isSending) && (
+        {(session.isLoading || session.isSending || session.isReconnecting) && (
           <div className="flex items-center gap-2 text-dark-text-muted text-sm py-1 px-3">
             <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
-            <span>{session.isLoading ? 'Starting session...' : 'Waiting for response...'}</span>
+            <span>
+              {session.isReconnecting ? 'Reconnecting session...' :
+               session.isLoading ? 'Starting session...' : 
+               'Waiting for response...'}
+            </span>
           </div>
         )}
 
-        {canReconnect && (
+        {canReconnect && !session.isReconnecting && (
           <div className="mx-2 my-1 p-2 rounded bg-accent-warning/10 border border-accent-warning/30 text-accent-warning text-sm">
             <div className="flex items-start gap-2">
               <svg className="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -247,7 +251,7 @@ export function ChatPanel({
                 <p className="mb-2">This session is not currently active. Reconnect to continue chatting.</p>
                 <button
                   className="btn btn-primary btn-xs"
-                  disabled={session.isLoading}
+                  disabled={session.isLoading || session.isReconnecting}
                   onClick={onReconnect}
                 >
                   Reconnect
@@ -375,14 +379,14 @@ export function ChatPanel({
             value={messageInput}
             onChange={(e) => setMessageInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={session.isLoading || !session.session?.id}
+            disabled={session.isLoading || session.isReconnecting || !session.session?.id}
           />
         </div>
 
         <div className="px-2 pb-1">
           <button
             className="chat-send-btn w-full"
-            disabled={!messageInput.trim() || session.isSending || !session.session?.id || session.isLoading}
+            disabled={!messageInput.trim() || session.isSending || !session.session?.id || session.isLoading || session.isReconnecting}
             onClick={handleSend}
           >
             <span className="flex items-center justify-center gap-1">
@@ -396,7 +400,8 @@ export function ChatPanel({
 
         <div className="px-2 pb-1 text-xs text-dark-text-muted flex items-center justify-between">
           <span>
-            {session.isSending ? 'Sending...' :
+            {session.isReconnecting ? 'Reconnecting session...' :
+             session.isSending ? 'Sending...' :
              session.session?.status === 'starting' ? 'Session starting...' :
              session.session?.status === 'active' ? 'Ready' :
              session.session?.status === 'failed' ? 'Session failed' :
