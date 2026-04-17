@@ -8,7 +8,7 @@ import { getLatestTaggedOutput, getPlanExecutionEligibility } from "./task-state
 import type { PiKanbanDB } from "./db.ts"
 import type { PiSessionKind, PiWorkflowSession } from "./db/types.ts"
 import { resolveContainerImage, type Options, type Task, type WSMessage, type WorkflowRun } from "./types.ts"
-import { resolveExecutionTasks, getExecutionGraphTasks } from "./execution-plan.ts"
+import { resolveExecutionTasks, getExecutionGraphTasks, resolveBatches } from "./execution-plan.ts"
 import { PiSessionManager } from "./runtime/session-manager.ts"
 import { PiReviewSessionRunner } from "./runtime/review-session.ts"
 import { BestOfNRunner } from "./runtime/best-of-n.ts"
@@ -76,6 +76,9 @@ export class PiOrchestrator {
   }>()
   private activeBestOfNRunner: BestOfNRunner | null = null
   private activeWorktreeInfo: WorktreeInfo | null = null
+  // TODO: Support multiple active tasks for parallel execution
+  // Currently only tracks one task, but with parallelTasks > 1, there could be multiple
+  // For proper pause coordination, this should be a Set<Task> or Map<string, Task>
   private activeTask: Task | null = null
 
   constructor(
@@ -592,6 +595,10 @@ export class PiOrchestrator {
     console.log(`[orchestrator] Pausing run ${runId}`)
     this.shouldPause = true
 
+    // TODO: With parallel execution, multiple tasks may be active simultaneously
+    // Currently we iterate and pause one by one, which works but may leave some
+    // tasks running briefly while others are paused. For true atomic pause,
+    // we'd need to signal all active sessions in parallel and wait for all to ack.
     // Pause all active sessions for tasks in this run
     const pausedSessions: PausedSessionState[] = []
 
@@ -637,6 +644,8 @@ export class PiOrchestrator {
       targetTaskId: run.targetTaskId,
       pausedAt: nowUnix(),
       sessions: pausedSessions,
+      // TODO: With parallel execution, this only captures the phase of one active task
+      // For complete parallel pause support, we'd need to track all active task phases
       executionPhase: this.activeTask?.status === "review" ? "reviewing" : "executing",
     }
 
@@ -650,6 +659,10 @@ export class PiOrchestrator {
       this.broadcast({ type: "run_updated", payload: updated })
     }
 
+    // TODO: With parallel execution, multiple tasks may be active
+    // Currently only resets the tracked activeTask, but other active tasks in the
+    // batch won't be reset. The batch will complete first (due to shouldPause check)
+    // then on resume they'll restart from backlog since they weren't done.
     if (this.activeTask && run.taskOrder.includes(this.activeTask.id)) {
       this.db.updateTask(this.activeTask.id, {
         status: "backlog", // Move back to backlog so it will be picked up on resume
@@ -1067,35 +1080,86 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
 
   private async runInBackground(runId: string, taskIds: string[]): Promise<void> {
     const executedTaskIds = new Set<string>()
+    const options = this.db.getOptions()
+    const parallelLimit = options.parallelTasks ?? 1
+
+    // Get task objects for all task IDs
+    const tasks: Task[] = []
+    for (const taskId of taskIds) {
+      const task = this.db.getTask(taskId)
+      if (task) tasks.push(task)
+    }
+
+    // Resolve tasks into parallel batches based on dependencies
+    const batches = resolveBatches(tasks, parallelLimit)
+    console.log(`[orchestrator] runInBackground: ${tasks.length} tasks resolved into ${batches.length} batches with parallelLimit=${parallelLimit}`)
 
     try {
-      for (let index = 0; index < taskIds.length; index++) {
+      let taskIndex = 0
+      for (const batch of batches) {
         if (this.shouldStop) break
+        // TODO: Implement proper pause coordination for multiple active tasks
+        // Currently pause only works between batches, not within a batch.
+        // For full parallel pause support:
+        // 1. Track all active tasks in a Set (not just activeTask)
+        // 2. Send pause signal to all active sessions in parallel
+        // 3. Wait for all to reach paused state
+        // 4. Save state for all tasks
         if (this.shouldPause) return
 
-        const taskId = taskIds[index]
-        const task = this.db.getTask(taskId)
-        if (!task) continue
-
-        for (const depId of task.requirements) {
-          const dep = this.db.getTask(depId)
-          if (dep && dep.status !== "done" && !executedTaskIds.has(depId)) {
-            const msg = `Dependency "${dep.name}" is not done (status: ${dep.status})`
-            this.db.updateTask(task.id, { status: "failed", errorMessage: msg })
-            this.broadcastTask(task.id)
-            throw new Error(msg)
+        // Validate dependencies for all tasks in the batch
+        for (const task of batch) {
+          for (const depId of task.requirements) {
+            const dep = this.db.getTask(depId)
+            if (dep && dep.status !== "done" && !executedTaskIds.has(depId)) {
+              const msg = `Dependency "${dep.name}" is not done (status: ${dep.status})`
+              this.db.updateTask(task.id, { status: "failed", errorMessage: msg })
+              this.broadcastTask(task.id)
+              throw new Error(msg)
+            }
           }
         }
 
-        const updatedRun = this.db.updateWorkflowRun(runId, {
-          currentTaskId: task.id,
-          currentTaskIndex: index,
-        })
-        if (updatedRun) this.broadcast({ type: "run_updated", payload: updatedRun })
+        // Update run progress (first task of the batch)
+        if (batch.length > 0) {
+          const updatedRun = this.db.updateWorkflowRun(runId, {
+            currentTaskId: batch[0].id,
+            currentTaskIndex: taskIndex,
+          })
+          if (updatedRun) this.broadcast({ type: "run_updated", payload: updatedRun })
+        }
 
-        await this.executeTask(task, this.db.getOptions())
-        executedTaskIds.add(taskId)
-        console.log(`[orchestrator] executeTask COMPLETE: ${task.name}(${task.id}), all executed: ${executedTaskIds.size}`)
+        // Execute all tasks in this batch in parallel
+        console.log(`[orchestrator] Executing batch with ${batch.length} tasks in parallel: ${batch.map(t => t.name).join(', ')}`)
+
+        const batchResults = await Promise.allSettled(
+          batch.map(task => this.executeTask(task, options))
+        )
+
+        // Process results
+        let hasFailure = false
+        for (let i = 0; i < batch.length; i++) {
+          const task = batch[i]
+          const result = batchResults[i]
+
+          if (result.status === 'fulfilled') {
+            executedTaskIds.add(task.id)
+            console.log(`[orchestrator] executeTask COMPLETE: ${task.name}(${task.id})`)
+          } else {
+            hasFailure = true
+            console.error(`[orchestrator] executeTask FAILED: ${task.name}(${task.id}) - ${result.reason}`)
+            // Task failure is already handled within executeTask
+          }
+
+          taskIndex++
+        }
+
+        // If any task failed, stop the workflow (fail-fast behavior)
+        if (hasFailure) {
+          throw new Error(`One or more tasks in the batch failed`)
+        }
+
+        console.log(`[orchestrator] Batch complete. Total executed: ${executedTaskIds.size}/${tasks.length}`)
       }
 
       // Only mark as completed if we weren't paused
@@ -1158,6 +1222,8 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     }
 
     // Track active task for pause/stop operations
+    // TODO: For parallel execution, this should add to a Set of active tasks
+    // rather than replacing the single activeTask reference
     this.activeTask = task
 
     if (task.executionStrategy === "best_of_n") {
@@ -1300,6 +1366,8 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     } finally {
       // Clear active tracking
       this.activeWorktreeInfo = null
+      // TODO: For parallel execution, this should remove from Set of active tasks
+      // rather than just clearing the single reference
       this.activeTask = null
     }
   }

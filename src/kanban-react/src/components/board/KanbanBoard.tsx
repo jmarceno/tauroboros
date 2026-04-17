@@ -14,7 +14,7 @@ interface KanbanBoardProps {
   columnSorts?: Record<string, string>
   highlightedRunId?: string | null
   isTaskInRun?: (taskId: string, runId: string | null) => boolean
-  onOpenTask: (id: string) => void
+  onOpenTask: (id: string, e?: React.MouseEvent) => void
   onOpenTemplateModal: () => void
   onOpenTaskModal: () => void
   onDeployTemplate: (id: string) => void

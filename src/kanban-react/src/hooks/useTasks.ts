@@ -48,8 +48,17 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
       }
     }
 
+    // Apply column-specific sorting
+    for (const status of Object.keys(groups) as Array<keyof typeof groups>) {
+      const sortKey = getSortForColumn(status as TaskStatus)
+      const sortFn = sortFns[sortKey]
+      if (sortFn) {
+        groups[status].sort(sortFn)
+      }
+    }
+
     return groups
-  }, [tasks])
+  }, [tasks, sortFns, getSortForColumn])
 
   const groupedTasks = useMemo(() => getGroupedTasks(), [getGroupedTasks])
 

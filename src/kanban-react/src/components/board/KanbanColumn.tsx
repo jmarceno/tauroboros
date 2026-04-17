@@ -19,7 +19,7 @@ interface KanbanColumnProps {
   currentSort: string
   highlightedRunId?: string | null
   isTaskInRun?: (taskId: string, runId: string | null) => boolean
-  onOpenTask: (id: string) => void
+  onOpenTask: (id: string, e?: React.MouseEvent) => void
   onChangeSort: (sort: string) => void
   onOpenTemplateModal: () => void
   onOpenTaskModal: () => void
@@ -128,7 +128,7 @@ export const KanbanColumn = memo(function KanbanColumn({
             isSelected={getIsSelected?.(task.id) || false}
             isMultiSelecting={isMultiSelecting}
             isHighlighted={highlightedRunId ? isTaskInRun?.(task.id, highlightedRunId) || false : false}
-            onOpen={() => onOpenTask(task.id)}
+            onOpen={(e) => onOpenTask(task.id, e)}
             onDeploy={() => onDeployTemplate(task.id)}
             onOpenTaskSessions={() => onOpenTaskSessions(task.id)}
             onApprovePlan={() => onApprovePlan(task.id)}

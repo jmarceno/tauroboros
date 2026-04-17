@@ -68,8 +68,40 @@ export function useRuns() {
     if (!runId) return false
     const run = runs.find(r => r.id === runId)
     if (!run) return false
-    return run.taskOrder?.includes(taskId) || false
-  }, [runs])
+    if (!run.taskOrder) return false
+
+    // Check if task is directly in the run
+    if (run.taskOrder.includes(taskId)) return true
+
+    // Check if task is a dependency of any task in the run
+    // Build a map of all tasks for dependency lookup
+    const taskMap = new Map(tasksRef.map(t => [t.id, t]))
+
+    // Collect all dependency IDs for tasks in this run
+    const visited = new Set<string>()
+    const toVisit = [...run.taskOrder]
+
+    while (toVisit.length > 0) {
+      const currentId = toVisit.pop()!
+      if (visited.has(currentId)) continue
+      visited.add(currentId)
+
+      const task = taskMap.get(currentId)
+      if (!task) continue
+
+      // Check if this task depends on the target task
+      if (task.requirements?.includes(taskId)) return true
+
+      // Add this task's dependencies to visit queue (for transitive deps)
+      for (const depId of task.requirements || []) {
+        if (!visited.has(depId)) {
+          toVisit.push(depId)
+        }
+      }
+    }
+
+    return false
+  }, [runs, tasksRef])
 
   const getRunProgressLabel = useCallback((run: WorkflowRun) => {
     const total = run.taskOrder?.length ?? 0

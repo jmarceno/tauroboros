@@ -13,7 +13,7 @@ interface TaskCardProps {
   isSelected?: boolean
   isMultiSelecting?: boolean
   isHighlighted?: boolean
-  onOpen: () => void
+  onOpen: (e?: React.MouseEvent) => void
   onDeploy: () => void
   onOpenTaskSessions: () => void
   onApprovePlan: () => void
@@ -253,7 +253,7 @@ export const TaskCard = memo(function TaskCard({
       draggable={canDrag && !isMultiSelecting}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
-      onClick={onOpen}
+      onClick={(e) => onOpen(e)}
     >
       {/* Header */}
       <div className="task-header">

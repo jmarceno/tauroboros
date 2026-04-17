@@ -111,9 +111,17 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
     return () => { cancelled = true }
   }, [getBranches, getContainerImages, existingTask, seedTask, optionsContext.options])
 
-  const availableRequirements = tasks.tasks.filter(t =>
-    isViewOnly ? t.id !== taskId : t.status === 'backlog' && t.id !== taskId
-  )
+  // Show backlog tasks for adding new dependencies
+  // Also show done tasks that are already dependencies so they can be removed
+  const availableRequirements = tasks.tasks.filter(t => {
+    if (isViewOnly) return t.id !== taskId
+    if (t.id === taskId) return false
+    // Always show backlog tasks as potential new dependencies
+    if (t.status === 'backlog') return true
+    // Show done tasks only if they are already in requirements (so they can be removed)
+    if (t.status === 'done' && requirements.includes(t.id)) return true
+    return false
+  })
 
   const addBonWorker = () => {
     setBonWorkers([...bonWorkers, { model: '', count: 1, suffix: '' }])

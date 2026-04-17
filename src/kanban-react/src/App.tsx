@@ -717,7 +717,13 @@ function App() {
                                   columnSorts={optionsHook.options?.columnSorts}
                                   highlightedRunId={highlightedRunId}
                                   isTaskInRun={runsHook.isTaskInRun}
-                                  onOpenTask={(id: string) => openModal('task', { taskId: id, mode: 'edit' })}
+                                  onOpenTask={(id: string, e?: React.MouseEvent) => {
+                                    if (e && (e.ctrlKey || e.metaKey)) {
+                                      multiSelectHook.toggleSelection(id, e)
+                                    } else {
+                                      openModal('task', { taskId: id, mode: 'edit' })
+                                    }
+                                  }}
                                   onOpenTemplateModal={() => openModal('task', { mode: 'create', createStatus: 'template' })}
                                   onOpenTaskModal={() => openModal('task', { mode: 'create', createStatus: 'backlog' })}
                                   onDeployTemplate={(id: string) => openModal('task', { mode: 'deploy', seedTaskId: id })}
