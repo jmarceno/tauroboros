@@ -159,6 +159,7 @@ export interface Options {
   command?: string
   commitPrompt?: string
   extraPrompt?: string
+  codeStylePrompt?: string
   parallelTasks: number
   maxReviews: number
   maxJsonParseRetries: number

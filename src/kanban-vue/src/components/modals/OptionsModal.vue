@@ -48,6 +48,7 @@ const safeForm = computed<Options>(() => {
     telegramBotToken: '',
     telegramChatId: '',
     showExecutionGraph: false,
+    codeStylePrompt: '',
   }
 })
 
@@ -109,6 +110,7 @@ const save = async () => {
       command: safeForm.value.command,
       commitPrompt: safeForm.value.commitPrompt,
       extraPrompt: safeForm.value.extraPrompt,
+      codeStylePrompt: safeForm.value.codeStylePrompt,
       parallelTasks: safeForm.value.parallelTasks,
       maxReviews: safeForm.value.maxReviews,
       autoDeleteNormalSessions: safeForm.value.autoDeleteNormalSessions,
@@ -322,6 +324,20 @@ const closeOnOverlay = (e: MouseEvent) => {
               class="form-textarea font-mono text-xs"
               style="min-height: 100px;"
               placeholder="Additional context or instructions for all tasks..."
+            />
+          </div>
+
+          <!-- Code Style Prompt -->
+          <div class="form-group">
+            <div class="label-row">
+              <label>Code Style Prompt <span class="text-dark-text-muted font-normal">(used during code style enforcement)</span></label>
+              <span class="help-btn" title="Instructions used during the code style phase to review and apply fixes to code. Uses the Review Model and Review Thinking Level.">?</span>
+            </div>
+            <textarea
+              v-model="form!.codeStylePrompt"
+              class="form-textarea font-mono text-xs"
+              style="min-height: 100px;"
+              placeholder="Instructions for code style review and enforcement..."
             />
           </div>
 

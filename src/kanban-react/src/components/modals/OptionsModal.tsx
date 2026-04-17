@@ -43,6 +43,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
           command: currentOpts.command || '',
           commitPrompt: currentOpts.commitPrompt || '',
           extraPrompt: currentOpts.extraPrompt || '',
+          codeStylePrompt: currentOpts.codeStylePrompt || '',
           parallelTasks: currentOpts.parallelTasks ?? 1,
           maxReviews: currentOpts.maxReviews ?? 3,
           maxJsonParseRetries: currentOpts.maxJsonParseRetries ?? 5,
@@ -338,6 +339,21 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
                 placeholder="Additional context or instructions for all tasks..."
                 value={formData.extraPrompt || ''}
                 onChange={(e) => updateField('extraPrompt', e.target.value)}
+              />
+            </div>
+
+            {/* Code Style Prompt */}
+            <div className="form-group">
+              <div className="label-row">
+                <label>Code Style Prompt <span className="text-dark-text-muted font-normal">(used during code style enforcement)</span></label>
+                <span className="help-btn" title="Instructions used during the code style phase to review and apply fixes to code. Uses the Review Model and Review Thinking Level.">?</span>
+              </div>
+              <textarea
+                className="form-textarea font-mono text-xs"
+                style={{ minHeight: '100px' }}
+                placeholder="Instructions for code style review and enforcement..."
+                value={formData.codeStylePrompt || ''}
+                onChange={(e) => updateField('codeStylePrompt', e.target.value)}
               />
             </div>
 
