@@ -54,6 +54,41 @@ function isSelectionMode(value: unknown): value is "pick_best" | "synthesize" | 
   return value === "pick_best" || value === "synthesize" || value === "pick_or_synthesize"
 }
 
+// Task Group validation helpers
+function isTaskGroupStatus(value: unknown): value is "active" | "completed" | "archived" {
+  return value === "active" || value === "completed" || value === "archived"
+}
+
+function isValidHexColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9A-Fa-f]{6}$/.test(value)
+}
+
+function validateTaskGroupName(name: unknown): { valid: boolean; error?: string } {
+  if (typeof name !== "string") return { valid: false, error: "name must be a string" }
+  if (name.trim().length === 0) return { valid: false, error: "name cannot be empty" }
+  if (name.length > 100) return { valid: false, error: "name must be 100 characters or less" }
+  return { valid: true }
+}
+
+function validateTaskIds(taskIds: unknown, db: PiKanbanDB): { valid: boolean; error?: string; invalidIds?: string[] } {
+  if (!Array.isArray(taskIds)) return { valid: false, error: "taskIds must be an array" }
+  if (taskIds.length === 0) return { valid: true }
+
+  const invalidIds: string[] = []
+  for (const id of taskIds) {
+    if (typeof id !== "string") {
+      invalidIds.push(String(id))
+      continue
+    }
+    if (!db.getTask(id)) invalidIds.push(id)
+  }
+
+  if (invalidIds.length > 0) {
+    return { valid: false, error: `Invalid or non-existent task IDs: ${invalidIds.join(', ')}`, invalidIds }
+  }
+  return { valid: true }
+}
+
 interface BestOfNSlotInput {
   model?: unknown
   count?: unknown
@@ -2335,6 +2370,204 @@ Please confirm when you've created the tasks, and provide a summary of what was 
     })
 
     // ---- End Container Configuration Routes ----
+
+    // ---- Task Group Routes ----
+
+    this.router.get("/api/task-groups", ({ json }) => {
+      const groups = this.db.getTaskGroups()
+      return json(groups)
+    })
+
+    this.router.post("/api/task-groups", async ({ req, json, broadcast }) => {
+      const body = await req.json()
+
+      const nameValidation = validateTaskGroupName(body?.name)
+      if (!nameValidation.valid) return json({ error: nameValidation.error }, 400)
+
+      if (body?.color !== undefined && !isValidHexColor(body.color)) {
+        return json({ error: "color must be a valid hex color (e.g., #888888)" }, 400)
+      }
+
+      if (body?.status !== undefined && !isTaskGroupStatus(body.status)) {
+        return json({ error: "status must be active, completed, or archived" }, 400)
+      }
+
+      let memberTaskIds: string[] = []
+      if (body?.taskIds !== undefined) {
+        const taskValidation = validateTaskIds(body.taskIds, this.db)
+        if (!taskValidation.valid) return json({ error: taskValidation.error }, 400)
+        memberTaskIds = body.taskIds as string[]
+      }
+
+      try {
+        const group = this.db.createTaskGroup({
+          name: String(body.name).trim(),
+          color: body.color,
+          status: body.status,
+          memberTaskIds,
+        })
+
+        broadcast({ type: "group_created", payload: group })
+        return json(group, 201)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: message }, 409)
+      }
+    })
+
+    this.router.get("/api/task-groups/:id", ({ params, json, sessionUrlFor }) => {
+      const group = this.db.getTaskGroup(params.id)
+      if (!group) return json({ error: "Task group not found" }, 404)
+
+      const tasks = group.taskIds.map(taskId => {
+        const task = this.db.getTask(taskId)
+        return task ? normalizeTaskForClient(task, sessionUrlFor) : null
+      }).filter(Boolean)
+
+      return json({ ...group, tasks })
+    })
+
+    this.router.patch("/api/task-groups/:id", async ({ params, req, json, broadcast }) => {
+      const existing = this.db.getTaskGroup(params.id)
+      if (!existing) return json({ error: "Task group not found" }, 404)
+
+      const body = await req.json()
+
+      if (body?.name !== undefined) {
+        const nameValidation = validateTaskGroupName(body.name)
+        if (!nameValidation.valid) return json({ error: nameValidation.error }, 400)
+      }
+
+      if (body?.color !== undefined && !isValidHexColor(body.color)) {
+        return json({ error: "color must be a valid hex color (e.g., #888888)" }, 400)
+      }
+
+      if (body?.status !== undefined && !isTaskGroupStatus(body.status)) {
+        return json({ error: "status must be active, completed, or archived" }, 400)
+      }
+
+      try {
+        const updated = this.db.updateTaskGroup(params.id, {
+          name: body?.name !== undefined ? String(body.name).trim() : undefined,
+          color: body?.color,
+          status: body?.status,
+          completedAt: body?.status === "completed" ? Math.floor(Date.now() / 1000) : undefined,
+        })
+
+        if (!updated) return json({ error: "Failed to update task group" }, 500)
+
+        broadcast({ type: "group_updated", payload: updated })
+        return json(updated)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: message }, 500)
+      }
+    })
+
+    this.router.delete("/api/task-groups/:id", ({ params, json, broadcast }) => {
+      const group = this.db.getTaskGroup(params.id)
+      if (!group) return json({ error: "Task group not found" }, 404)
+
+      const success = this.db.deleteTaskGroup(params.id)
+      if (!success) return json({ error: "Failed to delete task group" }, 500)
+
+      broadcast({ type: "group_deleted", payload: { id: params.id } })
+      return new Response(null, { status: 204 })
+    })
+
+    this.router.post("/api/task-groups/:id/tasks", async ({ params, req, json, broadcast }) => {
+      const group = this.db.getTaskGroup(params.id)
+      if (!group) return json({ error: "Task group not found" }, 404)
+
+      const body = await req.json()
+
+      if (!body?.taskIds || !Array.isArray(body.taskIds)) {
+        return json({ error: "taskIds array is required" }, 400)
+      }
+
+      const taskValidation = validateTaskIds(body.taskIds, this.db)
+      if (!taskValidation.valid) return json({ error: taskValidation.error }, 400)
+
+      try {
+        const addedCount = this.db.addTasksToGroup(params.id, body.taskIds)
+        const updated = this.db.getTaskGroup(params.id)
+
+        broadcast({ type: "group_task_added", payload: { groupId: params.id, taskIds: body.taskIds, addedCount } })
+        return json(updated)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes("already in another group")) {
+          return json({ error: message }, 409)
+        }
+        return json({ error: message }, 500)
+      }
+    })
+
+    this.router.delete("/api/task-groups/:id/tasks", async ({ params, req, json, broadcast }) => {
+      const group = this.db.getTaskGroup(params.id)
+      if (!group) return json({ error: "Task group not found" }, 404)
+
+      const body = await req.json()
+
+      if (!body?.taskIds || !Array.isArray(body.taskIds)) {
+        return json({ error: "taskIds array is required" }, 400)
+      }
+
+      try {
+        const removedCount = this.db.removeTasksFromGroup(params.id, body.taskIds)
+        const updated = this.db.getTaskGroup(params.id)
+
+        broadcast({ type: "group_task_removed", payload: { groupId: params.id, taskIds: body.taskIds, removedCount } })
+        return json(updated)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: message }, 500)
+      }
+    })
+
+    this.router.post("/api/task-groups/:id/start", async ({ params, json, broadcast }) => {
+      const group = this.db.getTaskGroup(params.id)
+      if (!group) return json({ error: "Task group not found" }, 404)
+
+      if (group.taskIds.length === 0) {
+        return json({ error: "Cannot start group with no tasks" }, 400)
+      }
+
+      if (this.db.hasRunningWorkflows()) {
+        return json({ error: "A workflow is already running. Stop it first." }, 409)
+      }
+
+      const tasks = group.taskIds.map(id => this.db.getTask(id)).filter(Boolean)
+      const nonBacklogTasks = tasks.filter(t => t!.status !== "backlog" && t!.status !== "template")
+      if (nonBacklogTasks.length > 0) {
+        return json({
+          error: "Some tasks are not in backlog status",
+          tasks: nonBacklogTasks.map(t => ({ id: t!.id, name: t!.name, status: t!.status }))
+        }, 409)
+      }
+
+      return json({
+        error: "Group execution not yet implemented. onStartGroup callback will be added later.",
+        groupId: params.id,
+        tasks: group.taskIds,
+      }, 501)
+    })
+
+    this.router.get("/api/tasks/:id/group", ({ params, json }) => {
+      if (!this.db.getTask(params.id)) {
+        return json({ error: "Task not found" }, 404)
+      }
+
+      const membership = this.db.getTaskGroupMembership(params.id)
+
+      if (!membership.groupId) {
+        return json({ groupId: null, group: null })
+      }
+
+      return json(membership)
+    })
+
+    // ---- End Task Group Routes ----
   }
 
   private async getPodmanImages(): Promise<Array<{ tag: string; createdAt: number; size: string }>> {
