@@ -52,7 +52,7 @@ function App() {
     }
   }, [])
 
-  // Initialize hooks
+  // Initialize hooks (wsHook must come before planningChatHook)
   const optionsHook = useOptions()
   const tasksHook = useTasks(optionsHook.options?.columnSorts)
   const runsHook = useRuns()
@@ -61,7 +61,7 @@ function App() {
   const sessionHook = useSession()
   const wsHook = useWebSocket()
   const multiSelectHook = useMultiSelect()
-  const planningChatHook = usePlanningChat()
+  const planningChatHook = usePlanningChat(wsHook)
   const sessionUsageHook = useSessionUsage()
 
   // Workflow control
@@ -463,28 +463,8 @@ function App() {
       toastsHook.showToast(data.message, 'error')
     }))
 
-    unsubscribers.push(wsHook.on('planning_prompt_updated', (payload) => {
-      planningChatHook.planningPrompt = payload as PlanningPrompt
-      toastsHook.addLog('Planning prompt updated', 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('planning_session_created', (payload) => {
-      planningChatHook.handlePlanningSessionCreated(payload as Session)
-      toastsHook.addLog('Planning session created', 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('planning_session_updated', (payload) => {
-      planningChatHook.handlePlanningSessionUpdated(payload as Session)
-    }))
-
-    unsubscribers.push(wsHook.on('planning_session_closed', (payload) => {
-      planningChatHook.handlePlanningSessionClosed(payload as { id: string })
-      toastsHook.addLog('Planning session closed', 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('planning_session_message', (payload: { sessionId: string; message: SessionMessage }) => {
-      planningChatHook.handlePlanningSessionMessage(payload)
-    }))
+    // Planning chat WebSocket handlers are now managed inside usePlanningChat hook
+    // to avoid stale closure issues with session state
 
     unsubscribers.push(wsHook.on('container_config_updated', () => {
       toastsHook.addLog('Container configuration updated', 'info')

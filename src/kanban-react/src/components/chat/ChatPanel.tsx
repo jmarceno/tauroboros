@@ -8,7 +8,7 @@ interface ChatPanelProps {
   onMinimize: () => void
   onClose: () => void
   onRename: (name: string) => void
-  onSendMessage: (content: string, attachments?: ContextAttachment[]) => Promise<void>
+  onSendMessage: (sessionId: string, content: string, attachments?: ContextAttachment[]) => Promise<void>
   onReconnect: () => Promise<void>
   onChangeModel: (model: string, thinkingLevel?: string) => Promise<void>
   onCreateTasks: () => Promise<void>
@@ -78,7 +78,7 @@ export function ChatPanel({
     setAttachedContext([])
 
     try {
-      await onSendMessage(content, attachments)
+      await onSendMessage(session.id, content, attachments)
       if (messagesContainerRef.current) {
         messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
       }

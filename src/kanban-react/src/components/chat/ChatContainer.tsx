@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { ChatSession, ContextAttachment } from '@/hooks/usePlanningChat'
 import type { PlanningSession, ThinkingLevel } from '@/types'
-import { usePlanningChat } from '@/hooks/usePlanningChat'
 import { useApi } from '@/hooks/useApi'
 import { useOptions } from '@/hooks/useOptions'
 import { useModelSearch } from '@/hooks/useModelSearch'
-import { useModalContext } from '@/contexts/AppContext'
+import { useModalContext, usePlanningChatContext } from '@/contexts/AppContext'
 import { ChatPanel } from './ChatPanel'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
@@ -14,7 +13,7 @@ const MIN_PANEL_WIDTH = 350
 const DEFAULT_PANEL_WIDTH = 500
 
 export function ChatContainer() {
-  const planningChat = usePlanningChat()
+  const planningChat = usePlanningChatContext()
   const api = useApi()
   const options = useOptions()
   const modelSearch = useModelSearch()
@@ -141,8 +140,7 @@ export function ChatContainer() {
       console.error('Failed to load session messages:', e)
     }
 
-    planningChat.sessions.push(newSession)
-    planningChat.activeSessionId = sessionId
+    planningChat.addExistingSession(newSession)
     setActiveTab('chat')
   }
 

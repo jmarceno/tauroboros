@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { PlanningSession, PlanningPrompt, SessionMessage, ThinkingLevel } from '@/types'
 import { useApi } from './useApi'
+import type { useWebSocket } from './useWebSocket'
 
 export interface ContextAttachment {
   type: 'file' | 'screenshot' | 'task'
@@ -21,7 +22,7 @@ export interface ChatSession {
   error: string | null
 }
 
-export function usePlanningChat() {
+export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
   const api = useApi()
 
   const [isOpen, setIsOpen] = useState(false)
@@ -31,6 +32,15 @@ export function usePlanningChat() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [planningPrompt, setPlanningPrompt] = useState<PlanningPrompt | null>(null)
   const [isLoadingPrompt, setIsLoadingPrompt] = useState(false)
+
+  // Use ref to track sessions for WebSocket handlers
+  const sessionsRef = useRef(sessions)
+  sessionsRef.current = sessions
+
+  // Helper to get current session from state (avoids stale closures)
+  const getSession = useCallback((sessionId: string): ChatSession | undefined => {
+    return sessionsRef.current.find(s => s.id === sessionId)
+  }, [])
 
   const activeSession = sessions.find(s => s.id === activeSessionId) || null
   const visibleSessions = sessions.filter(s => !s.isMinimized)
@@ -92,8 +102,14 @@ export function usePlanningChat() {
   }, [api, sessions.length])
 
   const sendMessage = useCallback(async (sessionId: string, content: string, attachments?: ContextAttachment[]) => {
-    const session = sessions.find(s => s.id === sessionId)
-    if (!session?.session?.id) {
+    // Get current session using ref
+    const session = getSession(sessionId)
+
+    if (!session) {
+      throw new Error('Session not found')
+    }
+
+    if (!session.session?.id) {
       throw new Error('No active session')
     }
 
@@ -101,14 +117,32 @@ export function usePlanningChat() {
       throw new Error('Already sending a message')
     }
 
+    const backendSessionId = session.session.id
+
+    // Create optimistic user message
+    const optimisticMessage: SessionMessage = {
+      id: Date.now(),
+      seq: Math.max(0, ...session.messages.map(m => Number(m.seq || 0))) + 1,
+      messageId: `user-${Date.now()}`,
+      sessionId: backendSessionId,
+      taskId: null,
+      taskRunId: null,
+      timestamp: Math.floor(Date.now() / 1000),
+      role: 'user',
+      eventName: 'user_message',
+      messageType: 'user_prompt',
+      contentJson: { text: content, attachments },
+    }
+
+    // Optimistically add user message to UI
     setSessions(prev => prev.map(s => 
       s.id === sessionId 
-        ? { ...s, isSending: true, error: null }
+        ? { ...s, messages: [...s.messages, optimisticMessage], isSending: true, error: null }
         : s
     ))
 
     try {
-      await api.sendPlanningMessage(session.session.id, content, attachments)
+      await api.sendPlanningMessage(backendSessionId, content, attachments)
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : 'Failed to send message'
       if (errorMsg.includes('Planning session not active')) {
@@ -132,10 +166,10 @@ export function usePlanningChat() {
           : s
       ))
     }
-  }, [api, sessions])
+  }, [api])
 
   const setSessionModel = useCallback(async (sessionId: string, model: string, thinkingLevel?: string) => {
-    const session = sessions.find(s => s.id === sessionId)
+    const session = getSession(sessionId)
     if (!session?.session?.id) {
       throw new Error('No active session')
     }
@@ -152,10 +186,10 @@ export function usePlanningChat() {
       console.error('Failed to change model:', e)
       throw e
     }
-  }, [api, sessions])
+  }, [api, getSession])
 
   const reconnectSession = useCallback(async (sessionId: string, model?: string, thinkingLevel?: string) => {
-    const session = sessions.find(s => s.id === sessionId)
+    const session = getSession(sessionId)
     if (!session?.session?.id) {
       throw new Error('No session to reconnect')
     }
@@ -186,10 +220,10 @@ export function usePlanningChat() {
       ))
       throw e
     }
-  }, [api, sessions])
+  }, [api, getSession])
 
   const createTasksFromChat = useCallback(async (sessionId: string, tasks?: Array<{ name: string; prompt: string; status?: string; requirements?: string[] }>) => {
-    const session = sessions.find(s => s.id === sessionId)
+    const session = getSession(sessionId)
     if (!session?.session?.id) {
       throw new Error('No active session')
     }
@@ -200,7 +234,7 @@ export function usePlanningChat() {
       console.error('Failed to create tasks:', e)
       throw e
     }
-  }, [api, sessions])
+  }, [api, getSession])
 
   const switchToSession = useCallback((sessionId: string) => {
     setActiveSessionId(sessionId)
@@ -225,17 +259,17 @@ export function usePlanningChat() {
       if (session?.session?.id) {
         api.closePlanningSession(session.session.id).catch(console.error)
       }
+      
+      // Update active session ID if needed
+      if (activeSessionId === sessionId) {
+        const remainingVisible = prev.filter(s => s.id !== sessionId && !s.isMinimized)
+        const nextActiveId = remainingVisible.length > 0 ? remainingVisible[0].id : null
+        setActiveSessionId(nextActiveId)
+      }
+      
       return prev.filter(s => s.id !== sessionId)
     })
-
-    setActiveSessionId(prev => {
-      if (prev === sessionId) {
-        const remaining = sessions.filter(s => s.id !== sessionId && !s.isMinimized)
-        return remaining.length > 0 ? remaining[0].id : null
-      }
-      return prev
-    })
-  }, [api, sessions])
+  }, [api, activeSessionId])
 
   const renameSession = useCallback((sessionId: string, newName: string) => {
     setSessions(prev => prev.map(s => 
@@ -249,17 +283,36 @@ export function usePlanningChat() {
     setSessions(prev => prev.map(s => {
       if (s.id !== sessionId) return s
 
+      // Check for exact duplicate by ID or messageId
       const existingIdx = s.messages.findIndex(m => 
         m.id === message.id || 
         (m.messageId && m.messageId === message.messageId)
       )
       
-      let newMessages
+      // If exact match found, update it (server confirmation replacing optimistic)
       if (existingIdx >= 0) {
-        newMessages = s.messages.map((m, i) => i === existingIdx ? message : m)
-      } else {
-        newMessages = [...s.messages, message]
+        return { ...s, messages: s.messages.map((m, i) => i === existingIdx ? message : m) }
       }
+      
+      // Check for optimistic message to replace (same content, role, similar timestamp)
+      if (message.role === 'user' && message.messageType === 'user_prompt') {
+        const messageText = (message.contentJson as { text?: string })?.text || ''
+        const optimisticIdx = s.messages.findIndex(m => {
+          if (m.role !== 'user' || m.messageType !== 'user_prompt') return false
+          const mText = (m.contentJson as { text?: string })?.text || ''
+          // Same content and within 30 seconds (reasonable window for network delay)
+          const timeDiff = Math.abs(Number(m.timestamp || 0) - Number(message.timestamp || 0))
+          return mText === messageText && timeDiff < 30
+        })
+        
+        if (optimisticIdx >= 0) {
+          // Replace optimistic with server-confirmed message
+          return { ...s, messages: s.messages.map((m, i) => i === optimisticIdx ? message : m) }
+        }
+      }
+      
+      // New message - add it
+      let newMessages = [...s.messages, message]
       
       newMessages.sort((a, b) => {
         const sa = Number((a as unknown as { seq?: number }).seq || 0)
@@ -325,11 +378,59 @@ export function usePlanningChat() {
   }, [])
 
   const handlePlanningSessionMessage = useCallback((data: { sessionId: string; message: SessionMessage }) => {
-    const session = sessions.find(s => s.session?.id === data.sessionId)
+    // Use ref to access current sessions state
+    const session = sessionsRef.current.find(s => s.session?.id === data.sessionId)
     if (session) {
       addMessageToSession(session.id, data.message)
     }
-  }, [sessions, addMessageToSession])
+  }, [addMessageToSession])
+
+  // Register WebSocket handlers
+  useEffect(() => {
+    if (!wsHook) return
+
+    const unsubscribers: (() => void)[] = []
+
+    unsubscribers.push(wsHook.on('planning_session_created', (payload) => {
+      handlePlanningSessionCreated(payload as PlanningSession)
+    }))
+
+    unsubscribers.push(wsHook.on('planning_session_updated', (payload) => {
+      handlePlanningSessionUpdated(payload as PlanningSession)
+    }))
+
+    unsubscribers.push(wsHook.on('planning_session_closed', (payload) => {
+      handlePlanningSessionClosed(payload as { id: string })
+    }))
+
+    unsubscribers.push(wsHook.on('planning_session_message', (payload) => {
+      handlePlanningSessionMessage(payload as { sessionId: string; message: SessionMessage })
+    }))
+
+    return () => {
+      unsubscribers.forEach(unsub => unsub())
+    }
+  }, [wsHook, handlePlanningSessionCreated, handlePlanningSessionUpdated, handlePlanningSessionClosed, handlePlanningSessionMessage])
+
+  /**
+   * Add an existing session from history to active sessions
+   */
+  const addExistingSession = useCallback((session: ChatSession) => {
+    setSessions(prev => {
+      // Check if session already exists
+      const exists = prev.some(s => s.id === session.id || s.session?.id === session.session?.id)
+      if (exists) {
+        // If session exists, just switch to it
+        const existingSession = prev.find(s => s.session?.id === session.session?.id)
+        if (existingSession) {
+          setActiveSessionId(existingSession.id)
+        }
+        return prev
+      }
+      return [...prev, session]
+    })
+    setActiveSessionId(session.id)
+  }, [])
 
   return {
     isOpen,
@@ -363,5 +464,6 @@ export function usePlanningChat() {
     createTasksFromChat,
     reconnectSession,
     setSessionModel,
+    addExistingSession,
   }
 }

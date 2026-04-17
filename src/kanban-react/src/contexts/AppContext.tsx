@@ -191,6 +191,7 @@ interface PlanningChatContextType {
   createTasksFromChat: (sessionId: string, tasks?: unknown[]) => Promise<unknown>
   reconnectSession: (sessionId: string, model?: string, thinkingLevel?: string) => Promise<Session>
   setSessionModel: (sessionId: string, model: string, thinkingLevel?: string) => Promise<{ ok: boolean; model: string; thinkingLevel?: string }>
+  addExistingSession: (session: ChatSession) => void
 }
 
 // Modal context type
