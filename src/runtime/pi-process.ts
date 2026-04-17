@@ -1,4 +1,5 @@
-import { mkdirSync, dirname } from "fs"
+import { mkdirSync } from "fs"
+import { dirname } from "path"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
