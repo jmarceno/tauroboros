@@ -7,10 +7,10 @@ rl.on("line", (line) => {
     const request = JSON.parse(line)
     const id = request?.id
     if (id) {
-      console.log(JSON.stringify({ 
-        id, 
-        type: "response", 
-        command: request.type || "unknown", 
+      console.log(JSON.stringify({
+        id,
+        type: "response",
+        command: request.type || "unknown",
         success: true,
         data: { echo: request }
       }))

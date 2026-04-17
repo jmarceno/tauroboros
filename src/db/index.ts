@@ -30,4 +30,10 @@ export type {
   ContainerBuildResult,
   CreateContainerPackageInput,
   ContainerBuildStatus,
+  CreateTaskGroupDTO,
+  UpdateTaskGroupDTO,
+  AddTasksToGroupDTO,
+  RemoveTasksFromGroupDTO,
+  TaskGroup,
+  TaskGroupMember,
 } from "./types.ts"

@@ -1,5 +1,7 @@
 export type TaskStatus = "template" | "backlog" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
 
+export type TaskGroupStatus = "active" | "completed" | "archived"
+
 export type ThinkingLevel = "default" | "low" | "medium" | "high"
 
 export type ExecutionPhase = "not_started" | "plan_complete_waiting_approval" | "plan_revision_pending" | "implementation_pending" | "implementation_done"
@@ -46,6 +48,24 @@ export interface BestOfNConfig {
   verificationCommand?: string
 }
 
+export interface TaskGroup {
+  id: string
+  name: string
+  color: string
+  status: TaskGroupStatus
+  createdAt: number
+  updatedAt: number
+  completedAt: number | null
+}
+
+export interface TaskGroupMember {
+  id: number
+  groupId: string
+  taskId: string
+  idx: number
+  addedAt: number
+}
+
 export interface Task {
   id: string
   name: string
@@ -88,6 +108,7 @@ export interface Task {
   archivedAt: number | null
   containerImage?: string
   codeStyleReview: boolean
+  groupId?: string
 }
 
 export interface WorkflowRun {
@@ -109,6 +130,7 @@ export interface WorkflowRun {
   isArchived: boolean
   archivedAt: number | null
   color: string
+  groupId?: string
 }
 
 export interface TaskRun {
@@ -304,6 +326,15 @@ export type WSMessageType =
   | "container_build_completed"
   | "container_build_cancelled"
   | "container_profile_applied"
+  // Task Group events
+  | "group_created"
+  | "group_updated"
+  | "group_deleted"
+  | "group_completed"
+  | "group_archived"
+  | "group_task_added"
+  | "group_task_removed"
+  | "group_task_reordered"
 
 export interface WSMessage {
   type: WSMessageType
