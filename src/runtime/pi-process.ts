@@ -1,3 +1,4 @@
+import { mkdirSync, dirname } from "fs"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
@@ -61,6 +62,7 @@ export class PiRpcProcess {
   private readonly settings?: InfrastructureSettings
   private readonly systemPrompt?: string
   private readonly disableAutoSessionMessages: boolean
+  private readonly piSessionFile?: string
   private proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null
   private requestId = 0
   private readonly pending = new Map<string, Pending>()
@@ -80,6 +82,7 @@ export class PiRpcProcess {
     settings?: InfrastructureSettings
     systemPrompt?: string
     disableAutoSessionMessages?: boolean
+    piSessionFile?: string
   }) {
     this.db = args.db
     this.disableAutoSessionMessages = args.disableAutoSessionMessages ?? false
@@ -88,6 +91,7 @@ export class PiRpcProcess {
     this.onSessionMessage = args.onSessionMessage
     this.settings = args.settings
     this.systemPrompt = args.systemPrompt
+    this.piSessionFile = args.piSessionFile ?? args.session.piSessionFile ?? undefined
 
     if (!this.disableAutoSessionMessages) {
       this.messageStreamer = new MessageStreamer(
@@ -112,6 +116,17 @@ export class PiRpcProcess {
     const args = [...configuredArgs]
     if (this.systemPrompt) {
       args.push("--system-prompt", this.systemPrompt)
+    }
+
+    // Add session file if available for conversation history persistence
+    if (this.piSessionFile) {
+      // Ensure the session directory exists
+      try {
+        mkdirSync(dirname(this.piSessionFile), { recursive: true })
+      } catch {
+        // Directory may already exist, ignore error
+      }
+      args.push("--session", this.piSessionFile)
     }
 
     this.proc = Bun.spawn({

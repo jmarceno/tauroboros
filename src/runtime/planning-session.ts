@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto"
+import { join } from "path"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
@@ -10,6 +11,14 @@ import { parseModelSelection } from "./model-utils.ts"
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
+}
+
+/**
+ * Generate a session file path for pi CLI conversation persistence.
+ * Stores sessions in .tauroboros/pi-sessions/ directory.
+ */
+function getSessionFilePath(sessionId: string, cwd: string): string {
+  return join(cwd, ".tauroboros", "pi-sessions", `${sessionId}.jsonl`)
 }
 
 export interface PlanningSessionInput {
@@ -109,6 +118,16 @@ export class PlanningSession {
       throw new Error("Session already started")
     }
 
+    // Generate session file path for conversation persistence
+    const piSessionFile = this.session.piSessionFile ?? getSessionFilePath(this.session.id, this.session.cwd)
+    
+    // Update session with the session file path if not already set
+    if (!this.session.piSessionFile) {
+      this.session = this.db.updateWorkflowSession(this.session.id, {
+        piSessionFile,
+      }) ?? this.session
+    }
+
     try {
       this.process = createPiProcess({
         db: this.db,
@@ -121,6 +140,7 @@ export class PlanningSession {
         settings: this.settings,
         systemPrompt: systemPrompt,
         disableAutoSessionMessages: true,
+        piSessionFile,
       }) as PiRpcProcess
 
       // Start the process
@@ -532,6 +552,9 @@ export class PlanningSession {
     // Initialize messageSeq from existing messages to avoid UNIQUE constraint violations
     this.messageSeq = this.getNextSeqFromDb()
 
+    // Use existing session file or generate one if not set
+    const piSessionFile = this.session.piSessionFile ?? getSessionFilePath(this.session.id, this.session.cwd)
+
     try {
       this.process = createPiProcess({
         db: this.db,
@@ -544,6 +567,7 @@ export class PlanningSession {
         settings: this.settings,
         systemPrompt: systemPrompt,
         disableAutoSessionMessages: true,
+        piSessionFile,
       }) as PiRpcProcess
 
       // Start the process

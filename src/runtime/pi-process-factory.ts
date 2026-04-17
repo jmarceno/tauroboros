@@ -26,6 +26,11 @@ export interface UnifiedPiProcessOptions {
    * If not specified, uses the default image from settings.
    */
   containerImage?: string | null
+  /**
+   * Pi session file path for conversation history persistence.
+   * If not specified, uses the session's piSessionFile.
+   */
+  piSessionFile?: string
 }
 
 /**
@@ -91,6 +96,7 @@ export function createPiProcess(
     settings: options.settings,
     systemPrompt: options.systemPrompt,
     disableAutoSessionMessages: options.disableAutoSessionMessages,
+    piSessionFile: options.piSessionFile,
   })
 }
 
