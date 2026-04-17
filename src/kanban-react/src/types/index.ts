@@ -150,6 +150,8 @@ export interface ColumnSortPreferences {
   review?: ColumnSortOption
   'code-style'?: ColumnSortOption
   done?: ColumnSortOption
+  failed?: ColumnSortOption
+  stuck?: ColumnSortOption
 }
 
 export interface Options {
