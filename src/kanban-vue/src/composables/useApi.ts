@@ -6,8 +6,23 @@ import type {
   PlanningPrompt, PlanningPromptVersion, PlanningSession, CreatePlanningSessionDTO,
   ContainerImage,
 } from '@/types/api'
+import type { ApiError } from '../../../shared/error-codes'
 
 const API_BASE = import.meta.env.VITE_API_URL || location.origin
+
+export class ApiErrorResponse extends Error {
+  code?: string
+  details?: Record<string, unknown>
+  status: number
+
+  constructor(message: string, status: number, code?: string, details?: Record<string, unknown>) {
+    super(message)
+    this.name = 'ApiErrorResponse'
+    this.status = status
+    this.code = code
+    this.details = details
+  }
+}
 
 export function useApi() {
   const isLoading = ref(false)
@@ -24,14 +39,20 @@ export function useApi() {
       if (!res.ok) {
         const text = await res.text()
         let errorMessage = `Request failed (${res.status})`
+        let errorCode: string | undefined
+        let errorDetails: Record<string, unknown> | undefined
+        
         try {
-          const parsed = JSON.parse(text)
+          const parsed = JSON.parse(text) as ApiError
           if (parsed?.error) errorMessage = parsed.error
           else errorMessage = text || errorMessage
+          errorCode = parsed?.code
+          errorDetails = parsed?.details
         } catch {
           errorMessage = text || errorMessage
         }
-        throw new Error(errorMessage)
+        
+        throw new ApiErrorResponse(errorMessage, res.status, errorCode, errorDetails)
       }
       return res.status === 204 ? undefined as T : res.json()
     } catch (e) {

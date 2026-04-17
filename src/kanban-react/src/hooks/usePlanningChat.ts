@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import type { PlanningSession, PlanningPrompt, SessionMessage, ThinkingLevel } from '@/types'
 import { useApi } from './useApi'
 import type { useWebSocket } from './useWebSocket'
+import { ErrorCode, isErrorCode, detectErrorCodeFromMessage } from '../../../shared/error-codes'
 
 export interface ContextAttachment {
   type: 'file' | 'screenshot' | 'task'
@@ -19,7 +20,16 @@ export interface ChatSession {
   isMinimized: boolean
   isLoading: boolean
   isSending: boolean
+  isReconnecting: boolean
   error: string | null
+}
+
+interface PendingMessage {
+  id: string
+  content: string
+  attachments?: ContextAttachment[]
+  retryCount: number
+  maxRetries: number
 }
 
 export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
@@ -32,6 +42,15 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [planningPrompt, setPlanningPrompt] = useState<PlanningPrompt | null>(null)
   const [isLoadingPrompt, setIsLoadingPrompt] = useState(false)
+
+  // Track pending messages per session for auto-retry
+  const pendingMessagesRef = useRef<Map<string, PendingMessage[]>>(new Map())
+  
+  // Track if a reconnect is in progress per session to prevent race conditions
+  const reconnectingRef = useRef<Set<string>>(new Set())
+  
+  // Track sending state per session for race condition prevention
+  const sendingRef = useRef<Set<string>>(new Set())
 
   // Use ref to track sessions for WebSocket handlers
   const sessionsRef = useRef(sessions)
@@ -73,6 +92,7 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
       isMinimized: false,
       isLoading: true,
       isSending: false,
+      isReconnecting: false,
       error: null,
     }
 
@@ -101,8 +121,16 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
     }
   }, [api, sessions.length])
 
-  const sendMessage = useCallback(async (sessionId: string, content: string, attachments?: ContextAttachment[]) => {
-    // Get current session using ref
+  /**
+   * Internal function to attempt sending a message with auto-reconnect logic.
+   * This handles the actual send/retry flow without optimistic UI updates.
+   */
+  const attemptSendMessage = useCallback(async (
+    sessionId: string, 
+    content: string, 
+    attachments?: ContextAttachment[],
+    isRetry = false
+  ): Promise<void> => {
     const session = getSession(sessionId)
 
     if (!session) {
@@ -113,60 +141,170 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
       throw new Error('No active session')
     }
 
-    if (session.isSending) {
+    // Prevent multiple concurrent sends on the same session
+    if (sendingRef.current.has(sessionId) && !isRetry) {
       throw new Error('Already sending a message')
+    }
+
+    // Mark as sending
+    sendingRef.current.add(sessionId)
+    
+    if (!isRetry) {
+      setSessions(prev => prev.map(s => 
+        s.id === sessionId 
+          ? { ...s, isSending: true, error: null }
+          : s
+      ))
     }
 
     const backendSessionId = session.session.id
 
-    // Create optimistic user message
-    const optimisticMessage: SessionMessage = {
-      id: Date.now(),
-      seq: Math.max(0, ...session.messages.map(m => Number(m.seq || 0))) + 1,
-      messageId: `user-${Date.now()}`,
-      sessionId: backendSessionId,
-      taskId: null,
-      taskRunId: null,
-      timestamp: Math.floor(Date.now() / 1000),
-      role: 'user',
-      eventName: 'user_message',
-      messageType: 'user_prompt',
-      contentJson: { text: content, attachments },
-    }
-
-    // Optimistically add user message to UI
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId 
-        ? { ...s, messages: [...s.messages, optimisticMessage], isSending: true, error: null }
-        : s
-    ))
-
     try {
       await api.sendPlanningMessage(backendSessionId, content, attachments)
+      
+      // Success - clear sending state
+      sendingRef.current.delete(sessionId)
+      setSessions(prev => prev.map(s => 
+        s.id === sessionId 
+          ? { ...s, isSending: false, error: null }
+          : s
+      ))
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : 'Failed to send message'
-      if (errorMsg.includes('Planning session not active')) {
+      
+      // Check if the error indicates session is not active
+      const isSessionNotActive = isErrorCode(e, ErrorCode.PLANNING_SESSION_NOT_ACTIVE) ||
+        detectErrorCodeFromMessage(errorMsg) === ErrorCode.PLANNING_SESSION_NOT_ACTIVE
+
+      if (isSessionNotActive) {
+        // Prevent concurrent reconnect attempts
+        if (reconnectingRef.current.has(sessionId)) {
+          // Queue the message for retry after reconnect completes
+          const pending = pendingMessagesRef.current.get(sessionId) || []
+          pendingMessagesRef.current.set(sessionId, [...pending, {
+            id: `pending-${Date.now()}`,
+            content,
+            attachments,
+            retryCount: 0,
+            maxRetries: 1,
+          }])
+          return
+        }
+
+        reconnectingRef.current.add(sessionId)
+        
+        // Set reconnecting state
         setSessions(prev => prev.map(s => 
           s.id === sessionId 
-            ? { ...s, error: 'Session not active. Click "Reconnect" to resume the session.', isSending: false }
+            ? { ...s, isReconnecting: true, error: 'Session not active. Reconnecting automatically...', isSending: false }
             : s
         ))
+
+        try {
+          // Attempt to reconnect with the session's current model and thinking level
+          const reconnectedSession = await api.reconnectPlanningSession(backendSessionId, {
+            model: session.session.model,
+            thinkingLevel: session.session.thinkingLevel,
+          })
+          
+          reconnectingRef.current.delete(sessionId)
+
+          // Update session with reconnected state
+          setSessions(prev => prev.map(s => 
+            s.id === sessionId 
+              ? { ...s, session: reconnectedSession, isReconnecting: false, error: null }
+              : s
+          ))
+
+          // Retry sending the message after successful reconnect
+          await api.sendPlanningMessage(reconnectedSession.id, content, attachments)
+          
+          // Success after retry - clear sending state
+          sendingRef.current.delete(sessionId)
+          setSessions(prev => prev.map(s => 
+            s.id === sessionId 
+              ? { ...s, isSending: false, error: null }
+              : s
+          ))
+
+          // Process any queued messages
+          const pending = pendingMessagesRef.current.get(sessionId) || []
+          pendingMessagesRef.current.delete(sessionId)
+          
+          for (const queuedMsg of pending) {
+            await attemptSendMessage(sessionId, queuedMsg.content, queuedMsg.attachments, true)
+          }
+        } catch (reconnectError) {
+          // Reconnect failed - clear all states and throw
+          reconnectingRef.current.delete(sessionId)
+          sendingRef.current.delete(sessionId)
+          
+          const reconnectErrorMsg = reconnectError instanceof Error ? reconnectError.message : 'Failed to reconnect session'
+          setSessions(prev => prev.map(s => 
+            s.id === sessionId 
+              ? { ...s, isReconnecting: false, error: `Session not active. Reconnect failed: ${reconnectErrorMsg}`, isSending: false }
+              : s
+          ))
+          throw reconnectError
+        }
       } else {
+        // Other errors - clear sending state and throw
+        sendingRef.current.delete(sessionId)
         setSessions(prev => prev.map(s => 
           s.id === sessionId 
             ? { ...s, error: errorMsg, isSending: false }
             : s
         ))
+        throw e
       }
-      throw e
-    } finally {
-      setSessions(prev => prev.map(s => 
-        s.id === sessionId 
-          ? { ...s, isSending: false }
-          : s
-      ))
     }
-  }, [api])
+  }, [api, getSession])
+
+  /**
+   * Send a message to the planning session.
+   * The message is queued and will be sent after the session is confirmed active.
+   * NO optimistic UI update - the message only appears after successful send.
+   */
+  const sendMessage = useCallback(async (sessionId: string, content: string, attachments?: ContextAttachment[]) => {
+    const session = getSession(sessionId)
+
+    if (!session) {
+      throw new Error('Session not found')
+    }
+
+    if (!session.session?.id) {
+      throw new Error('No active session')
+    }
+
+    // Check if already sending (prevents race conditions)
+    if (sendingRef.current.has(sessionId)) {
+      throw new Error('Already sending a message')
+    }
+
+    // If session is not active, queue the message and trigger reconnect first
+    const isSessionNotActive = !session.session || session.error?.includes('not active')
+    
+    if (isSessionNotActive || session.isReconnecting) {
+      // Queue the message
+      const pending = pendingMessagesRef.current.get(sessionId) || []
+      pendingMessagesRef.current.set(sessionId, [...pending, {
+        id: `pending-${Date.now()}`,
+        content,
+        attachments,
+        retryCount: 0,
+        maxRetries: 1,
+      }])
+
+      // If not already reconnecting, trigger reconnect
+      if (!session.isReconnecting && !reconnectingRef.current.has(sessionId)) {
+        await attemptSendMessage(sessionId, content, attachments)
+      }
+      return
+    }
+
+    // Normal send flow
+    await attemptSendMessage(sessionId, content, attachments)
+  }, [attemptSendMessage, getSession])
 
   const setSessionModel = useCallback(async (sessionId: string, model: string, thinkingLevel?: string) => {
     const session = getSession(sessionId)
@@ -194,9 +332,16 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
       throw new Error('No session to reconnect')
     }
 
+    // Prevent concurrent reconnect attempts
+    if (reconnectingRef.current.has(sessionId)) {
+      throw new Error('Reconnect already in progress')
+    }
+
+    reconnectingRef.current.add(sessionId)
+    
     setSessions(prev => prev.map(s => 
       s.id === sessionId 
-        ? { ...s, isLoading: true, error: null }
+        ? { ...s, isLoading: true, isReconnecting: true, error: null }
         : s
     ))
 
@@ -205,17 +350,22 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
         model,
         thinkingLevel,
       })
+      
+      reconnectingRef.current.delete(sessionId)
+      
       setSessions(prev => prev.map(s => 
         s.id === sessionId 
-          ? { ...s, session: reconnectedSession, isLoading: false }
+          ? { ...s, session: reconnectedSession, isLoading: false, isReconnecting: false }
           : s
       ))
       return reconnectedSession
     } catch (e) {
+      reconnectingRef.current.delete(sessionId)
+      
       const errorMsg = e instanceof Error ? e.message : 'Failed to reconnect session'
       setSessions(prev => prev.map(s => 
         s.id === sessionId 
-          ? { ...s, error: errorMsg, isLoading: false }
+          ? { ...s, error: errorMsg, isLoading: false, isReconnecting: false }
           : s
       ))
       throw e
@@ -259,6 +409,11 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
       if (session?.session?.id) {
         api.closePlanningSession(session.session.id).catch(console.error)
       }
+      
+      // Clean up refs
+      pendingMessagesRef.current.delete(sessionId)
+      reconnectingRef.current.delete(sessionId)
+      sendingRef.current.delete(sessionId)
       
       // Update active session ID if needed
       if (activeSessionId === sessionId) {

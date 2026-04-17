@@ -164,16 +164,16 @@ const sendMessage = async () => {
   const content = messageInput.value.trim()
   const attachments = [...attachedContext.value]
 
-  // Clear input and editor
-  messageInput.value = ''
-  attachedContext.value = []
-  editorRef.value?.clear()
-
   try {
     await planningChat.sendMessage(props.session.id, content, attachments)
+    // Only clear input after successful send
+    messageInput.value = ''
+    attachedContext.value = []
+    editorRef.value?.clear()
     scrollToBottom()
   } catch (e) {
     console.error('Failed to send message:', e)
+    // Input is NOT cleared on failure - user can retry or edit the message
     scrollToBottom()
   }
 }
@@ -181,7 +181,12 @@ const sendMessage = async () => {
 const handleKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault()
-    if (messageInput.value.trim() && !props.session.isSending && props.session.session?.id && props.session.session?.status === 'active') {
+    const canSend = messageInput.value.trim() &&
+                   !props.session.isSending &&
+                   !props.session.isReconnecting &&
+                   props.session.session?.id &&
+                   (props.session.session?.status === 'active' || props.session.error?.includes('not active'))
+    if (canSend) {
       sendMessage()
     }
   }
@@ -203,7 +208,7 @@ const changeModel = async () => {
 
 const canReconnect = computed(() => {
   const session = props.session.session
-  return session && (session.status !== 'active' || props.session.error?.includes('not active'))
+  return session && !props.session.isReconnecting && (session.status !== 'active' || props.session.error?.includes('not active'))
 })
 
 const createTasksFromChat = async () => {
@@ -343,14 +348,16 @@ const handleReconnect = async () => {
 
       <!-- Loading Indicator -->
       <div
-        v-if="session.isLoading || session.isSending"
+        v-if="session.isLoading || session.isSending || session.isReconnecting"
         class="flex items-center gap-2 text-dark-text-muted text-sm py-2 px-4"
       >
         <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
         </svg>
-        <span>{{ session.isLoading ? 'Starting session...' : 'Waiting for response...' }}</span>
+        <span>
+          {{ session.isReconnecting ? 'Reconnecting session...' : session.isLoading ? 'Starting session...' : 'Waiting for response...' }}
+        </span>
       </div>
 
       <!-- Reconnect Button -->
@@ -540,8 +547,8 @@ const handleReconnect = async () => {
         <MarkdownEditor
           ref="editorRef"
           v-model="messageInput"
-          :disabled="session.isLoading || !session.session?.id"
-          placeholder="Type your message... (Shift+Enter to send)"
+          :disabled="session.isLoading || session.isReconnecting || !session.session?.id"
+          :placeholder="session.isReconnecting ? 'Reconnecting session, please wait...' : 'Type your message... (Shift+Enter to send)'"
           class="min-h-[60px] max-h-[150px] w-full"
           @keydown="handleKeydown"
         />
@@ -550,14 +557,15 @@ const handleReconnect = async () => {
       <!-- Send Button (below input) -->
       <button
         class="chat-send-btn"
-        :disabled="!messageInput.trim() || session.isSending || !session.session?.id || session.isLoading"
+        :disabled="!messageInput.trim() || session.isSending || session.isReconnecting || !session.session?.id || session.isLoading"
         @click="sendMessage"
       >
-        <span v-if="session.isSending" class="flex items-center gap-1">
+        <span v-if="session.isSending || session.isReconnecting" class="flex items-center gap-1">
           <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
           </svg>
+          {{ session.isReconnecting ? 'Reconnecting...' : '' }}
         </span>
         <span v-else class="flex items-center gap-1">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -569,7 +577,8 @@ const handleReconnect = async () => {
 
       <!-- Status -->
       <div class="mt-2 text-xs text-dark-text-muted flex items-center justify-between">
-        <span v-if="session.isSending">Sending...</span>
+        <span v-if="session.isReconnecting">Reconnecting session...</span>
+        <span v-else-if="session.isSending">Sending...</span>
         <span v-else-if="session.session?.status === 'starting'">Session starting...</span>
         <span v-else-if="session.session?.status === 'active'">Ready</span>
         <span v-else-if="session.session?.status === 'failed'">Session failed</span>

@@ -3,6 +3,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from "fs"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import type { InfrastructureSettings } from "../config/settings.ts"
+import { ErrorCode, createApiError } from "../shared/error-codes.ts"
 import { BASE_IMAGES } from "../config/base-images.ts"
 import { buildExecutionGraph, getExecutionGraphTasks } from "../execution-plan.ts"
 import { discoverPiModels } from "../pi/model-discovery.ts"
@@ -1538,7 +1539,7 @@ export class PiKanbanServer {
       const promptKey = sessionKind === "container_config" ? "container_config" : "default"
       const planningPrompt = this.db.getPlanningPrompt(promptKey)
       if (!planningPrompt) {
-        return json({ error: "Planning prompt not configured" }, 500)
+        return json(createApiError("Planning prompt not configured", ErrorCode.PLANNING_PROMPT_NOT_CONFIGURED), 500)
       }
 
       try {
@@ -1570,14 +1571,16 @@ export class PiKanbanServer {
 
     this.router.post("/api/planning/sessions/:id/messages", async ({ params, req, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
-      if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
+      if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+        return json(createApiError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION), 400)
+      }
 
       const body = await req.json()
       const planningSession = this.planningSessionManager.getSession(params.id)
       
       if (!planningSession) {
-        return json({ error: "Planning session not active" }, 400)
+        return json(createApiError("Planning session not active", ErrorCode.PLANNING_SESSION_NOT_ACTIVE), 400)
       }
 
       try {
@@ -1589,14 +1592,16 @@ export class PiKanbanServer {
         return json({ ok: true })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to send message: ${message}` }, 500)
+        return json(createApiError(`Failed to send message: ${message}`, ErrorCode.MESSAGE_SEND_FAILED), 500)
       }
     })
 
     this.router.post("/api/planning/sessions/:id/reconnect", async ({ params, req, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
-      if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
+      if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+        return json(createApiError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION), 400)
+      }
 
       // Check if already active
       const existingSession = this.planningSessionManager.getSession(params.id)
@@ -1607,7 +1612,7 @@ export class PiKanbanServer {
       const body = await req.json()
       const planningPrompt = this.db.getPlanningPrompt("default")
       if (!planningPrompt) {
-        return json({ error: "Planning prompt not configured" }, 500)
+        return json(createApiError("Planning prompt not configured", ErrorCode.PLANNING_PROMPT_NOT_CONFIGURED), 500)
       }
 
       try {
@@ -1625,7 +1630,7 @@ export class PiKanbanServer {
         })
 
         if (!result) {
-          return json({ error: "Failed to reconnect to session" }, 500)
+          return json(createApiError("Failed to reconnect to session", ErrorCode.PLANNING_SESSION_RECONNECT_FAILED), 500)
         }
 
         const withUrl = { ...result.session, sessionUrl: this.sessionUrlFor(result.session.id) }
@@ -1633,26 +1638,28 @@ export class PiKanbanServer {
         return json(withUrl)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to reconnect to session: ${message}` }, 500)
+        return json(createApiError(`Failed to reconnect to session: ${message}`, ErrorCode.PLANNING_SESSION_RECONNECT_FAILED), 500)
       }
     })
 
     this.router.post("/api/planning/sessions/:id/model", async ({ params, req, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
-      if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
+      if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+        return json(createApiError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION), 400)
+      }
 
       const body = await req.json()
       
       // Validate thinking level if provided
       if (body.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
-        return json({ error: "Invalid thinkingLevel. Allowed values: default, low, medium, high" }, 400)
+        return json(createApiError("Invalid thinkingLevel. Allowed values: default, low, medium, high", ErrorCode.INVALID_THINKING_LEVEL), 400)
       }
       
       const planningSession = this.planningSessionManager.getSession(params.id)
       
       if (!planningSession || !planningSession.isActive()) {
-        return json({ error: "Planning session not active" }, 400)
+        return json(createApiError("Planning session not active", ErrorCode.PLANNING_SESSION_NOT_ACTIVE), 400)
       }
 
       try {
@@ -1671,14 +1678,16 @@ export class PiKanbanServer {
         return json({ ok: true, model: body.model, thinkingLevel: body.thinkingLevel })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to change model: ${message}` }, 500)
+        return json(createApiError(`Failed to change model: ${message}`, ErrorCode.INVALID_MODEL), 500)
       }
     })
 
     this.router.post("/api/planning/sessions/:id/create-tasks", async ({ params, req, json, broadcast, sessionUrlFor }) => {
       const session = this.db.getWorkflowSession(params.id)
-      if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") return json({ error: "Not a planning session" }, 400)
+      if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+        return json(createApiError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION), 400)
+      }
 
       const body = await req.json()
       
