@@ -1,4 +1,4 @@
-export type TaskStatus = 'template' | 'backlog' | 'executing' | 'review' | 'done' | 'failed' | 'stuck'
+export type TaskStatus = 'template' | 'backlog' | 'executing' | 'review' | 'code-style' | 'done' | 'failed' | 'stuck'
 export type ThinkingLevel = 'default' | 'low' | 'medium' | 'high'
 export type ExecutionStrategy = 'standard' | 'best_of_n'
 export type SelectionMode = 'pick_best' | 'synthesize' | 'pick_or_synthesize'
@@ -147,6 +147,7 @@ export interface ColumnSortPreferences {
   backlog?: ColumnSortOption
   executing?: ColumnSortOption
   review?: ColumnSortOption
+  'code-style'?: ColumnSortOption
   done?: ColumnSortOption
 }
 

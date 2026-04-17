@@ -365,7 +365,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
       if (status) return status;
     }
 
-    const columns = ['template', 'backlog', 'executing', 'review', 'stuck', 'done'];
+    const columns = ['template', 'backlog', 'executing', 'review', 'code-style', 'stuck', 'done'];
     for (const column of columns) {
       const columnElement = page.locator(`[data-status="${column}"]`);
       const taskInColumn = columnElement.locator(`text=${taskName}`).first();

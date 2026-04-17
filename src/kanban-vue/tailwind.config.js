@@ -35,6 +35,7 @@ export default {
           backlog: '#ffab40',    // Orange
           executing: '#69f0ae',  // Green
           review: '#ff4081',     // Pink
+          'code-style': '#ffd740', // Amber/Yellow
           done: '#18ffff',       // Cyan
         },
         // Legacy aliases for backward compatibility

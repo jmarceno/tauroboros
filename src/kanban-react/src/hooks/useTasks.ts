@@ -30,6 +30,7 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
       backlog: [],
       executing: [],
       review: [],
+      'code-style': [],
       done: [],
       failed: [],
       stuck: [],

@@ -38,6 +38,7 @@ const columns: { status: TaskStatus; title: string }[] = [
   { status: 'backlog', title: 'Backlog' },
   { status: 'executing', title: 'Executing' },
   { status: 'review', title: 'Review' },
+  { status: 'code-style', title: 'Code Style' },
   { status: 'done', title: 'Done' },
 ]
 
@@ -46,6 +47,7 @@ const columnHelpText: Record<string, string> = {
   backlog: 'Ready-to-run tasks waiting for execution. Add, edit, reorder, and set dependencies here before starting work.',
   executing: 'Tasks currently being worked on by the agent. Use this column to monitor active runs and open their live sessions.',
   review: 'Tasks that need human attention. Review outputs here, approve plans, or inspect stuck and failed work before deciding the next step.',
+  'code-style': 'Tasks that need code style and formatting fixes. Apply linting, formatting, and style improvements here before marking as done.',
   done: 'Completed tasks. Use this column as the final state once the work and any needed review are finished.',
 }
 
@@ -54,6 +56,7 @@ const columnIcons: Record<string, string> = {
   backlog: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>`,
   executing: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`,
   review: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>`,
+  'code-style': `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>`,
   done: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`,
 }
 
@@ -62,6 +65,7 @@ const columnColors: Record<string, string> = {
   backlog: 'text-column-backlog',
   executing: 'text-column-executing',
   review: 'text-column-review',
+  'code-style': 'text-column-code-style',
   done: 'text-column-done',
 }
 

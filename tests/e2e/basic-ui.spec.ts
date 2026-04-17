@@ -121,7 +121,7 @@ test.describe('Basic UI Functionality', () => {
 
   test('kanban columns have correct data-status attributes', async ({ page }) => {
     // Verify all expected columns exist with correct data-status
-    const expectedColumns = ['template', 'backlog', 'executing', 'review', 'done'];
+    const expectedColumns = ['template', 'backlog', 'executing', 'review', 'code-style', 'done'];
     
     for (const status of expectedColumns) {
       const column = page.locator(`[data-status="${status}"]`);

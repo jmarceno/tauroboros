@@ -428,7 +428,7 @@ function normalizeBoolean(value: unknown, fallback = false): boolean {
 }
 
 function asTaskStatus(value: unknown): TaskStatus {
-  return value === "template" || value === "backlog" || value === "executing" || value === "review" || value === "done" || value === "failed" || value === "stuck"
+  return value === "template" || value === "backlog" || value === "executing" || value === "review" || value === "code-style" || value === "done" || value === "failed" || value === "stuck"
     ? value
     : "backlog"
 }
