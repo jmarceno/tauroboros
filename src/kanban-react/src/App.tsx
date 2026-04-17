@@ -182,6 +182,12 @@ function App() {
 
     if (task.status === targetStatus) return
 
+    // Prevent manual drops into the code-style column (workflow-managed only)
+    if (targetStatus === 'code-style') {
+      toastsHook.showToast('Code Style column is workflow-managed', 'error')
+      return
+    }
+
     const canMoveToDone = ['stuck', 'review'].includes(task.status)
     const canMoveToBacklog = ['stuck', 'failed', 'done', 'review'].includes(task.status)
     const canMoveToReview = ['backlog', 'stuck', 'failed'].includes(task.status)
