@@ -86,6 +86,8 @@ function parseRepairDecision(responseText: string): SmartRepairDecision {
     && action !== "mark_done"
     && action !== "fail_task"
     && action !== "continue_with_more_reviews"
+    && action !== "skip_code_style"
+    && action !== "return_to_review"
   ) {
     throw new Error("Repair response JSON contains unsupported action")
   }
@@ -189,6 +191,21 @@ export class SmartRepairService {
         reviewCount: 0,
         errorMessage: null,
         reviewActivity: "idle",
+      }
+    } else if (decision.action === "skip_code_style") {
+      update = {
+        status: "done",
+        completedAt: now,
+        errorMessage: null,
+        awaitingPlanApproval: false,
+        reviewActivity: "idle",
+      }
+    } else if (decision.action === "return_to_review") {
+      update = {
+        status: "review",
+        errorMessage: null,
+        reviewActivity: "idle",
+        reviewCount: 0,
       }
     } else {
       update = {
