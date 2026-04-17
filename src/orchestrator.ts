@@ -11,6 +11,7 @@ import { resolveContainerImage, type Options, type Task, type WSMessage, type Wo
 import { resolveExecutionTasks, getExecutionGraphTasks, resolveBatches } from "./execution-plan.ts"
 import { PiSessionManager } from "./runtime/session-manager.ts"
 import { PiReviewSessionRunner } from "./runtime/review-session.ts"
+import { CodeStyleSessionRunner } from "./runtime/codestyle-session.ts"
 import { BestOfNRunner } from "./runtime/best-of-n.ts"
 import { WorktreeLifecycle, resolveTargetBranch, listWorktrees, type WorktreeInfo } from "./runtime/worktree.ts"
 import type { PiContainerManager } from "./runtime/container-manager.ts"
@@ -1352,6 +1353,15 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         if (!reviewPassed) return
       }
 
+      if (task.review && task.codeStyleReview) {
+        const success = await this.runCodeStyleCheck(task.id, options, worktreeInfo)
+        if (!success) {
+          this.db.updateTask(task.id, { status: "stuck", errorMessage: "Code style enforcement failed" })
+          this.broadcastTask(task.id)
+          return
+        }
+      }
+
       if (task.autoCommit) {
         await this.runCommitPrompt(task.id, task, options, worktreeInfo)
       }
@@ -1712,6 +1722,60 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     this.db.updateTask(taskId, { executionPhase: "implementation_done" })
     this.broadcastTask(task.id)
     return true
+  }
+
+  private async runCodeStyleCheck(taskId: string, options: Options, worktreeInfo: WorktreeInfo): Promise<boolean> {
+    const task = this.db.getTask(taskId)
+    if (!task) return false
+
+    this.db.updateTask(taskId, { status: "code-style" })
+    this.broadcastTask(taskId)
+
+    const codeStyleRunner = new CodeStyleSessionRunner(
+      this.db,
+      this.settings,
+      this.containerManager,
+      this.sessionManager
+    )
+
+    try {
+      const result = await codeStyleRunner.run({
+        task,
+        cwd: worktreeInfo.directory,
+        worktreeDir: worktreeInfo.directory,
+        branch: worktreeInfo.branch,
+        codeStylePrompt: task.codeStylePrompt,
+        model: options.reviewModel,
+        thinkingLevel: options.reviewThinkingLevel,
+        onOutput: (chunk) => {
+          if (chunk.trim()) {
+            this.db.appendAgentOutput(taskId, `${stripAndNormalize(chunk)}\n`)
+          }
+        },
+        onSessionCreated: (process, startedSession) => {
+          this.activeSessionProcesses.set(startedSession.id, {
+            process,
+            session: startedSession,
+          })
+        },
+      })
+
+      if (result.sessionId) {
+        this.activeSessionProcesses.delete(result.sessionId)
+      }
+
+      if (result.responseText.trim()) {
+        this.db.appendAgentOutput(taskId, tagOutput("code-style", result.responseText))
+        this.broadcastTask(taskId)
+      }
+
+      return result.success
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.db.appendAgentOutput(taskId, `\n[code-style-error]\n${message}\n`)
+      this.broadcastTask(taskId)
+      return false
+    }
   }
 
   private async runCommitPrompt(taskId: string, task: Task, options: Options, worktreeInfo: WorktreeInfo): Promise<void> {
