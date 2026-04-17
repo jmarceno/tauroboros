@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import type { ExtensionFactory } from "@anthropic-ecsfolding/pi-coding-agent";
+import type { ExtensionFactory } from "@anthropic-ecsfolding/pi-coding-agent"
 
 const COMPACTION_PROMPT = `Provide a detailed prompt for continuing our conversation above.
 Focus on information that would be helpful for continuing the conversation, including what we did, what we're doing, which files we're working on, and what we're going to do next.
@@ -35,12 +35,12 @@ When constructing the summary, try to stick to this template:
 const DEFAULT_CONTINUE_MESSAGE = `Context has been compacted and project instructions have been refreshed. Please continue the work based on the summary above.`
 
 interface CompactionSettings {
-  type: "tokens" | "percent";
-  value: number;
-  "auto-compact": boolean;
-  "check-interval": number;
-  "refresh-agents-md": boolean;
-  "continue-message": string;
+  type: "tokens" | "percent"
+  value: number
+  "auto-compact": boolean
+  "check-interval": number
+  "refresh-agents-md": boolean
+  "continue-message": string
 }
 
 const DEFAULTS: Omit<CompactionSettings, "continue-message"> = {

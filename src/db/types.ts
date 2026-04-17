@@ -483,6 +483,7 @@ export interface CreateTaskGroupDTO {
   status?: TaskGroup["status"]
   createdAt?: number
   completedAt?: number | null
+  memberTaskIds?: string[]
 }
 
 export interface UpdateTaskGroupDTO {
