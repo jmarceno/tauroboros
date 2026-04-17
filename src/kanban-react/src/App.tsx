@@ -12,6 +12,7 @@ import {
   useWorkflowControl, useMultiSelect, usePlanningChat,
   useDragDrop, useKeyboard, useSessionUsage,
 } from '@/hooks'
+import { validateTaskDrop } from '@/utils/dropValidation'
 import type { Task, TaskStatus, WorkflowRun } from '@/types'
 
 // Components
@@ -175,31 +176,36 @@ function App() {
     const task = tasksHook.getTaskById(taskId)
     if (!task) return
 
-    if (runsHook.isTaskMutationLocked(taskId)) {
-      toastsHook.showToast('This task is currently executing and cannot be moved.', 'error')
+    const validation = validateTaskDrop(
+      task,
+      targetStatus as TaskStatus,
+      runsHook.isTaskMutationLocked(taskId)
+    )
+
+    if (!validation.allowed) {
+      if (validation.reason !== 'no-change') {
+        toastsHook.showToast(validation.reason, 'error')
+      }
       return
     }
 
-    if (task.status === targetStatus) return
-
-    const canMoveToDone = ['stuck', 'review'].includes(task.status)
-    const canMoveToBacklog = ['stuck', 'failed', 'done', 'review'].includes(task.status)
-    const canMoveToReview = ['backlog', 'stuck', 'failed'].includes(task.status)
 
     try {
-      if (targetStatus === 'done' && canMoveToDone) {
-        await tasksHook.updateTask(taskId, {
-          status: 'done' as TaskStatus,
-          completedAt: Math.floor(Date.now() / 1000),
-        })
-        toastsHook.showToast('Task moved to Done', 'success')
-      } else if (targetStatus === 'backlog' && canMoveToBacklog) {
-        await tasksHook.resetTask(taskId)
-      } else if (targetStatus === 'review' && canMoveToReview) {
-        await tasksHook.updateTask(taskId, { status: 'review' as TaskStatus })
-        toastsHook.showToast('Task moved to Review', 'success')
-      } else {
-        toastsHook.showToast(`Cannot move task from ${task.status} to ${targetStatus}`, 'error')
+      switch (validation.action) {
+        case 'move-to-done':
+          await tasksHook.updateTask(taskId, {
+            status: 'done' as TaskStatus,
+            completedAt: Math.floor(Date.now() / 1000),
+          })
+          toastsHook.showToast('Task moved to Done', 'success')
+          break
+        case 'reset-to-backlog':
+          await tasksHook.resetTask(taskId)
+          break
+        case 'move-to-review':
+          await tasksHook.updateTask(taskId, { status: 'review' as TaskStatus })
+          toastsHook.showToast('Task moved to Review', 'success')
+          break
       }
       await tasksHook.loadTasks()
     } catch (e) {

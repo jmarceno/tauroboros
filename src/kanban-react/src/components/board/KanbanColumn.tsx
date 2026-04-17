@@ -123,7 +123,7 @@ export const KanbanColumn = memo(function KanbanColumn({
             bonSummary={bonSummaries[task.id]}
             runColor={getTaskRunColor(task.id)}
             isLocked={isTaskMutationLocked(task.id)}
-            canDrag={status === 'backlog' && !isTaskMutationLocked(task.id) && currentSort === 'manual'}
+            canDrag={(status === 'backlog' || status === 'code-style') && !isTaskMutationLocked(task.id) && currentSort === 'manual'}
             dragDrop={dragDrop}
             isSelected={getIsSelected?.(task.id) || false}
             isMultiSelecting={isMultiSelecting}
