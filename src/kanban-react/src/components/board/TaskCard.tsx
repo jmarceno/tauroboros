@@ -2,6 +2,7 @@ import { useEffect, useMemo, useCallback, memo } from 'react'
 import type { Task, BestOfNSummary } from '@/types'
 import type { useDragDrop } from '@/hooks/useDragDrop'
 import { useOptionsContext, useTasksContext, useSessionUsageContext } from '@/contexts/AppContext'
+import { useTaskSessionUsage } from '@/hooks/useTaskSessionUsage'
 
 interface TaskCardProps {
   task: Task
@@ -56,7 +57,10 @@ export const TaskCard = memo(function TaskCard({
   const { tasks } = useTasksContext()
   const sessionUsage = useSessionUsageContext()
 
-  // Start/stop watching session usage
+  // Get aggregated usage across all task sessions
+  const taskUsage = useTaskSessionUsage(task.id)
+
+  // Start/stop watching current session usage (for real-time updates)
   useEffect(() => {
     if (task.sessionId) {
       sessionUsage.startWatching(task.sessionId)
@@ -67,7 +71,7 @@ export const TaskCard = memo(function TaskCard({
         sessionUsage.stopWatching(task.sessionId)
       }
     }
-  }, [task.sessionId])
+  }, [task.sessionId, sessionUsage])
 
   const hasLocalSession = useMemo(() =>
     !!task.sessionId &&
@@ -174,17 +178,8 @@ export const TaskCard = memo(function TaskCard({
     }
   }, [task.status])
 
-  const taskCost = useMemo(() => {
-    if (!task.sessionId) return null
-    const usage = sessionUsage.getCachedUsage(task.sessionId)
-    if (!usage || usage.totalCost === 0) return null
-    return {
-      cost: usage.totalCost,
-      tokens: usage.totalTokens,
-      formattedCost: sessionUsage.formatCost(usage.totalCost),
-      formattedTokens: sessionUsage.formatTokenCount(usage.totalTokens),
-    }
-  }, [task.sessionId, sessionUsage])
+  // Determine if we have usage data to display
+  const hasUsageData = taskUsage.totalCost > 0 || taskUsage.totalTokens > 0
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
     if (!canDrag) return
@@ -489,20 +484,21 @@ export const TaskCard = memo(function TaskCard({
         </button>
       )}
 
-      {/* Cost and tokens badge */}
-      {task.sessionId && (
+      {/* Cost and tokens badge - aggregated across all sessions */}
+      {hasUsageData && (
         <div className="flex items-center gap-2 mt-1 text-xs">
           <span
             className="px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full text-dark-text-secondary flex items-center gap-1"
-            title={taskCost ? `${taskCost.formattedTokens} tokens` : 'Loading usage data...'}
+            title={`${taskUsage.formattedTokens} tokens across all sessions`}
           >
-            💰 {taskCost?.formattedCost ?? '$0'}
+            💰 {taskUsage.formattedCost}
           </span>
-          {taskCost && (
-            <span className="px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full text-dark-text-muted text-[10px]">
-              {taskCost.formattedTokens}
-            </span>
-          )}
+          <span
+            className="px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full text-dark-text-muted"
+            title="Total tokens across all sessions"
+          >
+            🪙 {taskUsage.formattedTokens}
+          </span>
         </div>
       )}
 
