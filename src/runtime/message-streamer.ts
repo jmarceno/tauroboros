@@ -52,6 +52,17 @@ export class MessageStreamer {
   }
 
   /**
+   * Get the next sequence number for this session.
+   * Callers should use this when creating non-streaming session messages
+   * to ensure consistent sequencing and avoid UNIQUE constraint violations.
+   */
+  getNextSeq(): number {
+    this.initSeqIfNeeded()
+    this.messageSeq++
+    return this.messageSeq
+  }
+
+  /**
    * Handles an event. Returns true if the event was processed as a streaming event 
    * (meaning it should NOT be passed to default persistence logic).
    */

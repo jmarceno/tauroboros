@@ -505,7 +505,13 @@ export class PiRpcProcess {
           taskRunId: this.session.taskRunId,
         })
         if (message.contentJson && Object.keys(message.contentJson).length > 0) {
-          const createdMessage = this.db.createSessionMessage(message)
+          // Use MessageStreamer's seq counter to ensure consistent sequencing
+          // and avoid UNIQUE constraint violations with streaming messages
+          const seq = this.messageStreamer?.getNextSeq()
+          const createdMessage = this.db.createSessionMessage({
+            ...message,
+            seq,
+          })
           if (createdMessage && this.onSessionMessage) {
             this.onSessionMessage(createdMessage)
           }
