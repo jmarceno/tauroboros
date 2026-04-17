@@ -123,6 +123,8 @@ export const KanbanBoard = memo(function KanbanBoard({
       if (!task) continue
       if (task.status === 'failed' || task.status === 'stuck') {
         groups.review.push(task)
+      } else if (task.status === 'code-style') {
+        groups['code-style'].push(task)
       } else if (task.status && task.status in groups) {
         groups[task.status as TaskStatus].push(task)
       }
