@@ -143,6 +143,7 @@ Container settings are configured in `.tauroboros/settings.json`:
 | `workflow.container.cpuCount` | `1` | CPU limit per container |
 | `workflow.container.portRangeStart` | `30000` | Start of host port allocation range |
 | `workflow.container.portRangeEnd` | `40000` | End of host port allocation range |
+| `workflow.container.mountPodmanSocket` | `false` | Mount host's podman socket (enables docker-compose) |
 
 ### Task-Level Configuration
 
@@ -187,6 +188,80 @@ Multiple agents can run development servers on the same port:
 ```
 
 The PortAllocator automatically assigns unique host ports while allowing agents to use their preferred internal ports.
+
+## Container Nesting (Docker Compose Support)
+
+Task containers can run Docker Compose by mounting the host's Podman socket. This is useful for projects that need databases or other services via docker-compose.
+
+### How It Works
+
+The host's Podman socket is mounted into the task container:
+- Host path: `/run/user/$UID/podman/podman.sock` (rootless) or `/run/podman/podman.sock` (rootful)
+- Container path: `/var/run/docker.sock`
+- Environment: `DOCKER_HOST=unix:///var/run/docker.sock`
+
+This allows `docker-compose` inside the container to talk to the host's Podman daemon, which provides a Docker-compatible API.
+
+### Enabling Socket Mounting
+
+Add to your `.tauroboros/settings.json`:
+
+```json
+{
+  "workflow": {
+    "container": {
+      "mountPodmanSocket": true
+    }
+  }
+}
+```
+
+Or enable per-task via the API when creating a task.
+
+### Prerequisites
+
+1. **Podman socket must be running** on the host:
+   ```bash
+   # For rootless (most common)
+   systemctl --user enable podman.socket
+   systemctl --user start podman.socket
+   
+   # For rootful
+   sudo systemctl enable podman.socket
+   sudo systemctl start podman.socket
+   ```
+
+2. **User must have access** to the socket (rootless mode is recommended).
+
+### Security Warning
+
+**⚠️ Security Trade-off**: Mounting the Podman socket significantly reduces isolation:
+
+- Task containers can see all host containers
+- Task containers can start/stop any host container
+- Task containers can mount any host path
+- One task can interfere with another task's containers
+
+Only enable this when needed for specific tasks. Consider running sensitive tasks without socket mounting.
+
+### Usage in Tasks
+
+When enabled, docker-compose works normally inside the container:
+
+```bash
+# Inside the task container
+docker-compose up -d postgres
+docker-compose ps
+docker-compose logs
+```
+
+Or programmatically with Python:
+
+```python
+import docker
+client = docker.DockerClient()
+containers = client.containers.list()
+```
 
 ## Directory Structure Preservation
 

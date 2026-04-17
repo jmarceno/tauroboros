@@ -39,6 +39,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
+# Install docker SDK for Python programmatic access
+RUN pip3 install --break-system-packages docker
+
+# Download standalone docker-compose binary (Python 3.13 compatible)
+RUN curl -SL https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose && \
+    chmod +x /usr/local/bin/docker-compose
+
 # Install uv (Python package manager)
 RUN curl -fsSL https://astral.sh/uv/install.sh | bash && \
     mv /root/.local/bin/uv /usr/local/bin/uv && \

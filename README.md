@@ -127,6 +127,23 @@ bun run src/index.ts
 
 This process will be done automatically to you if you have Podman installed the first time you run Tauroboros in project directory.
 
+#### Docker Compose Support
+
+To run `docker-compose` inside task containers (e.g., for databases), enable podman socket mounting:
+
+```bash
+# 1. Enable podman socket on host
+systemctl --user enable podman.socket
+systemctl --user start podman.socket
+
+# 2. Add to .tauroboros/settings.json:
+# "workflow.container.mountPodmanSocket": true
+
+# 3. Now docker-compose works inside task containers
+```
+
+**Note:** This reduces container isolation—task containers can see/start any host container.
+
 ## Available Commands
 
 All commands use **Bun** (the kanban frontend build uses npm internally, handled automatically):
@@ -226,6 +243,7 @@ All infrastructure-level configuration is stored in `.pi/settings.json`. This fi
 | `workflow.container.cpuCount` | CPU limit per container |
 | `workflow.container.portRangeStart` | Host port allocation range start |
 | `workflow.container.portRangeEnd` | Host port allocation range end |
+| `workflow.container.mountPodmanSocket` | Mount podman socket for docker-compose support |
 
 ### Task-Level Configuration
 

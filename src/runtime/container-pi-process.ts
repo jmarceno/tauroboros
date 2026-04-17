@@ -176,6 +176,7 @@ this.abortController = new AbortController()
       memoryMb,
       cpuCount,
       env: {},
+      mountPodmanSocket: containerSettings?.mountPodmanSocket ?? false,
     }
 
     this.containerProcess = await this.containerManager.createContainer(

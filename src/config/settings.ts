@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
 import { BASE_IMAGES } from "./base-images.ts"
 
@@ -31,6 +31,7 @@ export interface ContainerSettings {
   cpuCount: number
   portRangeStart: number
   portRangeEnd: number
+  mountPodmanSocket: boolean
 }
 
 export interface WorkflowSettings {
@@ -72,6 +73,7 @@ export const DEFAULT_INFRASTRUCTURE_SETTINGS: InfrastructureSettings = {
       cpuCount: 1,
       portRangeStart: 30000,
       portRangeEnd: 40000,
+      mountPodmanSocket: false,
     },
   },
 }
@@ -242,6 +244,7 @@ function validateAndExtractUnknown(
             "cpuCount",
             "portRangeStart",
             "portRangeEnd",
+            "mountPodmanSocket",
           ]
           unknownFields.push(
             ...extractUnknownFields(container, validContainerKeys, "workflow.container"),
@@ -300,6 +303,9 @@ function validateAndExtractUnknown(
               "integer",
               warnings,
             )
+          }
+          if (container.mountPodmanSocket !== undefined) {
+            validateFieldType("workflow.container.mountPodmanSocket", container.mountPodmanSocket, "boolean", warnings)
           }
         }
       }
@@ -360,7 +366,10 @@ export function saveInfrastructureSettings(
   projectRoot: string,
   settings: InfrastructureSettings,
 ): void {
-  const settingsPath = join(projectRoot, ".tauroboros", "settings.json")
+  const settingsDir = join(projectRoot, ".tauroboros")
+  mkdirSync(settingsDir, { recursive: true })
+
+  const settingsPath = join(settingsDir, "settings.json")
   const content = JSON.stringify(settings, null, 2)
   writeFileSync(settingsPath, content, "utf-8")
 }

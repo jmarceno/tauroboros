@@ -18,6 +18,7 @@ export interface ContainerConfig {
   memoryMb?: number
   imageName?: string
   useMockLLM?: boolean
+  mountPodmanSocket?: boolean // Mount host's podman socket for container nesting
 }
 
 export interface ContainerProcess {
@@ -44,6 +45,7 @@ export interface VolumeMount {
 export function createVolumeMounts(
   worktreeDir: string,
   repoRoot: string,
+  mountPodmanSocket = false,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = []
 
@@ -88,6 +90,18 @@ export function createVolumeMounts(
     Type: "bind",
     ReadOnly: false,
   })
+
+  // Podman socket for container nesting (Docker-in-Docker via socket mount)
+  if (mountPodmanSocket) {
+    const uid = process.getuid?.() || 1000
+    const podmanSocketPath = `/run/user/${uid}/podman/podman.sock`
+    mounts.push({
+      Source: podmanSocketPath,
+      Target: "/var/run/docker.sock",
+      Type: "bind",
+      ReadOnly: false,
+    })
+  }
 
   return mounts
 }
@@ -244,7 +258,7 @@ export class PiContainerManager {
     // Use host network when mock LLM is enabled so container can reach mock server on localhost
     const networkMode = config.useMockLLM ? "host" : (config.networkMode || "bridge")
 
-    const mounts = createVolumeMounts(config.worktreeDir, config.repoRoot)
+    const mounts = createVolumeMounts(config.worktreeDir, config.repoRoot, config.mountPodmanSocket)
 
     // Build mount arguments for podman
     const mountArgs: string[] = []
@@ -262,6 +276,11 @@ export class PiContainerManager {
     const defaultEnv: Record<string, string> = {
       PI_OFFLINE: "1",
       PI_CODING_AGENT: "true",
+    }
+
+    // If mounting podman socket, set DOCKER_HOST so docker-compose can find it
+    if (config.mountPodmanSocket) {
+      defaultEnv.DOCKER_HOST = "unix:///var/run/docker.sock"
     }
     if (!config.env) {
       throw new Error(`Container config.env is required but was not provided`)
