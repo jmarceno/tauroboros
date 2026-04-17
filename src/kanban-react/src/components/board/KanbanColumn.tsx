@@ -23,7 +23,7 @@ interface KanbanColumnProps {
   onChangeSort: (sort: string) => void
   onOpenTemplateModal: () => void
   onOpenTaskModal: () => void
-  onDeployTemplate: (id: string) => void
+  onDeployTemplate: (id: string, e: React.MouseEvent) => void
   onOpenTaskSessions: (id: string) => void
   onApprovePlan: (id: string) => void
   onRequestRevision: (id: string) => void
@@ -129,7 +129,7 @@ export const KanbanColumn = memo(function KanbanColumn({
             isMultiSelecting={isMultiSelecting}
             isHighlighted={highlightedRunId ? isTaskInRun?.(task.id, highlightedRunId) || false : false}
             onOpen={(e) => onOpenTask(task.id, e)}
-            onDeploy={() => onDeployTemplate(task.id)}
+            onDeploy={(e) => onDeployTemplate(task.id, e)}
             onOpenTaskSessions={() => onOpenTaskSessions(task.id)}
             onApprovePlan={() => onApprovePlan(task.id)}
             onRequestRevision={() => onRequestRevision(task.id)}
