@@ -179,6 +179,7 @@ export interface CreateWorkflowRunInput {
   startedAt?: number
   finishedAt?: number | null
   color?: string
+  groupId?: string
 }
 
 export interface UpdateWorkflowRunInput {
@@ -192,6 +193,7 @@ export interface UpdateWorkflowRunInput {
   stopRequested?: boolean
   errorMessage?: string | null
   finishedAt?: number | null
+  groupId?: string
 }
 
 export interface CreateTaskInput {

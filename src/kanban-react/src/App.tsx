@@ -1,43 +1,43 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
-import './styles/theme.css'
+import { useEffect, useState, useCallback, useRef } from "react"
+import "./styles/theme.css"
 import {
   TasksContext, RunsContext, OptionsContext, ToastContext,
   ModelSearchContext, SessionContext, WebSocketContext,
   WorkflowControlContext, MultiSelectContext, PlanningChatContext,
   ModalContext, ContainerStatusContext, SessionUsageContext, TaskLastUpdateContext,
-} from '@/contexts/AppContext'
+} from "@/contexts/AppContext"
 import {
   useTasks, useRuns, useOptions, useToasts,
   useModelSearch, useSession, useWebSocket,
   useWorkflowControl, useMultiSelect, usePlanningChat,
   useDragDrop, useKeyboard, useSessionUsage, useTaskLastUpdate,
-} from '@/hooks'
-import { validateTaskDrop } from '@/utils/dropValidation'
-import type { Task, TaskStatus, WorkflowRun } from '@/types'
+} from "@/hooks"
+import { validateTaskDrop } from "@/utils/dropValidation"
+import type { Task, TaskStatus, WorkflowRun } from "@/types"
 
 // Components
-import { Sidebar } from '@/components/board/Sidebar'
-import { TopBar } from '@/components/board/TopBar'
-import { KanbanBoard } from '@/components/board/KanbanBoard'
-import { TabbedLogPanel } from '@/components/common/TabbedLogPanel'
-import { ToastContainer } from '@/components/common/ToastContainer'
-import { ChatContainer } from '@/components/chat/ChatContainer'
+import { Sidebar } from "@/components/board/Sidebar"
+import { TopBar } from "@/components/board/TopBar"
+import { KanbanBoard } from "@/components/board/KanbanBoard"
+import { TabbedLogPanel } from "@/components/common/TabbedLogPanel"
+import { ToastContainer } from "@/components/common/ToastContainer"
+import { ChatContainer } from "@/components/chat/ChatContainer"
 
 // Modals
-import { TaskModal } from '@/components/modals/TaskModal'
-import { OptionsModal } from '@/components/modals/OptionsModal'
-import { ExecutionGraphModal } from '@/components/modals/ExecutionGraphModal'
-import { ApproveModal } from '@/components/modals/ApproveModal'
-import { RevisionModal } from '@/components/modals/RevisionModal'
-import { StartSingleModal } from '@/components/modals/StartSingleModal'
-import { SessionModal } from '@/components/modals/SessionModal'
-import { TaskSessionsModal } from '@/components/modals/TaskSessionsModal'
-import { BestOfNDetailModal } from '@/components/modals/BestOfNDetailModal'
-import { BatchEditModal } from '@/components/modals/BatchEditModal'
-import { ConfirmModal } from '@/components/modals/ConfirmModal'
-import { StopConfirmModal } from '@/components/modals/StopConfirmModal'
-import { PlanningPromptModal } from '@/components/modals/PlanningPromptModal'
-import { ContainerConfigModal } from '@/components/modals/ContainerConfigModal'
+import { TaskModal } from "@/components/modals/TaskModal"
+import { OptionsModal } from "@/components/modals/OptionsModal"
+import { ExecutionGraphModal } from "@/components/modals/ExecutionGraphModal"
+import { ApproveModal } from "@/components/modals/ApproveModal"
+import { RevisionModal } from "@/components/modals/RevisionModal"
+import { StartSingleModal } from "@/components/modals/StartSingleModal"
+import { SessionModal } from "@/components/modals/SessionModal"
+import { TaskSessionsModal } from "@/components/modals/TaskSessionsModal"
+import { BestOfNDetailModal } from "@/components/modals/BestOfNDetailModal"
+import { BatchEditModal } from "@/components/modals/BatchEditModal"
+import { ConfirmModal } from "@/components/modals/ConfirmModal"
+import { StopConfirmModal } from "@/components/modals/StopConfirmModal"
+import { PlanningPromptModal } from "@/components/modals/PlanningPromptModal"
+import { ContainerConfigModal } from "@/components/modals/ContainerConfigModal"
 
 function App() {
   // Container status
@@ -46,10 +46,10 @@ function App() {
 
   const loadContainerStatus = useCallback(async () => {
     try {
-      const response = await fetch('/api/container/status')
+      const response = await fetch("/api/container/status")
       setContainerStatus(await response.json())
     } catch {
-      setContainerStatus({ enabled: false, available: false, hasRunningWorkflows: false, message: 'Failed to load status' })
+      setContainerStatus({ enabled: false, available: false, hasRunningWorkflows: false, message: "Failed to load status" })
     }
   }, [])
 
@@ -69,7 +69,7 @@ function App() {
   // Workflow control
   const workflowControl = useWorkflowControl(
     (state) => {
-      toastsHook.addLog(`Workflow state: ${state}`, 'info')
+      toastsHook.addLog(`Workflow state: ${state}`, "info")
     },
     (run) => {
       runsHook.updateRunFromWebSocket(run)
@@ -82,7 +82,7 @@ function App() {
   const [showContainerConfigModal, setShowContainerConfigModal] = useState(false)
   const [showStopConfirmModal, setShowStopConfirmModal] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
-  const [confirmModalAction, setConfirmModalAction] = useState<'delete' | 'convertToTemplate'>('delete')
+  const [confirmModalAction, setConfirmModalAction] = useState<"delete" | "convertToTemplate">("delete")
   const [confirmModalTaskId, setConfirmModalTaskId] = useState<string | null>(null)
   const [confirmModalTaskName, setConfirmModalTaskName] = useState('')
   const [logPanelCollapsed, setLogPanelCollapsed] = useState(false)
@@ -184,32 +184,32 @@ function App() {
     )
 
     if (!validation.allowed) {
-      if (validation.reason !== 'no-change') {
-        toastsHook.showToast(validation.reason, 'error')
+      if (validation.reason !== "no-change") {
+        toastsHook.showToast(validation.reason, "error")
       }
       return
     }
 
     try {
       switch (validation.action) {
-        case 'move-to-done':
+        case "move-to-done":
           await tasksHook.updateTask(taskId, {
-            status: 'done' as TaskStatus,
+            status: "done" as TaskStatus,
             completedAt: Math.floor(Date.now() / 1000),
           })
-          toastsHook.showToast('Task moved to Done', 'success')
+          toastsHook.showToast("Task moved to Done", "success")
           break
-        case 'reset-to-backlog':
+        case "reset-to-backlog":
           await tasksHook.resetTask(taskId)
           break
-        case 'move-to-review':
-          await tasksHook.updateTask(taskId, { status: 'review' as TaskStatus })
-          toastsHook.showToast('Task moved to Review', 'success')
+        case "move-to-review":
+          await tasksHook.updateTask(taskId, { status: "review" as TaskStatus })
+          toastsHook.showToast("Task moved to Review", "success")
           break
       }
       await tasksHook.loadTasks()
     } catch (e) {
-      toastsHook.showToast('Move failed: ' + (e instanceof Error ? e.message : String(e)), 'error')
+      toastsHook.showToast("Move failed: " + (e instanceof Error ? e.message : String(e)), "error")
     }
   })
 

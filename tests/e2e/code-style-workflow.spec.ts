@@ -18,7 +18,7 @@
  * All interactions are via Web UI only (except initial configuration).
  */
 
-import { test, expect, Page } from "@playwright/test';
+import { test, expect, Page } from "@playwright/test";
 
 test.describe('Code Style Feature - Comprehensive Workflow Tests', () => {
   test.setTimeout(600000); // 10 minutes for full workflow tests

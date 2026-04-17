@@ -204,7 +204,7 @@ describe("smart repair", () => {
       db.close()
     })
 
-    it("detects code-style phase from "code style' text in agent output", () => {
+    it("detects code-style phase from 'code style' text in agent output", () => {
       const root = createTempDir("tauroboros-codestyle-text-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 

@@ -17,9 +17,9 @@
  * to simulate a real end-to-end workflow scenario with containers.
  */
 
-import { test, expect, Page } from "@playwright/test';
-import { execSync } from "child_process';
-import { BASE_IMAGES } from "../../src/config/base-images.ts';
+import { test, expect, Page } from "@playwright/test";
+import { execSync } from "child_process";
+import { BASE_IMAGES } from "../../src/config/base-images.ts";
 
 test.beforeAll(() => {
   console.log('[TEST SETUP] Verifying container infrastructure...');

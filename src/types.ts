@@ -22,7 +22,7 @@ export type RunStatus = "pending" | "running" | "done" | "failed" | "skipped"
 
 export type SelectionMode = "pick_best" | "synthesize" | "pick_or_synthesize"
 
-export type WorkflowRunKind = "all_tasks" | "single_task" | "workflow_review"
+export type WorkflowRunKind = "all_tasks" | "single_task" | "workflow_review" | "group_tasks"
 
 export type WorkflowRunStatus = "running" | "paused" | "stopping" | "completed" | "failed"
 

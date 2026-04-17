@@ -35,6 +35,7 @@ const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "autoCommi
 type RunControlFn = (runId: string) => Promise<any>
 type StartFn = () => Promise<any>
 type StartSingleFn = (taskId: string) => Promise<any>
+type StartGroupFn = (groupId: string) => Promise<WorkflowRun>
 type StopFn = () => Promise<any>
 type StopRunFn = (runId: string, options?: { destructive?: boolean }) => Promise<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>
 
@@ -184,6 +185,7 @@ export class PiKanbanServer {
   private server: Bun.Server<unknown> | null = null
   private readonly onStart: StartFn
   private readonly onStartSingle: StartSingleFn
+  private readonly onStartGroup: StartGroupFn | null
   private readonly onStop: StopFn
   private readonly onPauseRun: RunControlFn | null
   private readonly onResumeRun: RunControlFn | null
@@ -243,6 +245,7 @@ export class PiKanbanServer {
       port?: number
       onStart?: StartFn
       onStartSingle?: StartSingleFn
+      onStartGroup?: StartGroupFn
       onStop?: StopFn
       onPauseRun?: RunControlFn
       onResumeRun?: RunControlFn
@@ -258,6 +261,7 @@ export class PiKanbanServer {
     this.smartRepair = new SmartRepairService(this.db, opts.settings)
     this.onStart = opts.onStart ?? (async () => null)
     this.onStartSingle = opts.onStartSingle ?? (async () => null)
+    this.onStartGroup = opts.onStartGroup ?? null
     this.onStop = opts.onStop ?? (async () => null)
     this.onPauseRun = opts.onPauseRun ?? null
     this.onResumeRun = opts.onResumeRun ?? null
@@ -2546,11 +2550,32 @@ Please confirm when you've created the tasks, and provide a summary of what was 
         }, 409)
       }
 
-      return json({
-        error: "Group execution not yet implemented. onStartGroup callback will be added later.",
-        groupId: params.id,
-        tasks: group.taskIds,
-      }, 501)
+      if (!this.onStartGroup) {
+        return json({ error: "Group execution handler not available" }, 503)
+      }
+
+      try {
+        const run = await this.onStartGroup(params.id)
+        broadcast({ type: "run_created", payload: run })
+        broadcast({ type: "execution_started", payload: {} })
+        return json(run)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        // Check for specific error types to return appropriate status codes
+        if (message.includes("not found")) {
+          return json({ error: message }, 404)
+        }
+        if (message.includes("external dependencies") || message.includes("blocked")) {
+          return json({ error: message }, 409)
+        }
+        if (message.includes("invalid container images") || message.includes("container image")) {
+          return json({ error: message }, 409)
+        }
+        if (message.includes("Already executing")) {
+          return json({ error: message }, 409)
+        }
+        return json({ error: message }, 500)
+      }
     })
 
     this.router.get("/api/tasks/:id/group", ({ params, json }) => {

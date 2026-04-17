@@ -4,10 +4,10 @@
  * Simple fixtures for Playwright tests. Server is managed by webServer config.
  */
 
-import { test as base, expect } from "@playwright/test';
-import { readFileSync, existsSync } from "fs';
-import { tmpdir } from "os';
-import { join } from "path';
+import { test as base, expect } from "@playwright/test";
+import { readFileSync, existsSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 export interface TestContext {
   baseURL: string;
