@@ -5,7 +5,7 @@
  * Note: These tests primarily use the API since they test server-side behavior.
  */
 
-import { test, expect } from "@playwright/test';
+import { test, expect } from "@playwright/test";
 
 test.describe('Failure Recovery Scenarios', () => {
   test.setTimeout(60000);

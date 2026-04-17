@@ -8,7 +8,7 @@ import { randomUUID } from "crypto"
 // Falls back to localhost:3000 for backward compatibility
 const BASE_URL = process.env.TEST_SERVER_PORT
   ? `http://localhost:${process.env.TEST_SERVER_PORT}`
-  : 'http://localhost:3000"
+  : "http://localhost:3000"
 
 async function getOptionViaAPI(page: any, key: string): Promise<string | null> {
   try {
@@ -165,7 +165,7 @@ test.describe('Options Modal Data Loading and Persistence', () => {
     let commitPromptTextarea = textareas.first()
     for (let i = 0; i < textareaCount; i++) {
       const textarea = textareas.nth(i)
-      const placeholder = await textarea.getAttribute('placeholder') || '"
+      const placeholder = await textarea.getAttribute('placeholder') || ""
       if (placeholder.includes('commit') || placeholder.includes('Commit')) {
         commitPromptTextarea = textarea
         break
@@ -203,7 +203,7 @@ test.describe('Options Modal Data Loading and Persistence', () => {
     let commitPromptTextareaAfter = textareasAfter.first()
     for (let i = 0; i < await textareasAfter.count(); i++) {
       const textarea = textareasAfter.nth(i)
-      const placeholder = await textarea.getAttribute('placeholder') || '"
+      const placeholder = await textarea.getAttribute('placeholder') || ""
       if (placeholder.includes('commit') || placeholder.includes('Commit')) {
         commitPromptTextareaAfter = textarea
         break
@@ -214,10 +214,10 @@ test.describe('Options Modal Data Loading and Persistence', () => {
     expect(newPrompt).toBe(testCommitPrompt)
   })
 
-  test('Model fields should not show "default" when API has real values', async ({ page }) => {
+  test("Model fields should not show 'default' when API has real values", async ({ page }) => {
     // First set real model values via API
-    const testPlanModel = 'openai/gpt-4"
-    const testExecModel = 'anthropic/claude-3-opus"
+    const testPlanModel = "openai/gpt-4"
+    const testExecModel = "anthropic/claude-3-opus"
 
     await setOptionViaAPI(page, 'planModel', testPlanModel)
     await setOptionViaAPI(page, 'executionModel', testExecModel)

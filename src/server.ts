@@ -69,6 +69,10 @@ export function createPiServer(options: CreateServerOptions = {}): {
       if (!orchestrator) throw new Error("Orchestrator unavailable")
       return await orchestrator.startSingle(taskId)
     },
+    onStartGroup: async (groupId: string) => {
+      if (!orchestrator) throw new Error("Orchestrator unavailable")
+      return await orchestrator.startGroup(groupId)
+    },
     onStop: async () => {
       if (!orchestrator) throw new Error("Orchestrator unavailable")
       await orchestrator.stop()

@@ -2137,8 +2137,8 @@ export class PiKanbanDB {
         INSERT INTO workflow_runs (
           id, kind, status, display_name, target_task_id, task_order_json,
           current_task_id, current_task_index, pause_requested, stop_requested,
-          error_message, created_at, started_at, updated_at, finished_at, color
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          error_message, created_at, started_at, updated_at, finished_at, color, group_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         input.id,
@@ -2157,6 +2157,7 @@ export class PiKanbanDB {
         now,
         input.finishedAt ?? null,
         input.color ?? "#888888",
+        input.groupId ?? null,
       )
 
     return this.getWorkflowRun(input.id) as WorkflowRun

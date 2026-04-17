@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import type { SessionMessage } from '@/types'
-import type { useWebSocket } from './useWebSocket'
+import { useState, useCallback, useEffect, useRef, useMemo } from "react"
+import type { SessionMessage } from "@/types"
+import type { useWebSocket } from "./useWebSocket"
 
 const CACHE_TTL = 60000 // 1 minute cache for last updates
 
@@ -79,7 +79,7 @@ function formatRelativeTime(timestamp: number): string {
   const diffMs = now - timestamp * 1000
   const diffSec = Math.floor(diffMs / 1000)
 
-  if (diffSec < 10) return 'just now'
+  if (diffSec < 10) return "just now"
   if (diffSec < 60) return `${diffSec}s ago`
 
   const diffMin = Math.floor(diffSec / 60)
@@ -100,9 +100,9 @@ function getUpdateAgeClass(timestamp: number): string {
   const diffMs = now - timestamp * 1000
   const diffMin = Math.floor(diffMs / 60000)
 
-  if (diffMin < 2) return 'recent'
-  if (diffMin < 30) return 'medium'
-  return 'old'
+  if (diffMin < 2) return "recent"
+  if (diffMin < 30) return "medium"
+  return "old"
 }
 
 export function useTaskLastUpdate(wsHook: ReturnType<typeof useWebSocket>): TaskLastUpdateHook {
@@ -160,7 +160,7 @@ export function useTaskLastUpdate(wsHook: ReturnType<typeof useWebSocket>): Task
   useEffect(() => {
     if (!wsHook) return
 
-    const unsubscribe = wsHook.on('session_message_created', (payload) => {
+    const unsubscribe = wsHook.on("session_message_created", (payload) => {
       const msg = payload as SessionMessage
       if (msg.taskId && msg.timestamp) {
         setLastUpdateMap(prev => {

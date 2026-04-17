@@ -8,7 +8,7 @@ import { randomUUID } from "crypto"
 // Falls back to localhost:3000 for backward compatibility
 const BASE_URL = process.env.TEST_SERVER_PORT
   ? `http://localhost:${process.env.TEST_SERVER_PORT}`
-  : 'http://localhost:3000"
+  : "http://localhost:3000"
 
 async function getOptionViaAPI(page: any, key: string): Promise<string | null> {
   try {

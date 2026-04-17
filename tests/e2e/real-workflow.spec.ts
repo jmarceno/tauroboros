@@ -14,11 +14,11 @@
  * for initial test configuration.
  */
 
-import { test, expect, Page } from "@playwright/test';
-import { execSync } from "child_process';
-import { BASE_IMAGES } from "../../src/config/base-images.ts';
+import { test, expect, Page } from "@playwright/test";
+import { execSync } from "child_process";
+import { BASE_IMAGES } from "../../src/config/base-images.ts";
 
-test.describe('REAL Multi-Task Workflow', () => {
+test.describe("REAL Multi-Task Workflow", () => {
   test.setTimeout(600000); // 10 minutes for full workflow
 
   // Pre-test check: Container requirements MUST be met

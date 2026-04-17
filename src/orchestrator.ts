@@ -396,6 +396,145 @@ export class PiOrchestrator {
   }
 
   /**
+   * Validate that all tasks in the given array exist in the database.
+   * Returns the loaded Task objects.
+   * Throws an error if any task is not found.
+   */
+  private validateGroupTasksExist(taskIds: string[]): Task[] {
+    const tasks: Task[] = []
+    const missingIds: string[] = []
+
+    for (const taskId of taskIds) {
+      const task = this.db.getTask(taskId)
+      if (!task) {
+        missingIds.push(taskId)
+      } else {
+        tasks.push(task)
+      }
+    }
+
+    if (missingIds.length > 0) {
+      throw new Error(`One or more tasks in group were not found in database: ${missingIds.join(', ')}`)
+    }
+
+    return tasks
+  }
+
+  /**
+   * Find dependencies that are outside the group.
+   * Returns array of objects with task and its external dependency.
+   */
+  private findExternalDependencies(
+    groupTasks: Task[],
+    allTasks: Task[],
+  ): Array<{ task: Task; dependency: string }> {
+    const groupTaskIds = new Set(groupTasks.map((t) => t.id))
+    const allTaskIds = new Set(allTasks.map((t) => t.id))
+    const externalDeps: Array<{ task: Task; dependency: string }> = []
+
+    for (const task of groupTasks) {
+      for (const depId of task.requirements) {
+        // Check if dependency is NOT in the group AND is a valid task (exists in allTasks)
+        if (!groupTaskIds.has(depId) && allTaskIds.has(depId)) {
+          externalDeps.push({ task, dependency: depId })
+        }
+      }
+    }
+
+    return externalDeps
+  }
+
+  /**
+   * Start execution of a task group.
+   * Loads group members, validates dependencies, checks container images,
+   * and executes tasks in dependency order.
+   */
+  async startGroup(groupId: string): Promise<WorkflowRun> {
+    // Phase 1: Clean up any stale runs before checking if already executing
+    await this.cleanupStaleRuns()
+
+    // Defensive check: If still running but current run is not actually active in DB, force reset
+    if (this.running && this.currentRunId) {
+      const activeRun = this.db.getWorkflowRun(this.currentRunId)
+      if (!activeRun || (activeRun.status !== "running" && activeRun.status !== "stopping")) {
+        console.log(`[orchestrator] startGroup: Force resetting stale running flag (run ${this.currentRunId} status: ${activeRun?.status ?? "not found"})`)
+        this.running = false
+      }
+    }
+
+    if (this.running) throw new Error("Already executing")
+
+    // Load group - throws if not found
+    const group = this.db.getTaskGroup(groupId)
+    if (!group) {
+      throw new Error(`Task group with ID "${groupId}" not found`)
+    }
+
+    if (group.taskIds.length === 0) {
+      throw new Error(`Cannot start group "${group.name}": group has no tasks`)
+    }
+
+    // Validate all tasks exist
+    const groupTasks = this.validateGroupTasksExist(group.taskIds)
+
+    // Check for external dependencies
+    const allTasks = this.db.getTasks()
+    const externalDeps = this.findExternalDependencies(groupTasks, allTasks)
+
+    if (externalDeps.length > 0) {
+      // Get unique task names that have external dependencies
+      const taskNamesWithExternalDeps = [...new Set(externalDeps.map((d) => d.task.name))]
+      throw new Error(
+        `Group execution blocked: ${externalDeps.length} tasks have external dependencies that must be completed first: ${taskNamesWithExternalDeps.join(', ')}`
+      )
+    }
+
+    // Validate container images for all group tasks
+    const imageValidation = await this.validateWorkflowImages(group.taskIds)
+    if (!imageValidation.valid) {
+      // Log event for each invalid task before throwing
+      for (const invalid of imageValidation.invalid) {
+        await this.logTaskEvent(invalid.taskId, "execution_blocked", {
+          reason: "missing_container_image",
+          image: invalid.image,
+          message: `Task execution blocked: Container image '${invalid.image}' not found`,
+          recommendation: "Build the image in Image Builder or select a valid image in task settings",
+        })
+      }
+      const details = imageValidation.invalid
+        .map((i) => `"${i.taskName}" (${i.taskId}): ${i.image}`)
+        .join("; ")
+      throw new Error(`Cannot start group: The following tasks have invalid container images: ${details}`)
+    }
+
+    // Create workflow run with kind=group_tasks
+    const run = this.db.createWorkflowRun({
+      id: randomUUID().slice(0, 8),
+      kind: "group_tasks",
+      status: "running",
+      displayName: `Group: ${group.name}`,
+      groupId: group.id,
+      taskOrder: group.taskIds,
+      currentTaskId: group.taskIds[0] ?? null,
+      currentTaskIndex: 0,
+      color: this.db.getNextRunColor(),
+    })
+
+    // Set orchestrator state
+    this.currentRunId = run.id
+    this.running = true
+    this.shouldStop = false
+
+    // Broadcast events
+    this.broadcast({ type: "run_created", payload: run })
+    this.broadcast({ type: "execution_started", payload: {} })
+
+    // Execute in background
+    void this.runInBackground(run.id, group.taskIds)
+    return run
+  }
+
+  /**
    * Stop (kill - SIGKILL) of a specific workflow run by ID.
    * Sets flags that will be checked in the execution loop and kills active sessions.
    */
@@ -1967,11 +2106,18 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
   /**
    * Validate that all container images for the given tasks exist.
    * Returns an object with valid flag and list of invalid tasks.
+   * Skips validation when container mode is disabled.
    */
   async validateWorkflowImages(taskIds: string[]): Promise<{
     valid: boolean
     invalid: { taskId: string; taskName: string; image: string }[]
   }> {
+    // Skip image validation when container mode is disabled
+    const containerEnabled = this.settings?.workflow?.container?.enabled !== false
+    if (!containerEnabled) {
+      return { valid: true, invalid: [] }
+    }
+
     const invalid: { taskId: string; taskName: string; image: string }[] = []
 
     for (const taskId of taskIds) {

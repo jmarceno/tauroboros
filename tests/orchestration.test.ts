@@ -111,7 +111,7 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     const settings = createTestSettings(mockPiBin)
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
-    db.updateOptions({ branch: "master" })
+    db.updateOptions({ branch: "master", executionModel: "openai/gpt-4", planModel: "openai/gpt-4" })
 
     const taskA = db.createTask({
       id: "orch-a",
