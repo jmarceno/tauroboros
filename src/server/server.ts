@@ -490,6 +490,18 @@ export class PiKanbanServer {
         }
       }
 
+      // Validate and clean requirements - check for invalid dependencies
+      const allValidTaskIds = new Set(this.db.getTasks().map(t => t.id))
+      const rawRequirements = Array.isArray(body.requirements) ? body.requirements : []
+      const validRequirements = rawRequirements.filter((reqId: string) => {
+        if (!allValidTaskIds.has(reqId)) {
+          console.warn(`[server] Task creation: Removing invalid dependency "${reqId}"`)
+          return false
+        }
+        return true
+      })
+      const removedDeps = rawRequirements.filter((reqId: string) => !allValidTaskIds.has(reqId))
+
       const task = this.db.createTask({
         id: randomUUID().slice(0, 8),
         name: String(body.name ?? "").trim(),
@@ -503,7 +515,7 @@ export class PiKanbanServer {
         review: body.review,
         autoCommit: body.autoCommit,
         deleteWorktree: body.deleteWorktree,
-        requirements: Array.isArray(body.requirements) ? body.requirements : [],
+        requirements: validRequirements,
         thinkingLevel: body.thinkingLevel,
         planThinkingLevel: body.planThinkingLevel,
         executionThinkingLevel: body.executionThinkingLevel,
@@ -516,6 +528,14 @@ export class PiKanbanServer {
 
       const normalized = normalizeTaskForClient(task, sessionUrlFor)
       broadcast({ type: "task_created", payload: normalized })
+      
+      // Include warning if invalid dependencies were removed
+      if (removedDeps.length > 0) {
+        return json({ 
+          ...normalized, 
+          warning: `Invalid dependencies auto-removed: ${removedDeps.join(', ')}` 
+        }, 201)
+      }
       return json(normalized, 201)
     })
 
@@ -1032,12 +1052,34 @@ export class PiKanbanServer {
     this.router.get("/api/execution-graph", ({ json }) => {
       // Use getExecutionGraphTasks to get ALL tasks that will run,
       // including those whose dependencies will be satisfied during this run
-      const allExecutable = getExecutionGraphTasks(this.db.getTasks())
-      if (allExecutable.length === 0) return json({ error: "No tasks in backlog" }, 400)
+      const allTasks = this.db.getTasks()
+      const validTaskIds = new Set(allTasks.map(t => t.id))
+      
+      // Check for tasks with invalid dependencies and collect warnings
+      const dependencyWarnings: string[] = []
+      for (const task of allTasks) {
+        const invalidDeps = task.requirements.filter(depId => !validTaskIds.has(depId))
+        if (invalidDeps.length > 0) {
+          dependencyWarnings.push(`Task "${task.name}" has invalid dependencies: ${invalidDeps.join(', ')} (auto-removed)`)
+        }
+      }
+      
+      const allExecutable = getExecutionGraphTasks(allTasks)
+      if (allExecutable.length === 0) {
+        return json({ 
+          error: "No tasks in backlog",
+          warnings: dependencyWarnings.length > 0 ? dependencyWarnings : undefined
+        }, 400)
+      }
 
       const options = this.db.getOptions()
       // Pass the full task set to buildExecutionGraph
-      const graph = buildExecutionGraph(this.db.getTasks(), options.parallelTasks)
+      const graph = buildExecutionGraph(allTasks, options.parallelTasks)
+      
+      // Add dependency warnings to the response if any exist
+      if (dependencyWarnings.length > 0) {
+        graph.warnings = dependencyWarnings
+      }
 
       for (const node of graph.nodes) {
         const task = this.db.getTask(node.id)

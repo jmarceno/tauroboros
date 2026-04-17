@@ -1498,6 +1498,13 @@ export class PiKanbanDB {
     const idx = input.idx ?? this.getNextTaskIndex()
     const taskId = input.id ?? randomUUID().slice(0, 8)
 
+    // Validate and clean requirements before creating
+    const rawRequirements = input.requirements ?? []
+    const { cleaned: validatedRequirements, removed } = this.validateAndCleanRequirements(rawRequirements, input.name)
+    if (removed.length > 0) {
+      console.log(`[db] Task "${input.name}" created with invalid dependencies auto-removed: ${removed.join(', ')}`)
+    }
+
     this.db
       .prepare(`
         INSERT INTO tasks (
@@ -1523,7 +1530,7 @@ export class PiKanbanDB {
         input.autoCommit !== false ? 1 : 0,
         input.deleteWorktree !== false ? 1 : 0,
         input.status ?? "backlog",
-        JSON.stringify(input.requirements ?? []),
+        JSON.stringify(validatedRequirements),
         now,
         now,
         input.thinkingLevel ?? "default",
@@ -1602,8 +1609,13 @@ export class PiKanbanDB {
       values.push(input.deleteWorktree ? 1 : 0)
     }
     if (input.requirements !== undefined) {
+      // Validate and clean requirements
+      const { cleaned, removed } = this.validateAndCleanRequirements(input.requirements, currentTask?.name)
+      if (removed.length > 0) {
+        console.log(`[db] Task "${currentTask?.name}" updated with invalid dependencies auto-removed: ${removed.join(', ')}`)
+      }
       sets.push("requirements = ?")
-      values.push(JSON.stringify(input.requirements))
+      values.push(JSON.stringify(cleaned))
     }
     if (input.agentOutput !== undefined) {
       sets.push("agent_output = ?")
@@ -1720,6 +1732,37 @@ export class PiKanbanDB {
     }
 
     return updatedTask
+  }
+
+  /**
+   * Validates and cleans task requirements by removing any dependency IDs
+   * that don't exist in the database. Returns information about what was cleaned.
+   * This is called automatically during task creation and updates.
+   */
+  validateAndCleanRequirements(requirements: string[], taskName?: string): { cleaned: string[]; removed: string[] } {
+    if (!requirements || requirements.length === 0) {
+      return { cleaned: [], removed: [] }
+    }
+
+    // Get all valid (non-archived) task IDs
+    const validTaskIds = new Set(this.getTasks().map(t => t.id))
+    
+    const cleaned: string[] = []
+    const removed: string[] = []
+
+    for (const reqId of requirements) {
+      if (validTaskIds.has(reqId)) {
+        cleaned.push(reqId)
+      } else {
+        removed.push(reqId)
+      }
+    }
+
+    if (removed.length > 0) {
+      console.log(`[db] Removed invalid dependencies from task "${taskName ?? 'unknown'}": ${removed.join(', ')}`)
+    }
+
+    return { cleaned, removed }
   }
 
   appendAgentOutput(taskId: string, chunk: string): Task | null {

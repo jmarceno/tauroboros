@@ -33,7 +33,12 @@ export function isTaskExecutable(task: Task): boolean {
 function areTaskRequirementsDone(task: Task, taskMap: Map<string, Task>): boolean {
   for (const depId of task.requirements) {
     const dep = taskMap.get(depId)
-    if (!dep || dep.status !== "done") {
+    if (!dep) {
+      // Log warning about invalid dependency and treat it as satisfied
+      console.warn(`[execution-plan] Task "${task.name}" has invalid dependency "${depId}" - ignoring`)
+      continue
+    }
+    if (dep.status !== "done") {
       return false
     }
   }
@@ -69,7 +74,9 @@ function collectTaskAndDependencyIds(taskId: string, taskMap: Map<string, Task>,
     visiting.add(id)
     for (const depId of task.requirements) {
       if (!taskMap.has(depId)) {
-        throw new Error(`Task "${task.name}" depends on missing task "${depId}"`)
+        // Log warning about invalid dependency and skip it
+        console.warn(`[execution-plan] Task "${task.name}" depends on missing task "${depId}" - ignoring`)
+        continue
       }
       // If depId is not in allowedTaskIds, skip it (treat as satisfied)
       if (!(allowedTaskIds && !allowedTaskIds.has(depId))) {
@@ -236,7 +243,11 @@ export function getExecutionGraphTasks(tasks: Task[]): Task[] {
 
       const requirementsSatisfied = task.requirements.every(depId => {
         const dependency = taskMap.get(depId)
-        if (!dependency) return false
+        if (!dependency) {
+          // Log warning about invalid dependency and treat it as satisfied
+          console.warn(`[execution-plan] Task "${task.name}" has invalid dependency "${depId}" - ignoring`)
+          return true
+        }
         return dependency.status === "done" || scheduledIds.has(depId)
       })
 

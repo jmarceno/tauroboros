@@ -237,9 +237,21 @@ export class PiOrchestrator {
 
     if (this.running) throw new Error("Already executing")
 
+    // Get all tasks and validate dependencies
+    const allTasks = this.db.getTasks()
+    const validTaskIds = new Set(allTasks.map(t => t.id))
+    
+    // Check for and log tasks with invalid dependencies
+    for (const task of allTasks) {
+      const invalidDeps = task.requirements.filter(depId => !validTaskIds.has(depId))
+      if (invalidDeps.length > 0) {
+        console.warn(`[orchestrator] Task "${task.name}" has invalid dependencies: ${invalidDeps.join(', ')} - will be ignored during execution`)
+      }
+    }
+
     // Use getExecutionGraphTasks to get ALL tasks that will run,
     // including those whose dependencies will be satisfied during this run
-    const tasks = getExecutionGraphTasks(this.db.getTasks())
+    const tasks = getExecutionGraphTasks(allTasks)
 
     if (tasks.length === 0) throw new Error("No tasks in backlog")
 
@@ -289,7 +301,20 @@ export class PiOrchestrator {
     await this.cleanupStaleRuns()
 
     if (this.running) throw new Error("Already executing")
-    const chain = resolveExecutionTasks(this.db.getTasks(), taskId)
+    
+    // Get all tasks and validate dependencies
+    const allTasks = this.db.getTasks()
+    const validTaskIds = new Set(allTasks.map(t => t.id))
+    
+    // Check for and log tasks with invalid dependencies
+    for (const task of allTasks) {
+      const invalidDeps = task.requirements.filter(depId => !validTaskIds.has(depId))
+      if (invalidDeps.length > 0) {
+        console.warn(`[orchestrator] Task "${task.name}" has invalid dependencies: ${invalidDeps.join(', ')} - will be ignored during execution`)
+      }
+    }
+    
+    const chain = resolveExecutionTasks(allTasks, taskId)
     if (chain.length === 0) throw new Error("No tasks in backlog")
     const target = this.db.getTask(taskId)
     if (!target) throw new Error("Task not found")
