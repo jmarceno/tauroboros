@@ -4,6 +4,7 @@ import { mkdirSync } from "fs"
 import { dirname } from "path"
 import {
   DEFAULT_COMMIT_PROMPT,
+  DEFAULT_CODE_STYLE_PROMPT,
   type ColumnSortPreferences,
   type CreateSessionMessageInput,
   type ExecutionPhase,
@@ -112,7 +113,6 @@ const DEFAULT_OPTIONS: Options = {
   telegramNotificationsEnabled: true,
   maxReviews: 2,
   columnSorts: undefined,
-  codeStylePrompt: "",
 }
 
 type PromptSeed = {
@@ -2866,7 +2866,6 @@ export class PiKanbanDB {
       maxReviews: getNumber("max_reviews"),
       maxJsonParseRetries: getNumber("max_json_parse_retries") || 5,
       columnSorts,
-      codeStylePrompt: getValue("code_style_prompt"),
     }
   }
 
@@ -2900,7 +2899,6 @@ export class PiKanbanDB {
     if (partial.maxReviews !== undefined) upsert.run("max_reviews", String(partial.maxReviews))
     if (partial.maxJsonParseRetries !== undefined) upsert.run("max_json_parse_retries", String(partial.maxJsonParseRetries))
     if (partial.columnSorts !== undefined) upsert.run("column_sorts", JSON.stringify(partial.columnSorts))
-    if (partial.codeStylePrompt !== undefined) upsert.run("code_style_prompt", partial.codeStylePrompt)
 
     return this.getOptions()
   }
@@ -3067,7 +3065,6 @@ export class PiKanbanDB {
     upsert.run("telegram_chat_id", DEFAULT_OPTIONS.telegramChatId)
     upsert.run("telegram_notifications_enabled", String(DEFAULT_OPTIONS.telegramNotificationsEnabled))
     upsert.run("max_reviews", String(DEFAULT_OPTIONS.maxReviews))
-    upsert.run("code_style_prompt", DEFAULT_OPTIONS.codeStylePrompt)
   }
 
   private seedPromptTemplates(): void {
