@@ -176,7 +176,7 @@ export class ContainerImageManager {
   /**
    * Prepare the image - build or pull as needed.
    * This is the main entry point for ensuring the image is ready.
-   * 
+   *
    * Uses a mutex to prevent concurrent builds. If prepare() is already
    * running, subsequent calls wait for it to complete and then check
    * readiness. Once successfully prepared, subsequent calls return
@@ -261,16 +261,16 @@ export class ContainerImageManager {
   private async buildFromDockerfile(): Promise<void> {
     const projectRoot = this.options.projectRoot || process.cwd()
     const dockerfileRelativePath = this.options.dockerfilePath || "docker/pi-agent/Dockerfile"
-    
+
     // First check extracted location (binary or source mode)
     const extractedDockerfilePath = join(projectRoot, ".tauroboros", "docker", "pi-agent", "Dockerfile")
     // Fallback to source location (development mode)
     const sourceDockerfilePath = join(projectRoot, dockerfileRelativePath)
-    
+
     // Determine which Dockerfile to use
     let fullDockerfilePath: string
     let dockerfilePathForBuild: string
-    
+
     if (existsSync(extractedDockerfilePath)) {
       fullDockerfilePath = extractedDockerfilePath
       // For podman build, we need a path relative to the build context or absolute path
@@ -752,19 +752,19 @@ export class ContainerImageManager {
           // Build detailed error message with all available information
           const errorDetails: string[] = []
           errorDetails.push(`Build failed with exit code ${code}`)
-          
+
           if (errorLogs.length > 0) {
             errorDetails.push("\n--- STDERR OUTPUT ---")
             errorDetails.push(...errorLogs.slice(-50)) // Last 50 error lines
           }
-          
+
           // Include last few lines of stdout for context
           const lastLogs = logs.slice(-30)
           if (lastLogs.length > 0) {
             errorDetails.push("\n--- LAST OUTPUT LINES ---")
             errorDetails.push(...lastLogs)
           }
-          
+
           const detailedErrorMessage = errorDetails.join("\n")
           
           progressHandler?.onStatus({

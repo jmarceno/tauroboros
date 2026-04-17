@@ -138,7 +138,7 @@ export class ContainerPiProcess {
         if (attachedProcess) {
           this.containerProcess = attachedProcess
           console.log(`[container-pi-process] Successfully attached to container ${this.existingContainerId}`)
-          
+
           this.db.updateWorkflowSession(this.session.id, {
             status: "active",
           })
@@ -524,7 +524,7 @@ export class ContainerPiProcess {
     // Project to session messages (unless disabled)
     if (!this.disableAutoSessionMessages) {
       const isStreamEvent = this.messageStreamer?.handleEvent(parsed) ?? false
-      
+
       if (!isStreamEvent) {
         const message = projectPiEventToSessionMessage({
           event: parsed,

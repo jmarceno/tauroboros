@@ -20,7 +20,7 @@ function nowUnix(): number {
 
 /**
  * Utility to manage streaming message events (text_delta, thinking_delta)
- * and prevent duplicate persistence in the database. It buffers deltas 
+ * and prevent duplicate persistence in the database. It buffers deltas
  * and only persists fully formed messages.
  */
 export class MessageStreamer {
@@ -63,18 +63,18 @@ export class MessageStreamer {
   }
 
   /**
-   * Handles an event. Returns true if the event was processed as a streaming event 
+   * Handles an event. Returns true if the event was processed as a streaming event
    * (meaning it should NOT be passed to default persistence logic).
    */
   handleEvent(event: Record<string, unknown>): boolean {
     this.initSeqIfNeeded()
-    
+
     const eventType = event.type as string
 
     if (eventType === "message_update") {
       const msgEvent = event.assistantMessageEvent as Record<string, unknown> | undefined
       const msgEventType = msgEvent?.type as string
-      
+
       if (!msgEventType) return true // Handled (prevent raw persistence)
 
       if (!this.streamingState) {

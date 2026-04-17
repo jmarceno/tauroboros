@@ -52,7 +52,7 @@ interface StreamingMessageState {
 
 /**
  * PlanningSession - Manages an ongoing chat session with Pi for planning
- * 
+ *
  * Unlike PiSessionManager which handles single-prompt execution sessions,
  * PlanningSession maintains a persistent conversation with message history.
  */
@@ -94,13 +94,13 @@ export class PlanningSession {
     if (this.recentMessageIds.includes(messageId)) {
       return false
     }
-    
+
     this.recentMessageIds.unshift(messageId)
-    
+
     if (this.recentMessageIds.length > 3) {
       this.recentMessageIds.pop()
     }
-    
+
     return true
   }
 
@@ -197,7 +197,7 @@ export class PlanningSession {
       this.session = this.db.updateWorkflowSession(this.session.id, {
         model: model,
       }) ?? this.session
-      
+
       this.onStatusChange?.(this.session)
     } catch (error) {
       throw new Error(`Failed to set model: ${error instanceof Error ? error.message : String(error)}`)
@@ -224,7 +224,7 @@ export class PlanningSession {
       this.session = this.db.updateWorkflowSession(this.session.id, {
         thinkingLevel: thinkingLevel,
       }) ?? this.session
-      
+
       this.onStatusChange?.(this.session)
     } catch (error) {
       throw new Error(`Failed to set thinking level: ${error instanceof Error ? error.message : String(error)}`)
@@ -238,7 +238,7 @@ export class PlanningSession {
 
     // Build the message content with attachments
     let fullContent = input.content
-    
+
     if (input.contextAttachments && input.contextAttachments.length > 0) {
       fullContent += "\n\n---\n\n**Context Attachments:**\n"
       for (const attachment of input.contextAttachments) {
@@ -269,9 +269,9 @@ export class PlanningSession {
       messageType: "user_prompt",
       contentJson: { text: input.content, attachments: input.contextAttachments },
     }
-    
+
     const userMessage = this.db.createSessionMessage(userMessageInput)
-    
+
     // Broadcast user message to UI immediately
     this.onMessage?.(userMessage)
 
@@ -291,7 +291,7 @@ export class PlanningSession {
       if (eventType === "message_update") {
         const msgEvent = event.assistantMessageEvent as Record<string, unknown> | undefined
         const msgEventType = msgEvent?.type as string
-        
+
         if (!msgEventType) return
 
         // Initialize streaming state if needed
@@ -317,7 +317,7 @@ export class PlanningSession {
           if (delta) {
             state.hasThinking = true
             state.thinkingBuffer += delta
-            
+
             const thinkingMessage: SessionMessage = {
               id: state.seq,
               seq: state.seq,
@@ -329,10 +329,10 @@ export class PlanningSession {
               role: "assistant",
               eventName: "assistant_thinking",
               messageType: "thinking",
-              contentJson: { 
-                thinking: state.thinkingBuffer, 
+              contentJson: {
+                thinking: state.thinkingBuffer,
                 streaming: true,
-                isThinking: true 
+                isThinking: true
               },
             }
             this.onMessage?.(thinkingMessage)
@@ -344,7 +344,7 @@ export class PlanningSession {
           if (delta) {
             state.hasText = true
             state.textBuffer += delta
-            
+
             const textMessage: SessionMessage = {
               id: state.seq + 1, // Different ID for text vs thinking
               seq: state.seq + 1,
@@ -356,10 +356,10 @@ export class PlanningSession {
               role: "assistant",
               eventName: "assistant_response",
               messageType: "assistant_response",
-              contentJson: { 
-                text: state.textBuffer, 
+              contentJson: {
+                text: state.textBuffer,
                 streaming: true,
-                isThinking: false 
+                isThinking: false
               },
             }
             this.onMessage?.(textMessage)
@@ -374,7 +374,7 @@ export class PlanningSession {
             return
           }
           state.persistLock = true
-          
+
           if (state.hasThinking && state.thinkingBuffer && this.checkAndAddRecentMessageId(state.messageId)) {
             this.messageSeq++
             const thinkingMessageInput: CreateSessionMessageInput = {
@@ -387,16 +387,16 @@ export class PlanningSession {
               role: "assistant",
               eventName: "assistant_thinking",
               messageType: "thinking",
-              contentJson: { 
-                thinking: state.thinkingBuffer, 
+              contentJson: {
+                thinking: state.thinkingBuffer,
                 streaming: false,
-                isThinking: true 
+                isThinking: true
               },
             }
             const persistedThinking = this.db.createSessionMessage(thinkingMessageInput)
             this.onMessage?.(persistedThinking)
           }
-          
+
           const textMessageId = state.messageId + "-text"
           if (this.checkAndAddRecentMessageId(textMessageId)) {
             this.messageSeq++
@@ -410,16 +410,16 @@ export class PlanningSession {
               role: "assistant",
               eventName: "assistant_response",
               messageType: "assistant_response",
-              contentJson: { 
-                text: state.textBuffer, 
+              contentJson: {
+                text: state.textBuffer,
                 streaming: false,
-                isThinking: false 
+                isThinking: false
               },
             }
             const persistedText = this.db.createSessionMessage(textMessageInput)
             this.onMessage?.(persistedText)
           }
-          
+
           this.streamingState = null
         }
       }
@@ -427,11 +427,11 @@ export class PlanningSession {
       if (eventType === "agent_end") {
         if (this.streamingState) {
           const state = this.streamingState
-          
+
           // Only persist if lock was not acquired (meaning text_complete didn't handle it)
           if (!state.persistLock) {
             state.persistLock = true
-            
+
             if (state.hasThinking && state.thinkingBuffer && this.checkAndAddRecentMessageId(state.messageId)) {
               this.messageSeq++
               const thinkingMessageInput: CreateSessionMessageInput = {
@@ -444,16 +444,16 @@ export class PlanningSession {
                 role: "assistant",
                 eventName: "assistant_thinking",
                 messageType: "thinking",
-                contentJson: { 
-                  thinking: state.thinkingBuffer, 
+                contentJson: {
+                  thinking: state.thinkingBuffer,
                   streaming: false,
-                  isThinking: true 
+                  isThinking: true
                 },
               }
               const persistedThinking = this.db.createSessionMessage(thinkingMessageInput)
               this.onMessage?.(persistedThinking)
             }
-            
+
             // Then persist any remaining text (if not already persisted and we have content)
             const textMessageId = state.messageId + "-text"
             if (state.hasText && state.textBuffer && this.checkAndAddRecentMessageId(textMessageId)) {
@@ -468,17 +468,17 @@ export class PlanningSession {
                 role: "assistant",
                 eventName: "assistant_response",
                 messageType: "assistant_response",
-                contentJson: { 
-                  text: state.textBuffer, 
+                contentJson: {
+                  text: state.textBuffer,
                   streaming: false,
-                  isThinking: false 
+                  isThinking: false
                 },
               }
               const persistedText = this.db.createSessionMessage(textMessageInput)
               this.onMessage?.(persistedText)
             }
           }
-          
+
           this.streamingState = null
         }
         unsubscribe()
@@ -497,12 +497,12 @@ export class PlanningSession {
 
     this.process = null
     this.isReady = false
-    
+
     this.session = this.db.updateWorkflowSession(this.session.id, {
       status: "completed",
       finishedAt: nowUnix(),
     }) ?? this.session
-    
+
     this.onStatusChange?.(this.session)
   }
 

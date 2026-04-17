@@ -108,7 +108,7 @@ export function createVolumeMounts(
 
 /**
  * Container Manager using pure Podman (without gVisor)
- * 
+ *
  * Uses an Ubuntu-based image with Bun and Pi pre-installed.
  * Provides filesystem and port isolation through standard container boundaries.
  */
@@ -628,20 +628,20 @@ export class PiContainerManager {
 
   /**
    * Attach to an existing container (for resume).
-   * 
+   *
    * CRITICAL: This is the RECOMMENDED approach for container resume operations.
    * Reattaching to an existing container preserves:
    *   - All file system state (modified files, installed packages)
    *   - Environment variables set during execution
    *   - Running processes and their state
    *   - Network connections
-   * 
+   *
    * Container recreation (the fallback) loses all unsaved work and requires
    * re-execution from scratch. Only use recreation when attach fails.
-   * 
+   *
    * Implementation uses 'podman exec' to create a new session in the existing
    * container while preserving all container state.
-   * 
+   *
    * @param containerId - The ID of the container to attach to
    * @param sessionId - The session ID for tracking this attachment
    * @returns ContainerProcess if successful, null if container not running or attach failed
@@ -656,7 +656,7 @@ export class PiContainerManager {
 
     try {
       console.log(`[container-manager] Attaching to existing container ${containerId} for session ${sessionId}`)
-      
+
       // Spawn podman exec to create a new pi rpc session in the existing container
       // The -i flag keeps stdin open, allowing us to send commands
       // The -e flag passes the PI_CODING_AGENT environment variable
@@ -793,7 +793,7 @@ export class PiContainerManager {
             try {
               await this.execPodman([
                 "exec", containerId,
-                "sh", "-c", 
+                "sh", "-c",
                 `pkill -f "pi.*${sessionId}" || true`
               ])
             } catch (err) {
@@ -809,9 +809,9 @@ export class PiContainerManager {
           // Check if the container is still running
           const info = await this.checkContainerById(containerId)
           return {
-            State: { 
-              Status: info?.status || "unknown", 
-              Running: info?.running || false 
+            State: {
+              Status: info?.status || "unknown",
+              Running: info?.running || false
             },
           }
         },
@@ -895,7 +895,7 @@ export class PiContainerManager {
     const killResults = await Promise.allSettled(
       Array.from(this.containers.values()).map((proc) => proc.kill())
     )
-    
+
     // Log any failures but continue clearing the map
     for (let i = 0; i < killResults.length; i++) {
       const result = killResults[i]
@@ -903,7 +903,7 @@ export class PiContainerManager {
         console.error(`[container-manager] Failed to kill container at index ${i}:`, result.reason)
       }
     }
-    
+
     this.containers.clear()
   }
 
@@ -922,14 +922,14 @@ export class PiContainerManager {
       ])
 
       const containers: { sessionId: string; containerId: string; status: string }[] = []
-      
+
       for (const line of stdout.trim().split("\n")) {
         if (!line) continue
         const [id, names, state, labels] = line.split("|")
-        
+
         const sessionIdMatch = labels?.match(/tauroboros\.session-id=([^,]+)/)
         const sessionId = sessionIdMatch?.[1] || "unknown"
-        
+
         containers.push({
           sessionId,
           containerId: id,
@@ -1023,16 +1023,16 @@ export class PiContainerManager {
         "--format", "json",
         "--filter", "reference=*pi-agent*"
       ])
-      
+
       const images = JSON.parse(stdout) as Array<{
         Names?: string[]
         CreatedAt?: string
         Size?: string
         RepoTags?: string[]
       }>
-      
+
       const result: Array<{ tag: string; createdAt: number; size: string }> = []
-      
+
       for (const img of images) {
         const tags = img.Names || img.RepoTags || []
         for (const tag of tags) {
@@ -1045,7 +1045,7 @@ export class PiContainerManager {
           }
         }
       }
-      
+
       return result.sort((a, b) => b.createdAt - a.createdAt)
     } catch (err) {
       console.error("[container-manager] Failed to list images:", err)

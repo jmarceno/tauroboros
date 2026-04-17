@@ -24,14 +24,30 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
   const toasts = useToastContext()
   const sessionUsage = useSessionUsageContext()
 
-  const [taskRuns, setTaskRuns] = useState<TaskRun[]>([])
   const [sessions, setSessions] = useState<Map<string, SessionData>>(new Map())
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [activeSessionId, setActiveSessionIdState] = useState<string | null>(null)
   const [showUsageDetails, setShowUsageDetails] = useState<Record<string, boolean>>({})
 
+  // Refs must be declared before use
+  const activeSessionIdRef = useRef<string | null>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
   const sessionLoadTokens = useRef<Map<string, number>>(new Map())
+  const hasInitiallySetActiveSessionRef = useRef(false)
+  const prevMessageCountRef = useRef(0)
+  const lastActiveSessionIdRef = useRef<string | null>(null)
+  const usageLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const task = tasks.getTaskById(taskId)
+
+  // Keep ref in sync with state to avoid stale closures
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId
+  }, [activeSessionId])
+
+  // Wrapper to update both state and ref
+  const setActiveSessionId = useCallback((id: string | null) => {
+    activeSessionIdRef.current = id
+    setActiveSessionIdState(id)
+  }, [])
 
   const loadSessionMessages = useCallback(async (sessionId: string) => {
     const token = (sessionLoadTokens.current.get(sessionId) || 0) + 1
@@ -91,7 +107,7 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
 
         if (cancelled) return
 
-        setTaskRuns(runsData)
+        // runsData loaded but not stored since it's merged into sessions
 
         const sessionIds: string[] = []
 
@@ -121,17 +137,32 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
           sessionIdsToCleanup.push(sessionId)
         }
         
-        setSessions(initialSessionsMap)
-
-        if (sessionIds.length > 0) {
-          setActiveSessionId(sessionIds[0])
+        // Validate that activeSessionId still exists in new session list
+        const currentActiveId = activeSessionIdRef.current
+        let newActiveId: string | null = currentActiveId
+        
+        if (currentActiveId && !sessionIds.includes(currentActiveId)) {
+          newActiveId = sessionIds[0] || null
+          setActiveSessionId(newActiveId)
+          hasInitiallySetActiveSessionRef.current = false
         }
+        
+        // Only auto-select first session on initial load, not on refresh
+        if (!hasInitiallySetActiveSessionRef.current && sessionIds.length > 0) {
+          newActiveId = sessionIds[0]
+          setActiveSessionId(newActiveId)
+          hasInitiallySetActiveSessionRef.current = true
+        }
+        
+        setSessions(initialSessionsMap)
 
         for (const sessionId of sessionIds) {
           loadSessionMessages(sessionId)
         }
       } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : String(e)
         console.error('Failed to load task sessions:', e)
+        toasts.showToast(`Failed to load sessions: ${errorMsg}`, 'error')
       }
     }
 
@@ -144,15 +175,48 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, api, loadSessionMessages])
 
+  // Smart scroll: only scroll when message count increases for the active session
   useEffect(() => {
-    if (timelineRef.current) {
-      timelineRef.current.scrollTop = timelineRef.current.scrollHeight
+    const activeSession = activeSessionId ? sessions.get(activeSessionId) : null
+    const currentCount = activeSession?.messages.length || 0
+    
+    // Only scroll if message count actually increased (new messages arrived)
+    if (currentCount > prevMessageCountRef.current && timelineRef.current) {
+      requestAnimationFrame(() => {
+        timelineRef.current?.scrollTo({ 
+          top: timelineRef.current.scrollHeight, 
+          behavior: 'smooth' 
+        })
+      })
     }
+    
+    prevMessageCountRef.current = currentCount
   }, [sessions, activeSessionId])
 
+  // Debounced usage loading: only load when session actually changes
   useEffect(() => {
+    // Skip if session hasn't actually changed
+    if (activeSessionId === lastActiveSessionIdRef.current) return
+    
+    // Clear any pending usage load
+    if (usageLoadTimeoutRef.current) {
+      clearTimeout(usageLoadTimeoutRef.current)
+    }
+    
     if (activeSessionId) {
-      sessionUsage.loadSessionUsage(activeSessionId)
+      // Debounce usage load to prevent duplicate requests during rapid tab switches
+      usageLoadTimeoutRef.current = setTimeout(() => {
+        sessionUsage.loadSessionUsage(activeSessionId)
+        lastActiveSessionIdRef.current = activeSessionId
+      }, 200)
+    } else {
+      lastActiveSessionIdRef.current = null
+    }
+    
+    return () => {
+      if (usageLoadTimeoutRef.current) {
+        clearTimeout(usageLoadTimeoutRef.current)
+      }
     }
   }, [activeSessionId, sessionUsage])
 
@@ -422,15 +486,16 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
                           <div className={`text-xs leading-relaxed whitespace-pre-wrap break-words ${group.isThinking ? 'text-dark-text-muted italic' : 'text-dark-text'} ${group.isError ? 'text-red-400' : ''}`}>
                             {group.text || '(no text content)'}
                           </div>
-                          {(group.toolArgsJson || group.toolResultJson) && (
+                          {((group.toolArgsJson !== null && group.toolArgsJson !== undefined) || 
+                            (group.toolResultJson !== null && group.toolResultJson !== undefined)) && (
                             <details className="mt-2 text-xs text-dark-text-muted">
                               <summary className="cursor-pointer">Tool payload</summary>
-                              {group.toolArgsJson && (
+                              {group.toolArgsJson !== null && group.toolArgsJson !== undefined && (
                                 <pre className="mt-1.5 bg-dark-surface2 border border-dark-surface3 rounded p-2 whitespace-pre-wrap break-words">
                                   args:{'\n'}{formatJson(group.toolArgsJson)}
                                 </pre>
                               )}
-                              {group.toolResultJson && (
+                              {group.toolResultJson !== null && group.toolResultJson !== undefined && (
                                 <pre className="mt-1.5 bg-dark-surface2 border border-dark-surface3 rounded p-2 whitespace-pre-wrap break-words">
                                   result:{'\n'}{formatJson(group.toolResultJson)}
                                 </pre>

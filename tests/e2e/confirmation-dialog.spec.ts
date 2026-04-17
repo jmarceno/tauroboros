@@ -11,7 +11,7 @@
  */
 
 import { test, expect, Page } from '@playwright/test';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'crypto'
 
 test.describe('Confirmation Dialog', () => {
   test.beforeEach(async ({ page }) => {

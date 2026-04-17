@@ -2,7 +2,7 @@ interface ModalWrapperProps {
   children: React.ReactNode
   title: string
   onClose: () => void
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'sm' | 'md' | 'lg' | 'xl'
 }
 
 export function ModalWrapper({ children, title, onClose, size = 'md' }: ModalWrapperProps) {
@@ -10,6 +10,7 @@ export function ModalWrapper({ children, title, onClose, size = 'md' }: ModalWra
     sm: 'max-w-md',
     md: 'max-w-2xl',
     lg: 'max-w-4xl',
+    xl: 'max-w-6xl',
   }
 
   return (
