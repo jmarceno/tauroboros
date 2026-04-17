@@ -113,6 +113,10 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
     })
   }, [api])
 
+  /**
+   * Creates a new task. Supports codeStyleReview field and all valid TaskStatus values
+   * including 'code-style' for workflow-managed code style review state.
+   */
   const createTask = useCallback(async (data: Parameters<typeof api.createTask>[0]) => {
     const task = await api.createTask(data)
     setTasks(prev => {
@@ -122,6 +126,10 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
     return task
   }, [api])
 
+  /**
+   * Updates a task. Supports status transitions to/from 'code-style' and updates
+   * to the codeStyleReview configuration field.
+   */
   const updateTask = useCallback(async (id: string, data: Parameters<typeof api.updateTask>[1]) => {
     const task = await api.updateTask(id, data)
     setTasks(prev => prev.map(t => t.id === id ? task : t))
@@ -153,6 +161,10 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
     return result
   }, [api, loadTasks])
 
+  /**
+   * Resets a task to backlog status. Preserves configuration fields including
+   * codeStyleReview. Can be called on tasks in any status including 'code-style'.
+   */
   const resetTask = useCallback(async (id: string) => {
     const task = await api.resetTask(id)
     setTasks(prev => prev.map(t => t.id === id ? task : t))
