@@ -36,6 +36,7 @@ export default {
           executing: '#69f0ae',  // Green
           review: '#ff4081',     // Pink
           'code-style': '#ffd740', // Amber/Yellow
+          codestyle: '#8b5cf6',  // Violet/Purple
           done: '#18ffff',       // Cyan
         },
         // Legacy aliases for backward compatibility
