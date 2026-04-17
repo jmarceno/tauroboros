@@ -257,6 +257,7 @@ export interface CreateTaskInput {
   smartRepairHints?: string | null
   reviewActivity?: "idle" | "running"
   containerImage?: string
+  codeStyleReview?: boolean
 }
 
 export interface UpdateTaskInput {
@@ -297,6 +298,7 @@ export interface UpdateTaskInput {
   isArchived?: boolean
   archivedAt?: number | null
   containerImage?: string
+  codeStyleReview?: boolean
 }
 
 export interface PromptRenderResult {

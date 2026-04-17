@@ -111,6 +111,7 @@ const DEFAULT_OPTIONS: Options = {
   telegramNotificationsEnabled: true,
   maxReviews: 2,
   columnSorts: undefined,
+  codeStylePrompt: "",
 }
 
 type PromptSeed = {
@@ -555,6 +556,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     isArchived: Number(row.is_archived ?? 0) === 1,
     archivedAt: row.archived_at === null || row.archived_at === undefined ? null : Number(row.archived_at),
     containerImage: row.container_image ? String(row.container_image) : undefined,
+    codeStyleReview: Number(row.code_style_review ?? 0) === 1,
   }
 }
 
@@ -1411,6 +1413,14 @@ const MIGRATIONS: Migration[] = [
       `ALTER TABLE tasks ADD COLUMN container_image TEXT;`,
     ],
   },
+  {
+    version: 12,
+    description: "Add code style fields to tasks and options tables",
+    statements: [
+      `ALTER TABLE tasks ADD COLUMN code_style_review INTEGER NOT NULL DEFAULT 0;`,
+      `INSERT OR REPLACE INTO options (key, value) VALUES ('code_style_prompt', '');`,
+    ],
+  },
 ]
 
 export class PiKanbanDB {
@@ -1485,8 +1495,8 @@ export class PiKanbanDB {
           requirements, agent_output, review_count, created_at, updated_at,
           thinking_level, plan_thinking_level, execution_thinking_level, execution_phase, awaiting_plan_approval, plan_revision_count,
           execution_strategy, best_of_n_config, best_of_n_substage, skip_permission_asking,
-          max_review_runs_override, smart_repair_hints, review_activity, is_archived, archived_at, container_image
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
+          max_review_runs_override, smart_repair_hints, review_activity, is_archived, archived_at, container_image, code_style_review
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
       `)
       .run(
         taskId,
@@ -1519,6 +1529,7 @@ export class PiKanbanDB {
         input.smartRepairHints ?? null,
         input.reviewActivity ?? "idle",
         input.containerImage ?? null,
+        input.codeStyleReview === true ? 1 : 0,
       )
 
     return this.getTask(taskId) as Task
@@ -1678,6 +1689,10 @@ export class PiKanbanDB {
     if (input.containerImage !== undefined) {
       sets.push("container_image = ?")
       values.push(input.containerImage ?? null)
+    }
+    if (input.codeStyleReview !== undefined) {
+      sets.push("code_style_review = ?")
+      values.push(input.codeStyleReview ? 1 : 0)
     }
 
     if (sets.length === 0) return this.getTask(id)
@@ -2849,6 +2864,7 @@ export class PiKanbanDB {
       maxReviews: getNumber("max_reviews"),
       maxJsonParseRetries: getNumber("max_json_parse_retries") || 5,
       columnSorts,
+      codeStylePrompt: getValue("code_style_prompt"),
     }
   }
 
@@ -2881,6 +2897,7 @@ export class PiKanbanDB {
     if (partial.maxReviews !== undefined) upsert.run("max_reviews", String(partial.maxReviews))
     if (partial.maxJsonParseRetries !== undefined) upsert.run("max_json_parse_retries", String(partial.maxJsonParseRetries))
     if (partial.columnSorts !== undefined) upsert.run("column_sorts", JSON.stringify(partial.columnSorts))
+    if (partial.codeStylePrompt !== undefined) upsert.run("code_style_prompt", partial.codeStylePrompt)
 
     return this.getOptions()
   }
@@ -3046,6 +3063,7 @@ export class PiKanbanDB {
     upsert.run("telegram_chat_id", DEFAULT_OPTIONS.telegramChatId)
     upsert.run("telegram_notifications_enabled", String(DEFAULT_OPTIONS.telegramNotificationsEnabled))
     upsert.run("max_reviews", String(DEFAULT_OPTIONS.maxReviews))
+    upsert.run("code_style_prompt", DEFAULT_OPTIONS.codeStylePrompt)
   }
 
   private seedPromptTemplates(): void {
