@@ -38,6 +38,7 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
   const [planmode, setPlanmode] = useState(existingTask?.planmode ?? false)
   const [autoApprovePlan, setAutoApprovePlan] = useState(existingTask?.autoApprovePlan ?? false)
   const [review, setReview] = useState(existingTask?.review ?? true)
+  const [codeStyleReview, setCodeStyleReview] = useState(existingTask?.codeStyleReview ?? false)
   const [autoCommit, setAutoCommit] = useState(existingTask?.autoCommit ?? true)
   const [deleteWorktree, setDeleteWorktree] = useState(existingTask?.deleteWorktree ?? true)
   const [skipPermissionAsking, setSkipPermissionAsking] = useState(existingTask?.skipPermissionAsking ?? true)
@@ -192,6 +193,7 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
         planmode,
         autoApprovePlan,
         review,
+        codeStyleReview,
         autoCommit,
         deleteWorktree,
         skipPermissionAsking,
@@ -579,6 +581,16 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
             <label className="checkbox-item">
               <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} />
               <span>Review</span>
+            </label>
+            <label className="checkbox-item">
+              <input
+                type="checkbox"
+                checked={codeStyleReview}
+                onChange={(e) => setCodeStyleReview(e.target.checked)}
+                disabled={!review}
+              />
+              <span className={!review ? 'opacity-50' : ''}>Code Style Review (after review)</span>
+              <span className="help-btn" title="Additional code style review pass after the main review. Only runs when Review is enabled.">?</span>
             </label>
             <label className="checkbox-item">
               <input type="checkbox" checked={autoCommit} onChange={(e) => setAutoCommit(e.target.checked)} />

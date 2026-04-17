@@ -20,6 +20,7 @@ export interface Task {
   planmode: boolean
   autoApprovePlan: boolean
   review: boolean
+  codeStyleReview: boolean
   autoCommit: boolean
   deleteWorktree: boolean
   skipPermissionAsking: boolean
@@ -373,6 +374,7 @@ export interface CreateTaskDTO {
   planmode?: boolean
   autoApprovePlan?: boolean
   review?: boolean
+  codeStyleReview?: boolean
   autoCommit?: boolean
   deleteWorktree?: boolean
   skipPermissionAsking?: boolean
@@ -414,6 +416,7 @@ export interface UpdateTaskDTO {
   planmode?: boolean
   autoApprovePlan?: boolean
   review?: boolean
+  codeStyleReview?: boolean
   autoCommit?: boolean
   deleteWorktree?: boolean
   skipPermissionAsking?: boolean
