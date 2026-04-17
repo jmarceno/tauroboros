@@ -56,6 +56,10 @@ import type {
   WorkflowRunIndicators,
   JsonOutFailEntry,
   CreateWorkflowRunIndicatorsInput,
+  CreateTaskGroupDTO,
+  UpdateTaskGroupDTO,
+  TaskGroup,
+  TaskGroupMember,
 } from "./db/types.ts"
 import { renderTemplate } from "./prompts/renderer.ts"
 import { parseModelSelection } from "./runtime/model-utils.ts"
@@ -553,6 +557,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     archivedAt: row.archived_at === null || row.archived_at === undefined ? null : Number(row.archived_at),
     containerImage: row.container_image ? String(row.container_image) : undefined,
     codeStyleReview: Number(row.code_style_review ?? 0) === 1,
+    groupId: row.group_id ? String(row.group_id) : undefined,
   }
 }
 
@@ -620,6 +625,7 @@ function rowToWorkflowRun(row: Record<string, unknown>): WorkflowRun {
     isArchived: Number(row.is_archived ?? 0) === 1,
     archivedAt: row.archived_at === null || row.archived_at === undefined ? null : Number(row.archived_at),
     color: row.color ? String(row.color) : "#888888",
+    groupId: row.group_id ? String(row.group_id) : undefined,
   }
 }
 
@@ -1393,6 +1399,50 @@ const MIGRATIONS: Migration[] = [
       `UPDATE tasks SET code_style_review = 0 WHERE code_style_review IS NULL;`,
       // Ensure code_style_prompt exists in options with empty string default
       `INSERT OR REPLACE INTO options (key, value) VALUES ('code_style_prompt', '');`,
+    ],
+  },
+  {
+    version: 25,
+    description: "Add task_groups and task_group_members tables for task grouping feature",
+    statements: [
+      // task_groups table
+      `
+      CREATE TABLE IF NOT EXISTS task_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL DEFAULT '#888888',
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        completed_at INTEGER
+      );
+      `,
+      // task_group_members table
+      `
+      CREATE TABLE IF NOT EXISTS task_group_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        idx INTEGER NOT NULL DEFAULT 0,
+        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        FOREIGN KEY(group_id) REFERENCES task_groups(id) ON DELETE CASCADE,
+        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        UNIQUE(group_id, task_id)
+      );
+      `,
+      // Indexes for task_groups
+      `CREATE INDEX IF NOT EXISTS idx_task_groups_status ON task_groups(status);`,
+      `CREATE INDEX IF NOT EXISTS idx_task_groups_name ON task_groups(name);`,
+      // Indexes for task_group_members
+      `CREATE INDEX IF NOT EXISTS idx_task_group_members_group_id ON task_group_members(group_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_task_group_members_task_id ON task_group_members(task_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_task_group_members_group_idx ON task_group_members(group_id, idx);`,
+      // Add group_id column to tasks table
+      `ALTER TABLE tasks ADD COLUMN group_id TEXT;`,
+      `CREATE INDEX IF NOT EXISTS idx_tasks_group_id ON tasks(group_id);`,
+      // Add group_id column to workflow_runs table
+      `ALTER TABLE workflow_runs ADD COLUMN group_id TEXT;`,
+      `CREATE INDEX IF NOT EXISTS idx_workflow_runs_group_id ON workflow_runs(group_id);`,
     ],
   },
 ]
@@ -3766,6 +3816,131 @@ export class PiKanbanDB {
     this.db.prepare("UPDATE workflow_runs_indicators SET json_out_fails = ? WHERE id = ?").run(updatedJson, sessionId)
   }
 
+  // ---- Task Groups ----
+
+  createTaskGroup(input: CreateTaskGroupDTO): TaskGroup {
+    const now = nowUnix()
+    const id = input.id ?? randomUUID().slice(0, 8)
+    const createdAt = input.createdAt ?? now
+
+    this.db
+      .prepare(`
+        INSERT INTO task_groups (
+          id, name, color, status, created_at, updated_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        input.name,
+        input.color ?? '#888888',
+        input.status ?? 'active',
+        createdAt,
+        now,
+        input.completedAt ?? null,
+      )
+
+    return this.getTaskGroup(id) as TaskGroup
+  }
+
+  getTaskGroup(id: string): TaskGroup | null {
+    const row = this.db.prepare("SELECT * FROM task_groups WHERE id = ?").get(id) as Record<string, unknown> | null
+    return row ? rowToTaskGroup(row) : null
+  }
+
+  getTaskGroups(): TaskGroup[] {
+    const rows = this.db.prepare("SELECT * FROM task_groups ORDER BY created_at DESC").all() as Record<string, unknown>[]
+    return rows.map(rowToTaskGroup)
+  }
+
+  updateTaskGroup(id: string, input: UpdateTaskGroupDTO): TaskGroup | null {
+    const sets: string[] = []
+    const values: any[] = []
+
+    if (input.name !== undefined) {
+      sets.push("name = ?")
+      values.push(input.name)
+    }
+    if (input.color !== undefined) {
+      sets.push("color = ?")
+      values.push(input.color)
+    }
+    if (input.status !== undefined) {
+      sets.push("status = ?")
+      values.push(input.status)
+    }
+    if (input.completedAt !== undefined) {
+      sets.push("completed_at = ?")
+      values.push(input.completedAt)
+    }
+
+    if (sets.length === 0) return this.getTaskGroup(id)
+
+    sets.push("updated_at = unixepoch()")
+    values.push(id)
+
+    this.db.prepare(`UPDATE task_groups SET ${sets.join(", ")} WHERE id = ?`).run(...values)
+    return this.getTaskGroup(id)
+  }
+
+  deleteTaskGroup(id: string): boolean {
+    const result = this.db.prepare("DELETE FROM task_groups WHERE id = ?").run(id)
+    return result.changes > 0
+  }
+
+  addTaskToGroup(groupId: string, taskId: string, idx?: number): TaskGroupMember | null {
+    const group = this.getTaskGroup(groupId)
+    if (!group) return null
+
+    const now = nowUnix()
+    const taskIdx = idx ?? this.getNextTaskIndexInGroup(groupId)
+
+    const result = this.db
+      .prepare(`
+        INSERT INTO task_group_members (group_id, task_id, idx, added_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(group_id, task_id) DO UPDATE SET
+          idx = excluded.idx,
+          added_at = excluded.added_at
+      `)
+      .run(groupId, taskId, taskIdx, now)
+
+    // Update task's group_id
+    this.db.prepare("UPDATE tasks SET group_id = ? WHERE id = ?").run(groupId, taskId)
+
+    const row = this.db.prepare("SELECT * FROM task_group_members WHERE id = ?").get(result.lastInsertRowid) as Record<string, unknown>
+    return row ? rowToTaskGroupMember(row) : null
+  }
+
+  removeTaskFromGroup(groupId: string, taskId: string): boolean {
+    const result = this.db
+      .prepare("DELETE FROM task_group_members WHERE group_id = ? AND task_id = ?")
+      .run(groupId, taskId)
+
+    // Clear task's group_id if it was in this group
+    this.db.prepare("UPDATE tasks SET group_id = NULL WHERE id = ? AND group_id = ?").run(taskId, groupId)
+
+    return result.changes > 0
+  }
+
+  getTasksInGroup(groupId: string): Array<{ taskId: string; idx: number; addedAt: number }> {
+    const rows = this.db
+      .prepare("SELECT task_id, idx, added_at FROM task_group_members WHERE group_id = ? ORDER BY idx ASC")
+      .all(groupId) as Record<string, unknown>[]
+
+    return rows.map(row => ({
+      taskId: String(row.task_id),
+      idx: Number(row.idx ?? 0),
+      addedAt: Number(row.added_at ?? 0),
+    }))
+  }
+
+  private getNextTaskIndexInGroup(groupId: string): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(MAX(idx), -1) AS max_idx FROM task_group_members WHERE group_id = ?")
+      .get(groupId) as { max_idx: number }
+    return Number(row.max_idx ?? -1) + 1
+  }
+
 }
 
 // Row converters for indicators
@@ -3800,5 +3975,30 @@ function rowToContainerBuild(row: Record<string, unknown>): ContainerBuild {
     errorMessage: row.error_message ? String(row.error_message) : null,
     imageTag: row.image_tag ? String(row.image_tag) : null,
     logs: row.logs ? String(row.logs) : null,
+  }
+}
+
+// Row converters for task group types
+function rowToTaskGroup(row: Record<string, unknown>): TaskGroup {
+  const validStatus: TaskGroup["status"][] = ["active", "completed", "archived"]
+
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    color: String(row.color ?? '#888888'),
+    status: validStatus.includes(row.status as TaskGroup["status"]) ? (row.status as TaskGroup["status"]) : 'active',
+    createdAt: Number(row.created_at ?? 0),
+    updatedAt: Number(row.updated_at ?? 0),
+    completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at),
+  }
+}
+
+function rowToTaskGroupMember(row: Record<string, unknown>): TaskGroupMember {
+  return {
+    id: Number(row.id),
+    groupId: String(row.group_id),
+    taskId: String(row.task_id),
+    idx: Number(row.idx ?? 0),
+    addedAt: Number(row.added_at ?? 0),
   }
 }

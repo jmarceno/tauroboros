@@ -120,7 +120,7 @@ export class PlanningSession {
 
     // Generate session file path for conversation persistence
     const piSessionFile = this.session.piSessionFile ?? getSessionFilePath(this.session.id, this.session.cwd)
-    
+
     // Update session with the session file path if not already set
     if (!this.session.piSessionFile) {
       this.session = this.db.updateWorkflowSession(this.session.id, {
