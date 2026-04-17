@@ -87,6 +87,7 @@ export interface Task {
   isArchived: boolean
   archivedAt: number | null
   containerImage?: string
+  codeStyleReview: boolean
 }
 
 export interface WorkflowRun {
@@ -198,6 +199,7 @@ export interface Options {
   maxReviews: number
   maxJsonParseRetries: number
   columnSorts?: ColumnSortPreferences
+  codeStylePrompt: string
 }
 
 export const DEFAULT_COMMIT_PROMPT = `You are in a worktree on a detached HEAD. When you are finished with the task, commit the working changes onto {{base_ref}}.
