@@ -201,7 +201,6 @@ export interface Options {
   maxReviews: number
   maxJsonParseRetries: number
   columnSorts?: ColumnSortPreferences
-  codeStylePrompt: string
 }
 
 export const DEFAULT_COMMIT_PROMPT = `You are in a worktree on a detached HEAD. When you are finished with the task, commit the working changes onto {{base_ref}}.
@@ -230,6 +229,35 @@ Steps:
    - Whether stash was used
    - Whether conflicts were resolved
    - Any remaining manual follow-up needed`;
+
+export const DEFAULT_CODE_STYLE_PROMPT = `You are a code style enforcement agent. Review the code in the workspace and apply fixes to ensure compliance.
+
+STANDARD RULES:
+- Follow existing project conventions
+- Use consistent indentation (match existing files)
+- Remove trailing whitespace
+- Ensure consistent quote style
+- Add missing semicolons where required by the language
+- Fix obvious linting issues
+
+APPROACH:
+1. First, read the relevant source files
+2. Identify any style violations
+3. Use the edit tool to fix all issues
+4. Confirm when complete
+
+IMPORTANT: You must actively use the edit tool to make changes. Do not just report issues - fix them.`;
+
+/**
+ * Resolves the code style prompt to use.
+ * Returns the provided prompt if non-empty, otherwise returns DEFAULT_CODE_STYLE_PROMPT.
+ */
+export function resolveCodeStylePrompt(codeStylePrompt: string | undefined | null): string {
+  if (typeof codeStylePrompt === "string" && codeStylePrompt.trim().length > 0) {
+    return codeStylePrompt
+  }
+  return DEFAULT_CODE_STYLE_PROMPT
+}
 
 export type WSMessageType =
   | "task_created"

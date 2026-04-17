@@ -37,6 +37,29 @@ describe("PiKanbanDB", () => {
     db.close()
   })
 
+  it("codeStylePrompt defaults to empty string and can be updated", () => {
+    const { db } = createTempDb()
+
+    // Verify default is empty string
+    const options = db.getOptions()
+    expect(options.codeStylePrompt).toBe("")
+
+    // Update to a custom prompt
+    const customPrompt = "Custom code style enforcement rules"
+    const updated = db.updateOptions({ codeStylePrompt: customPrompt })
+    expect(updated.codeStylePrompt).toBe(customPrompt)
+
+    // Verify persistence
+    const reloaded = db.getOptions()
+    expect(reloaded.codeStylePrompt).toBe(customPrompt)
+
+    // Reset to empty string
+    const reset = db.updateOptions({ codeStylePrompt: "" })
+    expect(reset.codeStylePrompt).toBe("")
+
+    db.close()
+  })
+
   it("supports task and workflow run storage", () => {
     const { db } = createTempDb()
 
