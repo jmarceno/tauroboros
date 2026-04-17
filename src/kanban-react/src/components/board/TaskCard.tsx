@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useCallback, memo } from 'react'
 import type { Task, BestOfNSummary } from '@/types'
 import type { useDragDrop } from '@/hooks/useDragDrop'
-import { useOptionsContext, useTasksContext, useSessionUsageContext } from '@/contexts/AppContext'
+import { useOptionsContext, useTasksContext, useSessionUsageContext, useTaskLastUpdateContext } from '@/contexts/AppContext'
 import { useTaskSessionUsage } from '@/hooks/useTaskSessionUsage'
 
 interface TaskCardProps {
@@ -56,9 +56,16 @@ export const TaskCard = memo(function TaskCard({
   const { options } = useOptionsContext()
   const { tasks } = useTasksContext()
   const sessionUsage = useSessionUsageContext()
+  const taskLastUpdate = useTaskLastUpdateContext()
 
   // Get aggregated usage across all task sessions
   const taskUsage = useTaskSessionUsage(task.id)
+
+  const hasLocalSession = useMemo(() =>
+    !!task.sessionId &&
+    task.status !== 'backlog' &&
+    task.status !== 'template'
+  , [task.sessionId, task.status])
 
   // Start/stop watching current session usage (for real-time updates)
   useEffect(() => {
@@ -73,11 +80,17 @@ export const TaskCard = memo(function TaskCard({
     }
   }, [task.sessionId, sessionUsage])
 
-  const hasLocalSession = useMemo(() =>
-    !!task.sessionId &&
-    task.status !== 'backlog' &&
-    task.status !== 'template'
-  , [task.sessionId, task.status])
+  // Load last update timestamp when task has a session
+  useEffect(() => {
+    if (task.id && hasLocalSession) {
+      taskLastUpdate.loadLastUpdate(task.id)
+    }
+  }, [task.id, hasLocalSession, taskLastUpdate])
+
+  // Get last update timestamp for this task
+  const lastUpdateTimestamp = taskLastUpdate.getLastUpdate(task.id)
+  const lastUpdateFormatted = lastUpdateTimestamp ? taskLastUpdate.formatLastUpdate(lastUpdateTimestamp) : null
+  const lastUpdateAgeClass = lastUpdateTimestamp ? taskLastUpdate.getUpdateAgeClass(lastUpdateTimestamp) : null
 
   const isAnomalousReviewTask = useMemo(() =>
     task.status === 'review' &&
@@ -498,6 +511,18 @@ export const TaskCard = memo(function TaskCard({
             title="Total tokens across all sessions"
           >
             🪙 {taskUsage.formattedTokens}
+          </span>
+        </div>
+      )}
+
+      {/* Last Update badge - shows when the last message was received */}
+      {lastUpdateFormatted && hasLocalSession && (
+        <div className="flex items-center gap-2 mt-1 text-xs">
+          <span
+            className={`px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full flex items-center gap-1 task-last-update-badge ${lastUpdateAgeClass}`}
+            title={`Last message received at ${new Date(lastUpdateTimestamp! * 1000).toLocaleString()}`}
+          >
+            🕐 {lastUpdateFormatted}
           </span>
         </div>
       )}

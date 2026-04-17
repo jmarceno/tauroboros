@@ -2592,6 +2592,25 @@ export class PiKanbanDB {
     }
   }
 
+  /**
+   * Get the timestamp of the most recent message for a task across all its sessions.
+   * Returns null if the task has no messages.
+   */
+  getTaskLastMessageTimestamp(taskId: string): number | null {
+    const row = this.db
+      .prepare(
+        `
+        SELECT MAX(sm.timestamp) AS last_timestamp
+        FROM session_messages sm
+        INNER JOIN workflow_sessions ws ON ws.id = sm.session_id
+        WHERE ws.task_id = ?
+        `,
+      )
+      .get(taskId) as { last_timestamp: number | null } | null
+
+    return row?.last_timestamp ?? null
+  }
+
   updateSessionMessage(id: number, updates: Partial<CreateSessionMessageInput>): SessionMessage | null {
     const sets: string[] = []
     const values: any[] = []
