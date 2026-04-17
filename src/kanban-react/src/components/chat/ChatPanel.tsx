@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import type { ChatSession, ContextAttachment } from '@/hooks/usePlanningChat'
 import type { SessionMessage } from '@/types'
 import { ChatMessage } from './ChatMessage'
@@ -36,10 +36,42 @@ export function ChatPanel({
   const nameInputRef = useRef<HTMLInputElement>(null)
 
   const currentModel = session.session?.model
-  const currentModelLabel = currentModel?.split('/').pop() || currentModel || ''
+  const currentModelLabel = useMemo(() => 
+    currentModel?.split('/').pop() || currentModel || ''
+  , [currentModel])
 
-  const canReconnect = session.session && (session.session.status !== 'active' || session.error?.includes('not active'))
-  const hasEnoughMessages = session.messages.length > 2
+  const canReconnect = useMemo(() => 
+    session.session && (session.session.status !== 'active' || session.error?.includes('not active'))
+  , [session.session, session.error])
+  
+  const hasEnoughMessages = useMemo(() => 
+    session.messages.length > 2
+  , [session.messages.length])
+
+  // Memoize computed status values
+  const statusColorClass = useMemo(() => {
+    const status = session.session?.status
+    switch (status) {
+      case 'active': return 'bg-accent-success'
+      case 'starting': return 'bg-accent-warning animate-pulse'
+      case 'paused': return 'bg-accent-warning'
+      case 'completed': return 'bg-dark-text-muted'
+      case 'failed': return 'bg-accent-danger'
+      default: return 'bg-dark-text-muted'
+    }
+  }, [session.session?.status])
+
+  const statusText = useMemo(() => {
+    const status = session.session?.status
+    switch (status) {
+      case 'active': return 'Active'
+      case 'starting': return 'Starting...'
+      case 'paused': return 'Paused'
+      case 'completed': return 'Completed'
+      case 'failed': return 'Failed'
+      default: return 'Initializing'
+    }
+  }, [session.session?.status])
 
   useEffect(() => {
     if (messagesContainerRef.current) {
@@ -58,16 +90,16 @@ export function ChatPanel({
     setEditedName(session.name)
   }, [session.name])
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault()
       if (messageInput.trim() && !session.isSending && session.session?.id && session.session?.status === 'active') {
         handleSend()
       }
     }
-  }
+  }, [messageInput, session.isSending, session.session?.id, session.session?.status])
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     if (!messageInput.trim() || session.isSending) return
     if (!session.session?.id) return
 
@@ -85,16 +117,16 @@ export function ChatPanel({
     } catch (e) {
       console.error('Failed to send message:', e)
     }
-  }
+  }, [messageInput, session.isSending, session.session?.id, session.id, attachedContext, onSendMessage])
 
-  const handleNameSave = () => {
+  const handleNameSave = useCallback(() => {
     if (editedName.trim() && editedName !== session.name) {
       onRename(editedName.trim())
     }
     setIsEditingName(false)
-  }
+  }, [editedName, session.name, onRename])
 
-  const handleChangeModel = async () => {
+  const handleChangeModel = useCallback(async () => {
     if (!pendingModel || !session.session?.id) return
     setIsChangingModel(true)
     try {
@@ -105,31 +137,7 @@ export function ChatPanel({
     } finally {
       setIsChangingModel(false)
     }
-  }
-
-  const statusColorClass = (() => {
-    const status = session.session?.status
-    switch (status) {
-      case 'active': return 'bg-accent-success'
-      case 'starting': return 'bg-accent-warning animate-pulse'
-      case 'paused': return 'bg-accent-warning'
-      case 'completed': return 'bg-dark-text-muted'
-      case 'failed': return 'bg-accent-danger'
-      default: return 'bg-dark-text-muted'
-    }
-  })()
-
-  const statusText = (() => {
-    const status = session.session?.status
-    switch (status) {
-      case 'active': return 'Active'
-      case 'starting': return 'Starting...'
-      case 'paused': return 'Paused'
-      case 'completed': return 'Completed'
-      case 'failed': return 'Failed'
-      default: return 'Initializing'
-    }
-  })()
+  }, [pendingModel, session.session?.id, pendingThinkingLevel, onChangeModel])
 
   return (
     <div className="h-full flex flex-col bg-dark-bg">

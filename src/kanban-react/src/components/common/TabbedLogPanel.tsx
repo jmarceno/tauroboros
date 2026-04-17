@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import type { LogEntry, WorkflowRun } from '@/types'
 
 interface TabbedLogPanelProps {
@@ -28,35 +28,36 @@ export function TabbedLogPanel({
 }: TabbedLogPanelProps) {
   const [activeTab, setActiveTab] = useState<'runs' | 'logs'>('runs')
 
-  const safeStaleRuns = Array.isArray(staleRuns) ? staleRuns : []
-  const hasStaleRuns = safeStaleRuns.length > 0
+  const safeStaleRuns = useMemo(() => Array.isArray(staleRuns) ? staleRuns : [], [staleRuns])
+  const hasStaleRuns = useMemo(() => safeStaleRuns.length > 0, [safeStaleRuns])
+  const hasAnyRuns = useMemo(() => runs.length > 0, [runs])
 
-  const isRunStale = (run: WorkflowRun) => {
+  const isRunStale = useCallback((run: WorkflowRun) => {
     return safeStaleRuns.some(sr => sr.id === run.id)
-  }
+  }, [safeStaleRuns])
 
-  const canArchiveRun = (run: WorkflowRun) => {
+  const canArchiveRun = useCallback((run: WorkflowRun) => {
     return run.status === 'completed' || run.status === 'failed'
-  }
+  }, [])
 
-  const getRunStatusClass = (status: string, isStale = false) => {
+  const getRunStatusClass = useCallback((status: string, isStale = false) => {
     if (isStale) return 'stale'
     switch (status) {
       case 'running': return 'active'
       case 'paused': return 'paused'
       default: return ''
     }
-  }
+  }, [])
 
-  const getRunProgressPercent = (run: WorkflowRun) => {
+  const getRunProgressPercent = useCallback((run: WorkflowRun) => {
     const total = run.taskOrder?.length ?? 0
     const completed = Math.min(run.currentTaskIndex ?? 0, total)
     if (total === 0) return 0
     return (completed / total) * 100
-  }
+  }, [])
 
   // Distribute runs into columns for masonry layout (L→R, T→B)
-  const getRunsForColumn = (columnIndex: number): WorkflowRun[] => {
+  const getRunsForColumn = useCallback((columnIndex: number): WorkflowRun[] => {
     const col = columnIndex - 1 // 0-based
     const allRuns = Array.isArray(runs) ? runs : []
 
@@ -64,9 +65,7 @@ export function TabbedLogPanel({
       const itemCol = index % 4
       return itemCol === col
     })
-  }
-
-  const hasAnyRuns = runs.length > 0
+  }, [runs])
 
   if (collapsed) {
     return (

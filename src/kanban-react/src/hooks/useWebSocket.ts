@@ -12,16 +12,23 @@ export function useWebSocket() {
   const reconnectCallbackRef = useRef<(() => void) | null>(null)
   const intentionalCloseRef = useRef(false)
   const wsRef = useRef<WebSocket | null>(null)
+  // Use ref to track current reconnect attempts to avoid stale closures
+  const reconnectAttemptsRef = useRef(0)
 
   const MAX_RECONNECT_ATTEMPTS = 50
   const INITIAL_RECONNECT_DELAY = 1000
   const MAX_RECONNECT_DELAY = 30000
 
+  // Sync ref with state
+  useEffect(() => {
+    reconnectAttemptsRef.current = reconnectAttempts
+  }, [reconnectAttempts])
+
   const getReconnectDelay = useCallback(() => {
-    const attempt = reconnectAttempts
+    const attempt = reconnectAttemptsRef.current
     const delay = Math.min(INITIAL_RECONNECT_DELAY * Math.pow(2, attempt), MAX_RECONNECT_DELAY)
     return delay + Math.random() * 1000
-  }, [reconnectAttempts])
+  }, [])
 
   const connect = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -39,7 +46,7 @@ export function useWebSocket() {
 
     newWs.onopen = () => {
       setIsConnected(true)
-      const wasReconnect = reconnectAttempts > 0
+      const wasReconnect = reconnectAttemptsRef.current > 0
       setReconnectAttempts(0)
       console.log('[WebSocket] Connected')
       if (wasReconnect && reconnectCallbackRef.current) {
@@ -55,9 +62,9 @@ export function useWebSocket() {
         intentionalCloseRef.current = false
         return
       }
-      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
         const delay = getReconnectDelay()
-        console.log(`[WebSocket] Reconnecting in ${Math.round(delay)}ms (attempt ${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})`)
+        console.log(`[WebSocket] Reconnecting in ${Math.round(delay)}ms (attempt ${reconnectAttemptsRef.current + 1}/${MAX_RECONNECT_ATTEMPTS})`)
         reconnectTimerRef.current = setTimeout(() => {
           setReconnectAttempts(prev => prev + 1)
           connect()
@@ -83,7 +90,7 @@ export function useWebSocket() {
     newWs.onerror = () => {
       // Error handled by onclose
     }
-  }, [reconnectAttempts, getReconnectDelay])
+  }, [getReconnectDelay])
 
   const disconnect = useCallback(() => {
     intentionalCloseRef.current = true

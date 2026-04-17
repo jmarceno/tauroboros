@@ -1,4 +1,4 @@
-import { useEffect, useMemo, memo } from 'react'
+import { useEffect, useMemo, useCallback, memo } from 'react'
 import type { Task, BestOfNSummary } from '@/types'
 import type { useDragDrop } from '@/hooks/useDragDrop'
 import { useOptionsContext, useTasksContext, useSessionUsageContext } from '@/contexts/AppContext'
@@ -186,19 +186,19 @@ export const TaskCard = memo(function TaskCard({
     }
   }, [task.sessionId, sessionUsage])
 
-  const handleDragStart = (e: React.DragEvent) => {
+  const handleDragStart = useCallback((e: React.DragEvent) => {
     if (!canDrag) return
     dragDrop.handleDragStart(task.id)
     ;(e.target as HTMLElement).classList.add('dragging')
     e.dataTransfer.effectAllowed = 'move'
-  }
+  }, [canDrag, dragDrop, task.id])
 
-  const handleDragEnd = (e: React.DragEvent) => {
+  const handleDragEnd = useCallback((e: React.DragEvent) => {
     dragDrop.handleDragEnd()
     ;(e.target as HTMLElement).classList.remove('dragging')
-  }
+  }, [dragDrop])
 
-  const getStatusIcon = () => {
+  const getStatusIcon = useCallback(() => {
     switch (task.status) {
       case 'executing':
         return (
@@ -242,7 +242,7 @@ export const TaskCard = memo(function TaskCard({
       default:
         return null
     }
-  }
+  }, [task.status])
 
   return (
     <div

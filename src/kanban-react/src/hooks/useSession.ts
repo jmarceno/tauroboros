@@ -11,9 +11,11 @@ export function useSession() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loadTokenRef = useRef(0)
+  const currentLoadingIdRef = useRef<string | null>(null)
 
   const loadSession = useCallback(async (id: string, context?: TaskRunContext) => {
     const token = ++loadTokenRef.current
+    currentLoadingIdRef.current = id
     setSessionId(id)
     setTaskRunContext(context || null)
     setSession(null)
@@ -27,7 +29,7 @@ export function useSession() {
         api.getSessionMessages(id, 1000),
       ])
 
-      if (token !== loadTokenRef.current || sessionId !== id) return
+      if (token !== loadTokenRef.current || currentLoadingIdRef.current !== id) return
 
       setSession(sessionData)
       setMessages(messagesData.sort((a, b) => {
@@ -37,7 +39,7 @@ export function useSession() {
         return Number(a.id || 0) - Number(b.id || 0)
       }))
     } catch (e) {
-      if (token !== loadTokenRef.current || sessionId !== id) return
+      if (token !== loadTokenRef.current || currentLoadingIdRef.current !== id) return
       const errorMsg = e instanceof Error ? e.message : String(e)
       setError(errorMsg)
       setSession({
@@ -49,16 +51,21 @@ export function useSession() {
         updatedAt: 0,
       } as Session)
     } finally {
-      setIsLoading(false)
+      if (token === loadTokenRef.current && currentLoadingIdRef.current === id) {
+        setIsLoading(false)
+      }
     }
-  }, [api, sessionId])
+  }, [api])
 
   const closeSession = useCallback(() => {
+    currentLoadingIdRef.current = null
+    loadTokenRef.current = 0
     setSessionId(null)
     setSession(null)
     setMessages([])
     setTaskRunContext(null)
     setError(null)
+    setIsLoading(false)
   }, [])
 
   const addMessage = useCallback((message: SessionMessage) => {
