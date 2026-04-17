@@ -6,6 +6,7 @@ import { PiKanbanDB } from "../src/db.ts"
 import { SmartRepairService } from "../src/runtime/smart-repair.ts"
 import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
 import { BASE_IMAGES } from "../src/config/base-images.ts"
+import { wasInCodeStylePhase, chooseDeterministicRepairAction } from "../src/task-state.ts"
 
 const tempDirs: string[] = []
 
@@ -92,6 +93,8 @@ describe("smart repair", () => {
       { action: "mark_done", expectedStatus: "done", expectedPhase: null },
       { action: "fail_task", expectedStatus: "failed", expectedPhase: null },
       { action: "continue_with_more_reviews", expectedStatus: "backlog", expectedPhase: null },
+      { action: "skip_code_style", expectedStatus: "done", expectedPhase: null },
+      { action: "return_to_review", expectedStatus: "review", expectedPhase: null },
     ] as const
 
     for (const [idx, scenario] of scenarios.entries()) {
@@ -179,5 +182,147 @@ describe("smart repair", () => {
     // Explicit errors: malformed JSON should throw, not fallback
     await expect(service.repair(task.id)).rejects.toThrow()
     db.close()
+  })
+
+  describe("code-style phase detection", () => {
+    it("detects code-style phase from [code-style] tag in agent output", () => {
+      const root = createTempDir("tauroboros-codestyle-detect-")
+      const db = new PiKanbanDB(join(root, "tasks.db"))
+
+      const task = db.createTask({
+        id: "codestyle-1",
+        name: "Code style task",
+        prompt: "Style check",
+        status: "stuck",
+        codeStyleReview: true,
+      })
+
+      db.updateTask(task.id, {
+        agentOutput: "[code-style] Applied style fixes to src/index.ts",
+      })
+
+      const updatedTask = db.getTask(task.id)!
+      expect(wasInCodeStylePhase(updatedTask)).toBe(true)
+
+      db.close()
+    })
+
+    it("detects code-style phase from 'code style' text in agent output", () => {
+      const root = createTempDir("tauroboros-codestyle-text-")
+      const db = new PiKanbanDB(join(root, "tasks.db"))
+
+      const task = db.createTask({
+        id: "codestyle-2",
+        name: "Code style task",
+        prompt: "Style check",
+        status: "stuck",
+        codeStyleReview: true,
+      })
+
+      db.updateTask(task.id, {
+        agentOutput: "Running code style enforcement on the repository",
+      })
+
+      const updatedTask = db.getTask(task.id)!
+      expect(wasInCodeStylePhase(updatedTask)).toBe(true)
+
+      db.close()
+    })
+
+    it("detects code-style phase from error message", () => {
+      const root = createTempDir("tauroboros-codestyle-error-")
+      const db = new PiKanbanDB(join(root, "tasks.db"))
+
+      const task = db.createTask({
+        id: "codestyle-3",
+        name: "Code style task",
+        prompt: "Style check",
+        status: "stuck",
+        codeStyleReview: true,
+      })
+
+      db.updateTask(task.id, {
+        errorMessage: "Code style enforcement failed: unable to parse source file",
+      })
+
+      const updatedTask = db.getTask(task.id)!
+      expect(wasInCodeStylePhase(updatedTask)).toBe(true)
+
+      db.close()
+    })
+
+    it("returns false when codeStyleReview is disabled", () => {
+      const root = createTempDir("tauroboros-codestyle-disabled-")
+      const db = new PiKanbanDB(join(root, "tasks.db"))
+
+      const task = db.createTask({
+        id: "codestyle-4",
+        name: "No code style task",
+        prompt: "Regular task",
+        status: "stuck",
+        codeStyleReview: false,
+      })
+
+      db.updateTask(task.id, {
+        agentOutput: "[code-style] Some output",
+      })
+
+      const updatedTask = db.getTask(task.id)!
+      expect(wasInCodeStylePhase(updatedTask)).toBe(false)
+
+      db.close()
+    })
+
+    it("returns reset_backlog for stuck tasks in code-style phase", () => {
+      const root = createTempDir("tauroboros-codestyle-repair-")
+      const db = new PiKanbanDB(join(root, "tasks.db"))
+
+      const task = db.createTask({
+        id: "codestyle-5",
+        name: "Code style stuck task",
+        prompt: "Style check",
+        status: "stuck",
+        codeStyleReview: true,
+      })
+
+      db.updateTask(task.id, {
+        agentOutput: "[code-style] Started style enforcement",
+        errorMessage: "Style check failed",
+      })
+
+      const updatedTask = db.getTask(task.id)!
+      const decision = chooseDeterministicRepairAction(updatedTask)
+
+      expect(decision.action).toBe("reset_backlog")
+      expect(decision.reason).toContain("Code style enforcement failed")
+
+      db.close()
+    })
+
+    it("skips code-style repair when task is not stuck", () => {
+      const root = createTempDir("tauroboros-codestyle-notstuck-")
+      const db = new PiKanbanDB(join(root, "tasks.db"))
+
+      const task = db.createTask({
+        id: "codestyle-6",
+        name: "Code style review task",
+        prompt: "Style check",
+        status: "review",
+        codeStyleReview: true,
+      })
+
+      db.updateTask(task.id, {
+        agentOutput: "[code-style] Completed style enforcement",
+      })
+
+      const updatedTask = db.getTask(task.id)!
+      const decision = chooseDeterministicRepairAction(updatedTask)
+
+      // Should NOT be code-style repair since task is not stuck
+      expect(decision.action).not.toBe("reset_backlog")
+      expect(decision.reason).not.toContain("Code style")
+
+      db.close()
+    })
   })
 })

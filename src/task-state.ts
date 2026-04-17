@@ -1,6 +1,6 @@
 import type { Task } from "./types"
 
-export type TaskRepairAction = "queue_implementation" | "restore_plan_approval" | "reset_backlog" | "mark_done" | "fail_task" | "continue_with_more_reviews"
+export type TaskRepairAction = "queue_implementation" | "restore_plan_approval" | "reset_backlog" | "mark_done" | "fail_task" | "continue_with_more_reviews" | "skip_code_style" | "return_to_review"
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -73,10 +73,42 @@ export function getPlanExecutionEligibility(task: Task): { ok: boolean; reason?:
   return { ok: true }
 }
 
+/**
+ * Checks if a task was in code-style enforcement phase based on task properties and agent output.
+ * A task is considered to have been in code-style phase if:
+ * - codeStyleReview is enabled
+ * - There is evidence of code-style processing in agent output (e.g., [code-style] tag or code style related content)
+ * - The error message suggests code-style enforcement failure
+ */
+export function wasInCodeStylePhase(task: Task): boolean {
+  if (!task.codeStyleReview) return false
+
+  // Check for code-style tag in agent output
+  const hasCodeStyleOutput = getLatestTaggedOutput(task.agentOutput, "code-style") !== null
+
+  // Check for code-style related content in agent output
+  const hasCodeStyleContent = task.agentOutput.toLowerCase().includes("code style") ||
+    task.agentOutput.toLowerCase().includes("code-style") ||
+    task.agentOutput.toLowerCase().includes("style enforcement")
+
+  // Check if error message indicates code-style failure
+  const hasCodeStyleError = task.errorMessage?.toLowerCase().includes("code style") ?? false
+
+  return hasCodeStyleOutput || hasCodeStyleContent || hasCodeStyleError
+}
+
 export function chooseDeterministicRepairAction(task: Task): { action: TaskRepairAction; reason: string } {
   const hasPlan = hasCapturedPlanOutput(task.agentOutput)
   const hasExec = hasExecutionOutput(task.agentOutput)
   const hasOutput = hasAnyAgentOutput(task.agentOutput)
+
+  // Handle stuck tasks that were in code-style enforcement phase
+  if (task.status === "stuck" && wasInCodeStylePhase(task)) {
+    return {
+      action: "reset_backlog",
+      reason: "Code style enforcement failed. Reset to backlog to retry from review.",
+    }
+  }
 
   if (task.planmode && task.awaitingPlanApproval) {
     if (hasPlan) {
