@@ -105,6 +105,7 @@ export const KanbanBoard = memo(function KanbanBoard({
         backlog: [],
         executing: [],
         review: [],
+        'code-style': [],
         done: [],
       } as Record<TaskStatus, Task[]>
     }
@@ -114,6 +115,7 @@ export const KanbanBoard = memo(function KanbanBoard({
       backlog: [],
       executing: [],
       review: [],
+      'code-style': [],
       done: [],
     }
 
