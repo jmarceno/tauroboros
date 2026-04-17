@@ -1414,6 +1414,13 @@ export class PiKanbanServer {
     this.router.get("/api/tasks/:id/messages", ({ params, json }) => json(this.db.getSessionMessageViewsByTask(params.id)))
     this.router.get("/api/task-runs/:id/messages", ({ params, json }) => json(this.db.getSessionMessageViewsByTaskRun(params.id)))
 
+    this.router.get("/api/tasks/:id/last-update", ({ params, json }) => {
+      const task = this.db.getTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
+      const lastUpdateAt = this.db.getTaskLastMessageTimestamp(params.id)
+      return json({ taskId: params.id, lastUpdateAt })
+    })
+
     this.router.post("/api/pi/sessions/:id/events", async ({ params, req, json, broadcast }) => {
       const session = this.db.getWorkflowSession(params.id)
       if (!session) return json({ error: "Session not found" }, 404)

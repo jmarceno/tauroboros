@@ -225,6 +225,15 @@ interface SessionUsageContextType {
   formatCost: (cost: number) => string
 }
 
+// Task last update context type
+interface TaskLastUpdateContextType {
+  lastUpdateMap: Record<string, number>
+  getLastUpdate: (taskId: string) => number | undefined
+  formatLastUpdate: (timestamp: number) => string
+  getUpdateAgeClass: (timestamp: number) => string
+  loadLastUpdate: (taskId: string) => Promise<void>
+}
+
 // Create contexts
 export const TasksContext = createContext<TasksContextType | undefined>(undefined)
 export const RunsContext = createContext<RunsContextType | undefined>(undefined)
@@ -239,6 +248,7 @@ export const PlanningChatContext = createContext<PlanningChatContextType | undef
 export const ModalContext = createContext<ModalContextType | undefined>(undefined)
 export const ContainerStatusContext = createContext<ContainerStatusContextType | undefined>(undefined)
 export const SessionUsageContext = createContext<SessionUsageContextType | undefined>(undefined)
+export const TaskLastUpdateContext = createContext<TaskLastUpdateContextType | undefined>(undefined)
 
 // Export hook functions
 export function useTasksContext() {
@@ -316,5 +326,11 @@ export function useContainerStatusContext() {
 export function useSessionUsageContext() {
   const context = useContext(SessionUsageContext)
   if (!context) throw new Error('useSessionUsageContext must be used within SessionUsageProvider')
+  return context
+}
+
+export function useTaskLastUpdateContext() {
+  const context = useContext(TaskLastUpdateContext)
+  if (!context) throw new Error('useTaskLastUpdateContext must be used within TaskLastUpdateProvider')
   return context
 }

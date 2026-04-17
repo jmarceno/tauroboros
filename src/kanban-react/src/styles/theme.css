@@ -944,4 +944,24 @@
   .hljs-strong {
     font-weight: bold;
   }
+
+  /* ============================================
+     LAST UPDATE BADGE - DYNAMIC STYLING
+     ============================================ */
+
+  .task-last-update-badge {
+    @apply text-dark-text-secondary;
+  }
+
+  .task-last-update-badge.recent {
+    @apply text-accent-success border-accent-success/50;
+  }
+
+  .task-last-update-badge.medium {
+    @apply text-dark-text-secondary;
+  }
+
+  .task-last-update-badge.old {
+    @apply text-dark-text-muted;
+  }
 }

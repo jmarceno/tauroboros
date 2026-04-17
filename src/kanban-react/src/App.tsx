@@ -4,13 +4,13 @@ import {
   TasksContext, RunsContext, OptionsContext, ToastContext,
   ModelSearchContext, SessionContext, WebSocketContext,
   WorkflowControlContext, MultiSelectContext, PlanningChatContext,
-  ModalContext, ContainerStatusContext, SessionUsageContext,
+  ModalContext, ContainerStatusContext, SessionUsageContext, TaskLastUpdateContext,
 } from '@/contexts/AppContext'
 import {
   useTasks, useRuns, useOptions, useToasts,
   useModelSearch, useSession, useWebSocket,
   useWorkflowControl, useMultiSelect, usePlanningChat,
-  useDragDrop, useKeyboard, useSessionUsage,
+  useDragDrop, useKeyboard, useSessionUsage, useTaskLastUpdate,
 } from '@/hooks'
 import { validateTaskDrop } from '@/utils/dropValidation'
 import type { Task, TaskStatus, WorkflowRun } from '@/types'
@@ -64,6 +64,7 @@ function App() {
   const multiSelectHook = useMultiSelect()
   const planningChatHook = usePlanningChat(wsHook)
   const sessionUsageHook = useSessionUsage()
+  const taskLastUpdateHook = useTaskLastUpdate()
 
   // Workflow control
   const workflowControl = useWorkflowControl(
@@ -621,6 +622,7 @@ function App() {
                         <ModalContext.Provider value={{ activeModal, modalData, openModal, closeModal, closeTopmostModal }}>
                           <ContainerStatusContext.Provider value={{ containerStatus, isContainerEnabled, loadContainerStatus }}>
                             <SessionUsageContext.Provider value={sessionUsageHook}>
+                              <TaskLastUpdateContext.Provider value={taskLastUpdateHook}>
                               <div className="app-layout bg-dark-bg text-dark-text">
                               <Sidebar
                                 consumedSlots={consumedSlotsValue}
@@ -981,6 +983,7 @@ function App() {
 
                               <ChatContainer />
                               </div>
+                              </TaskLastUpdateContext.Provider>
                             </SessionUsageContext.Provider>
                           </ContainerStatusContext.Provider>
                         </ModalContext.Provider>
