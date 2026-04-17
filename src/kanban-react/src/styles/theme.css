@@ -482,11 +482,11 @@
 
   /* Chat Tabs Secondary - Compact */
   .chat-tabs-secondary {
-    @apply flex items-center justify-between px-3 py-2;
+    @apply flex items-center justify-between px-2 py-1.5;
   }
 
   .new-session-btn {
-    @apply px-3 py-1.5 bg-dark-bg border border-dark-border rounded-md text-dark-text-secondary text-xs cursor-pointer flex items-center gap-1.5 transition-colors;
+    @apply px-2 py-1 bg-dark-bg border border-dark-border rounded-md text-dark-text-secondary text-xs cursor-pointer flex items-center gap-1.5 transition-colors;
   }
 
   .new-session-btn:hover {
@@ -507,11 +507,11 @@
   }
 
   .chat-message {
-    @apply border-b border-dark-border px-4 py-3;
+    @apply border-b border-dark-border px-3 py-1.5;
   }
 
   .chat-message-header {
-    @apply flex items-center gap-2 mb-1.5;
+    @apply flex items-center gap-2 mb-0.5;
   }
 
   .chat-message-sender {
@@ -539,7 +539,7 @@
   }
 
   .chat-message-content pre {
-    @apply bg-dark-surface2 p-3 rounded-md overflow-x-auto my-2.5 border border-dark-border font-mono text-xs;
+    @apply bg-dark-surface2 p-2 rounded-md overflow-x-auto my-1 border border-dark-border font-mono text-xs;
   }
 
   .chat-message-content code {
@@ -548,15 +548,15 @@
 
   /* Chat Input - Compact like prototype */
   .chat-input-container {
-    @apply px-4 py-3 border-t border-dark-border bg-dark-surface2;
+    @apply px-2 py-1 border-t border-dark-border bg-dark-surface2;
   }
 
   .chat-toolbar {
-    @apply flex items-center gap-2 mb-2;
+    @apply flex items-center gap-2 mb-1;
   }
 
   .chat-tool-btn {
-    @apply px-3 py-1.5 bg-dark-bg border border-dark-border rounded-md text-dark-text-secondary text-xs cursor-pointer flex items-center gap-1.5 transition-colors;
+    @apply px-2 py-1 bg-dark-bg border border-dark-border rounded-md text-dark-text-secondary text-xs cursor-pointer flex items-center gap-1.5 transition-colors;
   }
 
   .chat-tool-btn:hover {
@@ -564,11 +564,11 @@
   }
 
   .chat-input-box {
-    @apply w-full mb-2;
+    @apply w-full mb-1;
   }
 
   .chat-input {
-    @apply w-full px-3 py-2 bg-dark-input border border-dark-border rounded-lg text-dark-text text-sm resize-none min-h-[42px] max-h-[120px];
+    @apply w-full px-2 py-1 bg-dark-input border border-dark-border rounded-lg text-dark-text text-sm resize-none min-h-[96px] max-h-[200px];
   }
 
   .chat-input:focus {
@@ -580,7 +580,7 @@
   }
 
   .chat-send-btn {
-    @apply w-full px-5 py-2.5 bg-accent-primary border-none rounded-lg text-dark-bg text-sm font-semibold cursor-pointer flex items-center justify-center gap-2;
+    @apply w-full px-4 py-1.5 bg-accent-primary border-none rounded-lg text-dark-bg text-sm font-semibold cursor-pointer flex items-center justify-center gap-2;
   }
 
   .chat-send-btn:hover:not(:disabled) {

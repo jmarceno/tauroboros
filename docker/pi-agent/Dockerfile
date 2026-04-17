@@ -18,6 +18,9 @@ RUN apt-get update && apt-get install -y \
     chromium \
     nodejs \
     npm \
+    python3 \
+    python3-pip \
+    python3-venv \
     libglib2.0-0 \
     libnss3 \
     libatk1.0-0 \
@@ -35,6 +38,11 @@ RUN apt-get update && apt-get install -y \
     libasound2t64 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
+
+# Install uv (Python package manager)
+RUN curl -fsSL https://astral.sh/uv/install.sh | bash && \
+    mv /root/.local/bin/uv /usr/local/bin/uv && \
+    mv /root/.local/bin/uvx /usr/local/bin/uvx
 
 RUN curl -fsSL https://bun.sh/install | bash && \
     mv /root/.bun/bin/bun /usr/local/bin/bun && \

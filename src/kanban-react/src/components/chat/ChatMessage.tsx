@@ -190,7 +190,7 @@ export function ChatMessage({ message, showTimestamp }: ChatMessageProps) {
   return (
     <div className="chat-message">
       {showTimestamp && (
-        <div className="flex items-center justify-center my-2">
+        <div className="flex items-center justify-center my-1">
           <span className="text-xs text-dark-text-muted/50 bg-dark-surface2 px-2 py-0.5 rounded">
             {formatDate(message.timestamp)}
           </span>
@@ -249,7 +249,7 @@ export function ChatMessage({ message, showTimestamp }: ChatMessageProps) {
 
           if (block.type === 'mermaid') {
             return (
-              <div key={index} className="my-3 bg-dark-bg rounded-lg overflow-hidden border border-dark-border">
+              <div key={index} className="my-1.5 bg-dark-bg rounded-lg overflow-hidden border border-dark-border">
                 <div className="text-xs text-dark-text-muted/60 px-2 py-1 bg-dark-surface2 border-b border-dark-border flex items-center gap-2">
                   <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -262,7 +262,7 @@ export function ChatMessage({ message, showTimestamp }: ChatMessageProps) {
                   ) : (
                     <div
                       ref={(el) => setMermaidRef(block.id || '', el as HTMLDivElement)}
-                      className="p-2"
+                      className="p-1"
                     >
                       <pre className="text-xs text-dark-text-muted/80">{block.content}</pre>
                     </div>
@@ -275,11 +275,11 @@ export function ChatMessage({ message, showTimestamp }: ChatMessageProps) {
           if (block.type === 'code') {
             const highlighted = highlightedCode.get(block.content) || block.content
             return (
-              <div key={index} className="my-2 rounded-lg overflow-hidden bg-dark-bg border border-dark-border">
-                <div className="text-xs text-dark-text-muted/60 px-3 py-1.5 bg-dark-surface2 border-b border-dark-border flex items-center justify-between">
+              <div key={index} className="my-1 rounded-lg overflow-hidden bg-dark-bg border border-dark-border">
+                <div className="text-xs text-dark-text-muted/60 px-2 py-1 bg-dark-surface2 border-b border-dark-border flex items-center justify-between">
                   <span className="font-mono">{block.language}</span>
                 </div>
-                <pre className="p-3 overflow-x-auto"><code className={`hljs language-${block.language}`} dangerouslySetInnerHTML={{ __html: highlighted }} /></pre>
+                <pre className="p-2 overflow-x-auto"><code className={`hljs language-${block.language}`} dangerouslySetInnerHTML={{ __html: highlighted }} /></pre>
               </div>
             )
           }
