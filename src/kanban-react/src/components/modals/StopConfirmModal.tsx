@@ -29,7 +29,7 @@ export function StopConfirmModal({ isOpen, runName, isStopping, onClose, onConfi
         ) : (
           <>
             <p className="text-dark-text">How would you like to stop the workflow?</p>
-            
+
             <div className="grid grid-cols-2 gap-4">
               <button
                 type="button"
@@ -40,7 +40,7 @@ export function StopConfirmModal({ isOpen, runName, isStopping, onClose, onConfi
                 <div className="text-xs text-dark-text-muted">Graceful stop</div>
                 <div className="text-xs text-dark-text-muted">Preserves state</div>
               </button>
-              
+
               <button
                 type="button"
                 className="btn btn-danger"

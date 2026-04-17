@@ -15,8 +15,8 @@ export function ModalWrapper({ children, title, onClose, size = 'md' }: ModalWra
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div 
-        className={`modal ${sizeClasses[size]}`} 
+      <div
+        className={`modal ${sizeClasses[size]}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">

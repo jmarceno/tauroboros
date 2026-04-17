@@ -9,15 +9,15 @@ interface RunPanelProps {
 }
 
 export function RunPanel({ run, isStale, onArchive, onHighlight, onClearHighlight }: RunPanelProps) {
-  const progress = run.taskOrder?.length 
-    ? Math.round((run.currentTaskIndex / run.taskOrder.length) * 100) 
+  const progress = run.taskOrder?.length
+    ? Math.round((run.currentTaskIndex / run.taskOrder.length) * 100)
     : 0
 
-  const statusClass = run.status === 'running' ? 'active' : 
+  const statusClass = run.status === 'running' ? 'active' :
                      run.status === 'paused' ? 'paused' : ''
 
   return (
-    <div 
+    <div
       className={`run-card ${statusClass} ${isStale ? 'opacity-50' : ''}`}
       style={run.color ? { '--progress-color': run.color } as React.CSSProperties : undefined}
     >
@@ -27,12 +27,12 @@ export function RunPanel({ run, isStale, onArchive, onHighlight, onClearHighligh
           {run.status}
         </span>
       </div>
-      
+
       <div className="run-meta">
         <span>{run.currentTaskIndex || 0}/{run.taskOrder?.length || 0} tasks</span>
         {isStale && <span className="text-accent-warning">(stale)</span>}
       </div>
-      
+
       <div className="run-progress">
         <div className="run-progress-fill" style={{ width: `${progress}%` }} />
       </div>

@@ -65,7 +65,7 @@ describe('TabbedLogPanel', () => {
       render(<TabbedLogPanel {...mockProps} />)
 
       const resizeHandle = screen.getByTitle('Drag to resize')
-      
+
       fireEvent.mouseDown(resizeHandle, { clientY: 500 })
 
       expect(document.body.style.cursor).toBe('ns-resize')

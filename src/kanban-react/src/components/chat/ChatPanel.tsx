@@ -36,15 +36,15 @@ export function ChatPanel({
   const nameInputRef = useRef<HTMLInputElement>(null)
 
   const currentModel = session.session?.model
-  const currentModelLabel = useMemo(() => 
+  const currentModelLabel = useMemo(() =>
     currentModel?.split('/').pop() || currentModel || ''
   , [currentModel])
 
-  const canReconnect = useMemo(() => 
+  const canReconnect = useMemo(() =>
     session.session && (session.session.status !== 'active' || session.error?.includes('not active'))
   , [session.session, session.error])
-  
-  const hasEnoughMessages = useMemo(() => 
+
+  const hasEnoughMessages = useMemo(() =>
     session.messages.length > 2
   , [session.messages.length])
 
@@ -235,7 +235,7 @@ export function ChatPanel({
             </svg>
             <span>
               {session.isReconnecting ? 'Reconnecting session...' :
-               session.isLoading ? 'Starting session...' : 
+               session.isLoading ? 'Starting session...' :
                'Waiting for response...'}
             </span>
           </div>

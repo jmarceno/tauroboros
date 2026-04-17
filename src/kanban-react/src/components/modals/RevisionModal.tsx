@@ -50,9 +50,9 @@ export function RevisionModal({ taskId, onClose }: RevisionModalProps) {
 
         <div className="modal-footer">
           <button type="button" className="btn" onClick={onClose} disabled={isLoading}>Cancel</button>
-          <button 
-            type="button" 
-            className="btn btn-primary" 
+          <button
+            type="button"
+            className="btn btn-primary"
             onClick={handleRequestRevision}
             disabled={isLoading}
           >

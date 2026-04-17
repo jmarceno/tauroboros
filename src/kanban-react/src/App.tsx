@@ -219,7 +219,7 @@ function App() {
     onTogglePlanningChat: () => planningChatHook.togglePanel(),
     onStartWorkflow: async () => {
       const grouped = tasksHook.groupedTasks
-      const executableTasks = (grouped?.backlog?.length ?? 0) + 
+      const executableTasks = (grouped?.backlog?.length ?? 0) +
                             (grouped?.review?.length ?? 0) +
                             (grouped?.executing?.length ?? 0)
       if (executableTasks === 0) {

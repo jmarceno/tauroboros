@@ -1,3 +1,4 @@
+import { HelpButton } from './HelpButton'
 import type { ThinkingLevel } from '@/types'
 
 interface ThinkingLevelSelectProps {
@@ -14,7 +15,7 @@ export function ThinkingLevelSelect({ modelValue, label, help, disabled, onUpdat
       {label && (
         <div className="label-row">
           <label>{label}</label>
-          {help && <span className="help-btn" title={help}>?</span>}
+          {help && <HelpButton tooltip={help} />}
         </div>
       )}
       <select

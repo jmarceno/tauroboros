@@ -3,6 +3,7 @@ import { ModalWrapper } from '../common/ModalWrapper'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
 import { MarkdownEditor } from '../common/MarkdownEditor'
+import { HelpButton } from '../common/HelpButton'
 import { useTasksContext, useOptionsContext, useModelSearchContext, useToastContext } from '@/contexts/AppContext'
 import { useApi } from '@/hooks'
 import type { Task, TaskStatus, ThinkingLevel, ExecutionStrategy, BestOfNSlot } from '@/types'
@@ -273,7 +274,7 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
         <div className="form-group">
           <div className="label-row">
             <label>Name</label>
-            <span className="help-btn" title="Short task title shown on the card.">?</span>
+            <HelpButton tooltip="Short task title shown on the card." />
           </div>
           <input
             type="text"
@@ -290,7 +291,7 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
         <div className="form-group">
           <div className="label-row">
             <label>Prompt</label>
-            <span className="help-btn" title="The main instructions for the agent.">?</span>
+            <HelpButton tooltip="The main instructions for the agent." />
           </div>
           <MarkdownEditor
             modelValue={prompt}
@@ -340,7 +341,7 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
         <div className="form-group">
           <div className="label-row">
             <label>Execution Strategy</label>
-            <span className="help-btn" title="Standard runs a single execution. Best of N runs multiple candidates in parallel and picks or synthesizes the best result.">?</span>
+            <HelpButton tooltip="Standard runs a single execution. Best of N runs multiple candidates in parallel and picks or synthesizes the best result." />
           </div>
           <select
             className="form-select"
@@ -357,7 +358,7 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
         <div className="form-group">
           <div className="label-row">
             <label>Container Image</label>
-            <span className="help-btn" title="Select the container image for this task. Uses system default if not specified.">?</span>
+            <HelpButton tooltip="Select the container image for this task. Uses system default if not specified." />
           </div>
           <select
             className="form-select"
@@ -553,7 +554,7 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
         <div className="form-group">
           <div className="label-row">
             <label>Branch</label>
-            <span className="help-btn" title="Git branch the task should run against.">?</span>
+            <HelpButton tooltip="Git branch the task should run against." />
           </div>
           <select
             className="form-select"
@@ -590,7 +591,6 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
                 disabled={!review}
               />
               <span className={!review ? 'opacity-50' : ''}>Code Style Review (after review)</span>
-              <span className="help-btn" title="Additional code style review pass after the main review. Only runs when Review is enabled.">?</span>
             </label>
             <label className="checkbox-item">
               <input type="checkbox" checked={autoCommit} onChange={(e) => setAutoCommit(e.target.checked)} />
@@ -611,7 +611,7 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
         <div className="form-group">
           <div className="label-row">
             <label>Requirements (dependencies)</label>
-            <span className="help-btn" title="Tasks that must be completed before this one should run.">?</span>
+            <HelpButton tooltip="Tasks that must be completed before this one should run." />
           </div>
           <div className="border border-dark-surface3 rounded-lg p-1.5 max-h-36 overflow-y-auto">
             {availableRequirements.map(t => (

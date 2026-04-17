@@ -36,9 +36,9 @@ export function StartSingleModal({ taskId, onClose }: StartSingleModalProps) {
 
         <div className="modal-footer">
           <button type="button" className="btn" onClick={onClose} disabled={isLoading}>Cancel</button>
-          <button 
-            type="button" 
-            className="btn btn-primary" 
+          <button
+            type="button"
+            className="btn btn-primary"
             onClick={handleStart}
             disabled={isLoading}
           >

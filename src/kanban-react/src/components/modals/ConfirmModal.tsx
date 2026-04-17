@@ -12,7 +12,7 @@ export function ConfirmModal({ isOpen, action, taskName, onClose, onConfirm }: C
   if (!isOpen) return null
 
   const title = action === 'delete' ? 'Delete Task' : 'Convert to Template'
-  const message = action === 'delete' 
+  const message = action === 'delete'
     ? `Are you sure you want to delete "${taskName}"? This action cannot be undone.`
     : `Convert "${taskName}" to a template? The task will be moved to the Templates column.`
   const confirmText = action === 'delete' ? 'Delete' : 'Convert'

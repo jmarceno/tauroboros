@@ -44,9 +44,9 @@ export function ApproveModal({ taskId, onClose }: ApproveModalProps) {
 
         <div className="modal-footer">
           <button type="button" className="btn" onClick={onClose} disabled={isLoading}>Cancel</button>
-          <button 
-            type="button" 
-            className="btn btn-primary" 
+          <button
+            type="button"
+            className="btn btn-primary"
             onClick={handleApprove}
             disabled={isLoading}
           >
