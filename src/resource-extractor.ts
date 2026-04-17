@@ -261,25 +261,31 @@ import { readFileSync } from "fs"
 
 /**
  * Copy config files from source directory (development mode)
+ * Only copies JSON files, not TypeScript source files
  */
 export function copyConfigFromSource(projectRoot: string): { count: number } {
   const sourceConfigDir = join(projectRoot, "src", "config")
   const targetConfigDir = join(projectRoot, ".tauroboros", "config")
-  
+
   if (!existsSync(sourceConfigDir)) {
     return { count: 0 }
   }
-  
+
   ensureDir(targetConfigDir)
-  
-  // Copy only files that don't exist in target (preserves user modifications)
+
+  // Copy only JSON files that don't exist in target (preserves user modifications)
   const entries = readdirSync(sourceConfigDir)
   let copiedCount = 0
-  
+
   for (const entry of entries) {
+    // Only copy JSON config files, not TypeScript source files
+    if (!entry.endsWith(".json")) {
+      continue
+    }
+
     const sourcePath = join(sourceConfigDir, entry)
     const targetPath = join(targetConfigDir, entry)
-    
+
     const stat = statSync(sourcePath)
     if (stat.isFile() && !existsSync(targetPath)) {
       const content = readFileSync(sourcePath)
@@ -287,7 +293,7 @@ export function copyConfigFromSource(projectRoot: string): { count: number } {
       copiedCount++
     }
   }
-  
+
   return { count: copiedCount }
 }
 
