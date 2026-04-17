@@ -114,6 +114,22 @@ export class PiOrchestrator {
   private async cleanupStaleRuns(): Promise<void> {
     const activeRuns = this.db.getWorkflowRuns().filter((r) => r.status === "running" || r.status === "stopping")
 
+    // Defensive check: Validate this.running consistency with database state
+    if (this.running) {
+      const currentRunInActiveList = this.currentRunId && activeRuns.some(r => r.id === this.currentRunId)
+      if (!currentRunInActiveList) {
+        // this.running is true but the current run is not in active state in DB
+        // This can happen if pause/stop raced with runInBackground exit
+        const currentRunFromDb = this.currentRunId ? this.db.getWorkflowRun(this.currentRunId) : null
+        if (!currentRunFromDb || (currentRunFromDb.status !== "running" && currentRunFromDb.status !== "stopping" && currentRunFromDb.status !== "paused")) {
+          console.log(`[orchestrator] cleanupStaleRuns: Resetting stale running flag (run ${this.currentRunId} is not active in DB)`)
+          this.running = false
+          // Don't reset currentRunId here - it might be needed for resume or other operations
+          // Just reset the running flag to unblock new executions
+        }
+      }
+    }
+
     for (const run of activeRuns) {
       if (run.id === this.currentRunId && this.running) continue
 
@@ -236,6 +252,15 @@ export class PiOrchestrator {
     // Phase 2: Clean up any stale runs before checking if already executing
     await this.cleanupStaleRuns()
 
+    // Defensive check: If still running but current run is not actually active in DB, force reset
+    if (this.running && this.currentRunId) {
+      const activeRun = this.db.getWorkflowRun(this.currentRunId)
+      if (!activeRun || (activeRun.status !== "running" && activeRun.status !== "stopping")) {
+        console.log(`[orchestrator] startAll: Force resetting stale running flag (run ${this.currentRunId} status: ${activeRun?.status ?? "not found"})`)
+        this.running = false
+      }
+    }
+
     if (this.running) throw new Error("Already executing")
 
     // Get all tasks and validate dependencies
@@ -300,6 +325,15 @@ export class PiOrchestrator {
   async startSingle(taskId: string): Promise<WorkflowRun> {
     // Phase 2: Clean up any stale runs before checking if already executing
     await this.cleanupStaleRuns()
+
+    // Defensive check: If still running but current run is not actually active in DB, force reset
+    if (this.running && this.currentRunId) {
+      const activeRun = this.db.getWorkflowRun(this.currentRunId)
+      if (!activeRun || (activeRun.status !== "running" && activeRun.status !== "stopping")) {
+        console.log(`[orchestrator] startSingle: Force resetting stale running flag (run ${this.currentRunId} status: ${activeRun?.status ?? "not found"})`)
+        this.running = false
+      }
+    }
 
     if (this.running) throw new Error("Already executing")
     
@@ -1212,12 +1246,18 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       if (failed) this.broadcast({ type: "run_updated", payload: failed })
       this.broadcast({ type: "error", payload: { message } })
     } finally {
+      // Always reset running flag to allow new executions to start
+      // This is critical for pause functionality - when paused, we need running=false
+      // so users can start new runs, but we preserve currentRunId for resume
+      this.running = false
+
       if (!this.shouldPause) {
-        // Only reset orchestrator state if this run is still the current run.
+        // Only reset full orchestrator state if this run is still the current run.
         // If cleanupStaleRuns() or destructiveStop() has already started a new run,
         // we must not corrupt that new run's state.
+        // Note: When paused (shouldPause=true), we preserve currentRunId and other
+        // state so the run can be resumed later. The pauseRun() method handles that.
         if (this.currentRunId === runId) {
-          this.running = false
           this.currentRunId = null
           this.activeBestOfNRunner = null
           this.activeWorktreeInfo = null
