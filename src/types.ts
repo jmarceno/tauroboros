@@ -192,6 +192,7 @@ export interface Options {
   executionThinkingLevel: ThinkingLevel
   reviewThinkingLevel: ThinkingLevel
   repairThinkingLevel: ThinkingLevel
+  codeStylePrompt: string
   telegramBotToken: string
   telegramChatId: string
   telegramNotificationsEnabled: boolean

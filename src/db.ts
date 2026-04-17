@@ -106,6 +106,7 @@ const DEFAULT_OPTIONS: Options = {
   executionThinkingLevel: "default",
   reviewThinkingLevel: "default",
   repairThinkingLevel: "default",
+  codeStylePrompt: "",
   telegramBotToken: "",
   telegramChatId: "",
   telegramNotificationsEnabled: true,
@@ -2843,6 +2844,7 @@ export class PiKanbanDB {
       executionThinkingLevel: asThinkingLevel(values.get("execution_thinking_level")),
       reviewThinkingLevel: asThinkingLevel(values.get("review_thinking_level")),
       repairThinkingLevel: asThinkingLevel(values.get("repair_thinking_level")),
+      codeStylePrompt: getValue("code_style_prompt"),
       telegramBotToken: getValue("telegram_bot_token"),
       telegramChatId: getValue("telegram_chat_id"),
       telegramNotificationsEnabled: getBoolean("telegram_notifications_enabled"),
@@ -2875,6 +2877,7 @@ export class PiKanbanDB {
     if (partial.executionThinkingLevel !== undefined) upsert.run("execution_thinking_level", partial.executionThinkingLevel)
     if (partial.reviewThinkingLevel !== undefined) upsert.run("review_thinking_level", partial.reviewThinkingLevel)
     if (partial.repairThinkingLevel !== undefined) upsert.run("repair_thinking_level", partial.repairThinkingLevel)
+    if (partial.codeStylePrompt !== undefined) upsert.run("code_style_prompt", partial.codeStylePrompt)
     if (partial.telegramBotToken !== undefined) upsert.run("telegram_bot_token", partial.telegramBotToken)
     if (partial.telegramChatId !== undefined) upsert.run("telegram_chat_id", partial.telegramChatId)
     if (partial.telegramNotificationsEnabled !== undefined) upsert.run("telegram_notifications_enabled", String(partial.telegramNotificationsEnabled))
@@ -3042,6 +3045,7 @@ export class PiKanbanDB {
     upsert.run("execution_thinking_level", DEFAULT_OPTIONS.executionThinkingLevel)
     upsert.run("review_thinking_level", DEFAULT_OPTIONS.reviewThinkingLevel)
     upsert.run("repair_thinking_level", DEFAULT_OPTIONS.repairThinkingLevel)
+    upsert.run("code_style_prompt", DEFAULT_OPTIONS.codeStylePrompt)
     upsert.run("telegram_bot_token", DEFAULT_OPTIONS.telegramBotToken)
     upsert.run("telegram_chat_id", DEFAULT_OPTIONS.telegramChatId)
     upsert.run("telegram_notifications_enabled", String(DEFAULT_OPTIONS.telegramNotificationsEnabled))
