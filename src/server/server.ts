@@ -165,6 +165,13 @@ export class PiKanbanServer {
   }
 
   /**
+   * Get the current server port
+   */
+  getPort(): number {
+    return this.server?.port ?? this.defaultPort
+  }
+
+  /**
    * Get the path to container profiles JSON file
    * Uses extracted config in .tauroboros/config/ if available, falls back to src/config/
    */
@@ -1669,48 +1676,42 @@ export class PiKanbanServer {
       const body = await req.json()
       
       try {
-        const messages = this.db.getSessionMessages(params.id, { limit: 1000, offset: 0 })
+        // Get the server port for API access
+        const serverPort = this.getPort()
         
-        const conversationHistory = messages
-          .filter(m => m.messageType === "user_prompt" || m.messageType === "assistant_response")
-          .map(m => ({
-            role: m.role,
-            content: m.contentJson?.text || "",
-          }))
-
-        const taskExtractionPrompt = `Based on the following planning conversation, extract actionable implementation tasks.
-
-Conversation:
-${conversationHistory.map(m => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n")}
-
-Extract tasks and format them as JSON array with the following structure:
-[
-  {
-    "name": "Short task name",
-    "prompt": "Detailed implementation instructions",
-    "status": "backlog",
-    "requirements": ["dependency_task_name_if_any"]
-  }
-]
-
-Respond ONLY with the JSON array, no other text.`
-
-        // Use Pi to extract tasks from the conversation
+        // Use Pi to create tasks from the conversation
         const planningSession = this.planningSessionManager.getSession(params.id)
         if (!planningSession) {
           return json({ error: "Planning session not active" }, 400)
         }
 
-        // Send extraction request
-        await planningSession.sendMessage({
-          content: taskExtractionPrompt,
-        })
+        // Send message instructing agent to use workflow-task-setup skill
+        const taskSetupPrompt = `Please use the **workflow-task-setup** skill to create kanban tasks from our planning conversation.
 
-        // The task extraction result will be available in the next assistant response
-        // For now, return a placeholder response
-        // In a real implementation, we'd wait for and parse the Pi response
+**Instructions:**
+1. Review the conversation history in this session to understand the implementation plan we discussed
+2. Use the workflow-task-setup skill to convert the plan into actionable TaurOboros kanban tasks
+3. Create appropriate tasks with proper dependencies, statuses, and configurations
+
+**API Access Information:**
+- The TaurOboros server is running on port: **${serverPort}**
+- Base URL: http://localhost:${serverPort}
+- Use the HTTP API endpoints to create tasks (POST /api/tasks)
+
+**Task Creation Guidelines:**
+- Create small, outcome-based tasks that can be completed independently
+- Set appropriate dependencies where one task truly blocks another
+- Use status "backlog" for runnable tasks
+- Include clear, actionable prompts for each task
+- Consider using plan-mode (planmode: true) for tasks that need approval before implementation
+
+Please confirm when you've created the tasks, and provide a summary of what was created.`
+
+        await planningSession.sendMessage({
+          content: taskSetupPrompt,
+        })
         
-        // If user provided tasks directly, use those
+        // If user provided tasks directly, use those (legacy support)
         const tasks = body.tasks as Array<{ name: string; prompt: string; status?: string; requirements?: string[] }> | undefined
         
         if (tasks && tasks.length > 0) {
@@ -1739,10 +1740,10 @@ Respond ONLY with the JSON array, no other text.`
             createdTasks.push(normalizeTaskForClient(task, sessionUrlFor))
             broadcast({ type: "task_created", payload: normalizeTaskForClient(task, sessionUrlFor) })
           }
-          return json({ tasks: createdTasks, count: createdTasks.length })
+          return json({ tasks: createdTasks, count: createdTasks.length, message: "Tasks created. The AI has also been instructed to review the conversation and create additional tasks if needed." })
         }
 
-        return json({ message: "Task extraction request sent. The AI will analyze the conversation and suggest tasks in the next response." })
+        return json({ message: "Task creation request sent to the AI. The agent will use the workflow-task-setup skill to analyze the conversation and create appropriate kanban tasks." })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         return json({ error: `Failed to create tasks: ${message}` }, 500)
