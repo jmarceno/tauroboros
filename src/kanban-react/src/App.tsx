@@ -189,7 +189,6 @@ function App() {
       return
     }
 
-
     try {
       switch (validation.action) {
         case 'move-to-done':
