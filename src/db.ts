@@ -1422,6 +1422,16 @@ const MIGRATIONS: Migration[] = [
       `INSERT OR REPLACE INTO options (key, value) VALUES ('code_style_prompt', '');`,
     ],
   },
+  {
+    version: 13,
+    description: "Set default values for existing tasks code style fields",
+    statements: [
+      // Ensure all existing tasks have code_style_review = 0 (false)
+      `UPDATE tasks SET code_style_review = 0 WHERE code_style_review IS NULL;`,
+      // Ensure code_style_prompt exists in options with empty string default
+      `INSERT OR REPLACE INTO options (key, value) VALUES ('code_style_prompt', '');`,
+    ],
+  },
 ]
 
 export class PiKanbanDB {
