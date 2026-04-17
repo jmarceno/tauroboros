@@ -327,6 +327,21 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
               />
             </div>
 
+            {/* Code Style Prompt */}
+            <div className="form-group">
+              <div className="label-row">
+                <label>Code Style Prompt</label>
+                <span className="help-btn" title="Instructions for code style enforcement. The agent will review code and apply fixes to comply with these rules. Uses the Review Model."></span>
+              </div>
+              <textarea
+                className="form-textarea font-mono text-xs"
+                style={{ minHeight: '120px' }}
+                placeholder="Code style rules..."
+                value={formData.codeStylePrompt || ''}
+                onChange={(e) => updateField('codeStylePrompt', e.target.value)}
+              />
+            </div>
+
             {/* Extra Prompt */}
             <div className="form-group">
               <div className="label-row">
@@ -339,21 +354,6 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
                 placeholder="Additional context or instructions for all tasks..."
                 value={formData.extraPrompt || ''}
                 onChange={(e) => updateField('extraPrompt', e.target.value)}
-              />
-            </div>
-
-            {/* Code Style Prompt */}
-            <div className="form-group">
-              <div className="label-row">
-                <label>Code Style Prompt <span className="text-dark-text-muted font-normal">(used during code style enforcement)</span></label>
-                <span className="help-btn" title="Instructions used during the code style phase to review and apply fixes to code. Uses the Review Model and Review Thinking Level.">?</span>
-              </div>
-              <textarea
-                className="form-textarea font-mono text-xs"
-                style={{ minHeight: '100px' }}
-                placeholder="Instructions for code style review and enforcement..."
-                value={formData.codeStylePrompt || ''}
-                onChange={(e) => updateField('codeStylePrompt', e.target.value)}
               />
             </div>
 
