@@ -108,9 +108,11 @@ export class PiOrchestrator {
    * This is a defensive check to prevent ghost runs from blocking new executions.
    */
   private async cleanupStaleRuns(): Promise<void> {
-    const activeRuns = this.db.getWorkflowRuns().filter((r) => r.status === "running" || r.status === "stopping" || r.status === "paused")
+    const activeRuns = this.db.getWorkflowRuns().filter((r) => r.status === "running" || r.status === "stopping")
 
     for (const run of activeRuns) {
+      if (run.id === this.currentRunId && this.running) continue
+
       if (run.status === "stopping") {
         console.log(`[orchestrator] Force-completing stopping run ${run.id}`)
         console.log(`[orchestrator] Killing ${this.activeSessionProcesses.size} active sessions during force-complete`)
@@ -162,13 +164,13 @@ export class PiOrchestrator {
         continue
       }
 
-      // Check if any tasks in the taskOrder are actually executing
-      const hasExecutingTask = run.taskOrder?.some((taskId) => {
+      // Check if any tasks in the taskOrder are actually executing or in review
+      const hasActiveTask = run.taskOrder?.some((taskId) => {
         const task = this.db.getTask(taskId)
-        return task?.status === "executing"
+        return task?.status === "executing" || task?.status === "review"
       })
 
-      if (!hasExecutingTask) {
+      if (!hasActiveTask) {
         // This is a stale run - mark it as failed
         const updated = this.db.updateWorkflowRun(run.id, {
           status: "failed",

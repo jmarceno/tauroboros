@@ -34,15 +34,15 @@ function needsWorkflowRunRecovery(run: WorkflowRun, db: PiKanbanDB): boolean {
     return true
   }
 
-  // Check if any tasks in the taskOrder are actually executing
+  // Check if any tasks in the taskOrder are actually executing or in review
   const tasks = db.getTasks()
-  const hasExecutingTask = run.taskOrder.some((taskId) => {
+  const hasActiveTask = run.taskOrder.some((taskId) => {
     const task = tasks.find((t) => t.id === taskId)
-    return task?.status === "executing"
+    return task?.status === "executing" || task?.status === "review"
   })
 
-  // If no tasks are executing but run claims to be active, it's stale
-  return !hasExecutingTask
+  // If no tasks are active but run claims to be active, it's stale
+  return !hasActiveTask
 }
 
 export async function runStartupRecovery(args: {

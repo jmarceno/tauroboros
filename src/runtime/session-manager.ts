@@ -123,7 +123,10 @@ export class PiSessionManager {
       }
     }
 
-    // Create or update session
+    // Resolve model from database if 'default' is specified
+    const resolvedModel = this.resolveModel(input.model, input.sessionKind)
+
+    // Create or update session with resolved model
     let session: PiWorkflowSession
     if (input.isResume && input.resumedSessionId) {
       // Update existing session instead of creating new
@@ -131,6 +134,7 @@ export class PiSessionManager {
       if (existingSession) {
         session = this.db.updateWorkflowSession(input.resumedSessionId, {
           status: "starting",
+          model: resolvedModel, // Update with resolved model
           // Don't reset startedAt, keep original
         }) ?? existingSession
       } else {
@@ -144,7 +148,7 @@ export class PiSessionManager {
           cwd: input.cwd,
           worktreeDir: input.worktreeDir ?? null,
           branch: input.branch ?? null,
-          model: input.model ?? "default",
+          model: resolvedModel,
           thinkingLevel: input.thinkingLevel ?? "default",
           startedAt: nowUnix(),
         })
@@ -159,7 +163,7 @@ export class PiSessionManager {
         cwd: input.cwd,
         worktreeDir: input.worktreeDir ?? null,
         branch: input.branch ?? null,
-        model: input.model ?? "default",
+        model: resolvedModel,
         thinkingLevel: input.thinkingLevel ?? "default",
         startedAt: nowUnix(),
       })
@@ -205,37 +209,29 @@ if (process instanceof ContainerPiProcess) {
         await new Promise((resolve) => setTimeout(resolve, 500))
       }
 
-      // Always send a set_model command to the pi agent. This serves as a
-      // readiness check for container processes (the command will be buffered
-      // until the agent is ready) and ensures the model is properly configured.
-      // The 60-second timeout gives container processes enough time to fully
-      // initialize before the command must be acknowledged.
-      if (input.model && input.model !== "default") {
-        const modelSelection = parseModelSelection(input.model)
-        if (modelSelection) {
-          await process.send({
-            type: "set_model",
-            provider: modelSelection.provider,
-            modelId: modelSelection.modelId,
-          }, 60_000)
+      // Always send a set_model command to the pi agent using the resolved model.
+      // This is REQUIRED because the pi-agent does not have its own default model
+      // that matches our expectations. The command also serves as a readiness check.
+      const modelSelection = parseModelSelection(resolvedModel)
+      if (!modelSelection) {
+        throw new Error(`Invalid model format: ${resolvedModel}. Expected 'provider/modelId' (e.g., 'openai/gpt-4')`)
+      }
+
+      try {
+        await process.send({
+          type: "set_model",
+          provider: modelSelection.provider,
+          modelId: modelSelection.modelId,
+        }, 60_000)
+        console.log(`[session-manager] set_model readiness check succeeded: ${resolvedModel}`)
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err)
+        if (errMsg.includes("timeout") || errMsg.includes("time out") || errMsg.includes("timed out")) {
+          // If we timed out, the agent is not ready. This is a fatal error.
+          throw new Error(`Container pi agent failed to respond within 60 seconds: ${errMsg}`)
         }
-      } else {
-        // Even for the default model, send a set_model command as a readiness
-        // check. The response (success or error) confirms the agent is alive
-        // and processing commands.
-        try {
-          await process.send({ type: "set_model", provider: "default", modelId: "default" }, 60_000)
-          console.log("[session-manager] set_model readiness check succeeded")
-        } catch (err) {
-          // Non-fatal: default model configuration may not be supported,
-          // but the agent responded, which means it's ready for commands.
-          const errMsg = err instanceof Error ? err.message : String(err)
-          if (errMsg.includes("timeout") || errMsg.includes("time out") || errMsg.includes("timed out")) {
-            // If we timed out, the agent is not ready. This is a fatal error.
-            throw new Error(`Container pi agent failed to respond within 60 seconds: ${errMsg}`)
-          }
-          console.log(`[session-manager] set_model with default failed (non-fatal: ${errMsg})`)
-        }
+        // Fatal: We MUST set a valid model for the agent to work.
+        throw new Error(`Failed to set model ${resolvedModel}: ${errMsg}`)
       }
 
       if (input.thinkingLevel && input.thinkingLevel !== "default") {
@@ -325,5 +321,44 @@ if (process instanceof ContainerPiProcess) {
       session: this.db.getWorkflowSession(session.id) ?? session,
       responseText,
     }
+  }
+
+  /**
+   * Resolve the model to use for a session based on kind and database options.
+   * If 'default' is specified, looks up the corresponding model in options.
+   * Fails if no model can be resolved.
+   */
+  private resolveModel(model: string | undefined, sessionKind: PiSessionKind): string {
+    const options = this.db.getOptions()
+    let resolved = model || "default"
+
+    if (resolved === "default") {
+      switch (sessionKind) {
+        case "plan":
+        case "plan_revision":
+        case "planning":
+          resolved = options.planModel
+          break
+        case "task_run_reviewer":
+        case "review_scratch":
+          resolved = options.reviewModel
+          break
+        case "repair":
+          resolved = options.repairModel
+          break
+        case "task":
+        case "task_run_worker":
+        case "task_run_final_applier":
+        default:
+          resolved = options.executionModel
+          break
+      }
+    }
+
+    if (!resolved || resolved === "default" || resolved.trim() === "") {
+      throw new Error(`Failed to resolve model for ${sessionKind}: No model is set for this task and no default model is configured in options. Please set a model in task settings or global options.`)
+    }
+
+    return resolved
   }
 }

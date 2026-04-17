@@ -247,7 +247,7 @@ export function getExecutionGraphTasks(tasks: Task[]): Task[] {
     }
   }
 
-  return pendingTasks.filter(task => scheduledIds.has(task.id))
+  return Array.from(scheduledIds).map(id => taskMap.get(id)!)
 }
 
 export function buildExecutionGraph(tasks: Task[], parallelLimit: number): ExecutionGraph {
