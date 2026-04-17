@@ -277,6 +277,7 @@ export class PiOrchestrator {
 
     // Use getExecutionGraphTasks to get ALL tasks that will run,
     // including those whose dependencies will be satisfied during this run
+
     const tasks = getExecutionGraphTasks(allTasks)
 
     if (tasks.length === 0) throw new Error("No tasks in backlog")

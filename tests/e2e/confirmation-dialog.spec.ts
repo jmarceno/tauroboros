@@ -10,8 +10,8 @@
  * All interactions through the web UI only.
  */
 
-import { test, expect, Page } from "@playwright/test';
-import { randomUUID } from "crypto';
+import { test, expect, Page } from '@playwright/test'
+import { randomUUID } from 'crypto'
 
 test.describe('Confirmation Dialog', () => {
   test.beforeEach(async ({ page }) => {
