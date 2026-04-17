@@ -22,7 +22,7 @@ export function useTasks(columnSorts?: { value: ColumnSortPreferences | undefine
   const getSortForColumn = (status: TaskStatus): ColumnSortOption => {
     const sorts = columnSorts?.value
     if (!sorts) return 'manual'
-    return sorts[status] || 'manual'
+    return (sorts as Record<string, ColumnSortOption>)[status] || 'manual'
   }
 
   // Function to get grouped tasks (called on demand from template)
@@ -33,6 +33,7 @@ export function useTasks(columnSorts?: { value: ColumnSortPreferences | undefine
       backlog: [],
       executing: [],
       review: [],
+      'code-style': [],
       done: [],
       failed: [],
       stuck: [],

@@ -355,7 +355,7 @@ test.describe('REAL Multi-Task Workflow', () => {
     }
     
     // Fallback: check which column the task appears in
-    const columns = ['template', 'backlog', 'executing', 'review', 'done'];
+    const columns = ['template', 'backlog', 'executing', 'review', 'code-style', 'done'];
     
     for (const column of columns) {
       const columnElement = page.locator(`[data-status="${column}"]`);
