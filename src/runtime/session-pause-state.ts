@@ -255,10 +255,10 @@ export function loadPausedRunState(runId?: string, db?: PiKanbanDB): PausedRunSt
     const dbState = db.loadPausedRunState(runId)
     if (dbState) {
       // Get associated paused sessions for this run
-      const pausedSessions = db.listPausedSessions().filter(s => 
+      const pausedSessions = db.listPausedSessions().filter(s =>
         s.taskId && dbState.taskOrder.includes(s.taskId)
       )
-      
+
       return {
         runId: dbState.runId,
         kind: dbState.kind,
@@ -293,7 +293,7 @@ export function loadPausedRunState(runId?: string, db?: PiKanbanDB): PausedRunSt
     }
     return null
   }
-  
+
   // Fallback to file-based storage for backward compatibility
   const path = getPauseStatePath()
   if (!existsSync(path)) {
@@ -316,7 +316,7 @@ export function clearPausedRunState(runId?: string, db?: PiKanbanDB): void {
     // Clear from database
     db.clearPausedRunState(runId)
   }
-  
+
   // Also clear from file-based storage for cleanup
   const path = getPauseStatePath()
   if (existsSync(path)) {
@@ -349,10 +349,10 @@ export function listPausedRunStates(db: PiKanbanDB): PausedRunState[] {
   const dbStates = db.listPausedRunStates()
   return dbStates.map(dbState => {
     // Get associated paused sessions for this run
-    const pausedSessions = db.listPausedSessions().filter(s => 
+    const pausedSessions = db.listPausedSessions().filter(s =>
       s.taskId && dbState.taskOrder.includes(s.taskId)
     )
-    
+
     return {
       runId: dbState.runId,
       kind: dbState.kind,

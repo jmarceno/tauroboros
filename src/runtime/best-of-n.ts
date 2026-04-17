@@ -298,7 +298,7 @@ export class BestOfNRunner {
       )
       const outputChunks: string[] = []
       const workerImageToUse = resolveContainerImage(task, this.deps.settings?.workflow?.container?.image)
-      
+
       const response = await this.sessions.executePrompt({
         taskId,
         taskRunId: workerRun.id,
@@ -471,7 +471,7 @@ export class BestOfNRunner {
 
       const outputChunks: string[] = []
       const finalImageToUse = resolveContainerImage(task, this.deps.settings?.workflow?.container?.image)
-      
+
       const response = await this.sessions.executePrompt({
         taskId,
         taskRunId: finalRun.id,

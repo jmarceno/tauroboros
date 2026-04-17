@@ -1,11 +1,11 @@
 /**
  * E2E Tests: Failure Recovery Scenarios
- * 
+ *
  * Tests failure recovery scenarios using API calls.
  * Note: These tests primarily use the API since they test server-side behavior.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from "@playwright/test';
 
 test.describe('Failure Recovery Scenarios', () => {
   test.setTimeout(60000);
@@ -36,7 +36,7 @@ test.describe('Failure Recovery Scenarios', () => {
       });
       return { status: res.status, data: await res.json() };
     });
-    
+
     expect(createResponse.status).toBe(201);
     const taskId = createResponse.data.id;
     console.log(`[TEST] Task created: ${taskId}`);
@@ -49,7 +49,7 @@ test.describe('Failure Recovery Scenarios', () => {
       });
       return { status: res.status, data: await res.json() };
     }, taskId);
-    
+
     expect(resetResponse.status).toBe(200);
     console.log('[TEST] ✓ Task reset successful');
 
@@ -59,7 +59,7 @@ test.describe('Failure Recovery Scenarios', () => {
       const task = await res.json();
       return task.status;
     }, taskId);
-    
+
     expect(verifyResponse).toBe('backlog');
     console.log('[TEST] ✓ Task verified in backlog');
     console.log('[TEST] ✓ Task reset test completed');
@@ -86,7 +86,7 @@ test.describe('Failure Recovery Scenarios', () => {
       });
       return { status: res.status, data: await res.json() };
     });
-    
+
     const taskId = createResponse.data.id;
 
     // Try to stop workflow (may return 409 if no active run)
@@ -97,10 +97,10 @@ test.describe('Failure Recovery Scenarios', () => {
       });
       return { status: res.status };
     });
-    
+
     console.log(`[TEST] Stop returned: ${stopResponse.status}`);
     expect([200, 409]).toContain(stopResponse.status);
-    
+
     // Should be able to restart the task
     const restartResponse = await page.evaluate(async (id) => {
       const res = await fetch(`/api/tasks/${id}/start`, {
@@ -109,10 +109,10 @@ test.describe('Failure Recovery Scenarios', () => {
       });
       return { status: res.status };
     }, taskId);
-    
+
     // Should succeed or give clear error
     expect([200, 409, 400]).toContain(restartResponse.status);
-    
+
     console.log(`[TEST] Restart returned: ${restartResponse.status}`);
     console.log('[TEST] ✓ Stop/resume test completed');
   });
@@ -138,10 +138,10 @@ test.describe('Failure Recovery Scenarios', () => {
       });
       return { status: res.status, data: await res.json() };
     });
-    
+
     expect(createResponse.status).toBe(201);
     const taskId = createResponse.data.id;
-    
+
     // Reset task to backlog
     const resetResponse = await page.evaluate(async (id) => {
       const res = await fetch(`/api/tasks/${id}/reset`, {
@@ -150,16 +150,16 @@ test.describe('Failure Recovery Scenarios', () => {
       });
       return { status: res.status };
     }, taskId);
-    
+
     expect(resetResponse.status).toBe(200);
-    
+
     // Verify via API
     const statusResponse = await page.evaluate(async (id) => {
       const res = await fetch(`/api/tasks/${id}`);
       const task = await res.json();
       return task.status;
     }, taskId);
-    
+
     expect(statusResponse).toBe('backlog');
     console.log('[TEST] ✓ Stuck task recovery test completed');
   });

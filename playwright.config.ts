@@ -11,14 +11,14 @@ const isRealWorkflowTest = process.env.TEST_TYPE === 'real-workflow';
 if (isRealWorkflowTest) {
   let hasPodman = false;
   let hasPiAgentImage = false;
-  
+
   try {
     execSync('podman --version', { stdio: 'pipe' });
     hasPodman = true;
   } catch (err) {
     console.debug(`[playwright.config] Podman not available:`, err);
   }
-  
+
   if (hasPodman) {
     try {
       const result = execSync(`podman images ${BASE_IMAGES.piAgent} -q`, { encoding: 'utf-8', stdio: 'pipe' });
@@ -27,7 +27,7 @@ if (isRealWorkflowTest) {
       console.debug(`[playwright.config] ${BASE_IMAGES.piAgent} image not found:`, err);
     }
   }
-  
+
   if (!hasPodman || !hasPiAgentImage) {
     console.error('❌ REAL WORKFLOW TEST FAILED: Container infrastructure not available');
     if (!hasPodman) console.error('   - Podman not found');
@@ -66,12 +66,12 @@ if (testProjectDir) {
   // Start server exactly like users would: cd to project and run bun run start
   // We use shell: true to ensure PATH is properly inherited
   const command = `bun run start`;
-  
+
   if (testServerPort > 0) {
     baseURL = `http://localhost:${testServerPort}`;
     console.log(`[Playwright] Using port: ${testServerPort}`);
   }
-  
+
   webServerConfig = {
     command,
     cwd: testProjectDir,
@@ -84,7 +84,7 @@ if (testProjectDir) {
       USE_MOCK_LLM: process.env.USE_MOCK_LLM !== 'false' ? 'true' : 'false',
     },
   };
-  
+
   console.log(`[Playwright] Server will start from: ${testProjectDir}`);
   console.log(`[Playwright] baseURL: ${baseURL}`);
 } else {

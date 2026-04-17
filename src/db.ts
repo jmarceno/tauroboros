@@ -1709,7 +1709,7 @@ export class PiKanbanDB {
 
     // Get all valid (non-archived) task IDs
     const validTaskIds = new Set(this.getTasks().map(t => t.id))
-    
+
     const cleaned: string[] = []
     const removed: string[] = []
 

@@ -25,7 +25,7 @@ export interface RunCodeStyleResult {
 
 /**
  * CodeStyleSessionRunner - Manages a single-pass code style check session
- * 
+ *
  * Similar to PiReviewSessionRunner but:
  * - Uses reviewModel and reviewThinkingLevel from options
  * - Runs a single pass (no retry loop)

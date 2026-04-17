@@ -1,6 +1,6 @@
 /**
  * Shared error codes between frontend and backend
- * 
+ *
  * These codes provide a stable contract for error handling that won't break
  * if error messages are reworded. Always use codes for programmatic error detection.
  */

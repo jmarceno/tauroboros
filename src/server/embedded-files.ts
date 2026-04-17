@@ -1,6 +1,6 @@
 /**
  * Embedded file utilities for compiled binaries
- * 
+ *
  * This module provides file serving capabilities that work in both:
  * 1. Development mode - reads from filesystem
  * 2. Compiled binary - uses embedded assets from generated-assets.ts
@@ -38,12 +38,12 @@ function extractAssetKey(path: string): string | null {
   if (assetsMatch) {
     return `/assets/${assetsMatch[1]}`
   }
-  
+
   // Check for index.html
   if (path.endsWith("index.html")) {
     return "/index.html"
   }
-  
+
   return null
 }
 
@@ -71,7 +71,7 @@ export async function readEmbeddedFile(path: string): Promise<Uint8Array> {
       }
     }
   }
-  
+
   // Fallback to filesystem using Bun.file()
   const file = Bun.file(path)
   if (!(await file.exists())) {
@@ -94,7 +94,7 @@ export async function readEmbeddedText(path: string): Promise<string> {
       }
     }
   }
-  
+
   // Fallback to filesystem using Bun.file()
   const file = Bun.file(path)
   if (!(await file.exists())) {
@@ -115,7 +115,7 @@ export async function embeddedFileExists(path: string): Promise<boolean> {
       if (asset) return true
     }
   }
-  
+
   // Fallback to filesystem
   const file = Bun.file(path)
   return await file.exists()
@@ -152,7 +152,7 @@ export async function getIndexHtml(): Promise<string | undefined> {
   if (generatedAssets) {
     return generatedAssets.getIndexHtml()
   }
-  
+
   // Fallback to filesystem
   try {
     return await Bun.file(KANBAN_INDEX).text()

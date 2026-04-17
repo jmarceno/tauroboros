@@ -1,6 +1,6 @@
 /**
  * Resource Extractor
- * 
+ *
  * Handles extraction of embedded extensions and skills to the filesystem.
  * This ensures pi can auto-discover them from .pi/extensions/ and .pi/skills/
  */
@@ -41,7 +41,7 @@ function ensureDir(dir: string): void {
  */
 function writeAssetToFile(targetPath: string, asset: { isText: boolean; data: string }): void {
   ensureDir(dirname(targetPath))
-  
+
   if (asset.isText) {
     writeFileSync(targetPath, asset.data, "utf-8")
   } else {
@@ -56,12 +56,12 @@ function writeAssetToFile(targetPath: string, asset: { isText: boolean; data: st
  */
 function clearDirectory(dir: string): void {
   if (!existsSync(dir)) return
-  
+
   const entries = readdirSync(dir)
   for (const entry of entries) {
     const fullPath = join(dir, entry)
     const stat = statSync(fullPath)
-    
+
     if (stat.isDirectory()) {
       rmSync(fullPath, { recursive: true, force: true })
     } else {
@@ -78,22 +78,22 @@ export function extractEmbeddedExtensions(projectRoot: string): { count: number;
   if (!generatedAssets) {
     return { count: 0, paths: [] }
   }
-  
+
   const extensionsDir = join(projectRoot, ".pi", "extensions")
   ensureDir(extensionsDir)
-  
+
   // Clear existing extensions (always extract fresh)
   clearDirectory(extensionsDir)
-  
+
   const extensionAssets = generatedAssets.getAllExtensionAssets()
   const extractedPaths: string[] = []
-  
+
   for (const { path, asset } of extensionAssets) {
     const targetPath = join(extensionsDir, path)
     writeAssetToFile(targetPath, asset)
     extractedPaths.push(targetPath)
   }
-  
+
   return { count: extensionAssets.length, paths: extractedPaths }
 }
 
@@ -105,22 +105,22 @@ export function extractEmbeddedSkills(projectRoot: string): { count: number; pat
   if (!generatedAssets) {
     return { count: 0, paths: [] }
   }
-  
+
   const skillsDir = join(projectRoot, ".pi", "skills")
   ensureDir(skillsDir)
-  
+
   // Clear existing skills (always extract fresh)
   clearDirectory(skillsDir)
-  
+
   const skillAssets = generatedAssets.getAllSkillAssets()
   const extractedPaths: string[] = []
-  
+
   for (const { path, asset } of skillAssets) {
     const targetPath = join(skillsDir, path)
     writeAssetToFile(targetPath, asset)
     extractedPaths.push(targetPath)
   }
-  
+
   return { count: skillAssets.length, paths: extractedPaths }
 }
 
@@ -132,13 +132,13 @@ export function extractEmbeddedConfig(projectRoot: string): { count: number; pat
   if (!generatedAssets) {
     return { count: 0, paths: [] }
   }
-  
+
   const configDir = join(projectRoot, ".tauroboros", "config")
   ensureDir(configDir)
-  
+
   const configAssets = generatedAssets.getAllConfigAssets()
   const extractedPaths: string[] = []
-  
+
   for (const { path, asset } of configAssets) {
     const targetPath = join(configDir, path)
     // Only extract if file doesn't exist (preserves user modifications)
@@ -147,7 +147,7 @@ export function extractEmbeddedConfig(projectRoot: string): { count: number; pat
       extractedPaths.push(targetPath)
     }
   }
-  
+
   return { count: extractedPaths.length, paths: extractedPaths }
 }
 
@@ -159,13 +159,13 @@ export function extractEmbeddedDocker(projectRoot: string): { count: number; pat
   if (!generatedAssets) {
     return { count: 0, paths: [] }
   }
-  
+
   const dockerDir = join(projectRoot, ".tauroboros", "docker")
   ensureDir(dockerDir)
-  
+
   const dockerAssets = generatedAssets.getAllDockerAssets()
   const extractedPaths: string[] = []
-  
+
   for (const { path, asset } of dockerAssets) {
     const targetPath = join(dockerDir, path)
     // Only extract if file doesn't exist (preserves user modifications)
@@ -174,7 +174,7 @@ export function extractEmbeddedDocker(projectRoot: string): { count: number; pat
       extractedPaths.push(targetPath)
     }
   }
-  
+
   return { count: extractedPaths.length, paths: extractedPaths }
 }
 
@@ -185,31 +185,31 @@ export function extractEmbeddedDocker(projectRoot: string): { count: number; pat
 export function copyResourcesFromSource(projectRoot: string): { extensions: number; skills: number } {
   // In development mode, extensions and skills are at the project root level
   const sourceRoot = projectRoot
-  
+
   // Copy extensions
   const sourceExtensionsDir = join(sourceRoot, "extensions")
   const targetExtensionsDir = join(projectRoot, ".pi", "extensions")
   let extensionCount = 0
-  
+
   if (existsSync(sourceExtensionsDir)) {
     ensureDir(targetExtensionsDir)
     clearDirectory(targetExtensionsDir)
     copyDirectoryRecursive(sourceExtensionsDir, targetExtensionsDir)
     extensionCount = countFiles(targetExtensionsDir)
   }
-  
+
   // Copy skills
   const sourceSkillsDir = join(sourceRoot, "skills")
   const targetSkillsDir = join(projectRoot, ".pi", "skills")
   let skillCount = 0
-  
+
   if (existsSync(sourceSkillsDir)) {
     ensureDir(targetSkillsDir)
     clearDirectory(targetSkillsDir)
     copyDirectoryRecursive(sourceSkillsDir, targetSkillsDir)
     skillCount = countFiles(targetSkillsDir)
   }
-  
+
   return { extensions: extensionCount, skills: skillCount }
 }
 
@@ -218,13 +218,13 @@ export function copyResourcesFromSource(projectRoot: string): { extensions: numb
  */
 function copyDirectoryRecursive(source: string, target: string): void {
   ensureDir(target)
-  
+
   const entries = readdirSync(source)
   for (const entry of entries) {
     const sourcePath = join(source, entry)
     const targetPath = join(target, entry)
     const stat = statSync(sourcePath)
-    
+
     if (stat.isDirectory()) {
       copyDirectoryRecursive(sourcePath, targetPath)
     } else {
@@ -239,21 +239,21 @@ function copyDirectoryRecursive(source: string, target: string): void {
  */
 function countFiles(dir: string): number {
   if (!existsSync(dir)) return 0
-  
+
   let count = 0
   const entries = readdirSync(dir)
-  
+
   for (const entry of entries) {
     const fullPath = join(dir, entry)
     const stat = statSync(fullPath)
-    
+
     if (stat.isDirectory()) {
       count += countFiles(fullPath)
     } else {
       count++
     }
   }
-  
+
   return count
 }
 
@@ -303,23 +303,23 @@ export function copyConfigFromSource(projectRoot: string): { count: number } {
 export function copyDockerFromSource(projectRoot: string): { count: number } {
   const sourceDockerDir = join(projectRoot, "docker")
   const targetDockerDir = join(projectRoot, ".tauroboros", "docker")
-  
+
   if (!existsSync(sourceDockerDir)) {
     return { count: 0 }
   }
-  
+
   ensureDir(targetDockerDir)
-  
+
   // Copy directory recursively, but skip existing files
   const copyRecursive = (source: string, target: string): number => {
     ensureDir(target)
     let count = 0
-    
+
     const entries = readdirSync(source)
     for (const entry of entries) {
       const sourcePath = join(source, entry)
       const targetPath = join(target, entry)
-      
+
       const stat = statSync(sourcePath)
       if (stat.isDirectory()) {
         count += copyRecursive(sourcePath, targetPath)
@@ -329,10 +329,10 @@ export function copyDockerFromSource(projectRoot: string): { count: number } {
         count++
       }
     }
-    
+
     return count
   }
-  
+
   const copiedCount = copyRecursive(sourceDockerDir, targetDockerDir)
   return { count: copiedCount }
 }
@@ -354,7 +354,7 @@ export function extractEmbeddedResources(projectRoot: string): {
     const skillResult = extractEmbeddedSkills(projectRoot)
     const configResult = extractEmbeddedConfig(projectRoot)
     const dockerResult = extractEmbeddedDocker(projectRoot)
-    
+
     return {
       mode: "binary",
       extensions: extResult.count,
@@ -367,7 +367,7 @@ export function extractEmbeddedResources(projectRoot: string): {
     const result = copyResourcesFromSource(projectRoot)
     const configResult = copyConfigFromSource(projectRoot)
     const dockerResult = copyDockerFromSource(projectRoot)
-    
+
     // Only return "source" mode if we actually found and copied files
     if (result.extensions > 0 || result.skills > 0 || configResult.count > 0 || dockerResult.count > 0) {
       return {
@@ -378,7 +378,7 @@ export function extractEmbeddedResources(projectRoot: string): {
         docker: dockerResult.count,
       }
     }
-    
+
     return {
       mode: "none",
       extensions: 0,

@@ -1,13 +1,13 @@
 /**
  * E2E Test Fixtures
- * 
+ *
  * Simple fixtures for Playwright tests. Server is managed by webServer config.
  */
 
-import { test as base, expect } from '@playwright/test';
-import { readFileSync, existsSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { test as base, expect } from "@playwright/test';
+import { readFileSync, existsSync } from "fs';
+import { tmpdir } from "os';
+import { join } from "path';
 
 export interface TestContext {
   baseURL: string;
@@ -37,7 +37,7 @@ export const test = base.extend<Fixtures>({
     if (!projectDir) {
       throw new Error('Test environment not prepared. Run: bun run tests/e2e/prepare.ts');
     }
-    
+
     await use({
       baseURL: baseURL!,
     });

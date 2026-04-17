@@ -2,7 +2,7 @@
 /**
  * Compile script for TaurOboros
  * Creates a single executable binary using Bun's compile feature
- * 
+ *
  * This script:
  * 1. Builds the kanban-react frontend if needed
  * 2. Generates embedded-assets.ts with all static files inlined
@@ -25,7 +25,7 @@ console.log("===================================\n")
 // Build kanban-react frontend
 async function buildKanban(): Promise<void> {
   console.log("📦 Building kanban-react frontend...")
-  
+
   const packageJsonPath = join(KANBAN_REACT_DIR, "package.json")
   if (!existsSync(packageJsonPath)) {
     throw new Error(`package.json not found at ${KANBAN_REACT_DIR}`)
@@ -71,7 +71,7 @@ async function generateEmbeddedAssets(): Promise<void> {
 // Compile the binary
 async function compileBinary(): Promise<void> {
   console.log("🔨 Compiling binary with Bun...")
-  
+
   const compileCmd = [
     "build",
     "--compile",
@@ -81,21 +81,21 @@ async function compileBinary(): Promise<void> {
   ]
 
   console.log("  → Running bun build --compile...")
-  
+
   const result = await $`bun ${compileCmd}`.quiet()
-  
+
   if (result.exitCode !== 0) {
     throw new Error(`Compilation failed: ${result.stderr}`)
   }
 
   // Make executable
   await $`chmod +x ${BIN_OUTPUT}`.quiet()
-  
+
   // Get file size
   const { statSync: stat } = require("fs")
   const stats = stat(BIN_OUTPUT)
   const sizeMB = (stats.size / 1024 / 1024).toFixed(2)
-  
+
   console.log(`  ✓ Binary created: ${BIN_OUTPUT}`)
   console.log(`  📊 Size: ${sizeMB} MB\n`)
 }
@@ -113,7 +113,7 @@ async function cleanup(): Promise<void> {
 // Main execution
 async function main(): Promise<void> {
   const startTime = Date.now()
-  
+
   try {
     // Step 1: Always rebuild kanban-react to ensure fresh assets
     console.log("📦 Building kanban-react frontend...")

@@ -17,14 +17,14 @@ import { WorktreeLifecycle, resolveTargetBranch, listWorktrees, type WorktreeInf
 import type { PiContainerManager } from "./runtime/container-manager.ts"
 import { PiRpcProcess } from "./runtime/pi-process.ts"
 import { ContainerPiProcess } from "./runtime/container-pi-process.ts"
-import { 
-  savePausedRunState, 
-  loadPausedRunState, 
-  clearPausedRunState as clearGlobalPausedRunState, 
-  hasPausedRunState, 
+import {
+  savePausedRunState,
+  loadPausedRunState,
+  clearPausedRunState as clearGlobalPausedRunState,
+  hasPausedRunState,
   listPausedRunStates,
-  type PausedRunState, 
-  type PausedSessionState, 
+  type PausedRunState,
+  type PausedSessionState,
   sessionPauseStateManager,
   savePausedSessionState,
   loadPausedSessionState,
@@ -266,7 +266,7 @@ export class PiOrchestrator {
     // Get all tasks and validate dependencies
     const allTasks = this.db.getTasks()
     const validTaskIds = new Set(allTasks.map(t => t.id))
-    
+
     // Check for and log tasks with invalid dependencies
     for (const task of allTasks) {
       const invalidDeps = task.requirements.filter(depId => !validTaskIds.has(depId))
@@ -336,11 +336,11 @@ export class PiOrchestrator {
     }
 
     if (this.running) throw new Error("Already executing")
-    
+
     // Get all tasks and validate dependencies
     const allTasks = this.db.getTasks()
     const validTaskIds = new Set(allTasks.map(t => t.id))
-    
+
     // Check for and log tasks with invalid dependencies
     for (const task of allTasks) {
       const invalidDeps = task.requirements.filter(depId => !validTaskIds.has(depId))
@@ -348,7 +348,7 @@ export class PiOrchestrator {
         console.warn(`[orchestrator] Task "${task.name}" has invalid dependencies: ${invalidDeps.join(', ')} - will be ignored during execution`)
       }
     }
-    
+
     const chain = resolveExecutionTasks(allTasks, taskId)
     if (chain.length === 0) throw new Error("No tasks in backlog")
     const target = this.db.getTask(taskId)
@@ -746,7 +746,7 @@ export class PiOrchestrator {
       const currentRun = this.db.getWorkflowRun(runId)
       if (currentRun?.status === "running" && this.shouldPause) {
         console.log(`[orchestrator] Safety timeout: force-pausing run ${runId} that was still running`)
-        
+
         // Update run status to paused
         const pausedRun = this.db.updateWorkflowRun(runId, {
           status: "paused",
@@ -1002,7 +1002,7 @@ export class PiOrchestrator {
 
     const containerImage = this.settings?.workflow?.container?.image || null
     const executionPhase = task?.executionPhase || null
-    
+
     const pausedState: PausedSessionState = {
       sessionId,
       taskId: session.taskId,

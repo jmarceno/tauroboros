@@ -27,12 +27,12 @@ rl.on("line", (line) => {
   try { request = JSON.parse(line) } catch { return }
   const id = request?.id
   const type = request?.type
-  
+
   if (type === "set_model" || type === "set_thinking_level") {
     console.log(JSON.stringify({ id, type: "response", command: type, success: true }))
     return
   }
-  
+
   if (type === "prompt") {
     console.log(JSON.stringify({ id, type: "response", command: "prompt", success: true }))
     if (mode === "malformed") {
@@ -44,12 +44,12 @@ rl.on("line", (line) => {
     console.log(JSON.stringify({ type: "agent_end" }))
     return
   }
-  
+
   if (type === "get_messages") {
     console.log(JSON.stringify({ id, type: "response", command: "get_messages", success: true, data: { messages: [{ role: "assistant", text: "snapshot" }] } }))
     return
   }
-  
+
   console.log(JSON.stringify({ id, type: "response", command: type || "unknown", success: true, data: {} }))
 })
 `
@@ -175,7 +175,7 @@ describe("smart repair", () => {
     })
 
     const service = new SmartRepairService(db, settings)
-    
+
     // Explicit errors: malformed JSON should throw, not fallback
     await expect(service.repair(task.id)).rejects.toThrow()
     db.close()
@@ -204,7 +204,7 @@ describe("smart repair", () => {
       db.close()
     })
 
-    it("detects code-style phase from 'code style' text in agent output", () => {
+    it("detects code-style phase from "code style' text in agent output", () => {
       const root = createTempDir("tauroboros-codestyle-text-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 

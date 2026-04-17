@@ -1,5 +1,13 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import type { LogEntry, WorkflowRun } from '@/types'
+
+// Exported for testing
+export const MIN_PANEL_HEIGHT = 120
+export const DEFAULT_PANEL_HEIGHT = 176
+export const STORAGE_KEY = 'logPanelHeight'
+
+// Compute max height dynamically to handle window resize
+export const getMaxPanelHeight = (): number => window.innerHeight * 0.7
 
 interface TabbedLogPanelProps {
   collapsed: boolean
@@ -27,6 +35,71 @@ export function TabbedLogPanel({
   onClearHighlight,
 }: TabbedLogPanelProps) {
   const [activeTab, setActiveTab] = useState<'runs' | 'logs'>('runs')
+  const [panelHeight, setPanelHeight] = useState(DEFAULT_PANEL_HEIGHT)
+  const [isResizing, setIsResizing] = useState(false)
+
+  const resizeStartY = useRef(0)
+  const resizeStartHeight = useRef(0)
+  const currentPanelHeight = useRef(panelHeight)
+
+  // Keep ref in sync with state for resize handler
+  useEffect(() => {
+    currentPanelHeight.current = panelHeight
+  }, [panelHeight])
+
+  // Load saved height from localStorage on mount
+  useEffect(() => {
+    const savedHeight = localStorage.getItem(STORAGE_KEY)
+    if (savedHeight) {
+      const height = parseInt(savedHeight, 10)
+      const maxHeight = getMaxPanelHeight()
+      if (height >= MIN_PANEL_HEIGHT && height <= maxHeight) {
+        setPanelHeight(height)
+      }
+    }
+  }, [])
+
+  // Handle resize mouse events
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isResizing) return
+      const delta = resizeStartY.current - e.clientY
+      const maxHeight = getMaxPanelHeight()
+      const newHeight = Math.min(
+        maxHeight,
+        Math.max(MIN_PANEL_HEIGHT, resizeStartHeight.current + delta)
+      )
+      setPanelHeight(newHeight)
+    }
+
+    const handleMouseUp = () => {
+      if (isResizing) {
+        setIsResizing(false)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+        localStorage.setItem(STORAGE_KEY, currentPanelHeight.current.toString())
+      }
+    }
+
+    if (isResizing) {
+      window.addEventListener('mousemove', handleMouseMove)
+      window.addEventListener('mouseup', handleMouseUp)
+    }
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isResizing, panelHeight])
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault()
+    resizeStartY.current = e.clientY
+    resizeStartHeight.current = panelHeight
+    setIsResizing(true)
+    document.body.style.cursor = 'ns-resize'
+    document.body.style.userSelect = 'none'
+  }
 
   const safeStaleRuns = useMemo(() => Array.isArray(staleRuns) ? staleRuns : [], [staleRuns])
   const hasStaleRuns = useMemo(() => safeStaleRuns.length > 0, [safeStaleRuns])
@@ -89,9 +162,18 @@ export function TabbedLogPanel({
 
   return (
     <div
-      className="border-t border-dark-border bg-dark-surface flex flex-col transition-all duration-200 shrink-0"
-      style={{ height: collapsed ? 'auto' : '176px', minHeight: collapsed ? 'auto' : '120px' }}
+      className={`border-t border-dark-border bg-dark-surface flex flex-col shrink-0 relative ${isResizing ? 'resizing' : 'transition-all duration-200'}`}
+      style={{ height: collapsed ? 'auto' : `${panelHeight}px` }}
     >
+      {/* Resize Handle */}
+      {!collapsed && (
+        <div
+          className="log-panel-resize-handle"
+          onMouseDown={startResize}
+          title="Drag to resize"
+        />
+      )}
+
       {/* Header with Tabs */}
       <div
         className="px-3.5 py-2 text-xs font-semibold text-dark-text-secondary border-b border-dark-border uppercase tracking-wider flex items-center justify-between select-none"

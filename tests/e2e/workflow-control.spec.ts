@@ -1,49 +1,49 @@
 /**
  * E2E Test: Workflow Control (Pause, Resume, Stop) via Web UI ONLY
- * 
+ *
  * This tes must pass in a single run without manually cleaning any state
  * if a test does not pass because the previous one left a bad state,
  * this means that the previous test in fact FAILED.
- * 
+ *
  * Tests the workflow control functionality with real containers:
  * - Pause workflow during execution
  * - Resume paused workflow
  * - Stop workflow (graceful and destructive)
  * - Stop confirmation modal
- * 
+ *
  * CRITICAL: This test uses ONLY Web UI interactions - no API calls.
  * page.evaluate is NOT used for any workflow operations.
  * Tasks are created with plan mode, auto-approve, and review enabled
  * to simulate a real end-to-end workflow scenario with containers.
  */
 
-import { test, expect, Page } from '@playwright/test';
-import { execSync } from 'child_process';
-import { BASE_IMAGES } from '../../src/config/base-images.ts';
+import { test, expect, Page } from "@playwright/test';
+import { execSync } from "child_process';
+import { BASE_IMAGES } from "../../src/config/base-images.ts';
 
 test.beforeAll(() => {
   console.log('[TEST SETUP] Verifying container infrastructure...');
-  
+
   let hasPodman = false;
   let hasPiAgentImage = false;
-  
+
   try {
     execSync('podman --version', { stdio: 'pipe' });
     hasPodman = true;
   } catch {}
-  
+
   if (hasPodman) {
     try {
       const result = execSync(`podman images ${BASE_IMAGES.piAgent} -q`, { encoding: 'utf-8', stdio: 'pipe' });
       hasPiAgentImage = result.trim().length > 0;
     } catch {}
   }
-  
+
   if (!hasPodman || !hasPiAgentImage) {
     console.error('Container infrastructure not available. Run: bun run container:setup');
     throw new Error('Container infrastructure not available. Test cannot proceed.');
   }
-  
+
   console.log('[TEST SETUP] Container infrastructure verified');
 });
 
@@ -56,7 +56,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
         console.log(`[BROWSER ERROR] ${msg.text()}`);
       }
     });
-    
+
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
@@ -65,7 +65,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
   test.afterEach(async ({ page }) => {
     // Clean up: stop any running workflow and archive completed/failed runs
     console.log('[TEST CLEANUP] Checking for running workflow...');
-    
+
     // First, archive any stale/failed runs that might block new workflows
     const archiveButtons = page.locator('.sidebar button').filter({ hasText: /Archive this run|Archive.*Stale/ });
     let archiveCount = 0;
@@ -77,24 +77,24 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
       archiveCount++;
       if (archiveCount > 10) break; // Safety limit
     }
-    
+
     // Keep trying to stop until Start Workflow button appears (meaning system is idle)
     let attempts = 0;
     const maxAttempts = 5;
-    
+
     while (attempts < maxAttempts) {
       const stopButton = page.locator('.sidebar button.sidebar-btn.danger').filter({ hasText: 'Stop' });
       const pauseButton = page.locator('.sidebar button.sidebar-btn.warning').filter({ hasText: 'Pause' });
       const startButton = page.locator('.sidebar button.sidebar-btn.primary').filter({ hasText: 'Start Workflow' });
-      
+
       // Check for workflows in "stopping" state - these need to be force-stopped
       const stoppingRun = page.locator('.sidebar .active-runs .run-item, .sidebar [class*="run"]').filter({ hasText: /stopping/ }).first();
       const isStopping = await stoppingRun.isVisible().catch(() => false);
-      
+
       const isStopVisible = await stopButton.isVisible().catch(() => false);
       const isPauseVisible = await pauseButton.isVisible().catch(() => false);
       const isStartVisible = await startButton.isVisible().catch(() => false);
-      
+
       // If Start button is visible and enabled, system is idle - cleanup done
       if (isStartVisible) {
         const isDisabled = await startButton.evaluate(el => el.disabled).catch(() => false);
@@ -104,7 +104,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
         }
         console.log('[TEST CLEANUP] Start Workflow button visible but disabled, continuing cleanup...');
       }
-      
+
       // If workflow is stuck in "stopping" state, we need to wait for backend cleanup
       // or reload to trigger cleanupStaleRuns
       if (isStopping) {
@@ -115,7 +115,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
         attempts++;
         continue;
       }
-      
+
       // If no control buttons visible and no stopping run, wait a bit and recheck
       if (!isStopVisible && !isPauseVisible && !isStopping) {
         console.log('[TEST CLEANUP] No control buttons visible, waiting...');
@@ -125,7 +125,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
         attempts++;
         continue;
       }
-      
+
       // Workflow is running - stop it
       console.log('[TEST CLEANUP] Workflow is running, stopping it (attempt ' + (attempts + 1) + ')...');
       try {
@@ -137,21 +137,21 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
           await pauseButton.click();
           console.log('[TEST CLEANUP] Clicked Pause button');
         }
-        
+
         await page.waitForTimeout(1500);
-        
+
         // Handle the stop confirmation modal
         const modal = page.locator('.modal-overlay');
         const isModalVisible = await modal.isVisible().catch(() => false);
-        
+
         if (isModalVisible) {
           console.log('[TEST CLEANUP] Stop modal is open');
-          
+
           // Click the destructive/primary stop button
           const destructiveButton = modal.locator('button.option-btn.destructive');
           const stopConfirmButton = modal.locator('button:has-text("STOP")');
           const primaryButton = modal.locator('button').first();
-          
+
           if (await destructiveButton.isVisible().catch(() => false)) {
             await destructiveButton.click();
             console.log('[TEST CLEANUP] Clicked destructive stop button');
@@ -163,14 +163,14 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
             console.log('[TEST CLEANUP] Clicked primary modal button');
           }
         }
-        
+
         // Wait for stop to take effect
         await page.waitForTimeout(5000);
-        
+
         // Reload to trigger cleanup of stale runs
         await page.reload();
         await page.waitForTimeout(3000);
-        
+
         // Check if start button is now visible and enabled
         const isStartNowVisible = await startButton.isVisible().catch(() => false);
         if (isStartNowVisible) {
@@ -183,10 +183,10 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
       } catch (e) {
         console.log('[TEST CLEANUP] Error during stop attempt:', e);
       }
-      
+
       attempts++;
     }
-    
+
     // Final cleanup: prune any orphaned custom images from this test session
     // This ensures tests don't leave custom container images behind
     try {
@@ -223,11 +223,11 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
 
     const backlogColumn = page.locator('[data-status="backlog"]');
     await expect(backlogColumn).toBeVisible({ timeout: 15000 });
-    
+
     const addTaskButton = backlogColumn.locator('button.add-task-btn, button:has-text("+ Add Task")').first();
     await expect(addTaskButton).toBeVisible({ timeout: 10000 });
     await addTaskButton.click();
-    
+
     await page.waitForSelector('.modal-overlay', { timeout: 10000 });
     await page.waitForSelector('input[placeholder="Task name"]', { timeout: 10000 });
     await page.waitForTimeout(2000);
@@ -298,7 +298,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
       resp => resp.url().includes('/api/tasks') && resp.request().method() === 'POST',
       { timeout: 15000 }
     );
-    
+
     await saveButton.click();
     const saveResponse = await saveResponsePromise;
     console.log(`[UI] Task created: ${taskName}, status: ${saveResponse.status()}`);
@@ -313,7 +313,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     // Verify task appears
     const taskCard = page.locator('.task-card').filter({ hasText: taskName }).first();
     await expect(taskCard).toBeVisible({ timeout: 15000 });
-    
+
     console.log(`[UI] Task visible in UI: ${taskName}`);
     return taskName;
   }
@@ -328,7 +328,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     await startButton.click();
     console.log('[UI] Start Workflow clicked');
     await page.waitForTimeout(2000);
-    
+
     // Handle Execution Graph modal if shown
     await approveExecutionGraphModal(page);
   }
@@ -341,7 +341,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     try {
       const modal = page.locator('.modal-overlay').filter({ hasText: /Execution Graph/ });
       await modal.waitFor({ state: 'visible', timeout: 3000 }).catch(() => null);
-      
+
       if (await modal.isVisible().catch(() => false)) {
         const confirmButton = modal.locator('button').filter({ hasText: 'Confirm & Start' }).first();
         if (await confirmButton.isVisible().catch(() => false)) {
@@ -391,28 +391,28 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     const startTime = Date.now();
     let lastStatus = 'unknown';
     let lastLog = startTime;
-    
+
     while (Date.now() - startTime < timeoutMs) {
       const status = await getTaskStatusFromUI(page, taskName);
       lastStatus = status;
-      
+
       if (targetStatuses.includes(status)) {
         return status;
       }
-      
+
       if (Date.now() - lastLog > 10000) {
         console.log(`[TEST] Task "${taskName}" status: ${status} (waiting for ${targetStatuses.join('/')})`);
         lastLog = Date.now();
       }
-      
+
       if (status === 'done' || status === 'failed' || status === 'stuck') {
         console.log(`[TEST] Task "${taskName}" reached terminal status: ${status}`);
         return status;
       }
-      
+
       await page.waitForTimeout(intervalMs);
     }
-    
+
     throw new Error(`Task "${taskName}" did not reach status ${targetStatuses.join('/')} within ${timeoutMs}ms. Final status: ${lastStatus}`);
   }
 
@@ -445,14 +445,14 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     const pauseButton = page.locator('.sidebar button.sidebar-btn.warning').filter({ hasText: 'Pause' });
     const stopButton = page.locator('.sidebar button.sidebar-btn.danger').filter({ hasText: 'Stop' });
     const startButton = page.locator('.sidebar button.sidebar-btn.primary').filter({ hasText: 'Start Workflow' });
-    
+
     const isPauseVisible = await pauseButton.isVisible().catch(() => false);
     const isStopVisible = await stopButton.isVisible().catch(() => false);
     const isStartVisible = await startButton.isVisible().catch(() => false);
 
     // At least one control button should be visible
     expect(isPauseVisible || isStopVisible || isStartVisible).toBe(true);
-    
+
     if (isPauseVisible) {
       console.log('[TEST] Pause button is visible during workflow execution');
     } else if (isStopVisible) {
@@ -615,7 +615,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     // Verify destructive option
     const destructiveOption = page.locator('.modal-overlay button.option-btn.destructive');
     await expect(destructiveOption).toBeVisible({ timeout: 5000 });
-    
+
     const destructiveText = await destructiveOption.textContent();
     expect(destructiveText?.toLowerCase()).toContain('danger');
 
@@ -659,7 +659,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     // Verify Pause and Stop buttons
     const pauseButton = page.locator('.sidebar button.sidebar-btn.warning').filter({ hasText: 'Pause' });
     const stopButton = page.locator('.sidebar button.sidebar-btn.danger').filter({ hasText: 'Stop' });
-    
+
     await expect(pauseButton).toBeVisible({ timeout: 10000 });
     await expect(stopButton).toBeVisible({ timeout: 5000 });
 
@@ -688,7 +688,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     const pauseButtonResumed = page.locator('.sidebar button.sidebar-btn.warning').filter({ hasText: 'Pause' });
     const stopButtonResumed = page.locator('.sidebar button.sidebar-btn.danger').filter({ hasText: 'Stop' });
     const startButtonResumed = page.locator('.sidebar button.sidebar-btn.primary').filter({ hasText: 'Start Workflow' });
-    
+
     const anyControlVisible = await pauseButtonResumed.isVisible().catch(() => false)
       || await stopButtonResumed.isVisible().catch(() => false)
       || await startButtonResumed.isVisible().catch(() => false);
@@ -779,7 +779,7 @@ test.describe('Workflow Control (Pause, Resume, Stop)', () => {
     const hasStartButton = await page.locator('.sidebar button.sidebar-btn.primary').filter({ hasText: 'Start Workflow' }).isVisible().catch(() => false);
 
     console.log(`[TEST] Active runs: ${hasRunCards}, Pause: ${hasPauseButton}, Stop: ${hasStopButton}, Start: ${hasStartButton}`);
-    
+
     expect(hasRunCards || hasPauseButton || hasStopButton || hasStartButton).toBe(true);
 
     console.log('[TEST] Sidebar shows workflow control section');

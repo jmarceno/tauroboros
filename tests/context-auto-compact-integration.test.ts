@@ -24,7 +24,7 @@ function setupGitRepo(cwd: string): void {
 function copyExtension(projectDir: string): void {
   const extensionSrc = join(process.cwd(), ".pi", "extensions", "context-auto-compact");
   const extensionDest = join(projectDir, ".pi", "extensions", "context-auto-compact");
-  
+
   if (existsSync(extensionSrc)) {
     mkdirSync(extensionDest, { recursive: true });
     execSync(`cp -r "${extensionSrc}"/* "${extensionDest}"/ 2>/dev/null || true`, {
@@ -49,12 +49,12 @@ async function waitForCondition(
   timeoutMs: number = 30000
 ): Promise<boolean> {
   const startTime = Date.now();
-  
+
   while (Date.now() - startTime < timeoutMs) {
     if (condition()) return true;
     await Bun.sleep(100);
   }
-  
+
   return false;
 }
 
@@ -140,7 +140,7 @@ describe("context-auto-compact extension - real Pi integration", () => {
 
     // Send a prompt to trigger turn_end
     await send({ type: "prompt", message: "Say hello", id: "prompt-1" });
-    
+
     // Wait for turn to complete (event-driven, not fixed time)
     const turnCompleted = await waitForTurnEnd(30000);
     expect(turnCompleted).toBe(true);
@@ -165,7 +165,7 @@ describe("context-auto-compact extension - real Pi integration", () => {
 
     // Send a prompt to trigger turn_end (which loads settings)
     await send({ type: "prompt", message: "Hello", id: "prompt-1" });
-    
+
     // Wait for turn to complete (or error)
     await waitForTurnEnd(30000);
 
@@ -180,13 +180,13 @@ describe("context-auto-compact extension - real Pi integration", () => {
     // Should have an error about missing settings
     const errors = getExtensionErrors();
     expect(errors.length).toBeGreaterThan(0);
-    
-    const settingsError = errors.find((e) => 
+
+    const settingsError = errors.find((e) =>
       e.error?.toLowerCase().includes("context_settings") ||
       e.error?.toLowerCase().includes("enoent") ||
       e.error?.toLowerCase().includes("no such file")
     );
-    
+
     expect(settingsError).toBeDefined();
   });
 
@@ -207,7 +207,7 @@ describe("context-auto-compact extension - real Pi integration", () => {
 
     // Send a prompt to trigger turn_end
     await send({ type: "prompt", message: "Hello", id: "prompt-1" });
-    
+
     // Wait for turn to complete
     await waitForTurnEnd(30000);
 
@@ -225,12 +225,12 @@ describe("context-auto-compact extension - real Pi integration", () => {
 
     // Should have an error about missing compaction key
     expect(extensionErrors.length).toBeGreaterThan(0);
-    
-    const compactionError = extensionErrors.find((e) => 
+
+    const compactionError = extensionErrors.find((e) =>
       e.error?.toLowerCase().includes("compaction") ||
       e.error?.toLowerCase().includes("missing")
     );
-    
+
     expect(compactionError).toBeDefined();
   });
 
@@ -251,7 +251,7 @@ describe("context-auto-compact extension - real Pi integration", () => {
 
     // Send a prompt
     await send({ type: "prompt", message: "Hello", id: "prompt-1" });
-    
+
     // Wait for turn to complete
     const turnCompleted = await waitForTurnEnd(30000);
     expect(turnCompleted).toBe(true);
@@ -285,7 +285,7 @@ describe("context-auto-compact extension - real Pi integration", () => {
 
     // Send a prompt
     await send({ type: "prompt", message: "Hello", id: "prompt-1" });
-    
+
     // Wait for turn to complete
     const turnCompleted = await waitForTurnEnd(30000);
     expect(turnCompleted).toBe(true);
@@ -294,10 +294,10 @@ describe("context-auto-compact extension - real Pi integration", () => {
 
     // Extension should load fine, AGENTS.md error only happens during compaction
     const errors = getExtensionErrors();
-    const agentsErrors = errors.filter((e) => 
+    const agentsErrors = errors.filter((e) =>
       e.error?.includes("AGENTS.md") || e.error?.includes("ENOENT")
     );
-    
+
     expect(agentsErrors.length).toBe(0);
   });
 });

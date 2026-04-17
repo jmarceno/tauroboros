@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Test script for validating the compiled binary
- * 
+ *
  * This script tests:
  * 1. Binary can start successfully
  * 2. Health endpoint responds correctly
@@ -36,9 +36,9 @@ async function runTest(name: string, testFn: () => Promise<void>): Promise<void>
     results.push({ name, passed: true, duration: Date.now() - start })
     console.log(`  ✓ ${name}`)
   } catch (error) {
-    results.push({ 
-      name, 
-      passed: false, 
+    results.push({
+      name,
+      passed: false,
       error: error instanceof Error ? error.message : String(error),
       duration: Date.now() - start
     })
@@ -254,11 +254,11 @@ async function testCustomPort(): Promise<void> {
     // Test health on custom port with retries
     let retries = 5
     let lastError: Error | null = null
-    
+
     while (retries > 0) {
       try {
-        const response = await fetch("http://localhost:3791/healthz", { 
-          signal: AbortSignal.timeout(5000) 
+        const response = await fetch("http://localhost:3791/healthz", {
+          signal: AbortSignal.timeout(5000)
         })
         if (response.ok) {
           return // Success!
@@ -267,13 +267,13 @@ async function testCustomPort(): Promise<void> {
       } catch (e) {
         lastError = e instanceof Error ? e : new Error(String(e))
       }
-      
+
       retries--
       if (retries > 0) {
         await sleep(1000)
       }
     }
-    
+
     throw lastError || new Error("Failed to connect to custom port after retries")
   } finally {
     proc.kill()
@@ -300,7 +300,7 @@ async function main(): Promise<void> {
   const total = results.length
 
   console.log(`Results: ${passed}/${total} tests passed`)
-  
+
   if (failed > 0) {
     console.log("\nFailed tests:")
     results.filter(r => !r.passed).forEach(r => {

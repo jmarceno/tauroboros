@@ -104,7 +104,7 @@ export class PiSessionManager {
   async executePrompt(input: ExecuteSessionPromptInput): Promise<ExecuteSessionPromptResult> {
     // If resuming, use the same session ID
     const sessionId = input.resumedSessionId ?? randomUUID().slice(0, 8)
-    
+
     // Check if this is a resume of a container session
     let existingContainerId: string | null = null
     if (input.isResume && input.resumedSessionId && input.worktreeDir) {

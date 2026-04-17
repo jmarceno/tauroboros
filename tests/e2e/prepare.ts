@@ -1,16 +1,16 @@
 /**
  * Pre-test setup script
- * 
+ *
  * Prepares the test environment by creating a temp directory with all necessary files
  * Usage: bun run tests/e2e/prepare.ts [container]
  */
 
-import { mkdtempSync, writeFileSync, mkdirSync, cpSync, rmSync, existsSync, readFileSync, statSync } from 'fs';
-import { tmpdir } from 'os';
-import { join, resolve } from 'path';
-import { execSync } from 'child_process';
-import { fileURLToPath } from 'url';
-import { BASE_IMAGES } from '../../src/config/base-images.ts';
+import { mkdtempSync, writeFileSync, mkdirSync, cpSync, rmSync, existsSync, readFileSync, statSync } from "fs';
+import { tmpdir } from "os';
+import { join, resolve } from "path';
+import { execSync } from "child_process';
+import { fileURLToPath } from "url';
+import { BASE_IMAGES } from "../../src/config/base-images.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = resolve(__filename, '..');
@@ -49,13 +49,13 @@ const itemsToCopy = ['src', 'docker', 'skills', 'mock-llm-server', 'package.json
 for (const item of itemsToCopy) {
   const src = join(PROJECT_ROOT, item);
   const dest = join(projectDir, item);
-  
+
   try {
     if (!existsSync(src)) {
       console.warn(`[PREPARE] Source not found: ${src}`);
       continue;
     }
-    
+
     const stats = statSync(src);
     if (stats.isDirectory()) {
       mkdirSync(dest, { recursive: true });

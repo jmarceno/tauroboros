@@ -11,11 +11,11 @@ export interface ModelSelection {
 /**
  * Parse a model string into provider and modelId components.
  * Supports models with multiple slashes in the modelId (e.g., fireworks/accounts/fireworks/routers/kimi-k2p5-turbo)
- * 
+ *
  * Expected format: provider/modelId
  * - provider: The first segment before the first slash
  * - modelId: Everything after the first slash (can contain additional slashes)
- * 
+ *
  * Examples:
  * - "openai/gpt-4" -> { provider: "openai", modelId: "gpt-4" }
  * - "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo" -> { provider: "fireworks", modelId: "accounts/fireworks/routers/kimi-k2p5-turbo" }
@@ -28,7 +28,7 @@ export function parseModelSelection(model: string): ModelSelection | null {
 
   const trimmed = model.trim()
   const firstSlashIndex = trimmed.indexOf("/")
-  
+
   if (firstSlashIndex === -1) {
     // No slash found - invalid format
     return null
@@ -54,7 +54,7 @@ export function isValidModelFormat(model: string): boolean {
 /**
  * Get the display name for a model by extracting just the model name portion.
  * For models with complex paths, returns the last segment.
- * 
+ *
  * Examples:
  * - "openai/gpt-4" -> "gpt-4"
  * - "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo" -> "kimi-k2p5-turbo"
