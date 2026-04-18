@@ -37,12 +37,13 @@ describe("PiKanbanDB", () => {
     db.close()
   })
 
-  it("codeStylePrompt defaults to empty string and can be updated", () => {
+  it("codeStylePrompt defaults to DEFAULT_CODE_STYLE_PROMPT and can be updated", () => {
     const { db } = createTempDb()
 
-    // Verify default is empty string
+    // Verify default falls back to DEFAULT_CODE_STYLE_PROMPT when empty in DB
     const options = db.getOptions()
-    expect(options.codeStylePrompt).toBe("")
+    expect(options.codeStylePrompt.length).toBeGreaterThan(0)
+    expect(options.codeStylePrompt.includes("code style")).toBe(true)
 
     // Update to a custom prompt
     const customPrompt = "Custom code style enforcement rules"
@@ -53,9 +54,10 @@ describe("PiKanbanDB", () => {
     const reloaded = db.getOptions()
     expect(reloaded.codeStylePrompt).toBe(customPrompt)
 
-    // Reset to empty string
+    // Reset to empty string - falls back to DEFAULT_CODE_STYLE_PROMPT
     const reset = db.updateOptions({ codeStylePrompt: "" })
-    expect(reset.codeStylePrompt).toBe("")
+    expect(reset.codeStylePrompt).not.toBe("")
+    expect(reset.codeStylePrompt.length).toBeGreaterThan(0)
 
     db.close()
   })
@@ -341,5 +343,331 @@ describe("PiKanbanDB", () => {
     expect(afterVersions).toBe(beforeVersions + 1)
 
     db.close()
+  })
+
+  describe("archived tasks", () => {
+    it("getArchivedTasks() returns only archived tasks ordered by archived_at DESC", async () => {
+      const { db } = createTempDb()
+
+      db.createTask({ id: "arch-1", name: "Task 1", prompt: "P1", status: "done" })
+      db.createTask({ id: "arch-2", name: "Task 2", prompt: "P2", status: "done" })
+      db.createTask({ id: "arch-3", name: "Task 3", prompt: "P3", status: "backlog" })
+
+      let archived = db.getArchivedTasks()
+      expect(archived.length).toBe(0)
+
+      db.archiveTask("arch-1")
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      db.archiveTask("arch-2")
+
+      archived = db.getArchivedTasks()
+      expect(archived.length).toBe(2)
+      expect(archived.some((t) => t.id === "arch-1")).toBe(true)
+      expect(archived.some((t) => t.id === "arch-2")).toBe(true)
+      expect(archived.some((t) => t.id === "arch-3")).toBe(false)
+
+      expect(archived.every((t) => t.isArchived)).toBe(true)
+
+      const firstTimestamp = archived[0]?.archivedAt
+      const secondTimestamp = archived[1]?.archivedAt
+      expect(firstTimestamp).not.toBeNull()
+      expect(secondTimestamp).not.toBeNull()
+      if (firstTimestamp !== null && secondTimestamp !== null) {
+        expect(firstTimestamp).toBeGreaterThanOrEqual(secondTimestamp)
+      }
+
+      db.close()
+    })
+
+    it("getArchivedTasks() returns empty array when no archived tasks exist", () => {
+      const { db } = createTempDb()
+
+      db.createTask({ id: "no-arch-1", name: "Task 1", prompt: "P1", status: "backlog" })
+      db.createTask({ id: "no-arch-2", name: "Task 2", prompt: "P2", status: "executing" })
+
+      const archived = db.getArchivedTasks()
+      expect(archived).toEqual([])
+
+      db.close()
+    })
+
+    it("getArchivedTasksByRun() returns archived tasks for a specific run's task_order", () => {
+      const { db } = createTempDb()
+
+      db.createTask({ id: "run-arch-1", name: "Task 1", prompt: "P1", status: "done" })
+      db.createTask({ id: "run-arch-2", name: "Task 2", prompt: "P2", status: "done" })
+      db.createTask({ id: "run-arch-3", name: "Task 3", prompt: "P3", status: "done" })
+
+      db.createWorkflowRun({
+        id: "run-with-archived",
+        kind: "all_tasks",
+        displayName: "Test Run",
+        taskOrder: ["run-arch-1", "run-arch-2"],
+        status: "completed",
+        finishedAt: Math.floor(Date.now() / 1000),
+      })
+
+      db.archiveTask("run-arch-1")
+
+      let archivedInRun = db.getArchivedTasksByRun("run-with-archived")
+      expect(archivedInRun.length).toBe(1)
+      expect(archivedInRun[0]?.id).toBe("run-arch-1")
+
+      db.archiveTask("run-arch-2")
+
+      archivedInRun = db.getArchivedTasksByRun("run-with-archived")
+      expect(archivedInRun.length).toBe(2)
+      expect(archivedInRun.some((t) => t.id === "run-arch-1")).toBe(true)
+      expect(archivedInRun.some((t) => t.id === "run-arch-2")).toBe(true)
+
+      db.archiveTask("run-arch-3")
+      archivedInRun = db.getArchivedTasksByRun("run-with-archived")
+      expect(archivedInRun.length).toBe(2)
+      expect(archivedInRun.some((t) => t.id === "run-arch-3")).toBe(false)
+
+      db.close()
+    })
+
+    it("getArchivedTasksByRun() returns empty array for non-existent runId", () => {
+      const { db } = createTempDb()
+
+      const archived = db.getArchivedTasksByRun("non-existent-run")
+      expect(archived).toEqual([])
+
+      db.close()
+    })
+
+    it("getArchivedTasksByRun() returns empty array when run has no archived tasks", () => {
+      const { db } = createTempDb()
+
+      db.createTask({ id: "no-run-arch-1", name: "Task 1", prompt: "P1", status: "done" })
+      db.createTask({ id: "no-run-arch-2", name: "Task 2", prompt: "P2", status: "done" })
+
+      db.createWorkflowRun({
+        id: "run-no-archived",
+        kind: "all_tasks",
+        displayName: "Test Run",
+        taskOrder: ["no-run-arch-1", "no-run-arch-2"],
+        status: "completed",
+      })
+
+      const archived = db.getArchivedTasksByRun("run-no-archived")
+      expect(archived).toEqual([])
+
+      db.close()
+    })
+
+    it("getArchivedTasksByRun() returns empty array when run has empty task_order", () => {
+      const { db } = createTempDb()
+
+      db.createWorkflowRun({
+        id: "run-empty-order",
+        kind: "all_tasks",
+        displayName: "Test Run",
+        taskOrder: [],
+        status: "completed",
+      })
+
+      const archived = db.getArchivedTasksByRun("run-empty-order")
+      expect(archived).toEqual([])
+
+      db.close()
+    })
+
+    it("getWorkflowRunsWithArchivedTasks() returns only runs with archived tasks", () => {
+      const { db } = createTempDb()
+
+      db.createTask({ id: "wrat-1", name: "Task 1", prompt: "P1", status: "done" })
+      db.createTask({ id: "wrat-2", name: "Task 2", prompt: "P2", status: "done" })
+      db.createTask({ id: "wrat-3", name: "Task 3", prompt: "P3", status: "done" })
+      db.createTask({ id: "wrat-4", name: "Task 4", prompt: "P4", status: "done" })
+
+      db.createWorkflowRun({
+        id: "run-with-arch-1",
+        kind: "all_tasks",
+        displayName: "Run With Archived 1",
+        taskOrder: ["wrat-1"],
+        status: "completed",
+        finishedAt: 1000,
+      })
+
+      db.createWorkflowRun({
+        id: "run-with-arch-2",
+        kind: "all_tasks",
+        displayName: "Run With Archived 2",
+        taskOrder: ["wrat-2", "wrat-3"],
+        status: "completed",
+        finishedAt: 2000,
+      })
+
+      db.createWorkflowRun({
+        id: "run-without-arch",
+        kind: "all_tasks",
+        displayName: "Run Without Archived",
+        taskOrder: ["wrat-4"],
+        status: "completed",
+        finishedAt: 3000,
+      })
+
+      let runsWithArchived = db.getWorkflowRunsWithArchivedTasks()
+      expect(runsWithArchived.length).toBe(0)
+
+      db.archiveTask("wrat-1")
+      db.archiveTask("wrat-2")
+
+      runsWithArchived = db.getWorkflowRunsWithArchivedTasks()
+      expect(runsWithArchived.length).toBe(2)
+      expect(runsWithArchived.some((r) => r.id === "run-with-arch-1")).toBe(true)
+      expect(runsWithArchived.some((r) => r.id === "run-with-arch-2")).toBe(true)
+      expect(runsWithArchived.some((r) => r.id === "run-without-arch")).toBe(false)
+
+      expect(runsWithArchived[0]?.id).toBe("run-with-arch-2")
+      expect(runsWithArchived[1]?.id).toBe("run-with-arch-1")
+
+      db.close()
+    })
+
+    it("getWorkflowRunsWithArchivedTasks() returns empty array when no runs have archived tasks", () => {
+      const { db } = createTempDb()
+
+      db.createTask({ id: "no-wrat-1", name: "Task 1", prompt: "P1", status: "done" })
+      db.createWorkflowRun({
+        id: "run-no-arch-tasks",
+        kind: "all_tasks",
+        displayName: "Run",
+        taskOrder: ["no-wrat-1"],
+        status: "completed",
+      })
+
+      const runsWithArchived = db.getWorkflowRunsWithArchivedTasks()
+      expect(runsWithArchived).toEqual([])
+
+      db.close()
+    })
+
+    it("getArchivedTasksGroupedByRun() returns correct Map structure with run and tasks", () => {
+      const { db } = createTempDb()
+
+      db.createTask({ id: "group-1", name: "Task 1", prompt: "P1", status: "done" })
+      db.createTask({ id: "group-2", name: "Task 2", prompt: "P2", status: "done" })
+      db.createTask({ id: "group-3", name: "Task 3", prompt: "P3", status: "done" })
+
+      db.createWorkflowRun({
+        id: "run-group-1",
+        kind: "all_tasks",
+        displayName: "First Run",
+        taskOrder: ["group-1", "group-2"],
+        status: "completed",
+        finishedAt: 1000,
+      })
+
+      db.createWorkflowRun({
+        id: "run-group-2",
+        kind: "all_tasks",
+        displayName: "Second Run",
+        taskOrder: ["group-3"],
+        status: "completed",
+        finishedAt: 2000,
+      })
+
+      db.archiveTask("group-1")
+      db.archiveTask("group-2")
+      db.archiveTask("group-3")
+
+      const grouped = db.getArchivedTasksGroupedByRun()
+
+      expect(grouped.size).toBe(2)
+      expect(grouped.has("run-group-1")).toBe(true)
+      expect(grouped.has("run-group-2")).toBe(true)
+
+      const run1Data = grouped.get("run-group-1")
+      expect(run1Data).toBeDefined()
+      expect(run1Data?.run.id).toBe("run-group-1")
+      expect(run1Data?.run.displayName).toBe("First Run")
+      expect(run1Data?.tasks.length).toBe(2)
+      expect(run1Data?.tasks.some((t) => t.id === "group-1")).toBe(true)
+      expect(run1Data?.tasks.some((t) => t.id === "group-2")).toBe(true)
+
+      const run2Data = grouped.get("run-group-2")
+      expect(run2Data).toBeDefined()
+      expect(run2Data?.run.id).toBe("run-group-2")
+      expect(run2Data?.run.displayName).toBe("Second Run")
+      expect(run2Data?.tasks.length).toBe(1)
+      expect(run2Data?.tasks[0]?.id).toBe("group-3")
+
+      for (const [, data] of grouped) {
+        expect(data.tasks.every((t) => t.isArchived)).toBe(true)
+      }
+
+      db.close()
+    })
+
+    it("getArchivedTasksGroupedByRun() returns empty Map when no archived tasks exist", () => {
+      const { db } = createTempDb()
+
+      db.createTask({ id: "no-group-1", name: "Task 1", prompt: "P1", status: "done" })
+      db.createWorkflowRun({
+        id: "run-no-group",
+        kind: "all_tasks",
+        displayName: "Run",
+        taskOrder: ["no-group-1"],
+        status: "completed",
+      })
+
+      const grouped = db.getArchivedTasksGroupedByRun()
+      expect(grouped.size).toBe(0)
+
+      db.close()
+    })
+
+    it("getArchivedTasksGroupedByRun() handles mixed archived/non-archived tasks in runs", () => {
+      const { db } = createTempDb()
+
+      db.createTask({ id: "mixed-1", name: "Task 1", prompt: "P1", status: "done" })
+      db.createTask({ id: "mixed-2", name: "Task 2", prompt: "P2", status: "done" })
+      db.createTask({ id: "mixed-3", name: "Task 3", prompt: "P3", status: "done" })
+
+      db.createWorkflowRun({
+        id: "run-mixed",
+        kind: "all_tasks",
+        displayName: "Mixed Run",
+        taskOrder: ["mixed-1", "mixed-2", "mixed-3"],
+        status: "completed",
+      })
+
+      db.archiveTask("mixed-1")
+      db.archiveTask("mixed-3")
+
+      const grouped = db.getArchivedTasksGroupedByRun()
+
+      expect(grouped.size).toBe(1)
+      expect(grouped.has("run-mixed")).toBe(true)
+
+      const runData = grouped.get("run-mixed")
+      expect(runData?.tasks.length).toBe(2)
+      expect(runData?.tasks.some((t) => t.id === "mixed-1")).toBe(true)
+      expect(runData?.tasks.some((t) => t.id === "mixed-2")).toBe(false)
+      expect(runData?.tasks.some((t) => t.id === "mixed-3")).toBe(true)
+
+      db.close()
+    })
+
+    it("archived tasks are excluded from getTasks() and getTask()", () => {
+      const { db } = createTempDb()
+
+      db.createTask({ id: "exclude-1", name: "Task 1", prompt: "P1", status: "done" })
+      db.archiveTask("exclude-1")
+
+      const allTasks = db.getTasks()
+      expect(allTasks.some((t) => t.id === "exclude-1")).toBe(false)
+
+      const retrieved = db.getTask("exclude-1")
+      expect(retrieved).toBeNull()
+
+      const archived = db.getArchivedTasks()
+      expect(archived.some((t) => t.id === "exclude-1")).toBe(true)
+
+      db.close()
+    })
   })
 })
