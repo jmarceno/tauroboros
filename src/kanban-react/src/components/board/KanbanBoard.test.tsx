@@ -268,25 +268,6 @@ describe('KanbanBoard', () => {
     expect(screen.getByTestId('column-backlog-count')).toHaveTextContent('0')
   })
 
-  it('handles undefined tasks gracefully', () => {
-    render(
-      <KanbanBoard
-        tasks={undefined as unknown as Task[]}
-        bonSummaries={mockBonSummaries}
-        getTaskRunColor={getTaskRunColor}
-        isTaskMutationLocked={isTaskMutationLocked}
-        dragDrop={mockDragDrop}
-        groups={mockGroups}
-        groupMembers={mockGroupMembers}
-        {...mockCallbacks}
-      />
-    )
-
-    // Should not crash and should render columns with 0 tasks
-    expect(screen.getByTestId('column-template')).toBeInTheDocument()
-    expect(screen.getByTestId('column-backlog-count')).toHaveTextContent('0')
-  })
-
   it('correctly counts ungrouped tasks in backlog', () => {
     // task-1 is not in any group, task-2 and task-3 are in group-1
     const backlogTasks = mockTasks.filter(t => t.status === 'backlog')

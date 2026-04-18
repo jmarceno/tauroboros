@@ -287,6 +287,7 @@ export const KanbanBoard = memo(function KanbanBoard({
           onContinueReviews={onContinueReviews}
           onDeleteGroup={() => onDeleteGroup?.(activeGroup.id)}
           dragDrop={dragDrop}
+          isDragging={dragDrop.dragTaskId !== null}
         />
       )}
     </div>

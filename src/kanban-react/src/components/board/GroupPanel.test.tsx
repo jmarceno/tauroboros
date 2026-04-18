@@ -1,15 +1,25 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
+import React from 'react'
 import { GroupPanel } from './GroupPanel'
 import type { TaskGroup, Task } from '@/types'
+import {
+  OptionsContext,
+  TasksContext,
+  SessionUsageContext,
+  TaskLastUpdateContext,
+} from '@/contexts/AppContext'
+import type { Options } from '@/types'
+import type { useDragDrop } from '@/hooks/useDragDrop'
 
-// Mock dragDrop hook return type
-const createMockDragDrop = () => ({
-  dragTaskId: null as string | null,
-  dragSourceContext: null as string | null,
-  dragSourceGroupId: null as string | null,
-  dragOverTarget: null as { type: string; id: string } | null,
-  dragOverStatus: null as string | null,
+type DragDropHookReturn = ReturnType<typeof useDragDrop>
+
+const createMockDragDrop = (): DragDropHookReturn => ({
+  dragTaskId: null,
+  dragSourceContext: null,
+  dragSourceGroupId: null,
+  dragOverTarget: null,
+  dragOverStatus: null,
   handleDragStart: vi.fn(),
   handleDragEnd: vi.fn(),
   handleDragOver: vi.fn(),
@@ -18,6 +28,107 @@ const createMockDragDrop = () => ({
   handleDrop: vi.fn(),
   handleDropOnGroup: vi.fn(),
 })
+
+// Mock context values for TaskCard components
+const mockOptions: Options = {
+  branch: 'main',
+  planModel: 'test-model',
+  executionModel: 'test-model',
+  parallelTasks: 1,
+  maxReviews: 2,
+  maxJsonParseRetries: 5,
+  thinkingLevel: 'default',
+  planThinkingLevel: 'default',
+  executionThinkingLevel: 'default',
+  reviewThinkingLevel: 'default',
+  repairThinkingLevel: 'default',
+}
+
+
+
+// Create mock context providers for TaskCard
+const createMockContexts = () => ({
+  optionsContext: {
+    options: mockOptions,
+    isLoading: false,
+    error: null,
+    loadOptions: vi.fn(),
+    saveOptions: vi.fn(),
+    updateOptions: vi.fn(),
+    startExecution: vi.fn(),
+    stopExecution: vi.fn(),
+  },
+  tasksContext: {
+    tasks: [] as Task[],
+    setTasks: vi.fn(),
+    groupedTasks: {} as Record<string, Task[]>,
+    bonSummaries: {},
+    isLoading: false,
+    error: null,
+    getTaskById: vi.fn(),
+    getTaskName: vi.fn(),
+    loadTasks: vi.fn(),
+    refreshBonSummaries: vi.fn(),
+    createTask: vi.fn(),
+    updateTask: vi.fn(),
+    deleteTask: vi.fn(),
+    reorderTask: vi.fn(),
+    archiveAllDone: vi.fn(),
+    resetTask: vi.fn(),
+    resetTaskToGroup: vi.fn(),
+    moveTaskToGroup: vi.fn(),
+    approvePlan: vi.fn(),
+    requestPlanRevision: vi.fn(),
+    repairTask: vi.fn(),
+    startSingleTask: vi.fn(),
+    removeBonSummary: vi.fn(),
+  },
+  sessionUsageContext: {
+    usageCache: {},
+    isLoading: false,
+    error: null,
+    activeSessionIds: new Set<string>(),
+    loadSessionUsage: vi.fn(),
+    getCachedUsage: vi.fn(() => null),
+    clearCache: vi.fn(),
+    startWatching: vi.fn(),
+    stopWatching: vi.fn(),
+    startWatchingTask: vi.fn(),
+    stopWatchingTask: vi.fn(),
+    getTaskUsage: vi.fn(() => ({ totalTokens: 0, totalCost: 0 })),
+    formatTokenCount: vi.fn((count: number) => count.toString()),
+    formatCost: vi.fn((cost: number) => `$${cost.toFixed(2)}`),
+  },
+  taskLastUpdateContext: {
+    lastUpdateMap: {},
+    getLastUpdate: vi.fn(() => undefined),
+    formatLastUpdate: vi.fn(),
+    getUpdateAgeClass: vi.fn(),
+    loadLastUpdate: vi.fn(),
+  },
+})
+
+// Wrapper component that provides all required contexts
+function TestWrapper({ children }: { children: React.ReactNode }) {
+  const contexts = createMockContexts()
+
+  return (
+    <OptionsContext.Provider value={contexts.optionsContext}>
+      <TasksContext.Provider value={contexts.tasksContext}>
+        <SessionUsageContext.Provider value={contexts.sessionUsageContext}>
+          <TaskLastUpdateContext.Provider value={contexts.taskLastUpdateContext}>
+            {children}
+          </TaskLastUpdateContext.Provider>
+        </SessionUsageContext.Provider>
+      </TasksContext.Provider>
+    </OptionsContext.Provider>
+  )
+}
+
+// Custom render function that includes the test wrapper
+function renderWithContexts(ui: React.ReactElement) {
+  return render(ui, { wrapper: TestWrapper })
+}
 
 describe('GroupPanel', () => {
   const mockGroup: TaskGroup = {
@@ -88,12 +199,29 @@ describe('GroupPanel', () => {
   ]
 
   const mockCallbacks = {
+    // Required props for GroupPanel
+    bonSummaries: {} as Record<string, never>,
+    getTaskRunColor: vi.fn(() => null),
+    isTaskMutationLocked: vi.fn(() => false),
+    // Required callback props
     onClose: vi.fn(),
     onRemoveTask: vi.fn(),
     onAddTasks: vi.fn(),
     onStartGroup: vi.fn(),
     onOpenTask: vi.fn(),
     onDeleteGroup: vi.fn(),
+    onDeployTemplate: vi.fn(),
+    onOpenTaskSessions: vi.fn(),
+    onApprovePlan: vi.fn(),
+    onRequestRevision: vi.fn(),
+    onStartSingle: vi.fn(),
+    onRepairTask: vi.fn(),
+    onMarkDone: vi.fn(),
+    onResetTask: vi.fn(),
+    onConvertToTemplate: vi.fn(),
+    onArchiveTask: vi.fn(),
+    onViewRuns: vi.fn(),
+    onContinueReviews: vi.fn(),
   }
 
   beforeEach(() => {
@@ -101,7 +229,7 @@ describe('GroupPanel', () => {
   })
 
   it('returns null when isOpen is false', () => {
-    const { container } = render(
+    const { container } = renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -114,7 +242,7 @@ describe('GroupPanel', () => {
   })
 
   it('renders when isOpen is true', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -123,11 +251,12 @@ describe('GroupPanel', () => {
         {...mockCallbacks}
       />
     )
-    expect(screen.getByText('Test Group')).toBeInTheDocument()
+    // Use exact match to find the group title in the h3 element
+    expect(screen.getByRole('heading', { name: 'Test Group' })).toBeInTheDocument()
   })
 
   it('displays group name and task count', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -136,12 +265,12 @@ describe('GroupPanel', () => {
         {...mockCallbacks}
       />
     )
-    expect(screen.getByText('Test Group')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Test Group' })).toBeInTheDocument()
     expect(screen.getByText('2 tasks')).toBeInTheDocument()
   })
 
   it('uses singular "task" when count is 1', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={[mockTasks[0]]}
@@ -154,7 +283,7 @@ describe('GroupPanel', () => {
   })
 
   it('calls onClose when close button is clicked', () => {
-    const { container } = render(
+    const { container } = renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -172,7 +301,7 @@ describe('GroupPanel', () => {
   })
 
   it('calls onDeleteGroup when delete button is clicked', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -187,7 +316,7 @@ describe('GroupPanel', () => {
   })
 
   it('renders empty state when no tasks', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={[]}
@@ -201,7 +330,7 @@ describe('GroupPanel', () => {
   })
 
   it('renders task cards when tasks exist', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -215,7 +344,7 @@ describe('GroupPanel', () => {
   })
 
   it('displays task ID badges correctly', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -228,8 +357,8 @@ describe('GroupPanel', () => {
     expect(screen.getByText('#2')).toBeInTheDocument()
   })
 
-  it('displays task status correctly', () => {
-    render(
+  it('displays task status as data attribute', () => {
+    const { container } = renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -238,12 +367,15 @@ describe('GroupPanel', () => {
         {...mockCallbacks}
       />
     )
-    expect(screen.getByText('backlog')).toBeInTheDocument()
-    expect(screen.getByText('executing')).toBeInTheDocument()
+    // Task status is stored as data attribute on the task card
+    const task1 = container.querySelector('[data-task-id="task-1"]')
+    const task2 = container.querySelector('[data-task-id="task-2"]')
+    expect(task1).toHaveAttribute('data-task-status', 'backlog')
+    expect(task2).toHaveAttribute('data-task-status', 'executing')
   })
 
   it('calls onOpenTask when task card is clicked', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -252,13 +384,15 @@ describe('GroupPanel', () => {
         {...mockCallbacks}
       />
     )
-    const taskCard = screen.getByText('First Task').closest('.group-task-item')
-    fireEvent.click(taskCard!)
-    expect(mockCallbacks.onOpenTask).toHaveBeenCalledWith('task-1')
+    // Click on the first task title
+    const taskTitle = screen.getByText('First Task')
+    fireEvent.click(taskTitle)
+    // onOpenTask is called with task id (and optionally event)
+    expect(mockCallbacks.onOpenTask).toHaveBeenCalledWith('task-1', expect.anything())
   })
 
-  it('calls onRemoveTask when remove button is clicked', () => {
-    render(
+  it('calls onArchiveTask when archive button is clicked', () => {
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -267,28 +401,15 @@ describe('GroupPanel', () => {
         {...mockCallbacks}
       />
     )
-    // Find all remove buttons (they have aria-label with "Remove task")
-    const removeButtons = screen.getAllByLabelText(/Remove task/)
-    expect(removeButtons.length).toBe(2)
+    // Find task cards and look for the archive button (title="Archive Task")
+    // Note: Only tasks with status != 'executing' show the archive button
+    const archiveButtons = screen.getAllByTitle('Archive Task (Ctrl+click to skip confirmation)')
+    expect(archiveButtons.length).toBeGreaterThanOrEqual(1)
 
-    // Click first remove button
-    fireEvent.click(removeButtons[0])
-    expect(mockCallbacks.onRemoveTask).toHaveBeenCalledWith('task-1')
-  })
-
-  it('calls onRemoveTask with correct task ID', () => {
-    render(
-      <GroupPanel
-        group={mockGroup}
-        tasks={mockTasks}
-        isOpen={true}
-        dragDrop={createMockDragDrop()}
-        {...mockCallbacks}
-      />
-    )
-    const removeButtons = screen.getAllByLabelText(/Remove task/)
-    fireEvent.click(removeButtons[1])
-    expect(mockCallbacks.onRemoveTask).toHaveBeenCalledWith('task-2')
+    // Click first archive button (for task-1, backlog status)
+    fireEvent.click(archiveButtons[0])
+    // onArchiveTask is called with task id (and optionally event)
+    expect(mockCallbacks.onArchiveTask).toHaveBeenCalledWith('task-1', expect.anything())
   })
 
   it('calls handleDropOnGroup when drop occurs on the drop zone', () => {
@@ -296,7 +417,7 @@ describe('GroupPanel', () => {
     // Set up the drag state to simulate a task being dragged
     mockDragDrop.dragTaskId = 'dropped-task-id'
     
-    const { container } = render(
+    const { container } = renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -327,7 +448,7 @@ describe('GroupPanel', () => {
     // Ensure no drag task is set - but the handler is still called
     mockDragDrop.dragTaskId = null
     
-    const { container } = render(
+    const { container } = renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -358,7 +479,7 @@ describe('GroupPanel', () => {
     mockDragDrop.dragOverTarget = { type: 'group', id: 'group-1' }
     
     // Use empty tasks to show the drop zone text
-    const { container } = render(
+    const { container } = renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={[]}
@@ -382,7 +503,7 @@ describe('GroupPanel', () => {
     mockDragDrop.dragOverTarget = { type: 'group', id: 'group-1' }
     
     // Use empty tasks to show the drop zone
-    const { container, rerender } = render(
+    const { container, rerender } = renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={[]}
@@ -418,7 +539,7 @@ describe('GroupPanel', () => {
   })
 
   it('calls onStartGroup when start button is clicked', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -435,7 +556,7 @@ describe('GroupPanel', () => {
   })
 
   it('disables start button when no tasks', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={[]}
@@ -450,7 +571,7 @@ describe('GroupPanel', () => {
   })
 
   it('enables start button when tasks exist', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -465,7 +586,7 @@ describe('GroupPanel', () => {
   })
 
   it('renders color indicator with correct color', () => {
-    render(
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -476,15 +597,14 @@ describe('GroupPanel', () => {
     )
 
     // Find the color indicator - it's the div with background-color style
-    // Use case-insensitive attribute selector for better cross-browser compatibility
     const colorIndicator = document.querySelector('div[style*="background"]') ||
                           document.querySelector('[style*="#00d4ff"]')
     expect(colorIndicator).toBeInTheDocument()
     expect(colorIndicator).toHaveAttribute('style', expect.stringContaining('#00d4ff'))
   })
 
-  it('does not call onOpenTask when remove button is clicked (event stops propagation)', () => {
-    render(
+  it('does not call onOpenTask when archive button is clicked (event stops propagation)', () => {
+    renderWithContexts(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -494,12 +614,135 @@ describe('GroupPanel', () => {
       />
     )
 
-    const removeButtons = screen.getAllByLabelText(/Remove task/)
-    fireEvent.click(removeButtons[0])
+    const archiveButtons = screen.getAllByTitle('Archive Task (Ctrl+click to skip confirmation)')
+    fireEvent.click(archiveButtons[0])
 
     // onOpenTask should NOT be called because we stop propagation
     expect(mockCallbacks.onOpenTask).not.toHaveBeenCalled()
-    // onRemoveTask should be called
-    expect(mockCallbacks.onRemoveTask).toHaveBeenCalledWith('task-1')
+    // onArchiveTask should be called with task id (and optionally event)
+    expect(mockCallbacks.onArchiveTask).toHaveBeenCalledWith('task-1', expect.anything())
+  })
+
+  describe('drag-and-drop backdrop behavior', () => {
+    it('does not close panel when backdrop is clicked and isDragging is true', () => {
+      const { container } = renderWithContexts(
+        <GroupPanel
+          group={mockGroup}
+          tasks={mockTasks}
+          isOpen={true}
+          isDragging={true}
+          dragDrop={createMockDragDrop()}
+          {...mockCallbacks}
+        />
+      )
+
+      // Find and click the backdrop
+      const backdrop = container.querySelector('.group-panel-backdrop')
+      expect(backdrop).toBeInTheDocument()
+
+      fireEvent.click(backdrop!)
+
+      // onClose should NOT be called when dragging
+      expect(mockCallbacks.onClose).not.toHaveBeenCalled()
+    })
+
+    it('closes panel when backdrop is clicked and isDragging is false', () => {
+      const { container } = renderWithContexts(
+        <GroupPanel
+          group={mockGroup}
+          tasks={mockTasks}
+          isOpen={true}
+          isDragging={false}
+          dragDrop={createMockDragDrop()}
+          {...mockCallbacks}
+        />
+      )
+
+      const backdrop = container.querySelector('.group-panel-backdrop')
+      expect(backdrop).toBeInTheDocument()
+
+      fireEvent.click(backdrop!)
+
+      // Trigger animation end to complete the close sequence
+      const panel = container.querySelector('.group-panel')
+      fireEvent.animationEnd(panel!)
+
+      // onClose should be called when not dragging
+      expect(mockCallbacks.onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('closes panel when backdrop is clicked and isDragging is undefined (default)', () => {
+      const { container } = renderWithContexts(
+        <GroupPanel
+          group={mockGroup}
+          tasks={mockTasks}
+          isOpen={true}
+          dragDrop={createMockDragDrop()}
+          {...mockCallbacks}
+        />
+      )
+
+      const backdrop = container.querySelector('.group-panel-backdrop')
+      expect(backdrop).toBeInTheDocument()
+
+      fireEvent.click(backdrop!)
+
+      // Trigger animation end to complete the close sequence
+      const panel = container.querySelector('.group-panel')
+      fireEvent.animationEnd(panel!)
+
+      // onClose should be called when isDragging defaults to false
+      expect(mockCallbacks.onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('applies group-panel-backdrop-dragging CSS class when isDragging is true', () => {
+      const { container } = renderWithContexts(
+        <GroupPanel
+          group={mockGroup}
+          tasks={mockTasks}
+          isOpen={true}
+          isDragging={true}
+          dragDrop={createMockDragDrop()}
+          {...mockCallbacks}
+        />
+      )
+
+      const backdrop = container.querySelector('.group-panel-backdrop')
+      expect(backdrop).toBeInTheDocument()
+      expect(backdrop).toHaveClass('group-panel-backdrop-dragging')
+    })
+
+    it('does not apply group-panel-backdrop-dragging CSS class when isDragging is false', () => {
+      const { container } = renderWithContexts(
+        <GroupPanel
+          group={mockGroup}
+          tasks={mockTasks}
+          isOpen={true}
+          isDragging={false}
+          dragDrop={createMockDragDrop()}
+          {...mockCallbacks}
+        />
+      )
+
+      const backdrop = container.querySelector('.group-panel-backdrop')
+      expect(backdrop).toBeInTheDocument()
+      expect(backdrop).not.toHaveClass('group-panel-backdrop-dragging')
+    })
+
+    it('does not apply group-panel-backdrop-dragging CSS class when isDragging is undefined', () => {
+      const { container } = renderWithContexts(
+        <GroupPanel
+          group={mockGroup}
+          tasks={mockTasks}
+          isOpen={true}
+          dragDrop={createMockDragDrop()}
+          {...mockCallbacks}
+        />
+      )
+
+      const backdrop = container.querySelector('.group-panel-backdrop')
+      expect(backdrop).toBeInTheDocument()
+      expect(backdrop).not.toHaveClass('group-panel-backdrop-dragging')
+    })
   })
 })
