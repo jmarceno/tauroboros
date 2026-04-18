@@ -41,6 +41,7 @@ import { ConfirmModal } from "@/components/modals/ConfirmModal"
 import { StopConfirmModal } from "@/components/modals/StopConfirmModal"
 import { PlanningPromptModal } from "@/components/modals/PlanningPromptModal"
 import { ContainerConfigModal } from "@/components/modals/ContainerConfigModal"
+import { GroupCreateModal } from "@/components/modals/GroupCreateModal"
 
 function App() {
   // Container status
@@ -91,9 +92,11 @@ function App() {
   const [confirmModalTaskName, setConfirmModalTaskName] = useState('')
   const [logPanelCollapsed, setLogPanelCollapsed] = useState(false)
   const [highlightedRunId, setHighlightedRunId] = useState<string | null>(null)
+  const [showGroupCreateModal, setShowGroupCreateModal] = useState(false)
+  const [groupCreateModalData, setGroupCreateModalData] = useState<{ taskIds: string[]; defaultName?: string }>({ taskIds: [] })
 
   // Computed
-  const isAnyModalOpen = activeModal !== null || showContainerConfigModal || showStopConfirmModal || showConfirmModal
+  const isAnyModalOpen = activeModal !== null || showContainerConfigModal || showStopConfirmModal || showConfirmModal || showGroupCreateModal
   const consumedSlotsValue = runsHook.consumedRunSlots
   const parallelTasksValue = optionsHook.options?.parallelTasks ?? 1
   const isConnectedValue = wsHook.isConnected
@@ -142,8 +145,13 @@ function App() {
       setConfirmModalTaskId(null)
       return true
     }
+    if (showGroupCreateModal) {
+      setShowGroupCreateModal(false)
+      multiSelectHook.cancelGroupCreation()
+      return true
+    }
     return false
-  }, [activeModal, showContainerConfigModal, showStopConfirmModal, showConfirmModal, closeModal])
+  }, [activeModal, showContainerConfigModal, showStopConfirmModal, showConfirmModal, showGroupCreateModal, closeModal, multiSelectHook])
 
   const showConfirmation = useCallback((action: 'delete' | 'convertToTemplate', taskId: string, taskName: string, ctrlHeld: boolean) => {
     if (ctrlHeld) {
@@ -231,11 +239,49 @@ function App() {
     }
   })
 
+  // Group modal helpers
+  const openGroupCreateModal = useCallback((taskIds: string[]) => {
+    if (taskIds.length < 2) {
+      toastsHook.showToast('Select at least 2 tasks to create a group', 'error')
+      return
+    }
+    const defaultName = `Group ${taskGroupsHook.activeGroups.length + 1}`
+    setGroupCreateModalData({ taskIds, defaultName })
+    setShowGroupCreateModal(true)
+    multiSelectHook.startGroupCreation()
+  }, [taskGroupsHook.activeGroups.length, multiSelectHook, toastsHook])
+
+  const closeGroupCreateModal = useCallback(() => {
+    setShowGroupCreateModal(false)
+    setGroupCreateModalData({ taskIds: [] })
+    multiSelectHook.cancelGroupCreation()
+  }, [multiSelectHook])
+
+  const handleCreateGroup = useCallback(async (name: string) => {
+    const { taskIds } = groupCreateModalData
+    if (taskIds.length === 0) return
+
+    try {
+      await taskGroupsHook.createGroup(taskIds, name)
+      setShowGroupCreateModal(false)
+      setGroupCreateModalData({ taskIds: [] })
+      multiSelectHook.confirmGroupCreation()
+      toastsHook.showToast(`Group "${name}" created successfully`, 'success')
+    } catch (e) {
+      toastsHook.showToast(`Failed to create group: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    }
+  }, [groupCreateModalData, taskGroupsHook, multiSelectHook, toastsHook])
+
   // Keyboard shortcuts
   useKeyboard({
     onCreateTemplate: () => openModal('task', { mode: 'create', createStatus: 'template' }),
     onCreateBacklog: () => openModal('task', { mode: 'create', createStatus: 'backlog' }),
     onTogglePlanningChat: () => planningChatHook.togglePanel(),
+    onCreateGroup: () => {
+      if (multiSelectHook.isSelecting && multiSelectHook.selectedCount >= 2) {
+        openGroupCreateModal(multiSelectHook.getSelectedIds())
+      }
+    },
     onStartWorkflow: async () => {
       const grouped = tasksHook.groupedTasks
       const executableTasks = (grouped?.backlog?.length ?? 0) +
@@ -273,6 +319,10 @@ function App() {
       }
     },
     onEscape: () => {
+      if (showGroupCreateModal) {
+        closeGroupCreateModal()
+        return true
+      }
       if (multiSelectHook.isSelecting) {
         multiSelectHook.clearSelection()
         return true
@@ -562,28 +612,54 @@ function App() {
       toastsHook.addLog('Group deleted', 'info')
     }))
 
-    unsubscribers.push(wsHook.on('group_task_added', (payload) => {
-      const { groupId, taskId } = payload as { groupId: string; taskId: string }
+    unsubscribers.push(wsHook.on('group_task_added', () => {
       toastsHook.addLog(`Task added to group`, 'info')
       // Reload tasks to get updated groupId
       tasksHook.loadTasks()
     }))
 
-    unsubscribers.push(wsHook.on('group_task_removed', (payload) => {
-      const { groupId, taskId } = payload as { groupId: string; taskId: string }
+    unsubscribers.push(wsHook.on('group_task_removed', () => {
       toastsHook.addLog(`Task removed from group`, 'info')
       // Reload tasks to get updated groupId
       tasksHook.loadTasks()
     }))
 
-    unsubscribers.push(wsHook.on('group_execution_started', (payload) => {
-      const { groupId } = payload as { groupId: string }
+    unsubscribers.push(wsHook.on('group_execution_started', () => {
       toastsHook.showToast('Group execution started', 'success')
     }))
 
-    unsubscribers.push(wsHook.on('group_execution_complete', (payload) => {
-      const { groupId } = payload as { groupId: string }
+    unsubscribers.push(wsHook.on('group_execution_complete', () => {
       toastsHook.showToast('Group execution completed', 'success')
+    }))
+
+    // Task-scoped group WebSocket handlers
+    unsubscribers.push(wsHook.on('task_group_created', (payload) => {
+      const group = payload as TaskGroup
+      taskGroupsHook.updateGroupFromWebSocket(group)
+      toastsHook.addLog(`Group created from task context: ${group.name}`, 'success')
+    }))
+
+    unsubscribers.push(wsHook.on('task_group_updated', (payload) => {
+      const group = payload as TaskGroup
+      taskGroupsHook.updateGroupFromWebSocket(group)
+    }))
+
+    unsubscribers.push(wsHook.on('task_group_deleted', (payload) => {
+      const { id } = payload as { id: string }
+      taskGroupsHook.removeGroupFromWebSocket(id)
+      toastsHook.addLog('Group deleted from task context', 'info')
+    }))
+
+    unsubscribers.push(wsHook.on('task_group_members_added', (payload) => {
+      const { count } = payload as { groupId: string; taskIds: string[]; count: number }
+      toastsHook.addLog(`${count} task(s) added to group`, 'info')
+      tasksHook.loadTasks()
+    }))
+
+    unsubscribers.push(wsHook.on('task_group_members_removed', (payload) => {
+      const { count } = payload as { groupId: string; taskIds: string[]; count: number }
+      toastsHook.addLog(`${count} task(s) removed from group`, 'info')
+      tasksHook.loadTasks()
     }))
 
     wsHook.onReconnect(() => {
@@ -920,16 +996,7 @@ function App() {
                                 selectedCount={multiSelectHook.selectedCount}
                                 onCreateGroup={() => {
                                   const selectedIds = multiSelectHook.getSelectedIds()
-                                  if (selectedIds.length >= 2) {
-                                    taskGroupsHook.createGroup(selectedIds)
-                                      .then(() => {
-                                        multiSelectHook.clearSelection()
-                                        toastsHook.showToast('Group created successfully', 'success')
-                                      })
-                                      .catch((e) => {
-                                        toastsHook.showToast(`Failed to create group: ${e instanceof Error ? e.message : String(e)}`, 'error')
-                                      })
-                                  }
+                                  openGroupCreateModal(selectedIds)
                                 }}
                                 onBatchEdit={() => openModal('batchEdit', { taskIds: multiSelectHook.getSelectedIds() })}
                                 onClear={multiSelectHook.clearSelection}
@@ -1004,6 +1071,16 @@ function App() {
                                 <BatchEditModal
                                   taskIds={(modalData.taskIds as string[]) || []}
                                   onClose={closeModal}
+                                />
+                              )}
+
+                              {showGroupCreateModal && (
+                                <GroupCreateModal
+                                  taskCount={multiSelectHook.selectedCount}
+                                  defaultName={groupCreateModalData.defaultName}
+                                  isLoading={taskGroupsHook.loading}
+                                  onClose={closeGroupCreateModal}
+                                  onConfirm={handleCreateGroup}
                                 />
                               )}
 
