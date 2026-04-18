@@ -101,7 +101,7 @@ function App() {
   const planningChatHook = usePlanningChat(wsHook)
   const sessionUsageHook = useSessionUsage(wsHook)
   const taskLastUpdateHook = useTaskLastUpdate(wsHook)
-  const taskGroupsHook = useTaskGroups()
+  const taskGroupsHook = useTaskGroups({ showToast: toastsHook.showToast })
 
   // Workflow control
   const workflowControl = useWorkflowControl(

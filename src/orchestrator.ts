@@ -13,7 +13,7 @@ import { PiSessionManager } from "./runtime/session-manager.ts"
 import { PiReviewSessionRunner } from "./runtime/review-session.ts"
 import { CodeStyleSessionRunner } from "./runtime/codestyle-session.ts"
 import { BestOfNRunner } from "./runtime/best-of-n.ts"
-import { WorktreeLifecycle, resolveTargetBranch, listWorktrees, type WorktreeInfo } from "./runtime/worktree.ts"
+import { WorktreeLifecycle, resolveTargetBranch, listWorktrees, type WorktreeInfo, WorktreeError } from "./runtime/worktree.ts"
 import type { PiContainerManager } from "./runtime/container-manager.ts"
 import { PiRpcProcess, CollectEventsTimeoutError } from "./runtime/pi-process.ts"
 import { ContainerPiProcess } from "./runtime/container-pi-process.ts"
@@ -48,6 +48,24 @@ function tagOutput(tag: string, text: string): string {
  * Determine if a task that timed out was "essentially complete" based on collected events.
  * This heuristic checks if meaningful work was done before the timeout occurred.
  */
+/**
+ * Check if an error is a merge conflict failure.
+ */
+function isMergeConflictError(error: unknown): boolean {
+  if (error instanceof WorktreeError) {
+    return error.code === "MERGE_FAILED" || 
+           (error.gitOutput?.includes("CONFLICT") ?? false) ||
+           (error.gitOutput?.includes("conflict") ?? false)
+  }
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase()
+    return msg.includes("merge failed") || 
+           msg.includes("conflict") || 
+           msg.includes("automatic merge failed")
+  }
+  return false
+}
+
 function checkEssentialCompletion(collectedEvents: Record<string, unknown>[]): {
   isEssentiallyComplete: boolean
   reason: string
@@ -1656,6 +1674,69 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         }
       }
 
+      // Special handling for merge conflicts
+      // Send repair agent to fix the merge instead of failing the task
+      if (isMergeConflictError(error)) {
+        console.log(`[orchestrator] Merge conflict detected for task ${task.name}(${task.id}), attempting repair`)
+        const targetBranch = await resolveTargetBranch({
+          baseDirectory: this.projectRoot,
+          taskBranch: task.branch,
+          optionBranch: options.branch,
+        })
+
+        const repairSuccess = await this.runMergeRepairPrompt(
+          task.id,
+          task,
+          options,
+          worktreeInfo,
+          targetBranch,
+          error instanceof WorktreeError ? error : new Error(String(error)),
+        )
+
+        if (repairSuccess) {
+          console.log(`[orchestrator] Merge repair succeeded for task ${task.name}(${task.id}), completing task`)
+          try {
+            // Try to complete the worktree again (merge should now succeed)
+            await this.worktree.complete(worktreeInfo.directory, {
+              branch: worktreeInfo.branch,
+              targetBranch,
+              shouldMerge: true,
+              shouldRemove: task.deleteWorktree !== false,
+            })
+
+            this.db.updateTask(task.id, {
+              status: "done",
+              completedAt: nowUnix(),
+              worktreeDir: task.deleteWorktree !== false ? null : worktreeInfo.directory,
+              executionPhase: task.planmode ? "implementation_done" : undefined,
+            })
+            this.broadcastTask(task.id)
+            return
+          } catch (completionError) {
+            // If completion still fails after repair, mark as failed
+            const message = completionError instanceof Error ? completionError.message : String(completionError)
+            console.error(`[orchestrator] Worktree completion failed after merge repair: ${message}`)
+            this.db.updateTask(task.id, {
+              status: "failed",
+              errorMessage: `Merge repair succeeded but worktree completion failed: ${message}`,
+              worktreeDir: worktreeInfo?.directory ?? task.worktreeDir,
+            })
+            this.broadcastTask(task.id)
+            throw completionError
+          }
+        } else {
+          // Repair failed - mark as stuck since the task work is done but merge failed
+          console.error(`[orchestrator] Merge repair failed for task ${task.name}(${task.id})`)
+          this.db.updateTask(task.id, {
+            status: "stuck",
+            errorMessage: `Merge conflict could not be resolved automatically. Manual intervention required to merge '${worktreeInfo.branch}' into '${targetBranch}'`,
+            worktreeDir: worktreeInfo?.directory ?? task.worktreeDir,
+          })
+          this.broadcastTask(task.id)
+          throw error
+        }
+      }
+
       const message = error instanceof Error ? error.message : String(error)
       this.db.updateTask(task.id, {
         status: "failed",
@@ -2065,6 +2146,73 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     if (commit.responseText.trim()) {
       this.db.appendAgentOutput(taskId, tagOutput("commit", commit.responseText))
       this.broadcastTask(taskId)
+    }
+  }
+
+  /**
+   * Repair a merge conflict by sending a prompt to the agent.
+   * The agent will resolve the conflicts and complete the merge.
+   */
+  private async runMergeRepairPrompt(
+    taskId: string,
+    task: Task,
+    options: Options,
+    worktreeInfo: WorktreeInfo,
+    targetBranch: string,
+    mergeError: WorktreeError | Error,
+  ): Promise<boolean> {
+    console.log(`[orchestrator] Running merge repair for task ${task.name}(${taskId})`)
+
+    const mergeOutput = mergeError instanceof WorktreeError ? mergeError.gitOutput : ""
+    const repairPrompt = `A merge conflict occurred when merging branch '${worktreeInfo.branch}' into '${targetBranch}'.
+
+Git output:
+${mergeOutput || mergeError.message}
+
+Your task is to:
+1. Check the current git status to understand the conflicts
+2. Resolve all merge conflicts by choosing the appropriate changes (prefer the task branch changes when in doubt)
+3. Stage the resolved files
+4. Complete the merge by creating a merge commit
+5. Ensure the merge is successful
+
+Run git commands as needed to resolve the conflicts. After resolving, verify with 'git status' that there are no remaining conflicts.`
+
+    try {
+      const repair = await this.runSessionPrompt({
+        task,
+        sessionKind: "repair",
+        cwd: worktreeInfo.directory,
+        worktreeDir: worktreeInfo.directory,
+        branch: worktreeInfo.branch,
+        model: options.repairModel !== "default" ? options.repairModel : options.executionModel,
+        thinkingLevel: options.repairThinkingLevel,
+        promptText: repairPrompt,
+      })
+
+      if (repair.responseText.trim()) {
+        this.db.appendAgentOutput(taskId, tagOutput("merge-repair", repair.responseText))
+        this.broadcastTask(taskId)
+      }
+
+      // Verify the merge was resolved by checking git status
+      const status = await this.worktree.inspect(worktreeInfo.directory)
+      if (status.stagedFiles.length > 0 || status.modifiedFiles.length > 0) {
+        // There are still uncommitted changes - try to commit them
+        console.log(`[orchestrator] Merge repair has uncommitted changes, attempting commit`)
+        const commitResult = await runShellCommand(`git commit -m "Resolve merge conflicts"`, worktreeInfo.directory)
+        if (commitResult.exitCode !== 0) {
+          console.warn(`[orchestrator] Automatic commit after merge repair failed: ${commitResult.stderr}`)
+        }
+      }
+
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[orchestrator] Merge repair failed: ${message}`)
+      this.db.appendAgentOutput(taskId, `\n[merge-repair-error]\n${message}\n`)
+      this.broadcastTask(taskId)
+      return false
     }
   }
 

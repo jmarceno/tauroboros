@@ -1,7 +1,11 @@
 import { useState, useCallback, useMemo } from "react"
 import type { TaskGroup } from "@/types"
+import type { ToastVariant } from "@/types"
 import { useApi } from "./useApi"
 import { useToasts } from "./useToasts"
+
+// Type for the optional toast function that can be passed in
+type ShowToastFn = (message: string, variant?: ToastVariant, duration?: number) => number
 
 /**
  * Parse error message for user-friendly display.
@@ -40,9 +44,11 @@ export type GroupState = {
   activeGroupId: string | null
 }
 
-export function useTaskGroups() {
+export function useTaskGroups(opts: { showToast?: ShowToastFn } = {}) {
   const api = useApi()
-  const { showToast } = useToasts()
+  const localToasts = useToasts()
+  // Use passed-in showToast if provided, otherwise fall back to local instance
+  const showToast = opts.showToast ?? localToasts.showToast
   const [groups, setGroups] = useState<TaskGroup[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

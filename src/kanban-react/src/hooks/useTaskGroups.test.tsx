@@ -29,6 +29,58 @@ function createMockGroup(overrides: Partial<TaskGroup> = {}): TaskGroup {
 }
 
 describe('useTaskGroups', () => {
+  // Test that passed-in showToast takes precedence
+  it('uses passed showToast when provided', async () => {
+    const passedShowToast = vi.fn()
+    const localShowToast = vi.fn()
+    
+    // Override the mock to return different functions
+    vi.mocked(useToasts).mockReturnValue({ showToast: localShowToast } as unknown as ReturnType<typeof useToasts>)
+    
+    mockApi.startGroup.mockRejectedValue(new Error('Test error'))
+    mockApi.getTaskGroups.mockResolvedValue([createMockGroup({ id: 'group-1' })])
+
+    const { result } = renderHook(() => useTaskGroups({ showToast: passedShowToast }))
+
+    await act(async () => {
+      await result.current.loadGroups()
+    })
+
+    await act(async () => {
+      try {
+        await result.current.startGroup('group-1')
+      } catch (e) {
+        // Expected
+      }
+    })
+
+    // Should use passed showToast, not local one
+    expect(passedShowToast).toHaveBeenCalled()
+    expect(localShowToast).not.toHaveBeenCalled()
+  })
+
+  // Test that local showToast is used when not passed
+  it('falls back to local showToast when not provided', async () => {
+    mockApi.startGroup.mockRejectedValue(new Error('Test error'))
+    mockApi.getTaskGroups.mockResolvedValue([createMockGroup({ id: 'group-1' })])
+
+    const { result } = renderHook(() => useTaskGroups())
+
+    await act(async () => {
+      await result.current.loadGroups()
+    })
+
+    await act(async () => {
+      try {
+        await result.current.startGroup('group-1')
+      } catch (e) {
+        // Expected
+      }
+    })
+
+    // Should use local showToast
+    expect(mockShowToast).toHaveBeenCalled()
+  })
   const mockApi = {
     getTaskGroups: vi.fn(),
     getTaskGroup: vi.fn(),
