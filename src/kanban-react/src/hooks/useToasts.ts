@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react"
 import type { Toast, ToastVariant, LogEntry } from "@/types"
+import { formatLocalTime } from "@/utils/date"
 
 export function useToasts() {
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -9,7 +10,7 @@ export function useToasts() {
   const MAX_LOG_ENTRIES = 500
 
   const addLog = useCallback((message: string, variant: ToastVariant = 'info') => {
-    const ts = new Date().toLocaleTimeString()
+    const ts = formatLocalTime(Math.floor(Date.now() / 1000))
     setLogs(prev => {
       const newLogs = [...prev, { ts, message, variant }]
       if (newLogs.length > MAX_LOG_ENTRIES) {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useMemo } from 'react'
 import { ModalWrapper } from '../common/ModalWrapper'
 import { useSessionContext, useToastContext } from '@/contexts/AppContext'
+import { formatLocalTime } from '@/utils/date'
 
 interface SessionModalProps {
   sessionId: string
@@ -56,7 +57,7 @@ export function SessionModal({ sessionId, onClose }: SessionModalProps) {
               <div className="flex items-center gap-2 mb-2">
                 <span className={`session-role ${msg.role}`}>{msg.role}</span>
                 <span className="text-xs text-dark-text-muted">
-                  {new Date(msg.timestamp).toLocaleTimeString()}
+                  {formatLocalTime(msg.timestamp)}
                 </span>
               </div>
               <div className="text-sm text-dark-text">

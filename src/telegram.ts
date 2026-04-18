@@ -1,3 +1,5 @@
+import { formatTimestampForNotification } from "./utils/date-format.ts"
+
 export interface TelegramConfig {
   botToken: string
   chatId: string
@@ -28,7 +30,7 @@ const STATUS_EMOJI: Record<string, string> = {
 
 function buildMessage(taskName: string, oldStatus: string, newStatus: string): string {
   const emoji = STATUS_EMOJI[newStatus] ?? "💬"
-  const time = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC"
+  const time = formatTimestampForNotification()
   return [
     `${emoji} *Task State Update*`,
     ``,

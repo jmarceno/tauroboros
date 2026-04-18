@@ -1,5 +1,6 @@
 import { memo, useCallback, useState } from 'react'
 import type { TaskGroup, TaskGroupStatus } from '@/types'
+import { formatLocalDate } from '@/utils/date'
 
 interface VirtualCardProps {
   group: TaskGroup
@@ -48,14 +49,6 @@ export const VirtualCard = memo(function VirtualCard({
     }
   }, [onClick])
 
-  const formatDate = useCallback((timestamp: number) => {
-    return new Date(timestamp * 1000).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    })
-  }, [])
-
   const getStatusIcon = useCallback((status: TaskGroupStatus) => {
     switch (status) {
       case 'active':
@@ -95,7 +88,7 @@ export const VirtualCard = memo(function VirtualCard({
         tabIndex={0}
         role="button"
         aria-label={`${group.name} group with ${taskCount} task${taskCount !== 1 ? 's' : ''}, status ${group.status}. Press Enter to open.`}
-        title={`Created: ${formatDate(group.createdAt)}\nClick to manage group`}
+        title={`Created: ${formatLocalDate(group.createdAt)}\nClick to manage group`}
       >
         {/* Header */}
         <div className="virtual-card-header">

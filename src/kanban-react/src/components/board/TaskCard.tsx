@@ -3,6 +3,7 @@ import type { Task, BestOfNSummary } from "@/types"
 import type { useDragDrop } from "@/hooks/useDragDrop"
 import { useOptionsContext, useTasksContext } from "@/contexts/AppContext"
 import { useApi } from "@/hooks/useApi"
+import { formatLocalDateTime, formatRelativeTime } from "@/utils/date"
 
 interface TaskCardProps {
   task: Task
@@ -88,7 +89,8 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
           try {
             const usage = await api.getSessionUsage(session.id)
             return usage
-          } catch {
+          } catch (err) {
+            console.error(`Failed to load usage for session ${session.id}:`, err)
             return null
           }
         })
@@ -102,8 +104,8 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
         })
 
         setUsageData({ totalTokens, totalCost })
-      } catch {
-        // Silently fail
+      } catch (err) {
+        console.error('Failed to load session usage data:', err)
       }
     }
 
@@ -117,8 +119,8 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
             setLastUpdate(data.lastUpdateAt)
           }
         }
-      } catch {
-        // Silently fail
+      } catch (err) {
+        console.error('Failed to load last update timestamp:', err)
       }
     }
 
@@ -131,22 +133,6 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
 }
 
 // Format helpers
-function formatRelativeTime(timestamp: number): string {
-  const diffMs = Date.now() - timestamp * 1000
-  const diffSec = Math.floor(diffMs / 1000)
-
-  if (diffSec < 10) return 'just now'
-  if (diffSec < 60) return `${diffSec}s ago`
-
-  const diffMin = Math.floor(diffSec / 60)
-  if (diffMin < 60) return `${diffMin}m ago`
-
-  const diffHour = Math.floor(diffMin / 60)
-  if (diffHour < 24) return `${diffHour}h ago`
-
-  const diffDay = Math.floor(diffHour / 24)
-  return `${diffDay}d ago`
-}
 
 function getUpdateAgeClass(timestamp: number): string {
   const diffMs = Date.now() - timestamp * 1000
@@ -644,11 +630,11 @@ export const TaskCard = memo(function TaskCard({
       )}
 
       {/* Last Update badge - shows when the last message was received */}
-      {lastUpdateFormatted && hasLocalSession && (
+      {lastUpdate !== null && lastUpdateFormatted && hasLocalSession && (
         <div className="flex items-center gap-2 mt-1 text-xs">
           <span
             className={`px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full flex items-center gap-1 task-last-update-badge ${lastUpdateAgeClass}`}
-            title={`Last message received at ${new Date(lastUpdate! * 1000).toLocaleString()}`}
+            title={`Last message received at ${formatLocalDateTime(lastUpdate)}`}
           >
             🕐 {lastUpdateFormatted}
           </span>
@@ -658,7 +644,7 @@ export const TaskCard = memo(function TaskCard({
       {/* Completed date */}
       {task.completedAt && (
         <div className="text-xs text-dark-text-muted mt-1">
-          Completed: {new Date(task.completedAt * 1000).toLocaleString()}
+          Completed: {formatLocalDateTime(task.completedAt)}
         </div>
       )}
 
