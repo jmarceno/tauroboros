@@ -1048,28 +1048,55 @@
   }
 
   /* ============================================
-     GROUP-PANEL COMPONENTS
+     GROUP-PANEL COMPONENTS - FLOATING COLUMN
      ============================================ */
 
+  /* Column wrapper for positioning context */
+  .kanban-column-wrapper {
+    @apply flex flex-col;
+  }
+
+  .kanban-column-wrapper.relative {
+    position: relative;
+  }
+
+  /* Floating Group Panel - positioned beside Backlog column */
   .group-panel {
-    @apply fixed top-0 right-0 h-screen w-[350px] bg-dark-surface border-l border-dark-border flex flex-col z-40;
+    @apply absolute top-0 left-full w-[350px] bg-dark-surface border border-dark-border rounded-r-lg flex flex-col z-50;
+    height: 100%;
+    margin-left: 4px;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 212, 255, 0.1);
+    transform-origin: left center;
   }
 
+  /* Override box-shadow to use CSS custom property for group color glow */
+  .group-panel[style*="--group-color"] {
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--group-color, rgba(0, 212, 255, 0.2)), 0 0 16px var(--group-color, rgba(0, 212, 255, 0.15));
+  }
+
+  /* Slide-in animation from left (beside Backlog) */
   .group-panel-enter {
-    animation: slide-in-right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: slide-in-from-backlog 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
+  /* Slide-out animation to the left */
   .group-panel-exit {
-    animation: slide-out-right 0.2s ease-in;
+    animation: slide-out-to-backlog 0.2s ease-in;
   }
 
-  .group-panel-backdrop {
-    @apply fixed inset-0 bg-black/50 z-30;
-    backdrop-filter: blur(2px);
+  /* Column overlay effect when panel is open */
+  .kanban-column-wrapper:has(.group-panel) + .kanban-column-wrapper {
+    position: relative;
   }
 
-  .group-panel-backdrop-dragging {
+  .kanban-column-wrapper:has(.group-panel) + .kanban-column-wrapper::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
     pointer-events: none;
+    z-index: 40;
+    border-radius: 0.5rem;
   }
 
   .group-drop-zone {
@@ -1134,6 +1161,7 @@
    ANIMATION KEYFRAMES
    ============================================ */
 
+/* Legacy keyframes - kept for backwards compatibility */
 @keyframes slide-in-right {
   from {
     transform: translateX(100%);
@@ -1152,6 +1180,29 @@
   }
   to {
     transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+/* Group Panel animations - slide from beside Backlog column */
+@keyframes slide-in-from-backlog {
+  from {
+    transform: translateX(-20px) scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes slide-out-to-backlog {
+  from {
+    transform: translateX(0) scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-20px) scale(0.95);
     opacity: 0;
   }
 }
