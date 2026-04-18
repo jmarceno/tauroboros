@@ -1,14 +1,5 @@
 /**
  * Query Keys - Centralized query key management for TanStack Query
- * 
- * Query keys determine caching behavior. When a key changes or is invalidated,
- * the query refetches. Proper key structure enables precise cache invalidation.
- * 
- * Key patterns:
- * - ['entity'] - All entities of a type
- * * - ['entity', id] - Specific entity
- * - ['entity', id, 'relation'] - Related data for an entity
- * - ['entity', 'filter', value] - Filtered entity list
  */
 
 export const queryKeys = {
@@ -88,6 +79,17 @@ export const queryKeys = {
     sessionMessages: (id: string) => [...queryKeys.planning.session(id), 'messages'] as const,
     activeSessions: () => [...queryKeys.planning.sessions(), 'active'] as const,
   },
+
+  // Stats
+  stats: {
+    all: ['stats'] as const,
+    usage: (range: string) => [...queryKeys.stats.all, 'usage', range] as const,
+    tasks: ['stats', 'tasks'] as const,
+    models: ['stats', 'models'] as const,
+    duration: ['stats', 'duration'] as const,
+    hourly: ['stats', 'hourly'] as const,
+    daily: (days: number) => [...queryKeys.stats.all, 'daily', days] as const,
+  },
 } as const
 
 // Type exports for type-safe key construction
@@ -100,3 +102,4 @@ export type TaskGroupQueryKeys = QueryKeys['taskGroups']
 export type ReferenceQueryKeys = QueryKeys['reference']
 export type ContainerQueryKeys = QueryKeys['containers']
 export type PlanningQueryKeys = QueryKeys['planning']
+export type StatsQueryKeys = QueryKeys['stats']

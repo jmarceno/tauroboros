@@ -484,6 +484,43 @@ export interface CreatePlanningSessionDTO {
   thinkingLevel?: ThinkingLevel
 }
 
+// Stats Types
+export interface UsageStats {
+  totalTokens: number
+  totalCost: number
+  tokenChange: number
+  costChange: number
+}
+
+export interface TaskStats {
+  completed: number
+  failed: number
+  averageReviews: number
+}
+
+export interface ModelUsage {
+  model: string
+  count: number
+}
+
+export interface ModelUsageStats {
+  plan: ModelUsage[]
+  execution: ModelUsage[]
+  review: ModelUsage[]
+}
+
+export interface DailyUsage {
+  date: string
+  tokens: number
+  cost: number
+}
+
+export interface HourlyUsage {
+  hour: string
+  tokens: number
+  cost: number
+}
+
 // Toast Types
 export interface TaskGroup {
   id: string
