@@ -56,8 +56,8 @@ export function RestoreToGroupModal({
         <div className="px-6 py-4 border-b border-dark-border">
           <div className="flex items-center gap-3">
             <div
-              className="w-3 h-3 rounded-full"
-              style={{ backgroundColor: group.color }}
+              className="group-color-indicator"
+              data-indicator-color={group.color}
             />
             <h2 className="text-lg font-semibold text-dark-text">
               Restore Task to Group?
@@ -73,8 +73,8 @@ export function RestoreToGroupModal({
           </p>
 
           <div
-            className="p-3 rounded-md border border-dark-border bg-dark-surface2"
-            style={{ borderLeft: `4px solid ${group.color}` }}
+            className="p-3 rounded-md border border-dark-border bg-dark-surface2 border-l-4"
+            data-group-tag-color={group.color}
           >
             <div className="flex items-center gap-2 text-sm text-dark-text-secondary">
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

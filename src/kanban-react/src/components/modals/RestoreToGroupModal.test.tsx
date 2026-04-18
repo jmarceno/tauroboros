@@ -177,22 +177,11 @@ describe('RestoreToGroupModal', () => {
         />
       )
 
-      // Look for any element with style attribute that contains the color
-      const allWithStyle = container.querySelectorAll('[style]')
-      let foundHeaderIndicator = false
-      let foundInfoBoxBorder = false
+      // Look for elements with data attributes that contain the color
+      const colorIndicator = container.querySelector('[data-indicator-color="#ff0000"]')
+      const borderElement = container.querySelector('[data-group-tag-color="#ff0000"]')
       
-      for (const el of allWithStyle) {
-        const style = el.getAttribute('style') || ''
-        if (style.includes('background') && style.includes('#ff0000')) {
-          foundHeaderIndicator = true
-        }
-        if (style.includes('borderLeft') && style.includes('#ff0000')) {
-          foundInfoBoxBorder = true
-        }
-      }
-      
-      expect(foundHeaderIndicator || foundInfoBoxBorder).toBe(true)
+      expect(colorIndicator !== null || borderElement !== null).toBe(true)
     })
 
     it('shows group name with color indicator in info box', () => {

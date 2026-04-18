@@ -2,57 +2,107 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Prototype 6 - Cyberpunk Neon Theme - TIGHT SPACING */
-@layer base {
-  html {
-    scrollbar-color: #2a2a3e transparent;
+/* ============================================
+   TAILWIND CUSTOM UTILITIES
+   ============================================ */
+
+@layer utilities {
+  /* Scrollbar utilities */
+  .scrollbar-thin {
     scrollbar-width: thin;
+    scrollbar-color: theme('colors.dark.border') transparent;
   }
 
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+  .scrollbar-thin::-webkit-scrollbar {
+    @apply w-[6px] h-[6px];
   }
 
-  ::-webkit-scrollbar-track {
-    background: transparent;
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-transparent;
   }
 
-  ::-webkit-scrollbar-thumb {
-    background: #2a2a3e;
-    border-radius: 3px;
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-dark-border rounded-[3px];
   }
 
-  ::-webkit-scrollbar-thumb:hover {
-    background: #3a3a52;
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-dark-border-hover;
   }
 
-  body {
-    background-color: #0c0c14;
-    color: #f0f0f5;
-    font-size: 13px;
+  /* Transition utilities */
+  .transition-right {
+    @apply transition-all duration-300;
+    transition-property: right;
   }
-}
 
-@layer components {
-  /* ============================================
-     LAYOUT COMPONENTS - COMPACT SPACING
-     ============================================ */
-
-  /* Main App Layout */
-  .app-layout {
+  /* Grid template */
+  .grid-app-layout {
     @apply grid h-screen overflow-hidden;
     grid-template-columns: auto 1fr;
     grid-template-rows: 1fr;
   }
 
-  /* Sidebar - Tight spacing like prototype */
+  /* Form select background - data URI for dropdown arrow */
+  .form-select-bg {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236a6a80' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.75rem center;
+    background-size: 1.5em 1.5em;
+    padding-right: 2.5rem;
+  }
+
+  /* Syntax highlighting colors */
+  .hljs-comment { @apply text-[#8b949e] italic; }
+  .hljs-quote { @apply text-[#8b949e] italic; }
+  .hljs-keyword { @apply text-[#ff7b72] font-normal; }
+  .hljs-selector-tag { @apply text-[#ff7b72] font-normal; }
+  .hljs-subst { @apply text-[#ff7b72] font-normal; }
+  .hljs-number { @apply text-[#79c0ff]; }
+  .hljs-literal { @apply text-[#79c0ff]; }
+  .hljs-variable { @apply text-[#79c0ff]; }
+  .hljs-template-variable { @apply text-[#79c0ff]; }
+  .hljs-tag .hljs-attr { @apply text-[#79c0ff]; }
+  .hljs-string { @apply text-[#a5d6ff]; }
+  .hljs-doctag { @apply text-[#a5d6ff]; }
+  .hljs-title { @apply text-[#d2a8ff] font-normal; }
+  .hljs-section { @apply text-[#d2a8ff] font-normal; }
+  .hljs-selector-id { @apply text-[#d2a8ff] font-normal; }
+  .hljs-type { @apply text-[#ffa657] font-normal; }
+  .hljs-class .hljs-title { @apply text-[#ffa657] font-normal; }
+  .hljs-tag { @apply text-[#7ee787] font-normal; }
+  .hljs-name { @apply text-[#7ee787] font-normal; }
+  .hljs-attribute { @apply text-[#7ee787] font-normal; }
+  .hljs-regexp { @apply text-[#a5d6ff]; }
+  .hljs-link { @apply text-[#a5d6ff]; }
+  .hljs-symbol { @apply text-[#79c0ff]; }
+  .hljs-bullet { @apply text-[#79c0ff]; }
+  .hljs-built_in { @apply text-[#ffa657]; }
+  .hljs-builtin-name { @apply text-[#ffa657]; }
+  .hljs-meta { @apply text-[#8b949e] font-normal; }
+  .hljs-deletion { @apply bg-[#ff7b7240]; }
+  .hljs-addition { @apply bg-[#7ee78740]; }
+}
+
+@layer base {
+  html {
+    @apply scrollbar-thin;
+  }
+
+  body {
+    @apply bg-dark-bg text-dark-text text-[13px];
+  }
+}
+
+@layer components {
+  /* ============================================
+     LAYOUT COMPONENTS
+     ============================================ */
+
+  .app-layout {
+    @apply grid-app-layout;
+  }
+
   .sidebar {
-    @apply flex flex-col bg-dark-surface border-r border-dark-border overflow-hidden;
-    width: 240px;
-    flex-shrink: 0;
-    height: 100%;
-    min-height: 0;
+    @apply flex flex-col bg-dark-surface border-r border-dark-border overflow-hidden w-[240px] shrink-0 h-full min-h-0;
   }
 
   .sidebar-header {
@@ -71,17 +121,14 @@
     @apply text-[11px] uppercase tracking-wide text-dark-text-muted mb-2 px-1;
   }
 
-  /* Main Content Area - Fill all available space */
   .main-content {
     @apply flex flex-col overflow-hidden relative min-w-0 h-full;
   }
 
-  /* Top Bar */
   .top-bar {
     @apply flex items-center justify-between h-14 px-4 bg-dark-surface border-b border-dark-border;
   }
 
-  /* Kanban Area - Fill ALL available space */
   .kanban-wrapper {
     @apply flex-1 overflow-hidden relative flex flex-col;
   }
@@ -91,16 +138,13 @@
   }
 
   .kanban-container {
-    @apply flex gap-4 items-stretch;
-    min-width: max-content;
-    height: 100%;
+    @apply flex gap-4 items-stretch min-w-max h-full;
   }
 
   /* ============================================
-     CARD COMPONENTS - COMPACT SPACING
+     CARD COMPONENTS
      ============================================ */
 
-  /* Stat Card */
   .stat-card {
     @apply p-1 bg-dark-surface2 border border-dark-border rounded-md text-center;
   }
@@ -110,10 +154,9 @@
   }
 
   .stat-label {
-    @apply text-[9px] text-dark-text-muted mt-0.5;
+    @apply text-xxs text-dark-text-muted mt-0.5;
   }
 
-  /* Run Card */
   .run-card {
     @apply p-2.5 bg-dark-surface2 border border-dark-border rounded-md mb-2 cursor-pointer transition-all;
   }
@@ -156,10 +199,10 @@
 
   .run-progress-fill {
     @apply h-full rounded-sm;
+    /* CSS custom property for dynamic color - documented exception */
     background-color: var(--progress-color, theme('colors.accent.success'));
   }
 
-  /* Kanban Column - Prototype 300px width, fills available height */
   .kanban-column {
     @apply w-[300px] min-w-[300px] bg-dark-surface border border-dark-border rounded-lg flex flex-col overflow-hidden self-stretch;
   }
@@ -180,14 +223,12 @@
     @apply flex-1 overflow-y-auto p-2.5 flex flex-col gap-2;
   }
 
-  /* Task Card */
   .task-card {
     @apply p-3 bg-dark-bg border border-dark-border rounded-md cursor-pointer transition-all;
   }
 
   .task-card:hover {
-    @apply border-accent-primary;
-    transform: translateX(2px);
+    @apply border-accent-primary translate-x-0.5;
   }
 
   .task-card.dragging {
@@ -195,14 +236,11 @@
   }
 
   .task-card.highlighted {
-    box-shadow: 0 0 12px rgba(0, 212, 255, 0.4), 0 0 20px rgba(0, 212, 255, 0.2), inset 0 0 12px rgba(0, 212, 255, 0.1);
-    border-color: #00d4ff;
-    transform: translateX(4px);
-    z-index: 10;
+    @apply shadow-card-highlight border-accent-primary translate-x-1 z-10;
   }
 
   .task-id-badge {
-    @apply px-1.5 py-0 text-[10px] bg-dark-surface2 border border-dark-border rounded text-dark-text-muted font-mono flex-shrink-0;
+    @apply px-1.5 py-0 text-xxs bg-dark-surface2 border border-dark-border rounded text-dark-text-muted font-mono shrink-0;
   }
 
   .task-header {
@@ -210,7 +248,7 @@
   }
 
   .task-icon {
-    @apply w-3.5 h-3.5 flex-shrink-0 mt-0.5;
+    @apply w-3.5 h-3.5 shrink-0 mt-0.5;
   }
 
   .task-title {
@@ -245,7 +283,6 @@
     @apply bg-accent-info;
   }
 
-  /* Add Task Button */
   .add-task-btn {
     @apply w-full p-2.5 border border-dashed border-dark-border rounded-md bg-transparent text-dark-text-muted text-sm cursor-pointer text-center transition-all;
   }
@@ -255,10 +292,9 @@
   }
 
   /* ============================================
-     BUTTON COMPONENTS - COMPACT SPACING
+     BUTTON COMPONENTS
      ============================================ */
 
-  /* Icon Button */
   .icon-btn {
     @apply w-9 h-9 flex items-center justify-center bg-transparent border-none text-dark-text-secondary cursor-pointer rounded-md transition-colors;
   }
@@ -271,7 +307,6 @@
     @apply w-4 h-4;
   }
 
-  /* Sidebar Button - Tight like prototype */
   .sidebar-btn {
     @apply w-full px-3 py-2 bg-dark-surface2 border border-dark-border text-dark-text rounded-md cursor-pointer text-xs flex items-center gap-2 mb-1.5 transition-all;
   }
@@ -285,54 +320,41 @@
   }
 
   .sidebar-btn.primary:hover {
-    filter: brightness(1.1);
+    @apply brightness-110;
   }
 
   .sidebar-btn svg {
-    @apply w-4 h-4 flex-shrink-0;
+    @apply w-4 h-4 shrink-0;
   }
 
-  /* Warning button style (for pause) */
   .sidebar-btn.warning {
-    border-color: #ffc107;
-    color: #ffc107;
+    @apply border-accent-warning text-accent-warning;
   }
 
   .sidebar-btn.warning:hover {
-    background: rgba(255, 193, 7, 0.1);
+    @apply bg-accent-warning/10;
   }
 
-  /* Danger button style (for destructive stop) */
   .sidebar-btn.danger {
-    border-color: #ff6b6b;
-    color: #ff6b6b;
+    @apply border-accent-danger text-accent-danger;
   }
 
   .sidebar-btn.danger:hover {
-    background: rgba(255, 107, 107, 0.1);
+    @apply bg-accent-danger/10;
   }
 
-  /* Version section at bottom */
   .version-section {
-    @apply mt-auto pt-4;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    flex-shrink: 0;
+    @apply mt-auto pt-4 border-t border-white/5 shrink-0;
   }
 
   .version-display {
-    font-size: 10px;
-    color: rgba(140, 140, 154, 0.6);
-    text-align: center;
-    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
-    letter-spacing: 0.025em;
+    @apply text-xxs text-dark-text-muted/60 text-center font-mono tracking-wide;
   }
 
-  /* Action group for related buttons */
   .action-group {
     @apply flex flex-col gap-2 mb-2;
   }
 
-  /* Toggle Button */
   .toggle-btn {
     @apply w-7 h-7 flex items-center justify-center bg-transparent border-none text-dark-text-secondary cursor-pointer rounded transition-colors;
   }
@@ -358,7 +380,7 @@
   }
 
   .btn-primary:hover {
-    filter: brightness(1.1);
+    @apply brightness-110;
   }
 
   .btn-danger {
@@ -366,7 +388,7 @@
   }
 
   .btn-danger:hover {
-    filter: brightness(1.1);
+    @apply brightness-110;
   }
 
   .btn-sm {
@@ -382,62 +404,49 @@
   }
 
   /* ============================================
-     CHAT COMPONENTS - COMPACT SPACING
+     CHAT COMPONENTS
      ============================================ */
 
-  /* Chat Panel */
   .chat-panel {
-    @apply fixed top-0 h-screen bg-dark-surface border-l border-dark-border flex flex-col z-40;
+    @apply fixed top-0 h-screen bg-dark-surface border-l border-dark-border flex flex-col z-40 shadow-chat-panel;
     transition: right 0.3s ease;
-    box-shadow: -4px 0 20px rgba(0,0,0,0.5);
   }
 
   .chat-panel.resizing {
-    transition: none;
+    @apply transition-none;
   }
 
-  /* Chat Resize Handle */
   .chat-resize-handle {
-    @apply absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-50;
-    background: transparent;
-    transition: background 0.15s;
+    @apply absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-50 bg-transparent transition-colors duration-150;
   }
 
   .chat-resize-handle:hover,
   .chat-resize-handle:active {
-    background: theme('colors.accent.primary');
-    box-shadow: 0 0 6px theme('colors.accent.primary');
+    @apply bg-accent-primary shadow-[0_0_6px_theme(colors.accent.primary)];
   }
 
-  /* Log Panel Resize Handle */
   .log-panel-resize-handle {
-    @apply absolute left-0 right-0 top-0 h-1 cursor-ns-resize z-50;
-    background: transparent;
-    transition: background 0.15s;
+    @apply absolute left-0 right-0 top-0 h-1 cursor-ns-resize z-50 bg-transparent transition-colors duration-150;
   }
 
   .log-panel-resize-handle:hover,
   .log-panel-resize-handle:active {
-    background: theme('colors.accent.primary');
-    box-shadow: 0 0 6px theme('colors.accent.primary');
+    @apply bg-accent-primary shadow-[0_0_6px_theme(colors.accent.primary)];
   }
 
-  /* Chat Toggle Button */
   .chat-toggle {
-    @apply fixed top-1/2 -translate-y-1/2 right-0 flex flex-col items-center gap-1.5 p-4 px-2.5 bg-accent-primary text-dark-bg border-none cursor-pointer z-30 font-semibold text-xs rounded-l-lg;
-    box-shadow: -2px 0 12px rgba(0, 212, 255, 0.3);
+    @apply fixed top-1/2 -translate-y-1/2 right-0 flex flex-col items-center gap-1.5 p-4 px-2.5 bg-accent-primary text-dark-bg border-none cursor-pointer z-30 font-semibold text-xs rounded-l-lg shadow-chat-toggle;
     transition: right 0.3s ease;
   }
 
   .chat-toggle:hover {
-    filter: brightness(1.1);
+    @apply brightness-110;
   }
 
   .chat-toggle-badge {
     @apply absolute top-2 right-2 min-w-4 h-4 px-1.5 bg-accent-secondary text-white text-xs font-bold rounded-full flex items-center justify-center;
   }
 
-  /* Chat Tabs - Compact like prototype */
   .chat-tabs-container {
     @apply bg-dark-surface2 border-b border-dark-border flex flex-col;
   }
@@ -447,8 +456,7 @@
   }
 
   .chat-session-tab {
-    @apply px-3.5 py-2 bg-dark-bg border border-dark-border border-b-0 rounded-t-lg text-dark-text-secondary text-xs cursor-pointer flex items-center gap-2 whitespace-nowrap relative transition-colors;
-    max-width: 160px;
+    @apply px-3.5 py-2 bg-dark-bg border border-dark-border border-b-0 rounded-t-lg text-dark-text-secondary text-xs cursor-pointer flex items-center gap-2 whitespace-nowrap relative transition-colors max-w-[160px];
   }
 
   .chat-session-tab:hover {
@@ -460,8 +468,7 @@
   }
 
   .chat-session-tab.active::after {
-    content: '';
-    @apply absolute bottom-0 left-0 right-0 h-px bg-dark-surface;
+    @apply content-[''] absolute bottom-0 left-0 right-0 h-px bg-dark-surface;
   }
 
   .chat-session-tab .tab-name {
@@ -477,12 +484,11 @@
   }
 
   .chat-session-tab .tab-status {
-    @apply w-1.5 h-1.5 rounded-full flex-shrink-0;
+    @apply w-1.5 h-1.5 rounded-full shrink-0;
   }
 
   .tab-status.online {
-    @apply bg-accent-success;
-    box-shadow: 0 0 4px theme('colors.accent.success');
+    @apply bg-accent-success shadow-tab-status-online;
   }
 
   .tab-status.offline {
@@ -493,7 +499,6 @@
     @apply bg-accent-warning animate-blink;
   }
 
-  /* Chat Tabs Secondary - Compact */
   .chat-tabs-secondary {
     @apply flex items-center justify-between px-2 py-1.5;
   }
@@ -514,7 +519,6 @@
     @apply bg-dark-surface3 text-dark-text;
   }
 
-  /* Chat Messages - Compact padding */
   .chat-messages {
     @apply flex-1 overflow-y-auto bg-dark-bg;
   }
@@ -559,7 +563,6 @@
     @apply bg-dark-surface2 px-1.5 py-0.5 rounded font-mono text-xs;
   }
 
-  /* Chat Input - Compact like prototype */
   .chat-input-container {
     @apply px-2 py-1 border-t border-dark-border bg-dark-surface2;
   }
@@ -597,32 +600,29 @@
   }
 
   .chat-send-btn:hover:not(:disabled) {
-    filter: brightness(1.1);
+    @apply brightness-110;
   }
 
   .chat-send-btn:disabled {
     @apply opacity-50 cursor-not-allowed;
   }
 
-  /* Minimized Session Dock - Compact */
   .minimized-dock {
     @apply fixed bottom-5 flex flex-col gap-2 z-30;
     transition: right 0.3s ease;
   }
 
   .minimized-session {
-    @apply px-3.5 py-2.5 bg-dark-surface border border-dark-border rounded-lg text-dark-text-secondary text-xs cursor-pointer flex items-center gap-2 transition-all;
-    max-width: 200px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    @apply px-3.5 py-2.5 bg-dark-surface border border-dark-border rounded-lg text-dark-text-secondary text-xs cursor-pointer flex items-center gap-2 transition-all max-w-[200px] shadow-minimized;
+    transition: right 0.3s ease;
   }
 
   .minimized-session:hover {
-    @apply border-accent-primary text-dark-text;
-    transform: translateX(-4px);
+    @apply border-accent-primary text-dark-text -translate-x-1;
   }
 
   .minimized-session .min-status {
-    @apply w-2 h-2 rounded-full flex-shrink-0;
+    @apply w-2 h-2 rounded-full shrink-0;
   }
 
   .minimized-session .min-name {
@@ -651,16 +651,22 @@
 
   .status-dot {
     @apply w-2 h-2 rounded-full;
+    /* CSS custom property for dynamic color - documented exception */
     background-color: var(--status-color, theme('colors.accent.success'));
     box-shadow: 0 0 8px var(--status-color, theme('colors.accent.success'));
   }
 
+  .status-dot[data-status-color] {
+    background-color: attr(data-status-color type(<color>), theme('colors.accent.success'));
+    box-shadow: 0 0 8px attr(data-status-color type(<color>), theme('colors.accent.success'));
+  }
+
   .status-dot.pulse {
-    animation: pulse 2s infinite;
+    @apply animate-pulse;
   }
 
   /* ============================================
-     MODAL COMPONENTS - COMPACT SPACING
+     MODAL COMPONENTS
      ============================================ */
 
   .modal-overlay {
@@ -668,12 +674,11 @@
   }
 
   .modal {
-    @apply bg-dark-surface border border-dark-border rounded-xl flex flex-col overflow-hidden shadow-2xl;
-    max-height: calc(100vh - 32px);
+    @apply bg-dark-surface border border-dark-border rounded-xl flex flex-col overflow-hidden shadow-2xl max-h-[calc(100vh-32px)];
   }
 
   .modal-header {
-    @apply px-4 py-3 border-b border-dark-border flex items-center justify-between gap-3 flex-shrink-0;
+    @apply px-4 py-3 border-b border-dark-border flex items-center justify-between gap-3 shrink-0;
   }
 
   .modal-header h2 {
@@ -681,16 +686,15 @@
   }
 
   .modal-body {
-    @apply p-4 overflow-y-auto flex-1;
-    max-height: calc(100vh - 160px);
+    @apply p-4 overflow-y-auto flex-1 max-h-[calc(100vh-160px)];
   }
 
   .modal-footer {
-    @apply px-4 py-2.5 border-t border-dark-border flex justify-end gap-2 flex-shrink-0;
+    @apply px-4 py-2.5 border-t border-dark-border flex justify-end gap-2 shrink-0;
   }
 
   /* ============================================
-     FORM COMPONENTS (Additional) - COMPACT
+     FORM COMPONENTS (Additional)
      ============================================ */
 
   .form-group {
@@ -710,56 +714,42 @@
   }
 
   .help-btn {
-    @apply w-4 h-4 rounded-full border border-dark-border bg-dark-surface2 text-dark-text-muted cursor-help inline-flex items-center justify-center text-xs font-bold leading-none flex-shrink-0;
+    @apply w-4 h-4 rounded-full border border-dark-border bg-dark-surface2 text-dark-text-muted cursor-help inline-flex items-center justify-center text-xs font-bold leading-none shrink-0;
   }
 
   .help-btn:hover {
     @apply text-dark-text border-dark-text-muted;
   }
 
-  /* Tooltip Components */
   .tooltip-container {
     @apply relative inline-flex;
   }
 
   .tooltip {
-    @apply absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1.5
-           bg-dark-surface2 border border-dark-border rounded-md shadow-lg
-           text-xs text-dark-text whitespace-normal max-w-[200px] z-[100]
-           opacity-0 pointer-events-none transition-opacity duration-200;
+    @apply absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1.5 bg-dark-surface2 border border-dark-border rounded-md shadow-lg text-xs text-dark-text whitespace-normal max-w-[200px] z-[100] opacity-0 pointer-events-none transition-opacity duration-200;
   }
 
   .tooltip-container:hover .tooltip {
     @apply opacity-100;
   }
 
-  /* Tooltip arrow */
   .tooltip::after {
-    content: '';
-    @apply absolute top-full left-1/2 -translate-x-1/2;
+    @apply content-[''] absolute top-full left-1/2 -translate-x-1/2;
     border-width: 5px;
     border-style: solid;
     border-color: theme('colors.dark.surface2') transparent transparent transparent;
   }
 
   .form-select {
-    @apply form-input cursor-pointer appearance-none bg-no-repeat;
-    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236a6a80' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
-    background-position: right 0.75rem center;
-    background-size: 1.5em 1.5em;
-    padding-right: 2.5rem;
-    background-color: #0a0a12;
+    @apply form-input cursor-pointer appearance-none bg-dark-input form-select-bg;
   }
 
   .form-select option {
-    background-color: #151520;
-    color: #f0f0f5;
-    padding: 8px;
+    @apply bg-dark-surface text-dark-text p-2;
   }
 
   .form-select optgroup {
-    background-color: #151520;
-    color: #6a6a80;
+    @apply bg-dark-surface text-dark-text-muted;
   }
 
   .checkbox-group {
@@ -772,7 +762,7 @@
   }
 
   .checkbox-item input[type="checkbox"] {
-    @apply w-4 h-4 min-w-4 min-h-4 m-0 p-0 rounded border border-dark-border bg-dark-surface2 accent-accent-primary cursor-pointer flex-shrink-0 align-middle;
+    @apply w-4 h-4 min-w-4 min-h-4 m-0 p-0 rounded border border-dark-border bg-dark-surface2 accent-accent-primary cursor-pointer shrink-0 align-middle;
   }
 
   .checkbox-item input[type="checkbox"]:checked {
@@ -788,7 +778,7 @@
   }
 
   /* ============================================
-     SESSION VIEWER - COMPACT
+     SESSION VIEWER
      ============================================ */
 
   .session-entry {
@@ -827,7 +817,6 @@
      ANIMATIONS
      ============================================ */
 
-  /* Toast animations */
   .toast-enter-active,
   .toast-leave-active {
     @apply transition-all duration-300;
@@ -838,7 +827,6 @@
     @apply translate-x-full opacity-0;
   }
 
-  /* Drag and drop */
   .dragging {
     @apply opacity-50;
   }
@@ -848,105 +836,7 @@
   }
 
   /* ============================================
-     SYNTAX HIGHLIGHTING - GitHub Dark Theme
-     ============================================ */
-
-  .hljs {
-    display: block;
-    overflow-x: auto;
-    padding: 0;
-    background: transparent;
-    color: #e0e0e0;
-  }
-
-  .hljs-comment,
-  .hljs-quote {
-    color: #8b949e;
-    font-style: italic;
-  }
-
-  .hljs-keyword,
-  .hljs-selector-tag,
-  .hljs-subst {
-    color: #ff7b72;
-    font-weight: normal;
-  }
-
-  .hljs-number,
-  .hljs-literal,
-  .hljs-variable,
-  .hljs-template-variable,
-  .hljs-tag .hljs-attr {
-    color: #79c0ff;
-  }
-
-  .hljs-string,
-  .hljs-doctag {
-    color: #a5d6ff;
-  }
-
-  .hljs-title,
-  .hljs-section,
-  .hljs-selector-id {
-    color: #d2a8ff;
-    font-weight: normal;
-  }
-
-  .hljs-subst {
-    font-weight: normal;
-  }
-
-  .hljs-type,
-  .hljs-class .hljs-title {
-    color: #ffa657;
-    font-weight: normal;
-  }
-
-  .hljs-tag,
-  .hljs-name,
-  .hljs-attribute {
-    color: #7ee787;
-    font-weight: normal;
-  }
-
-  .hljs-regexp,
-  .hljs-link {
-    color: #a5d6ff;
-  }
-
-  .hljs-symbol,
-  .hljs-bullet {
-    color: #79c0ff;
-  }
-
-  .hljs-built_in,
-  .hljs-builtin-name {
-    color: #ffa657;
-  }
-
-  .hljs-meta {
-    color: #8b949e;
-    font-weight: normal;
-  }
-
-  .hljs-deletion {
-    background: #ff7b7240;
-  }
-
-  .hljs-addition {
-    background: #7ee78740;
-  }
-
-  .hljs-emphasis {
-    font-style: italic;
-  }
-
-  .hljs-strong {
-    font-weight: bold;
-  }
-
-  /* ============================================
-     LAST UPDATE BADGE - DYNAMIC STYLING
+     LAST UPDATE BADGE
      ============================================ */
 
   .task-last-update-badge {
@@ -965,37 +855,20 @@
     @apply text-dark-text-muted;
   }
 
-  /* ============================================
-     GROUP ACTION BAR ANIMATION
-     ============================================ */
-
-  @keyframes fade-in-up {
-    from {
-      opacity: 0;
-      transform: translateX(-50%) translateY(1rem);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
-  }
-
   .animate-fade-in-up {
-    animation: fade-in-up 0.3s ease-out;
+    animation: fadeInUp 0.3s ease-out;
   }
 
   /* ============================================
-     VIRTUAL CARD COMPONENTS - COMPACT FOR GROUPS
+     VIRTUAL CARD COMPONENTS
      ============================================ */
 
   .virtual-card {
-    @apply p-2.5 bg-dark-bg border border-dark-border rounded-md cursor-pointer transition-all;
-    border-left-width: 3px;
+    @apply p-2.5 bg-dark-bg border border-dark-border rounded-md cursor-pointer transition-all border-l-[3px];
   }
 
   .virtual-card:hover {
-    @apply border-accent-primary;
-    transform: translateX(2px);
+    @apply border-accent-primary translate-x-0.5;
   }
 
   .virtual-card-header {
@@ -1003,7 +876,7 @@
   }
 
   .virtual-card-icon {
-    @apply w-3.5 h-3.5 flex-shrink-0;
+    @apply w-3.5 h-3.5 shrink-0;
   }
 
   .virtual-card-title {
@@ -1015,14 +888,13 @@
   }
 
   .virtual-card-label {
-    @apply px-1.5 py-0.5 bg-dark-surface2 border border-dark-border rounded text-[10px] text-dark-text-muted uppercase tracking-wide;
+    @apply px-1.5 py-0.5 bg-dark-surface2 border border-dark-border rounded text-xxs text-dark-text-muted uppercase tracking-wide;
   }
 
   .virtual-card-footer {
     @apply flex items-center justify-between mt-1.5 pt-1.5 border-t border-dark-border;
   }
 
-  /* Virtual Cards Section in Backlog Column */
   .virtual-cards-section {
     @apply mb-3;
   }
@@ -1048,61 +920,46 @@
   }
 
   /* ============================================
-     GROUP-PANEL COMPONENTS - FLOATING COLUMN
+     GROUP-PANEL COMPONENTS
      ============================================ */
 
-  /* Column wrapper for positioning context */
   .kanban-column-wrapper {
     @apply flex flex-col;
   }
 
-  .kanban-column-wrapper.relative {
-    position: relative;
+  .kanban-column-wrapper.is-relative {
+    @apply relative;
   }
 
-  /* Floating Group Panel - positioned beside Backlog column */
   .group-panel {
-    @apply absolute top-0 left-full w-[350px] bg-dark-surface border border-dark-border rounded-r-lg flex flex-col z-50;
-    height: 100%;
-    margin-left: 4px;
-    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 212, 255, 0.1);
-    transform-origin: left center;
+    @apply absolute top-0 left-full w-[350px] bg-dark-surface border border-dark-border rounded-r-lg flex flex-col z-50 h-full ml-1 shadow-group-panel origin-left;
   }
 
-  /* Override box-shadow to use CSS custom property for group color glow */
-  .group-panel[style*="--group-color"] {
+  /* CSS custom property for dynamic group color - documented exception */
+  .group-panel[data-group-color] {
     box-shadow: 4px 0 24px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--group-color, rgba(0, 212, 255, 0.2)), 0 0 16px var(--group-color, rgba(0, 212, 255, 0.15));
   }
 
-  /* Slide-in animation from left (beside Backlog) */
   .group-panel-enter {
-    animation: slide-in-from-backlog 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    @apply animate-slide-in-from-backlog;
   }
 
-  /* Slide-out animation to the left */
   .group-panel-exit {
-    animation: slide-out-to-backlog 0.2s ease-in;
+    @apply animate-slide-out-to-backlog;
   }
 
-  /* Column overlay effect when panel is open */
+  /* Column overlay effect when panel is open - uses :has() selector */
   .kanban-column-wrapper:has(.group-panel) + .kanban-column-wrapper {
-    position: relative;
+    @apply relative;
   }
 
   .kanban-column-wrapper:has(.group-panel) + .kanban-column-wrapper::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.3);
-    pointer-events: none;
-    z-index: 40;
-    border-radius: 0.5rem;
+    @apply content-[''] absolute inset-0 bg-black/30 pointer-events-none z-40 rounded-lg;
   }
 
   .group-drop-zone {
-    @apply flex-shrink-0 p-3 border-b border-dark-border transition-colors duration-200;
+    @apply shrink-0 p-3 border-b border-dark-border transition-colors duration-200;
   }
-
 
   .group-drop-zone.drag-over {
     @apply bg-accent-primary/10 border-accent-primary;
@@ -1113,8 +970,7 @@
   }
 
   .group-task-item:hover {
-    @apply border-accent-primary;
-    transform: translateX(2px);
+    @apply border-accent-primary translate-x-0.5;
   }
 
   .group-task-item:focus {
@@ -1133,110 +989,70 @@
     @apply text-xs text-dark-text-muted/60 mt-1;
   }
 
-  /* Group color utilities */
   .group-color-indicator {
-    @apply w-3 h-3 rounded-full border border-dark-border flex-shrink-0;
+    @apply w-3 h-3 rounded-full border border-dark-border shrink-0;
+  }
+
+  .group-color-indicator[data-indicator-color] {
+    background-color: attr(data-indicator-color);
   }
 
   .group-tag {
-    @apply flex items-center gap-1 px-2 py-0.5 bg-dark-surface2 border rounded text-[11px];
-    border-left-width: 3px;
+    @apply flex items-center gap-1 px-2 py-0.5 bg-dark-surface2 border rounded text-[11px] border-l-[3px];
   }
 
-  /* Virtual Card hover glow effect */
-  .virtual-card {
-    @apply relative overflow-hidden;
+  /* Virtual Card with dynamic group color - documented exception
+     Using data attribute for border color since it comes from user data */
+  .virtual-card[data-group-color] {
+    border-left-color: attr(data-group-color);
   }
 
-  .virtual-card:hover {
+  .virtual-card[data-group-color]:hover {
     box-shadow: 0 0 12px var(--group-color, rgba(0, 212, 255, 0.4));
   }
 
   .virtual-card-running {
-    animation: pulse-glow 2s infinite;
+    @apply animate-pulse-glow;
+    /* CSS custom property for dynamic color - documented exception */
+    --tw-shadow-color: var(--group-color, rgba(0, 212, 255, 0.4));
   }
-}
 
-/* ============================================
-   ANIMATION KEYFRAMES
-   ============================================ */
+  /* ============================================
+     DYNAMIC COLOR COMPONENTS - Documented Exceptions
+     These use data attributes for colors that come from user data
+     ============================================ */
 
-/* Legacy keyframes - kept for backwards compatibility */
-@keyframes slide-in-right {
-  from {
-    transform: translateX(100%);
-    opacity: 0;
+  /* Task Card with dynamic run color */
+  .task-card[data-run-color] {
+    border-left: 3px solid attr(data-run-color);
   }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
 
-@keyframes slide-out-right {
-  from {
-    transform: translateX(0);
-    opacity: 1;
+  /* Task group tag with dynamic color */
+  .task-tag[data-group-tag-color] {
+    border-left: 3px solid attr(data-group-tag-color);
+    border-color: attr(data-group-tag-color);
   }
-  to {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-}
 
-/* Group Panel animations - slide from beside Backlog column */
-@keyframes slide-in-from-backlog {
-  from {
-    transform: translateX(-20px) scale(0.95);
-    opacity: 0;
+  /* Run progress bar with dynamic color */
+  div[data-run-color] {
+    background-color: attr(data-run-color);
   }
-  to {
-    transform: translateX(0) scale(1);
-    opacity: 1;
-  }
-}
 
-@keyframes slide-out-to-backlog {
-  from {
-    transform: translateX(0) scale(1);
-    opacity: 1;
-  }
-  to {
-    transform: translateX(-20px) scale(0.95);
-    opacity: 0;
-  }
-}
-
-@keyframes pulse-glow {
-  0%, 100% {
-    box-shadow: 0 0 8px var(--group-color, rgba(0, 212, 255, 0.3));
-  }
-  50% {
-    box-shadow: 0 0 16px var(--group-color, rgba(0, 212, 255, 0.6));
+  /* Run card with dynamic color - CSS custom property is set via inline style
+     as a documented exception for truly dynamic user data */
+  .run-card[data-run-color] {
+    --progress-color: attr(data-run-color);
   }
 }
 
 /* ============================================
    RESPONSIVE BREAKPOINTS
+   Using Tailwind's responsive prefixes instead of media queries
    ============================================ */
 
-@media (max-width: 1024px) {
-  .group-panel {
-    width: 300px;
-  }
-}
-
-@media (max-width: 768px) {
-  .group-panel {
-    width: 100%;
-    max-width: 400px;
-  }
-
-  .virtual-cards-empty {
-    @apply p-3;
-  }
-
-  .virtual-cards-empty kbd {
-    @apply text-xs;
-  }
-}
+/* Note: Media queries replaced with Tailwind responsive classes:
+   - lg:w-group-panel-lg (1024px breakpoint)
+   - md:w-full md:max-w-group-panel-mobile (768px breakpoint)
+   - md:p-3 for virtual-cards-empty
+   - md:text-xs for kbd elements
+*/

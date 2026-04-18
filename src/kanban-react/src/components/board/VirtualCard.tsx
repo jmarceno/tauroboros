@@ -82,6 +82,7 @@ export const VirtualCard = memo(function VirtualCard({
     <>
       <div
         className="virtual-card"
+        data-group-color={group.color}
         style={{ borderLeftColor: group.color, '--group-color': `${group.color}66` } as React.CSSProperties}
         onClick={onClick}
         onKeyDown={handleKeyDown}
@@ -137,7 +138,7 @@ export const VirtualCard = memo(function VirtualCard({
       {/* Delete Confirmation Modal */}
       {showConfirm && (
         <div className="modal-overlay" onClick={handleCancelDelete}>
-          <div className="modal" style={{ maxWidth: '400px' }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal max-w-modal-sm" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Delete Group</h2>
             </div>

@@ -19,6 +19,7 @@ export function RunPanel({ run, isStale, onArchive, onHighlight, onClearHighligh
   return (
     <div
       className={`run-card ${statusClass} ${isStale ? 'opacity-50' : ''}`}
+      data-run-color={run.color}
       style={run.color ? { '--progress-color': run.color } as React.CSSProperties : undefined}
     >
       <div className="run-header">

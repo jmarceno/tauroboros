@@ -256,13 +256,7 @@ export function TabbedLogPanel({
                           className={`p-2.5 bg-dark-surface2 border border-dark-border rounded-md cursor-pointer transition-all ${
                             getRunStatusClass(run.status, isRunStale(run)) === 'active' ? 'border-accent-success bg-accent-success/5' : ''
                           } ${getRunStatusClass(run.status, isRunStale(run)) === 'stale' ? 'border-dark-border-hover opacity-80' : ''}`}
-                          style={{
-                            borderColor: getRunStatusClass(run.status, isRunStale(run)) === 'active'
-                              ? undefined
-                              : getRunStatusClass(run.status, isRunStale(run)) === 'stale'
-                                ? undefined
-                                : undefined
-                          }}
+
                           onMouseEnter={() => onHighlightRun(run.id)}
                           onMouseLeave={onClearHighlight}
                         >
@@ -304,10 +298,9 @@ export function TabbedLogPanel({
                             <div className="h-0.5 bg-dark-border rounded-sm overflow-hidden">
                               <div
                                 className={`h-full rounded-sm transition-all ${isRunStale(run) ? 'opacity-50 bg-dark-border-hover' : ''}`}
-                                style={{
-                                  width: `${getRunProgressPercent(run)}%`,
-                                  backgroundColor: isRunStale(run) ? undefined : (run.color || '#00ff88')
-                                }}
+                                data-progress-width={getRunProgressPercent(run)}
+                                data-run-color={isRunStale(run) ? undefined : (run.color || '#00ff88')}
+                                style={{ width: `${getRunProgressPercent(run)}%` }}
                               />
                             </div>
                           </div>

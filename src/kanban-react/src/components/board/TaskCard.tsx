@@ -396,7 +396,7 @@ export const TaskCard = memo(function TaskCard({
       className={`task-card ${isSelected ? 'dragging' : ''} ${isHighlighted ? 'highlighted' : ''}`}
       data-task-id={task.id}
       data-task-status={task.status}
-      style={runColor ? { borderLeft: `3px solid ${runColor}` } : undefined}
+      data-run-color={runColor || undefined}
       draggable={canDrag && !isMultiSelecting}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
@@ -488,7 +488,7 @@ export const TaskCard = memo(function TaskCard({
         {group && showGroupIndicator && (
           <span
             className="task-tag flex items-center gap-1"
-            style={{ borderLeft: `3px solid ${group.color}`, borderColor: `${group.color}4D` }}
+            data-group-tag-color={group.color}
             title={`Member of group: ${group.name}`}
           >
             <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

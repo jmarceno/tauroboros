@@ -24,6 +24,7 @@ export function ToastContainer({ toasts, bottomOffset, onRemove }: ToastContaine
   return (
     <div
       className="fixed right-4 z-[1100] flex flex-col gap-2"
+      data-bottom-offset={bottomOffset}
       style={{ bottom: bottomOffset }}
     >
       {toasts.map(toast => (
