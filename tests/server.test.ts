@@ -1010,4 +1010,406 @@ describe("PiKanbanServer API", () => {
       db.close()
     }
   })
+
+  // Restore-to-group functionality tests
+  describe("Restore to Group Functionality", () => {
+    it("POST /api/tasks/:id/reset returns group info when task was in a group", async () => {
+      const root = createTempDir("tauroboros-reset-group-info-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      db.updateOptions({ branch: "master" })
+      const port = await server.start(0)
+
+      try {
+        // Create a task and move it to done
+        const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Task in Group",
+            prompt: "Test task",
+            status: "done",
+            completedAt: Math.floor(Date.now() / 1000),
+          }),
+        })
+        const task = await taskRes.json()
+        const taskId = task.id
+
+        // Create a group
+        const groupRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Test Group",
+            color: "#FF5733",
+            status: "active",
+          }),
+        })
+        const group = await groupRes.json()
+        const groupId = group.id
+
+        // Add task to group
+        await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ taskIds: [taskId] }),
+        })
+
+        // Reset the task - should return group info
+        const resetRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}/reset`, {
+          method: "POST",
+        })
+        const resetData = await resetRes.json()
+
+        expect(resetRes.status).toBe(200)
+        expect(resetData.wasInGroup).toBe(true)
+        expect(resetData.group).toBeDefined()
+        expect(resetData.group.id).toBe(groupId)
+        expect(resetData.group.name).toBe("Test Group")
+        expect(resetData.task.status).toBe("backlog")
+        expect(resetData.task.completedAt).toBeNull()
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("POST /api/tasks/:id/reset returns wasInGroup false when task was not in a group", async () => {
+      const root = createTempDir("tauroboros-reset-no-group-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      db.updateOptions({ branch: "master" })
+      const port = await server.start(0)
+
+      try {
+        // Create a task and move it to done
+        const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Task Not in Group",
+            prompt: "Test task",
+            status: "done",
+            completedAt: Math.floor(Date.now() / 1000),
+          }),
+        })
+        const task = await taskRes.json()
+        const taskId = task.id
+
+        // Reset the task - should not return group info
+        const resetRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}/reset`, {
+          method: "POST",
+        })
+        const resetData = await resetRes.json()
+
+        expect(resetRes.status).toBe(200)
+        expect(resetData.wasInGroup).toBe(false)
+        expect(resetData.group).toBeUndefined()
+        expect(resetData.task.status).toBe("backlog")
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("POST /api/tasks/:id/reset-to-group restores task to its previous group", async () => {
+      const root = createTempDir("tauroboros-reset-to-group-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      db.updateOptions({ branch: "master" })
+      const port = await server.start(0)
+
+      try {
+        // Create a task and move it to done
+        const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Task to Restore",
+            prompt: "Test task",
+            status: "done",
+            completedAt: Math.floor(Date.now() / 1000),
+          }),
+        })
+        const task = await taskRes.json()
+        const taskId = task.id
+
+        // Create a group
+        const groupRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Restore Group",
+            color: "#33FF57",
+            status: "active",
+          }),
+        })
+        const group = await groupRes.json()
+        const groupId = group.id
+
+        // Add task to group
+        await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ taskIds: [taskId] }),
+        })
+
+        // Reset to group - should restore task to the group
+        const resetToGroupRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}/reset-to-group`, {
+          method: "POST",
+        })
+        const resetData = await resetToGroupRes.json()
+
+        expect(resetToGroupRes.status).toBe(200)
+        expect(resetData.restoredToGroup).toBe(true)
+        expect(resetData.group.id).toBe(groupId)
+        expect(resetData.task.status).toBe("backlog")
+        expect(resetData.task.groupId).toBe(groupId)
+
+        // Verify task is actually in the group
+        const taskGetRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}`)
+        const updatedTask = await taskGetRes.json()
+        expect(updatedTask.groupId).toBe(groupId)
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("POST /api/tasks/:id/reset-to-group returns 400 when task was not in a group", async () => {
+      const root = createTempDir("tauroboros-reset-to-group-no-group-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      db.updateOptions({ branch: "master" })
+      const port = await server.start(0)
+
+      try {
+        // Create a task and move it to done (not in any group)
+        const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Task Without Group",
+            prompt: "Test task",
+            status: "done",
+            completedAt: Math.floor(Date.now() / 1000),
+          }),
+        })
+        const task = await taskRes.json()
+        const taskId = task.id
+
+        // Reset to group should fail since task wasn't in a group
+        const resetToGroupRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}/reset-to-group`, {
+          method: "POST",
+        })
+        const resetData = await resetToGroupRes.json()
+
+        expect(resetToGroupRes.status).toBe(400)
+        expect(resetData.error).toBe("Task was not in a group")
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("POST /api/tasks/:id/move-to-group with null groupId removes task from group", async () => {
+      const root = createTempDir("tauroboros-move-to-group-null-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      db.updateOptions({ branch: "master" })
+      const port = await server.start(0)
+
+      try {
+        // Create a task
+        const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Task to Remove from Group",
+            prompt: "Test task",
+            status: "backlog",
+          }),
+        })
+        const task = await taskRes.json()
+        const taskId = task.id
+
+        // Create a group and add the task
+        const groupRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Group to Leave",
+            color: "#5733FF",
+            status: "active",
+            taskIds: [taskId],
+          }),
+        })
+        const group = await groupRes.json()
+        const groupId = group.id
+
+        // Verify task is in the group
+        const taskBeforeRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}`)
+        const taskBefore = await taskBeforeRes.json()
+        expect(taskBefore.groupId).toBe(groupId)
+
+        // Move to group with null - should remove from group
+        const moveRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}/move-to-group`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ groupId: null }),
+        })
+        const moveData = await moveRes.json()
+
+        expect(moveRes.status).toBe(200)
+        // groupId can be null or undefined in JSON response (both represent "no group")
+        expect(moveData.groupId === null || moveData.groupId === undefined).toBe(true)
+
+        // Verify task is no longer in the group
+        const taskAfterRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}`)
+        const taskAfter = await taskAfterRes.json()
+        // groupId can be null or undefined in JSON response
+        expect(taskAfter.groupId === null || taskAfter.groupId === undefined).toBe(true)
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("POST /api/tasks/:id/move-to-group with valid groupId adds task to group", async () => {
+      const root = createTempDir("tauroboros-move-to-group-valid-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      db.updateOptions({ branch: "master" })
+      const port = await server.start(0)
+
+      try {
+        // Create a task
+        const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Task to Add to Group",
+            prompt: "Test task",
+            status: "backlog",
+          }),
+        })
+        const task = await taskRes.json()
+        const taskId = task.id
+
+        // Create a group
+        const groupRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Target Group",
+            color: "#FF33A1",
+            status: "active",
+          }),
+        })
+        const group = await groupRes.json()
+        const groupId = group.id
+
+        // Move to group - should add task to the group
+        const moveRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}/move-to-group`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ groupId }),
+        })
+        const moveData = await moveRes.json()
+
+        expect(moveRes.status).toBe(200)
+        expect(moveData.groupId).toBe(groupId)
+
+        // Verify task is now in the group
+        const taskAfterRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}`)
+        const taskAfter = await taskAfterRes.json()
+        expect(taskAfter.groupId).toBe(groupId)
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("broadcasts websocket events during reset-to-group flow", async () => {
+      const root = createTempDir("tauroboros-reset-to-group-ws-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      db.updateOptions({ branch: "master" })
+      const port = await server.start(0)
+
+      // Create a task
+      const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Task for WS Test",
+          prompt: "Test task",
+          status: "done",
+          completedAt: Math.floor(Date.now() / 1000),
+        }),
+      })
+      const task = await taskRes.json()
+      const taskId = task.id
+
+      // Create a group
+      const groupRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "WS Test Group",
+          color: "#33A1FF",
+          status: "active",
+        }),
+      })
+      const group = await groupRes.json()
+      const groupId = group.id
+
+      // Add task to group
+      await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskIds: [taskId] }),
+      })
+
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+
+      try {
+        await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+
+        const events: any[] = []
+        const eventPromise = new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("Timed out waiting for websocket events")), 5000)
+
+          const handler = (event: any) => {
+            const parsed = JSON.parse(String(event.data))
+            if (parsed?.type === "task_updated" || parsed?.type === "group_task_added" || parsed?.type === "task_group_members_added") {
+              events.push(parsed)
+              if (events.length >= 3) {
+                clearTimeout(timeout)
+                ws.removeEventListener("message", handler)
+                resolve()
+              }
+            }
+          }
+
+          ws.addEventListener("message", handler)
+        })
+
+        // Reset to group should trigger multiple events
+        await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}/reset-to-group`, {
+          method: "POST",
+        })
+
+        await eventPromise
+
+        expect(events.some(e => e.type === "task_updated")).toBe(true)
+        expect(events.some(e => e.type === "group_task_added")).toBe(true)
+        expect(events.some(e => e.type === "task_group_members_added")).toBe(true)
+      } finally {
+        ws.close()
+        server.stop()
+        db.close()
+      }
+    })
+  })
 })

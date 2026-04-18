@@ -1,6 +1,6 @@
 import { TaskCard } from './TaskCard'
 import { HelpButton } from '../common/HelpButton'
-import type { Task, TaskStatus, BestOfNSummary } from '@/types'
+import type { Task, TaskStatus, BestOfNSummary, TaskGroup } from '@/types'
 import type { useDragDrop } from '@/hooks/useDragDrop'
 import { memo } from 'react'
 
@@ -20,6 +20,7 @@ interface KanbanColumnProps {
   currentSort: string
   highlightedRunId?: string | null
   isTaskInRun?: (taskId: string, runId: string | null) => boolean
+  groups?: TaskGroup[]
   children?: React.ReactNode
   onOpenTask: (id: string, e?: React.MouseEvent) => void
   onChangeSort: (sort: string) => void
@@ -56,6 +57,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   currentSort,
   highlightedRunId,
   isTaskInRun,
+  groups = [],
   children,
   onOpenTask,
   onChangeSort,
@@ -75,6 +77,8 @@ export const KanbanColumn = memo(function KanbanColumn({
   onViewRuns,
   onContinueReviews,
 }: KanbanColumnProps) {
+  // Build group lookup map for O(1) access
+  const groupMap = new Map(groups.map(g => [g.id, g]))
   const isDragOver = dragDrop.dragOverStatus === status
 
   return (
@@ -114,33 +118,38 @@ export const KanbanColumn = memo(function KanbanColumn({
 
       <div className="kanban-column-body">
         {children}
-        {tasks.map(task => (
-          <TaskCard
-            key={task.id}
-            task={task}
-            bonSummary={bonSummaries[task.id]}
-            runColor={getTaskRunColor(task.id)}
-            isLocked={isTaskMutationLocked(task.id)}
-            canDrag={(status === 'backlog' || status === 'code-style') && !isTaskMutationLocked(task.id) && currentSort === 'manual'}
-            dragDrop={dragDrop}
-            isSelected={getIsSelected?.(task.id) || false}
-            isMultiSelecting={isMultiSelecting}
-            isHighlighted={highlightedRunId ? isTaskInRun?.(task.id, highlightedRunId) || false : false}
-            onOpen={(e) => onOpenTask(task.id, e)}
-            onDeploy={(e) => onDeployTemplate(task.id, e)}
-            onOpenTaskSessions={() => onOpenTaskSessions(task.id)}
-            onApprovePlan={() => onApprovePlan(task.id)}
-            onRequestRevision={() => onRequestRevision(task.id)}
-            onStartSingle={() => onStartSingle(task.id)}
-            onRepair={(action) => onRepairTask(task.id, action)}
-            onMarkDone={() => onMarkDone(task.id)}
-            onReset={() => onResetTask(task.id)}
-            onConvertToTemplate={(e) => onConvertToTemplate(task.id, e)}
-            onArchive={(e) => onArchiveTask(task.id, e)}
-            onViewRuns={() => onViewRuns(task.id)}
-            onContinueReviews={() => onContinueReviews(task.id)}
-          />
-        ))}
+        {tasks.map(task => {
+          const taskGroup = task.groupId ? groupMap.get(task.groupId) : undefined
+          return (
+            <TaskCard
+              key={task.id}
+              task={task}
+              bonSummary={bonSummaries[task.id]}
+              runColor={getTaskRunColor(task.id)}
+              isLocked={isTaskMutationLocked(task.id)}
+              canDrag={(status === 'backlog' || status === 'code-style') && !isTaskMutationLocked(task.id) && currentSort === 'manual'}
+              dragDrop={dragDrop}
+              isSelected={getIsSelected?.(task.id) || false}
+              isMultiSelecting={isMultiSelecting}
+              isHighlighted={highlightedRunId ? isTaskInRun?.(task.id, highlightedRunId) || false : false}
+              group={taskGroup ? { id: taskGroup.id, name: taskGroup.name, color: taskGroup.color } : undefined}
+              showGroupIndicator={!!taskGroup}
+              onOpen={(e) => onOpenTask(task.id, e)}
+              onDeploy={(e) => onDeployTemplate(task.id, e)}
+              onOpenTaskSessions={() => onOpenTaskSessions(task.id)}
+              onApprovePlan={() => onApprovePlan(task.id)}
+              onRequestRevision={() => onRequestRevision(task.id)}
+              onStartSingle={() => onStartSingle(task.id)}
+              onRepair={(action) => onRepairTask(task.id, action)}
+              onMarkDone={() => onMarkDone(task.id)}
+              onReset={() => onResetTask(task.id)}
+              onConvertToTemplate={(e) => onConvertToTemplate(task.id, e)}
+              onArchive={(e) => onArchiveTask(task.id, e)}
+              onViewRuns={() => onViewRuns(task.id)}
+              onContinueReviews={() => onContinueReviews(task.id)}
+            />
+          )
+        })}
 
         {/* Add buttons at the end */}
         {status === 'template' && (

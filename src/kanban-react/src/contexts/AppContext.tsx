@@ -1,11 +1,18 @@
-import { createContext, useContext, ReactNode } from "react"
+import { createContext, useContext, ReactNode } from 'react'
 import type {
   Task, WorkflowRun, Session, SessionMessage,
   BestOfNSummary, ColumnSortPreferences, Options,
   ModelCatalog, Toast, LogEntry, ControlState,
   TaskRunContext, PlanningPrompt, ChatSession, SessionUsageRollup,
   TaskGroup, TaskGroupWithTasks,
-} from "@/types"
+} from '@/types'
+
+// Reset task result type
+interface ResetTaskResult {
+  task: Task
+  group?: TaskGroup
+  wasInGroup: boolean
+}
 
 // Tasks context type
 interface TasksContextType {
@@ -24,7 +31,9 @@ interface TasksContextType {
   deleteTask: (id: string) => Promise<{ id: string; archived?: boolean }>
   reorderTask: (id: string, newIdx: number) => Promise<void>
   archiveAllDone: () => Promise<{ archived: number; deleted: number }>
-  resetTask: (id: string) => Promise<Task>
+  resetTask: (id: string) => Promise<ResetTaskResult>
+  resetTaskToGroup: (id: string) => Promise<Task>
+  moveTaskToGroup: (id: string, groupId: string | null) => Promise<Task>
   approvePlan: (id: string, message?: string) => Promise<Task>
   requestPlanRevision: (id: string, feedback: string) => Promise<Task>
   repairTask: (id: string, action: string, options?: { errorMessage?: string; smartRepairHints?: string; additionalReviewCount?: number }) => Promise<{ ok: boolean; action: string; reason?: string; task: Task }>
