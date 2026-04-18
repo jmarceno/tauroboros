@@ -8,6 +8,22 @@ import { projectPiEventToSessionMessage } from "./message-projection.ts"
 import { MessageStreamer } from "./message-streamer.ts"
 
 export type PiEventListener = (event: Record<string, unknown>) => void
+
+/**
+ * Error thrown when collectEvents times out but has partial events collected.
+ * The orchestrator can use these events to determine if the task was "essentially complete".
+ */
+export class CollectEventsTimeoutError extends Error {
+  readonly collectedEvents: Record<string, unknown>[]
+  readonly originalTimeoutMs: number
+
+  constructor(collectedEvents: Record<string, unknown>[], timeoutMs: number) {
+    super(`Timeout collecting events after ${timeoutMs}ms (collected ${collectedEvents.length} events)`)
+    this.name = "CollectEventsTimeoutError"
+    this.collectedEvents = collectedEvents
+    this.originalTimeoutMs = timeoutMs
+  }
+}
 export type ExtensionUIRequestHandler = (request: {
   id: string
   method: string
@@ -244,7 +260,9 @@ export class PiRpcProcess {
 
       const timer = setTimeout(() => {
         unsubscribe()
-        reject(new Error(`Timeout collecting events`))
+        // Use CollectEventsTimeoutError to preserve collected events
+        // This allows the orchestrator to determine if the task was "essentially complete"
+        reject(new CollectEventsTimeoutError(events, timeoutMs))
       }, timeoutMs)
 
       const unsubscribe = this.onEvent((event) => {

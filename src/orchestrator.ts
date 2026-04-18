@@ -15,7 +15,7 @@ import { CodeStyleSessionRunner } from "./runtime/codestyle-session.ts"
 import { BestOfNRunner } from "./runtime/best-of-n.ts"
 import { WorktreeLifecycle, resolveTargetBranch, listWorktrees, type WorktreeInfo } from "./runtime/worktree.ts"
 import type { PiContainerManager } from "./runtime/container-manager.ts"
-import { PiRpcProcess } from "./runtime/pi-process.ts"
+import { PiRpcProcess, CollectEventsTimeoutError } from "./runtime/pi-process.ts"
 import { ContainerPiProcess } from "./runtime/container-pi-process.ts"
 import {
   savePausedRunState,
@@ -42,6 +42,68 @@ function stripAndNormalize(value: string): string {
 
 function tagOutput(tag: string, text: string): string {
   return text.trim() ? `\n[${tag}]\n${text.trim()}\n` : ""
+}
+
+/**
+ * Determine if a task that timed out was "essentially complete" based on collected events.
+ * This heuristic checks if meaningful work was done before the timeout occurred.
+ */
+function checkEssentialCompletion(collectedEvents: Record<string, unknown>[]): {
+  isEssentiallyComplete: boolean
+  reason: string
+} {
+  if (collectedEvents.length === 0) {
+    return { isEssentiallyComplete: false, reason: "No events collected" }
+  }
+
+  // Event types that indicate substantial work was done
+  const workIndicators = new Set([
+    "tool_start",      // Tool execution started
+    "tool_complete",   // Tool execution completed
+    "text",            // Text output
+    "message_update",  // Assistant message
+    "file_write",      // File was written
+    "bash_command",    // Bash command executed
+    "git_commit",      // Git commit was made
+  ])
+
+  // Count meaningful events
+  let workEventCount = 0
+  let hasFileWrite = false
+  let hasGitCommit = false
+  let hasToolComplete = false
+  let hasMessageUpdate = false
+
+  for (const event of collectedEvents) {
+    const eventType = event.type as string
+    if (workIndicators.has(eventType)) {
+      workEventCount++
+    }
+    if (eventType === "file_write") hasFileWrite = true
+    if (eventType === "git_commit") hasGitCommit = true
+    if (eventType === "tool_complete") hasToolComplete = true
+    if (eventType === "message_update") hasMessageUpdate = true
+  }
+
+  // Heuristic: If we have at least 5 work events AND
+  // either a file write, git commit, tool completion, or substantial messages,
+  // consider the task essentially complete
+  if (workEventCount >= 5 && (hasFileWrite || hasGitCommit || hasToolComplete || hasMessageUpdate)) {
+    return {
+      isEssentiallyComplete: true,
+      reason: `Task made substantial progress (${workEventCount} work events, fileWrite=${hasFileWrite}, gitCommit=${hasGitCommit}, toolComplete=${hasToolComplete})`,
+    }
+  }
+
+  // Lower threshold for git commit specifically (if commit happened, task is essentially done)
+  if (hasGitCommit) {
+    return { isEssentiallyComplete: true, reason: "Git commit was made before timeout" }
+  }
+
+  return {
+    isEssentiallyComplete: false,
+    reason: `Insufficient progress indicators (${workEventCount} work events, need at least 5 with file/tool/message activity)`,
+  }
 }
 
 async function runShellCommand(command: string, cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
@@ -1570,6 +1632,30 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       if (this.shouldStop) {
         throw error
       }
+
+      // Special handling for CollectEventsTimeoutError
+      // The task may have timed out but completed substantial work
+      if (error instanceof CollectEventsTimeoutError) {
+        const completionCheck = checkEssentialCompletion(error.collectedEvents)
+        if (completionCheck.isEssentiallyComplete) {
+          console.log(`[orchestrator] Task ${task.name}(${task.id}) timed out but was essentially complete: ${completionCheck.reason}`)
+          // The work was done, just the agent_end event didn't arrive in time
+          // Complete the task normally without running review/commit (they already ran)
+          await this.completeTaskSuccessfully(task, worktreeInfo, options)
+          return
+        } else {
+          console.log(`[orchestrator] Task ${task.name}(${task.id}) timed out with insufficient progress: ${completionCheck.reason}`)
+          const message = `${error.message} - ${completionCheck.reason}`
+          this.db.updateTask(task.id, {
+            status: "failed",
+            errorMessage: message,
+            worktreeDir: worktreeInfo?.directory ?? task.worktreeDir,
+          })
+          this.broadcastTask(task.id)
+          throw error
+        }
+      }
+
       const message = error instanceof Error ? error.message : String(error)
       this.db.updateTask(task.id, {
         status: "failed",
@@ -2051,6 +2137,51 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     if (!updated) return
     console.log(`[orchestrator] broadcastTask: ${updated.name}(${taskId}) status=${updated.status}`)
     this.broadcast({ type: "task_updated", payload: updated })
+  }
+
+  /**
+   * Complete a task successfully after work is done.
+   * Used when a task timed out but was essentially complete.
+   * Skips re-running review/commit as they already happened.
+   */
+  private async completeTaskSuccessfully(
+    task: Task,
+    worktreeInfo: WorktreeInfo,
+    options: Options,
+  ): Promise<void> {
+    try {
+      const targetBranch = await resolveTargetBranch({
+        baseDirectory: this.projectRoot,
+        taskBranch: task.branch,
+        optionBranch: options.branch,
+      })
+      await this.worktree.complete(worktreeInfo.directory, {
+        branch: worktreeInfo.branch,
+        targetBranch,
+        shouldMerge: true,
+        shouldRemove: task.deleteWorktree !== false,
+      })
+
+      this.db.updateTask(task.id, {
+        status: "done",
+        completedAt: nowUnix(),
+        worktreeDir: task.deleteWorktree !== false ? null : worktreeInfo.directory,
+        executionPhase: task.planmode ? "implementation_done" : undefined,
+      })
+      this.broadcastTask(task.id)
+      console.log(`[orchestrator] Task ${task.name}(${task.id}) completed successfully after timeout recovery`)
+    } catch (completionError) {
+      // If completion itself fails, mark as failed but preserve the worktree for debugging
+      const message = completionError instanceof Error ? completionError.message : String(completionError)
+      console.error(`[orchestrator] Task ${task.name}(${task.id}) completion failed after timeout: ${message}`)
+      this.db.updateTask(task.id, {
+        status: "failed",
+        errorMessage: `Worktree completion failed after timeout recovery: ${message}`,
+        worktreeDir: worktreeInfo.directory,
+      })
+      this.broadcastTask(task.id)
+      throw completionError
+    }
   }
 
   appendApprovalNote(taskId: string, note: string): Task | null {
