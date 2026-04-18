@@ -630,3 +630,118 @@ After diagnosing a task issue, report:
 - What repair action you took (or recommended)
 - Any assumptions made during diagnosis
 - What the user should expect after the repair (e.g., "task will restart from planning")
+
+## Debugging Task Groups
+
+Task Groups are virtual workflows that execute multiple related tasks together. When debugging issues with groups, consider both the group-level and task-level state.
+
+### Group Debugging Endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/task-groups` | List all groups |
+| `GET` | `/api/task-groups/:id` | Get group with full task details |
+| `POST` | `/api/task-groups/:id/start` | Start group execution (returns error details) |
+| `GET` | `/api/tasks/:id/group` | Get task's group membership |
+
+### Common Group Issues
+
+#### Pattern 1: Group fails to start
+
+**Symptoms:** `POST /api/task-groups/:id/start` returns 409 Conflict.
+
+**Diagnosis:** Check the error message:
+- "A workflow is already running" - Another workflow/groups is executing
+- "Some tasks are not in backlog status" - Tasks moved outside backlog
+- "external dependencies" - Group tasks depend on non-group tasks
+
+**Repair:**
+- Stop the current workflow first
+- Move tasks back to backlog
+- Move external dependencies into the group or complete them first
+
+#### Pattern 2: Group task stuck in group panel
+
+**Symptoms:** Task shows in group panel but doesn't appear in execution.
+
+**Diagnosis:** Check:
+- Task `status` is `backlog` or `template` (not `executing`, `review`, etc.)
+- Task has no external dependencies on non-group tasks
+- Group `status` is `active`
+
+**Repair:**
+- Reset the task if it's stuck
+- Check if the group run completed or failed
+
+#### Pattern 3: Group shows completed but tasks are not done
+
+**Symptoms:** Group `status` is `completed` but some tasks are still in other statuses.
+
+**Diagnosis:** Check:
+- Each task's individual `status` and `executionPhase`
+- `agentOutput` for each task
+- Worktree state for each task
+
+**Repair:**
+- Investigate each stuck task individually using the investigation workflow above
+- Reset stuck tasks as needed
+
+### Group vs Individual Task Debugging
+
+When a task is part of a group:
+
+1. **Check group state first** - Is the group `active` or `completed`?
+2. **Check task membership** - Use `GET /api/tasks/:id/group`
+3. **Check group run** - Look at the `workflow_run` with `kind: "group_tasks"`
+4. **Debug as normal** - Once task membership is confirmed, debug using standard patterns
+
+### Group Workflow Run Inspection
+
+Group executions create `workflow_runs` with `kind: "group_tasks"`:
+
+```bash
+# Get all workflow runs
+curl http://localhost:<port>/api/runs
+
+# Look for runs with kind: "group_tasks"
+# Check:
+# - status: "running", "completed", "failed"
+# - current_task_id: which task is/was executing
+# - current_task_index: position in group task order
+# - task_order: array of all task IDs in execution order
+```
+
+### Restoring Tasks from Groups
+
+When a task is removed from a group or the group is deleted:
+
+```bash
+# Move a task back to general backlog (removes from group)
+curl -X POST http://localhost:<port>/api/tasks/:id/move-to-group \
+  -H "Content-Type: application/json" \
+  -d '{"groupId": null}'
+
+# The task will reappear in the main backlog column
+```
+
+### Group Diagnostic Checklist
+
+When debugging group issues, verify:
+
+- [ ] Group `status` is `active` (not `completed` or `archived`)
+- [ ] Group tasks are all in `backlog` or `template` status
+- [ ] No external dependencies on non-group tasks
+- [ ] No other workflow is running (check `GET /api/runs`)
+- [ ] Container images are valid if using container mode
+- [ ] Group `workflow_run` status reflects actual state
+- [ ] Tasks have no circular dependencies within the group
+
+### What to Tell the User About Groups
+
+When diagnosing group issues, report:
+
+- Whether the issue is at the group level or task level
+- If at group level: current run status, task order, blocking issues
+- If at task level: which task has the problem and its current state
+- What repair action resolves the issue
+- Expected behavior after repair (e.g., "group will restart from task X")

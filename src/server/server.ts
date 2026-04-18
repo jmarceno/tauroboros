@@ -1961,6 +1961,7 @@ export class PiKanbanServer {
 - The TaurOboros server is running on port: **${serverPort}**
 - Base URL: http://localhost:${serverPort}
 - Use the HTTP API endpoints to create tasks (POST /api/tasks)
+- Use the Task Groups API to organize related tasks (POST /api/task-groups)
 
 **Task Creation Guidelines:**
 - Create small, outcome-based tasks that can be completed independently
@@ -1969,7 +1970,28 @@ export class PiKanbanServer {
 - Include clear, actionable prompts for each task
 - Consider using plan-mode (planmode: true) for tasks that need approval before implementation
 
-Please confirm when you've created the tasks, and provide a summary of what was created.`
+**IMPORTANT - Create a Task Group:**
+If the implementation plan involves multiple related tasks:
+1. Create ALL tasks first using POST /api/tasks
+2. Then create a **Task Group** using POST /api/task-groups with:
+   - "name": A descriptive name for the feature/project (e.g., "Feature X")
+   - "color": A hex color for visual identification (e.g., "#6366f1")
+   - "taskIds": Array of the created task IDs to add to the group
+3. Use POST /api/task-groups/:id/tasks to add tasks if the group was created without them
+
+**Group Creation Example:**
+\`\`\`bash
+# Create tasks first
+curl -X POST http://localhost:${serverPort}/api/tasks -H "Content-Type: application/json" -d '{"name": "Task 1", "prompt": "Do thing A", "status": "backlog"}'
+curl -X POST http://localhost:${serverPort}/api/tasks -H "Content-Type: application/json" -d '{"name": "Task 2", "prompt": "Do thing B", "status": "backlog"}'
+
+# Create group with tasks
+curl -X POST http://localhost:${serverPort}/api/task-groups -H "Content-Type: application/json" -d '{"name": "Feature X", "color": "#6366f1", "taskIds": ["task-id-1", "task-id-2"]}'
+\`\`\`
+
+The group allows you to execute all related tasks together with a single click using the "Start Group Workflow" button.
+
+Please confirm when you've created the tasks and group, and provide a summary of what was created.`
 
         await planningSession.sendMessage({
           content: taskSetupPrompt,
