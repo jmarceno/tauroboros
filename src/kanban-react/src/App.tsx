@@ -271,9 +271,11 @@ function App() {
     // Handle group-related actions
     if (action === 'add-to-group') {
       // Validate that task can be added to group
+      // Use the actual dragSourceContext from the hook to determine where the drag started
+      const sourceContext = dragDrop.dragSourceContext === 'group' ? 'group' : 'column'
       const validation = validateGroupDrop(
         task,
-        task.groupId ? 'group' : 'backlog',
+        sourceContext,
         target,
         task.groupId ?? null
       )

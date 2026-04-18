@@ -30,6 +30,7 @@ export interface GroupPanelProps {
   onContinueReviews: (id: string) => void
   onDeleteGroup: () => void
   dragDrop: ReturnType<typeof useDragDrop>
+  isDragging?: boolean
 }
 
 export const GroupPanel = memo(function GroupPanel({
@@ -58,6 +59,7 @@ export const GroupPanel = memo(function GroupPanel({
   onContinueReviews,
   onDeleteGroup,
   dragDrop,
+  isDragging = false,
 }: GroupPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
@@ -123,8 +125,10 @@ export const GroupPanel = memo(function GroupPanel({
   }, [onDeleteGroup])
 
   const handleBackdropClick = useCallback(() => {
+    // Don't close if a drag is in progress (user might be dragging to this panel)
+    if (isDragging) return
     handleClose()
-  }, [handleClose])
+  }, [handleClose, isDragging])
 
   // Don't render anything when closed and animation finished
   if (!isOpen && !isExiting) {
@@ -136,9 +140,9 @@ export const GroupPanel = memo(function GroupPanel({
 
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop - disable pointer events during drag to allow dropping */}
       <div
-        className="group-panel-backdrop"
+        className={`group-panel-backdrop ${isDragging ? 'group-panel-backdrop-dragging' : ''}`}
         onClick={handleBackdropClick}
         aria-hidden="true"
       />

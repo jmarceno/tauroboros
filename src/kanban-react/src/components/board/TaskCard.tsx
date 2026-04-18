@@ -318,9 +318,13 @@ export const TaskCard = memo(function TaskCard({
   const handleDragStart = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     if (!canDrag) return
 
-    // Determine drag source context
-    const context = task.groupId
-      ? { source: 'group' as const, groupId: task.groupId }
+    // Determine drag source context based on where the task is being dragged from:
+    // - If rendered inside a GroupPanel (group prop provided): source is 'group'
+    // - Otherwise (rendered in a column): source is 'column'
+    // Note: We use the 'group' prop to determine this, not task.groupId, because
+    // a task can have groupId but still be displayed in a column (filtered view)
+    const context = group
+      ? { source: 'group' as const, groupId: group.id }
       : { source: 'column' as const, status: task.status }
 
     dragDrop.handleDragStart(task.id, context)
@@ -333,7 +337,7 @@ export const TaskCard = memo(function TaskCard({
       taskId: task.id,
       source: context,
     }))
-  }, [canDrag, dragDrop, task.id, task.groupId, task.status])
+  }, [canDrag, dragDrop, task.id, task.status, group])
 
   const handleDragEnd = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     dragDrop.handleDragEnd()

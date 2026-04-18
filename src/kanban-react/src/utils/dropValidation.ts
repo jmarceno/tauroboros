@@ -8,7 +8,7 @@ export type DropValidationResult =
   | { allowed: true; action: DropAction }
   | { allowed: false; reason: string }
 
-export type GroupDropSource = 'backlog' | 'group'
+export type GroupDropSource = 'backlog' | 'group' | 'column'
 
 export interface GroupDropValidationResult {
   allowed: boolean
@@ -80,6 +80,7 @@ export function canDragFromColumn(
 /**
  * Validates whether a task can be dropped onto a group panel.
  * Enforces group workflow constraints:
+ * - Column → Group: Allowed if task has no group or is dropping on same group
  * - Backlog → Group: Allowed if task has no group (add to group)
  * - Group → Backlog: Always allowed (remove from group)
  * - Group A → Group B: Not allowed (prevented for now)
@@ -91,6 +92,22 @@ export function validateGroupDrop(
   targetGroupId: string | null,
   taskGroupId: string | null
 ): GroupDropValidationResult {
+  // Dragging from a column to a group panel
+  // Note: 'column' source means the task was dragged from a kanban column,
+  // not from within a GroupPanel. The task may or may not have a groupId.
+  if (sourceContext === 'column') {
+    // If task is already in a different group, prevent adding to another group
+    if (taskGroupId !== null && taskGroupId !== targetGroupId) {
+      return { allowed: false, reason: 'Task is already in a group' }
+    }
+    // If dropping on the same group, it's a no-op
+    if (taskGroupId === targetGroupId && targetGroupId !== null) {
+      return { allowed: false, reason: 'no-change' }
+    }
+    // Valid: Add task to group (either ungrouped task or same group)
+    return { allowed: true, action: 'add-to-group' }
+  }
+
   // Dragging from backlog to a group panel
   if (sourceContext === 'backlog') {
     // If task is already in a group, prevent adding to another group

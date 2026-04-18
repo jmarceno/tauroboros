@@ -245,6 +245,43 @@ describe('validateGroupDrop', () => {
     })
   })
 
+  describe('column to group', () => {
+    it('allows column → group when task has no group', () => {
+      const task = createMockTask('review', null)
+      const result = validateGroupDrop(task, 'column', 'group-1', null)
+      expect(result.allowed).toBe(true)
+      expect(result.action).toBe('add-to-group')
+    })
+
+    it('prevents column → group when task is already in a different group', () => {
+      const task = createMockTask('review', 'group-2')
+      const result = validateGroupDrop(task, 'column', 'group-1', 'group-2')
+      expect(result.allowed).toBe(false)
+      expect(result.reason).toBe('Task is already in a group')
+    })
+
+    it('returns no-change when dropping on same group from column', () => {
+      const task = createMockTask('review', 'group-1')
+      const result = validateGroupDrop(task, 'column', 'group-1', 'group-1')
+      expect(result.allowed).toBe(false)
+      expect(result.reason).toBe('no-change')
+    })
+
+    it('allows column → group for review status task with no group', () => {
+      const task = createMockTask('review', null)
+      const result = validateGroupDrop(task, 'column', 'group-1', null)
+      expect(result.allowed).toBe(true)
+      expect(result.action).toBe('add-to-group')
+    })
+
+    it('allows column → group for stuck status task with no group', () => {
+      const task = createMockTask('stuck', null)
+      const result = validateGroupDrop(task, 'column', 'group-1', null)
+      expect(result.allowed).toBe(true)
+      expect(result.action).toBe('add-to-group')
+    })
+  })
+
   describe('group to backlog', () => {
     it('allows group → backlog (remove from group)', () => {
       const task = createMockTask('backlog', 'group-1')
