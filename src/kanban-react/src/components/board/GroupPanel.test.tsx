@@ -6,12 +6,17 @@ import type { TaskGroup, Task } from '@/types'
 // Mock dragDrop hook return type
 const createMockDragDrop = () => ({
   dragTaskId: null as string | null,
+  dragSourceContext: null as string | null,
+  dragSourceGroupId: null as string | null,
+  dragOverTarget: null as { type: string; id: string } | null,
   dragOverStatus: null as string | null,
   handleDragStart: vi.fn(),
   handleDragEnd: vi.fn(),
   handleDragOver: vi.fn(),
+  handleDragOverGroup: vi.fn(),
   handleDragLeave: vi.fn(),
   handleDrop: vi.fn(),
+  handleDropOnGroup: vi.fn(),
 })
 
 describe('GroupPanel', () => {
@@ -283,8 +288,11 @@ describe('GroupPanel', () => {
     expect(mockCallbacks.onRemoveTask).toHaveBeenCalledWith('task-2')
   })
 
-  it('handles drop events with valid task ID', () => {
+  it('calls handleDropOnGroup when drop occurs on the drop zone', () => {
     const mockDragDrop = createMockDragDrop()
+    // Set up the drag state to simulate a task being dragged
+    mockDragDrop.dragTaskId = 'dropped-task-id'
+    
     render(
       <GroupPanel
         group={mockGroup}
@@ -299,23 +307,23 @@ describe('GroupPanel', () => {
     const dropZone = screen.getByText('Drag tasks here').closest('div')?.parentElement
     expect(dropZone).toBeDefined()
 
-    // Create a mock drag event with dataTransfer
-    const mockDataTransfer = {
-      getData: vi.fn().mockReturnValue('dropped-task-id'),
-      setData: vi.fn(),
-      dropEffect: 'none',
-      effectAllowed: 'none',
-    }
+    // Simulate drop - the component's onDrop handler calls handleDropOnGroup
+    fireEvent.drop(dropZone!, {
+      dataTransfer: {
+        getData: vi.fn().mockReturnValue('dropped-task-id'),
+      },
+      preventDefault: vi.fn(),
+    })
 
-    // Simulate drop
-    fireEvent.drop(dropZone!, { dataTransfer: mockDataTransfer })
-
-    expect(mockCallbacks.onAddTasks).toHaveBeenCalledWith(['dropped-task-id'])
-    expect(mockDragDrop.handleDragEnd).toHaveBeenCalled()
+    // The component should call handleDropOnGroup from the dragDrop hook
+    expect(mockDragDrop.handleDropOnGroup).toHaveBeenCalled()
   })
 
-  it('handles drop events without calling onAddTasks for empty task ID', () => {
+  it('handleDropOnGroup is still invoked even when dragTaskId is null', () => {
     const mockDragDrop = createMockDragDrop()
+    // Ensure no drag task is set - but the handler is still called
+    mockDragDrop.dragTaskId = null
+    
     render(
       <GroupPanel
         group={mockGroup}
@@ -328,47 +336,81 @@ describe('GroupPanel', () => {
 
     const dropZone = screen.getByText('Drag tasks here').closest('div')?.parentElement
 
-    const mockDataTransfer = {
-      getData: vi.fn().mockReturnValue(''),
-      setData: vi.fn(),
-      dropEffect: 'none',
-      effectAllowed: 'none',
-    }
+    fireEvent.drop(dropZone!, {
+      dataTransfer: {
+        getData: vi.fn().mockReturnValue(''),
+      },
+      preventDefault: vi.fn(),
+    })
 
-    fireEvent.drop(dropZone!, { dataTransfer: mockDataTransfer })
-
-    expect(mockCallbacks.onAddTasks).not.toHaveBeenCalled()
+    // The handler is still called (the component calls it), even if the hook
+    // internally doesn't invoke the onDrop callback when dragTaskId is null
+    expect(mockDragDrop.handleDropOnGroup).toHaveBeenCalled()
   })
 
   it('updates visual state on drag over', () => {
-    render(
+    const mockDragDrop = createMockDragDrop()
+    // Set dragOverTarget to simulate being over this group
+    mockDragDrop.dragOverTarget = { type: 'group', id: 'group-1' }
+    
+    // Use empty tasks to show the drop zone text
+    const { container } = render(
       <GroupPanel
         group={mockGroup}
-        tasks={mockTasks}
+        tasks={[]}
         isOpen={true}
-        dragDrop={createMockDragDrop()}
+        dragDrop={mockDragDrop}
         {...mockCallbacks}
       />
     )
 
-    // Find the drop zone container that has the drag handlers
-    const dragText = screen.getByText('Drag tasks here')
-    const innerBox = dragText.closest('div')
-    const dropZone = innerBox?.parentElement
-
+    // Find the drop zone container by looking for the aria-label
+    const dropZone = container.querySelector('[aria-label*="Drop zone"]')
     expect(dropZone).toBeDefined()
 
-    // Initial state - no highlight class
-    expect(dropZone).not.toHaveClass('bg-accent-primary/10')
-
-    // Drag over
-    fireEvent.dragOver(dropZone!, {
-      dataTransfer: { dropEffect: 'move' },
-      preventDefault: vi.fn(),
-    })
-
-    // Visual state should update - container gets highlight class
+    // When dragOverTarget is set to this group, the highlight class should be applied
     expect(dropZone).toHaveClass('bg-accent-primary/10')
+  })
+
+  it('removes visual highlight when drag leaves', () => {
+    const mockDragDrop = createMockDragDrop()
+    // Simulate drag over this group first
+    mockDragDrop.dragOverTarget = { type: 'group', id: 'group-1' }
+    
+    // Use empty tasks to show the drop zone
+    const { container, rerender } = render(
+      <GroupPanel
+        group={mockGroup}
+        tasks={[]}
+        isOpen={true}
+        dragDrop={mockDragDrop}
+        {...mockCallbacks}
+      />
+    )
+
+    // Find the drop zone container
+    const dropZone = container.querySelector('[aria-label*="Drop zone"]')
+    expect(dropZone).toBeDefined()
+
+    // Verify highlight is shown
+    expect(dropZone).toHaveClass('bg-accent-primary/10')
+
+    // Now simulate drag leave by clearing the target
+    mockDragDrop.dragOverTarget = null
+    
+    // Re-render to reflect state change
+    rerender(
+      <GroupPanel
+        group={mockGroup}
+        tasks={[]}
+        isOpen={true}
+        dragDrop={mockDragDrop}
+        {...mockCallbacks}
+      />
+    )
+
+    // After leaving, highlight should be removed
+    expect(dropZone).not.toHaveClass('bg-accent-primary/10')
   })
 
   it('calls onStartGroup when start button is clicked', () => {
