@@ -1,6 +1,17 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import type { Task, TaskGroup, TaskStatus, BestOfNSummary, ColumnSortOption, ColumnSortPreferences } from '@/types'
 import { useApi } from './useApi'
+
+// Static sort functions - module level constant, no need for useMemo
+const sortFns: Record<ColumnSortOption, (a: Task, b: Task) => number> = {
+  'manual': (a, b) => a.idx - b.idx,
+  'name-asc': (a, b) => a.name.localeCompare(b.name),
+  'name-desc': (a, b) => b.name.localeCompare(a.name),
+  'created-asc': (a, b) => a.createdAt - b.createdAt,
+  'created-desc': (a, b) => b.createdAt - a.createdAt,
+  'updated-asc': (a, b) => (a.updatedAt || 0) - (b.updatedAt || 0),
+  'updated-desc': (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0),
+}
 
 export function useTasks(columnSorts?: ColumnSortPreferences) {
   const api = useApi()
@@ -9,15 +20,13 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const sortFns: Record<ColumnSortOption, (a: Task, b: Task) => number> = useMemo(() => ({
-    'manual': (a, b) => a.idx - b.idx,
-    'name-asc': (a, b) => a.name.localeCompare(b.name),
-    'name-desc': (a, b) => b.name.localeCompare(a.name),
-    'created-asc': (a, b) => a.createdAt - b.createdAt,
-    'created-desc': (a, b) => b.createdAt - a.createdAt,
-    'updated-asc': (a, b) => (a.updatedAt || 0) - (b.updatedAt || 0),
-    'updated-desc': (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0),
-  }), [])
+  // Mounted ref to prevent setState on unmounted component
+  const isMountedRef = useRef(true)
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
 
   const getSortForColumn = useCallback((status: TaskStatus): ColumnSortOption => {
     if (!columnSorts) return 'manual'
@@ -71,23 +80,35 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
     setError(null)
     try {
       const data = await api.getTasks()
-      setTasks(data)
-      await refreshBonSummaries(data)
+      // Only update state if component is still mounted
+      if (isMountedRef.current) {
+        setTasks(data)
+        await refreshBonSummaries(data)
+      }
       return data
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (isMountedRef.current) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
     } finally {
-      setIsLoading(false)
+      if (isMountedRef.current) {
+        setIsLoading(false)
+      }
     }
   }, [api])
 
   const refreshBonSummaries = useCallback(async (taskList?: Task[], specificTaskIds?: string[]) => {
+    // Don't proceed if component is unmounted
+    if (!isMountedRef.current) return
+
     const targetIds = specificTaskIds ?? taskList
       ?.filter(t => t.executionStrategy === 'best_of_n')
       .map(t => t.id) ?? []
 
     if (targetIds.length === 0) {
-      setBonSummaries({})
+      if (isMountedRef.current) {
+        setBonSummaries({})
+      }
       return
     }
 
@@ -102,15 +123,18 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
       })
     )
 
-    setBonSummaries(prev => {
-      const next = { ...prev }
-      for (const { id, summary } of results) {
-        if (summary) {
-          next[id] = summary
+    // Only update state if still mounted
+    if (isMountedRef.current) {
+      setBonSummaries(prev => {
+        const next = { ...prev }
+        for (const { id, summary } of results) {
+          if (summary) {
+            next[id] = summary
+          }
         }
-      }
-      return next
-    })
+        return next
+      })
+    }
   }, [api])
 
   /**

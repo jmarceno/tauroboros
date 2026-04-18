@@ -7,18 +7,28 @@ import {
   ModalContext, ContainerStatusContext, SessionUsageContext, TaskLastUpdateContext,
   TaskGroupsContext,
 } from '@/contexts/AppContext'
-import {
-  useTasks, useRuns, useOptions, useToasts,
-  useModelSearch, useSession, useWebSocket,
-  useWorkflowControl, useMultiSelect, usePlanningChat,
-  useDragDrop, useKeyboard, useSessionUsage, useTaskLastUpdate,
-  useTaskGroups,
-} from '@/hooks'
+// Direct imports from hook files (avoid barrel file)
+import { useTasks } from '@/hooks/useTasks'
+import { useRuns } from '@/hooks/useRuns'
+import { useOptions } from '@/hooks/useOptions'
+import { useToasts } from '@/hooks/useToasts'
+import { useModelSearch } from '@/hooks/useModelSearch'
+import { useSession } from '@/hooks/useSession'
+import { useWebSocket } from '@/hooks/useWebSocket'
+import { useWorkflowControl } from '@/hooks/useWorkflowControl'
+import { useMultiSelect } from '@/hooks/useMultiSelect'
+import { usePlanningChat } from '@/hooks/usePlanningChat'
+import { useDragDrop } from '@/hooks/useDragDrop'
+import { useKeyboard } from '@/hooks/useKeyboard'
+import { useSessionUsage } from '@/hooks/useSessionUsage'
+import { useTaskLastUpdate } from '@/hooks/useTaskLastUpdate'
+import { useTaskGroups } from '@/hooks/useTaskGroups'
+import { useWebSocketHandlers } from '@/hooks/useWebSocketHandlers'
 import { validateTaskDrop, validateGroupDrop } from '@/utils/dropValidation'
 import type { DropAction } from '@/utils/dropValidation'
-import type { Task, TaskStatus, WorkflowRun, TaskGroup } from '@/types'
+import type { Task, TaskStatus, TaskGroup } from '@/types'
 
-// Components
+// Components (direct imports from source files)
 import { Sidebar } from '@/components/board/Sidebar'
 import { TopBar } from '@/components/board/TopBar'
 import { KanbanBoard } from '@/components/board/KanbanBoard'
@@ -27,7 +37,7 @@ import { TabbedLogPanel } from '@/components/common/TabbedLogPanel'
 import { ToastContainer } from '@/components/common/ToastContainer'
 import { ChatContainer } from '@/components/chat/ChatContainer'
 
-// Modals
+// Modals (direct imports from source files)
 import { TaskModal } from '@/components/modals/TaskModal'
 import { OptionsModal } from '@/components/modals/OptionsModal'
 import { ExecutionGraphModal } from '@/components/modals/ExecutionGraphModal'
@@ -448,362 +458,32 @@ function App() {
     isModalOpen: () => isAnyModalOpen,
   })
 
-  const tasksRef = useRef(tasksHook.tasks)
-  tasksRef.current = tasksHook.tasks
-
-  const runsRef = useRef(runsHook.runs)
-  runsRef.current = runsHook.runs
-
-  // WebSocket handlers
-  useEffect(() => {
-    const unsubscribers: (() => void)[] = []
-
-    unsubscribers.push(wsHook.on('task_created', async (payload) => {
-      const task = payload as Task
-      if (!task || !task.id) return
-      const existingTask = tasksRef.current.find(t => t.id === task.id)
-      if (existingTask) return
-      tasksHook.setTasks([...tasksRef.current, task])
-      toastsHook.addLog(`Task created: ${task.name} (status: ${task.status || 'undefined'})`, 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('task_updated', async (payload) => {
-      const task = payload as Task
-      const idx = tasksRef.current.findIndex(t => t.id === task.id)
-      const prev = idx >= 0 ? tasksRef.current[idx] : null
-
-      if (prev && task.updatedAt && prev.updatedAt && task.updatedAt < prev.updatedAt) {
-        console.log(`[WebSocket] Skipping stale task_updated for ${task.name}`)
-        return
-      }
-
-      const mergedTask = prev ? { ...prev, ...task } : task
-
-      if (idx >= 0) {
-        tasksHook.setTasks(tasksRef.current.map((t, i) => i === idx ? mergedTask : t))
-      }
-      runsHook.setTasksRef(tasksRef.current)
-
-      if (!prev || prev.status !== task.status) {
-        if (task.status === 'executing') toastsHook.addLog(`Task started: ${task.name}`, 'info')
-        if (task.status === 'done') toastsHook.addLog(`Task completed: ${task.name}`, 'success')
-        if (task.status === 'failed' || task.status === 'stuck') {
-          toastsHook.addLog(`Task failed: ${task.name}${task.errorMessage ? ' - ' + task.errorMessage : ''}`, 'error')
-        }
-      }
-
-      if (task.executionStrategy === 'best_of_n') {
-        tasksHook.refreshBonSummaries([task.id])
-      }
-    }))
-
-    unsubscribers.push(wsHook.on('task_deleted', (payload) => {
-      const { id } = payload as { id: string }
-      const task = tasksRef.current.find(t => t.id === id)
-      tasksHook.removeBonSummary(id)
-      tasksHook.setTasks(tasksRef.current.filter(t => t.id !== id))
-      runsHook.setTasksRef(tasksRef.current.filter(t => t.id !== id))
-      toastsHook.addLog(`Task deleted: ${task?.name || id}`, 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('task_archived', (payload) => {
-      const { id } = payload as { id: string }
-      const task = tasksRef.current.find(t => t.id === id)
-      tasksHook.removeBonSummary(id)
-      tasksHook.setTasks(tasksRef.current.filter(t => t.id !== id))
-      runsHook.setTasksRef(tasksRef.current.filter(t => t.id !== id))
-      toastsHook.addLog(`Task archived: ${task?.name || id}`, 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('task_reordered', () => {
-      toastsHook.addLog('Task order updated', 'info')
-      tasksHook.loadTasks().then((data) => {
-        runsHook.setTasksRef(data || tasksRef.current)
-      })
-    }))
-
-    unsubscribers.push(wsHook.on('options_updated', () => {
-      toastsHook.addLog('Options updated', 'info')
-      optionsHook.loadOptions()
-    }))
-
-    unsubscribers.push(wsHook.on('run_created', (payload) => {
-      const run = payload as WorkflowRun
-      runsHook.updateRunFromWebSocket(run)
-      workflowControl.handleRunUpdate(run)
-    }))
-
-    unsubscribers.push(wsHook.on('run_updated', (payload) => {
-      const run = payload as WorkflowRun
-      runsHook.updateRunFromWebSocket(run)
-      workflowControl.handleRunUpdate(run)
-    }))
-
-    unsubscribers.push(wsHook.on('run_archived', (payload) => {
-      const { id } = payload as { id: string }
-      toastsHook.addLog(`Workflow run archived: ${id}`, 'info')
-      runsHook.removeRun(id)
-      workflowControl.clearRun()
-    }))
-
-    unsubscribers.push(wsHook.on('execution_paused', (payload) => {
-      const data = payload as { runId: string }
-      toastsHook.showToast('Workflow paused', 'info')
-      toastsHook.addLog(`Workflow paused: ${data.runId}`, 'info')
-      workflowControl.updateStateFromRuns(runsRef.current)
-    }))
-
-    unsubscribers.push(wsHook.on('execution_resumed', (payload) => {
-      const data = payload as { runId: string }
-      toastsHook.showToast('Workflow resumed', 'success')
-      toastsHook.addLog(`Workflow resumed: ${data.runId}`, 'success')
-      workflowControl.updateStateFromRuns(runsRef.current)
-    }))
-
-    unsubscribers.push(wsHook.on('run_paused', (payload) => {
-      const data = payload as { runId: string }
-      toastsHook.showToast('Workflow run paused', 'info')
-      toastsHook.addLog(`Workflow run paused: ${data.runId}`, 'info')
-      workflowControl.updateStateFromRuns(runsRef.current)
-    }))
-
-    unsubscribers.push(wsHook.on('run_resumed', (payload) => {
-      const data = payload as { runId: string }
-      toastsHook.showToast('Workflow run resumed', 'success')
-      toastsHook.addLog(`Workflow run resumed: ${data.runId}`, 'success')
-      workflowControl.updateStateFromRuns(runsRef.current)
-    }))
-
-    unsubscribers.push(wsHook.on('run_stopped', (payload) => {
-      const data = payload as { runId: string; destructive?: boolean }
-      const message = data.destructive ? 'Workflow force stopped' : 'Workflow stopped'
-      toastsHook.showToast(message, data.destructive ? 'error' : 'info')
-      toastsHook.addLog(`${message}: ${data.runId}`, data.destructive ? 'error' : 'info')
-      runsHook.loadRuns()
-    }))
-
-    unsubscribers.push(wsHook.on('session_started', (payload) => {
-      const data = payload as Session
-      if (data.taskId && data.id) {
-        const idx = tasksRef.current.findIndex(t => t.id === data.taskId)
-        if (idx >= 0) {
-          const updatedTasks = [...tasksRef.current]
-          updatedTasks[idx] = {
-            ...updatedTasks[idx],
-            sessionId: data.id,
-            sessionUrl: `/#session/${encodeURIComponent(data.id)}`,
-          }
-          tasksHook.setTasks(updatedTasks)
-        }
-      }
-      if (sessionHook.sessionId === data.id) {
-        sessionHook.updateSession(data)
-      }
-    }))
-
-    unsubscribers.push(wsHook.on('session_message_created', (payload) => {
-      const msg = payload as SessionMessage
-      if (msg.sessionId === sessionHook.sessionId) {
-        sessionHook.addMessage(msg)
-      }
-    }))
-
-    unsubscribers.push(wsHook.on('session_status_changed', (payload) => {
-      const data = payload as Session
-      if (sessionHook.sessionId === data.id) {
-        sessionHook.updateSession(data)
-      }
-    }))
-
-    unsubscribers.push(wsHook.on('session_completed', (payload) => {
-      const data = payload as Session
-      if (sessionHook.sessionId === data.id) {
-        sessionHook.updateSession(data)
-      }
-    }))
-
-    unsubscribers.push(wsHook.on('task_run_updated', (payload) => {
-      const data = payload as { taskId: string }
-      if (data.taskId) {
-        tasksHook.refreshBonSummaries([data.taskId])
-      }
-    }))
-
-    unsubscribers.push(wsHook.on('task_candidate_updated', (payload) => {
-      const data = payload as { taskId: string }
-      if (data.taskId) {
-        tasksHook.refreshBonSummaries([data.taskId])
-      }
-    }))
-
-    unsubscribers.push(wsHook.on('image_status', (payload) => {
-      const data = payload as { status: string; message: string; errorMessage?: string }
-      if (data.status === 'preparing') {
-        toastsHook.addLog(`⏳ ${data.message}`, 'info')
-      } else if (data.status === 'ready') {
-        toastsHook.addLog(`✅ ${data.message}`, 'success')
-      } else if (data.status === 'error') {
-        toastsHook.addLog(`❌ ${data.message}${data.errorMessage ? ': ' + data.errorMessage : ''}`, 'error')
-        toastsHook.showToast(`Container image error: ${data.errorMessage || data.message}`, 'error')
-      }
-    }))
-
-    unsubscribers.push(wsHook.on('error', (payload) => {
-      const data = payload as { message: string }
-      toastsHook.showToast(data.message, 'error')
-    }))
-
-    // Planning chat WebSocket handlers are now managed inside usePlanningChat hook
-    // to avoid stale closure issues with session state
-
-    unsubscribers.push(wsHook.on('container_config_updated', () => {
-      toastsHook.addLog('Container configuration updated', 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('container_package_added', (payload) => {
-      toastsHook.addLog(`Package '${(payload as { name: string }).name}' added to container config`, 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('container_package_removed', () => {
-      toastsHook.addLog('Package removed from container config', 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('container_build_started', (payload) => {
-      toastsHook.showToast('Container build started', 'info')
-      toastsHook.addLog(`Container build #${(payload as { buildId: number }).buildId} started (${(payload as { imageTag: string }).imageTag})`, 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('container_build_progress', () => {
-      // Progress updates handled within modal
-    }))
-
-    unsubscribers.push(wsHook.on('container_build_completed', (payload) => {
-      const data = payload as { status: string; buildId: number }
-      if (data.status === 'success') {
-        toastsHook.showToast('Container build completed successfully!', 'success')
-        toastsHook.addLog(`Container build #${data.buildId} completed successfully`, 'success')
-      } else if (data.status === 'failed') {
-        toastsHook.showToast('Container build failed', 'error')
-        toastsHook.addLog(`Container build #${data.buildId} failed`, 'error')
-      }
-    }))
-
-    unsubscribers.push(wsHook.on('container_build_cancelled', (payload) => {
-      toastsHook.addLog(`Container build #${(payload as { buildId: number }).buildId} cancelled`, 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('container_profile_created', (payload) => {
-      toastsHook.showToast(`New profile "${(payload as { name: string }).name}" created`, 'success')
-    }))
-
-    unsubscribers.push(wsHook.on('execution_started', () => {
-      toastsHook.addLog('Workflow execution started', 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('execution_stopped', () => {
-      toastsHook.addLog('Workflow execution stopped', 'info')
-      workflowControl.updateStateFromRuns(runsHook.runs)
-    }))
-
-    unsubscribers.push(wsHook.on('execution_complete', () => {
-      toastsHook.addLog('Workflow execution completed', 'success')
-      workflowControl.updateStateFromRuns(runsHook.runs)
-    }))
-
-    // Task Group WebSocket handlers
-    unsubscribers.push(wsHook.on('group_created', (payload) => {
-      const group = payload as { id: string; name: string }
-      taskGroupsHook.updateGroupFromWebSocket(group as TaskGroup)
-      toastsHook.addLog(`Group created: ${group.name}`, 'success')
-    }))
-
-    unsubscribers.push(wsHook.on('group_updated', (payload) => {
-      const group = payload as TaskGroup
-      taskGroupsHook.updateGroupFromWebSocket(group)
-    }))
-
-    unsubscribers.push(wsHook.on('group_deleted', (payload) => {
-      const { id } = payload as { id: string }
-      taskGroupsHook.removeGroupFromWebSocket(id)
-      toastsHook.addLog('Group deleted', 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('group_task_added', () => {
-      toastsHook.addLog(`Task added to group`, 'info')
-      // Reload tasks to get updated groupId
-      tasksHook.loadTasks()
-    }))
-
-    unsubscribers.push(wsHook.on('group_task_removed', () => {
-      toastsHook.addLog(`Task removed from group`, 'info')
-      // Reload tasks to get updated groupId
-      tasksHook.loadTasks()
-    }))
-
-    unsubscribers.push(wsHook.on('group_execution_started', () => {
-      toastsHook.showToast('Group execution started', 'success')
-    }))
-
-    unsubscribers.push(wsHook.on('group_execution_complete', () => {
-      toastsHook.showToast('Group execution completed', 'success')
-    }))
-
-    // Task-scoped group WebSocket handlers
-    unsubscribers.push(wsHook.on('task_group_created', (payload) => {
-      const group = payload as TaskGroup
-      taskGroupsHook.updateGroupFromWebSocket(group)
-      toastsHook.addLog(`Group created from task context: ${group.name}`, 'success')
-    }))
-
-    unsubscribers.push(wsHook.on('task_group_updated', (payload) => {
-      const group = payload as TaskGroup
-      taskGroupsHook.updateGroupFromWebSocket(group)
-    }))
-
-    unsubscribers.push(wsHook.on('task_group_deleted', (payload) => {
-      const { id } = payload as { id: string }
-      taskGroupsHook.removeGroupFromWebSocket(id)
-      toastsHook.addLog('Group deleted from task context', 'info')
-    }))
-
-    unsubscribers.push(wsHook.on('task_group_members_added', (payload) => {
-      const { count } = payload as { groupId: string; taskIds: string[]; count: number }
-      toastsHook.addLog(`${count} task(s) added to group`, 'info')
-      tasksHook.loadTasks()
-    }))
-
-    unsubscribers.push(wsHook.on('task_group_members_removed', (payload) => {
-      const { count } = payload as { groupId: string; taskIds: string[]; count: number }
-      toastsHook.addLog(`${count} task(s) removed from group`, 'info')
-      tasksHook.loadTasks()
-    }))
-
-    wsHook.onReconnect(() => {
-      console.log('[App] Reconnected - syncing state from server')
-      Promise.all([
-        tasksHook.loadTasks(),
-        runsHook.loadRuns(),
-        optionsHook.loadOptions(),
-        taskGroupsHook.loadGroups(),
-      ]).catch(err => {
-        console.error('[App] State resync failed:', err)
-      })
-    })
-
-    return () => {
-      unsubscribers.forEach(unsub => unsub())
-    }
-  }, [])
+  // WebSocket event handlers - consolidated in custom hook for better state management
+  useWebSocketHandlers({
+    wsHook,
+    tasksHook,
+    runsHook,
+    optionsHook,
+    toastsHook,
+    sessionHook,
+    taskGroupsHook,
+    workflowControl,
+  })
 
   // Initialize
   useEffect(() => {
     const init = async () => {
+      // Load options first as other operations may depend on it
       await optionsHook.loadOptions()
-      await modelSearchHook.loadModels()
-      await runsHook.loadRuns()
-      await tasksHook.loadTasks()
-      await taskGroupsHook.loadGroups()
-      await loadContainerStatus()
+
+      // Parallelize independent data loading operations
+      await Promise.all([
+        modelSearchHook.loadModels(),
+        runsHook.loadRuns(),
+        tasksHook.loadTasks(),
+        taskGroupsHook.loadGroups(),
+        loadContainerStatus(),
+      ])
 
       runsHook.setTasksRef(tasksHook.tasks)
 
@@ -862,22 +542,273 @@ function App() {
     return () => window.removeEventListener('hashchange', handleHashChange)
   }, [activeModal, openModal, closeModal])
 
+  // Memoize context values to prevent unnecessary re-renders
+  const tasksContextValue = useMemo(() => tasksHook, [tasksHook])
+  const runsContextValue = useMemo(() => runsHook, [runsHook])
+  const optionsContextValue = useMemo(() => optionsHook, [optionsHook])
+  const toastsContextValue = useMemo(() => toastsHook, [toastsHook])
+  const modelSearchContextValue = useMemo(() => modelSearchHook, [modelSearchHook])
+  const sessionContextValue = useMemo(() => sessionHook, [sessionHook])
+  const wsContextValue = useMemo(() => wsHook, [wsHook])
+  const workflowControlContextValue = useMemo(() => workflowControl, [workflowControl])
+  const multiSelectContextValue = useMemo(() => multiSelectHook, [multiSelectHook])
+  const planningChatContextValue = useMemo(() => planningChatHook, [planningChatHook])
+  const modalContextValue = useMemo(() => ({ activeModal, modalData, openModal, closeModal, closeTopmostModal }), [activeModal, modalData, openModal, closeModal, closeTopmostModal])
+  const containerStatusContextValue = useMemo(() => ({ containerStatus, isContainerEnabled, loadContainerStatus }), [containerStatus, isContainerEnabled, loadContainerStatus])
+  const sessionUsageContextValue = useMemo(() => sessionUsageHook, [sessionUsageHook])
+  const taskLastUpdateContextValue = useMemo(() => taskLastUpdateHook, [taskLastUpdateHook])
+  const taskGroupsContextValue = useMemo(() => taskGroupsHook, [taskGroupsHook])
+
+  // Memoize Sidebar callbacks
+  const onToggleExecution = useCallback(async () => {
+    const hasPaused = await workflowControl.checkPausedState()
+    if (hasPaused) {
+      toastsHook.showToast('Resuming paused workflow...', 'info')
+      await workflowControl.resume()
+      runsHook.loadRuns()
+      return
+    }
+
+    const isRunning = consumedSlotsValue > 0 || workflowControl.isRunning
+    if (isRunning) {
+      optionsHook.stopExecution().then(() => {
+        runsHook.loadRuns()
+        toastsHook.showToast('Workflow stopped', 'success')
+      }).catch(e => toastsHook.showToast('Failed to stop workflow: ' + (e instanceof Error ? e.message : String(e)), 'error'))
+    } else {
+      const grouped = tasksHook.groupedTasks
+      const executableTasks = (grouped?.backlog?.length ?? 0) +
+                              (grouped?.review?.length ?? 0) +
+                              (grouped?.executing?.length ?? 0)
+      if (executableTasks === 0) {
+        toastsHook.showToast('No tasks available to execute. Create some tasks first.', 'error')
+        return
+      }
+      if (optionsHook.options?.showExecutionGraph) {
+        openModal('executionGraph')
+      } else {
+        optionsHook.startExecution().then(() => {
+          runsHook.loadRuns()
+          tasksHook.loadTasks()
+          toastsHook.showToast('Workflow run started', 'success')
+        }).catch(e => toastsHook.showToast('Execution control failed: ' + (e instanceof Error ? e.message : String(e)), 'error'))
+      }
+    }
+  }, [workflowControl, toastsHook, consumedSlotsValue, optionsHook, tasksHook, runsHook, openModal])
+
+  const onPauseExecution = useCallback(async (runId: string) => {
+    toastsHook.showToast('Pausing workflow...', 'info')
+    const success = await workflowControl.pause(runId)
+    if (success) {
+      toastsHook.showToast('Workflow paused', 'success')
+      runsHook.loadRuns()
+    } else {
+      toastsHook.showToast(workflowControl.error || 'Failed to pause workflow', 'error')
+    }
+  }, [toastsHook, workflowControl, runsHook])
+
+  const onResumeExecution = useCallback(async (runId: string) => {
+    toastsHook.showToast('Resuming workflow...', 'info')
+    const success = await workflowControl.resume(runId)
+    if (success) {
+      toastsHook.showToast('Workflow resumed', 'success')
+      runsHook.loadRuns()
+    } else {
+      toastsHook.showToast(workflowControl.error || 'Failed to resume workflow', 'error')
+    }
+  }, [toastsHook, workflowControl, runsHook])
+
+  const onStopExecution = useCallback((type: 'graceful' | 'destructive') => {
+    workflowControl.requestStop(type)
+  }, [workflowControl])
+
+  const onOpenOptions = useCallback(() => openModal('options'), [openModal])
+  const onOpenContainerConfig = useCallback(() => setShowContainerConfigModal(true), [setShowContainerConfigModal])
+  const onOpenTemplateModal = useCallback(() => openModal('task', { mode: 'create', createStatus: 'template' }), [openModal])
+  const onOpenTaskModal = useCallback(() => openModal('task', { mode: 'create', createStatus: 'backlog' }), [openModal])
+
+  const onArchiveAllDoneSidebar = useCallback(async () => {
+    if (!confirm(`Archive all ${tasksHook.groupedTasks?.done?.length ?? 0} done task(s)?`)) return
+    await tasksHook.archiveAllDone()
+    toastsHook.showToast('All done tasks archived', 'success')
+  }, [tasksHook, toastsHook])
+
+  const onTogglePlanningChat = useCallback(() => planningChatHook.togglePanel(), [planningChatHook])
+
+  // Memoize KanbanBoard callbacks
+  const onOpenTask = useCallback((id: string, e?: React.MouseEvent) => {
+    if (e && (e.ctrlKey || e.metaKey)) {
+      multiSelectHook.toggleSelection(id, e)
+    } else {
+      openModal('task', { taskId: id, mode: 'edit' })
+    }
+  }, [multiSelectHook, openModal])
+
+  const onDeployTemplate = useCallback((id: string, e: React.MouseEvent) => {
+    const ctrlHeld = e.ctrlKey || e.metaKey
+    const shiftHeld = e.shiftKey
+
+    if (!ctrlHeld) {
+      openModal('task', { mode: 'deploy', seedTaskId: id })
+      return
+    }
+
+    const template = tasksHook.getTaskById(id)
+    if (!template) return
+
+    const { id: _, idx, status, createdAt, updatedAt, completedAt, sessionId, sessionUrl, ...templateData } = template
+
+    tasksHook.createTask({ ...templateData, status: 'backlog' })
+      .then(() => {
+        toastsHook.showToast('Template deployed', 'success')
+        if (shiftHeld) {
+          return tasksHook.deleteTask(id).then(() => {
+            toastsHook.showToast('Template deleted after deployment', 'success')
+          })
+        }
+      })
+      .catch(e => {
+        toastsHook.showToast(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      })
+  }, [tasksHook, toastsHook, openModal])
+
+  const onOpenTaskSessions = useCallback((id: string) => openModal('taskSessions', { taskId: id }), [openModal])
+  const onApprovePlan = useCallback((id: string) => openModal('approve', { taskId: id }), [openModal])
+  const onRequestRevision = useCallback((id: string) => openModal('revision', { taskId: id }), [openModal])
+  const onStartSingle = useCallback((id: string) => openModal('startSingle', { taskId: id }), [openModal])
+
+  const onRepairTask = useCallback((id: string, action: string) => {
+    tasksHook.repairTask(id, action)
+  }, [tasksHook])
+
+  const onMarkDone = useCallback((id: string) => {
+    tasksHook.updateTask(id, { status: 'done', completedAt: Math.floor(Date.now() / 1000) })
+  }, [tasksHook])
+
+  const onResetTask = useCallback(async (id: string) => {
+    try {
+      const result = await tasksHook.resetTask(id)
+      if (result.wasInGroup && result.group) {
+        setPendingRestoreTask(result.task)
+        setPendingRestoreGroup(result.group)
+        setShowRestoreModal(true)
+      }
+    } catch (e) {
+      toastsHook.showToast("Reset task failed: " + (e instanceof Error ? e.message : String(e)), "error")
+    }
+  }, [tasksHook, toastsHook])
+
+  const onConvertToTemplate = useCallback((id: string, event?: React.MouseEvent) => {
+    const task = tasksHook.getTaskById(id)
+    const taskName = task?.name || 'this task'
+    const ctrlHeld = event?.ctrlKey || event?.metaKey || false
+    showConfirmation('convertToTemplate', id, taskName, ctrlHeld)
+  }, [tasksHook, showConfirmation])
+
+  const onArchiveTask = useCallback((id: string, event?: React.MouseEvent) => {
+    const task = tasksHook.getTaskById(id)
+    const taskName = task?.name || 'this task'
+    const ctrlHeld = event?.ctrlKey || event?.metaKey || false
+    showConfirmation('delete', id, taskName, ctrlHeld)
+  }, [tasksHook, showConfirmation])
+
+  const onArchiveAllDoneBoard = useCallback(async () => {
+    if (!confirm(`Archive all ${tasksHook.groupedTasks?.done?.length ?? 0} done task(s)?`)) return
+    await tasksHook.archiveAllDone()
+    toastsHook.showToast('All done tasks archived', 'success')
+  }, [tasksHook, toastsHook])
+
+  const onViewRuns = useCallback((id: string) => openModal('bestOfNDetail', { taskId: id }), [openModal])
+
+  const onContinueReviews = useCallback((id: string) => {
+    tasksHook.repairTask(id, 'continue_with_more_reviews')
+  }, [tasksHook])
+
+  const onChangeColumnSort = useCallback((status: string, sort: string) => {
+    const newSorts = { ...(optionsHook.options?.columnSorts || {}), [status]: sort }
+    optionsHook.updateOptions({ columnSorts: newSorts })
+  }, [optionsHook])
+
+  const onVirtualCardClick = useCallback((groupId: string) => {
+    taskGroupsHook.openGroup(groupId)
+  }, [taskGroupsHook])
+
+  const onDeleteGroup = useCallback((groupId: string) => {
+    taskGroupsHook.deleteGroup(groupId)
+  }, [taskGroupsHook])
+
+  const onStartGroup = useCallback((groupId: string) => {
+    taskGroupsHook.startGroup(groupId)
+  }, [taskGroupsHook])
+
+  const onCloseGroupPanel = useCallback(() => {
+    taskGroupsHook.openGroup(null)
+  }, [taskGroupsHook])
+
+  const onRemoveTaskFromGroup = useCallback((taskId: string) => {
+    const groupId = taskGroupsHook.activeGroupId
+    if (groupId) {
+      taskGroupsHook.removeTasksFromGroup(groupId, [taskId])
+    }
+  }, [taskGroupsHook])
+
+  const onAddTasksToGroup = useCallback((taskIds: string[]) => {
+    const groupId = taskGroupsHook.activeGroupId
+    if (groupId) {
+      taskGroupsHook.addTasksToGroup(groupId, taskIds)
+    }
+  }, [taskGroupsHook])
+
+  // Memoize TabbedLogPanel callbacks
+  const onArchiveRun = useCallback(async (id: string) => {
+    try {
+      await runsHook.archiveRun(id)
+      toastsHook.showToast('Run archived', 'success')
+    } catch (e) {
+      toastsHook.showToast('Failed to archive run: ' + (e instanceof Error ? e.message : String(e)), 'error')
+    }
+  }, [runsHook, toastsHook])
+
+  const onArchiveAllStaleRuns = useCallback(async () => {
+    const staleCount = runsHook.staleRuns?.length ?? 0
+    if (staleCount === 0) return
+    if (!confirm(`Archive ${staleCount} stale workflow run${staleCount > 1 ? 's' : ''}?`)) return
+    try {
+      await Promise.all(runsHook.staleRuns.map(run => runsHook.archiveRun(run.id)))
+      toastsHook.showToast(`${staleCount} stale run${staleCount > 1 ? 's' : ''} archived`, 'success')
+    } catch (e) {
+      toastsHook.showToast('Failed to archive runs: ' + (e instanceof Error ? e.message : String(e)), 'error')
+    }
+  }, [runsHook, toastsHook])
+
+  const onHighlightRun = useCallback((runId: string) => setHighlightedRunId(runId), [setHighlightedRunId])
+  const onClearHighlight = useCallback(() => setHighlightedRunId(null), [setHighlightedRunId])
+
+  // Memoize GroupActionBar callbacks
+  const onCreateGroup = useCallback(() => {
+    const selectedIds = multiSelectHook.getSelectedIds()
+    openGroupCreateModal(selectedIds)
+  }, [multiSelectHook, openGroupCreateModal])
+
+  const onBatchEdit = useCallback(() => openModal('batchEdit', { taskIds: multiSelectHook.getSelectedIds() }), [multiSelectHook, openModal])
+  const onClearSelection = useCallback(() => multiSelectHook.clearSelection(), [multiSelectHook])
+
   return (
-    <TasksContext.Provider value={tasksHook}>
-      <RunsContext.Provider value={runsHook}>
-        <OptionsContext.Provider value={optionsHook}>
-          <ToastContext.Provider value={toastsHook}>
-            <ModelSearchContext.Provider value={modelSearchHook}>
-              <SessionContext.Provider value={sessionHook}>
-                <WebSocketContext.Provider value={wsHook}>
-                  <WorkflowControlContext.Provider value={workflowControl}>
-                    <MultiSelectContext.Provider value={multiSelectHook}>
-                      <PlanningChatContext.Provider value={planningChatHook}>
-                        <ModalContext.Provider value={{ activeModal, modalData, openModal, closeModal, closeTopmostModal }}>
-                          <ContainerStatusContext.Provider value={{ containerStatus, isContainerEnabled, loadContainerStatus }}>
-                            <SessionUsageContext.Provider value={sessionUsageHook}>
-                              <TaskLastUpdateContext.Provider value={taskLastUpdateHook}>
-                              <TaskGroupsContext.Provider value={taskGroupsHook}>
+    <TasksContext.Provider value={tasksContextValue}>
+      <RunsContext.Provider value={runsContextValue}>
+        <OptionsContext.Provider value={optionsContextValue}>
+          <ToastContext.Provider value={toastsContextValue}>
+            <ModelSearchContext.Provider value={modelSearchContextValue}>
+              <SessionContext.Provider value={sessionContextValue}>
+                <WebSocketContext.Provider value={wsContextValue}>
+                  <WorkflowControlContext.Provider value={workflowControlContextValue}>
+                    <MultiSelectContext.Provider value={multiSelectContextValue}>
+                      <PlanningChatContext.Provider value={planningChatContextValue}>
+                        <ModalContext.Provider value={modalContextValue}>
+                          <ContainerStatusContext.Provider value={containerStatusContextValue}>
+                            <SessionUsageContext.Provider value={sessionUsageContextValue}>
+                              <TaskLastUpdateContext.Provider value={taskLastUpdateContextValue}>
+                              <TaskGroupsContext.Provider value={taskGroupsContextValue}>
                               <div className="app-layout bg-dark-bg text-dark-text">
                               <Sidebar
                                 consumedSlots={consumedSlotsValue}
@@ -895,74 +826,16 @@ function App() {
                                 activeCount={tasksHook.groupedTasks?.executing?.length ?? 0}
                                 reviewCount={tasksHook.groupedTasks?.review?.length ?? 0}
                                 isContainerEnabled={isContainerEnabled}
-                                onToggleExecution={async () => {
-                                  const hasPaused = await workflowControl.checkPausedState()
-                                  if (hasPaused) {
-                                    toastsHook.showToast('Resuming paused workflow...', 'info')
-                                    await workflowControl.resume()
-                                    runsHook.loadRuns()
-                                    return
-                                  }
-
-                                  const isRunning = consumedSlotsValue > 0 || workflowControl.isRunning
-                                  if (isRunning) {
-                                    optionsHook.stopExecution().then(() => {
-                                      runsHook.loadRuns()
-                                      toastsHook.showToast('Workflow stopped', 'success')
-                                    }).catch(e => toastsHook.showToast('Failed to stop workflow: ' + (e instanceof Error ? e.message : String(e)), 'error'))
-                                  } else {
-                                    const grouped = tasksHook.groupedTasks
-                                    const executableTasks = (grouped?.backlog?.length ?? 0) +
-                                                            (grouped?.review?.length ?? 0) +
-                                                            (grouped?.executing?.length ?? 0)
-                                    if (executableTasks === 0) {
-                                      toastsHook.showToast('No tasks available to execute. Create some tasks first.', 'error')
-                                      return
-                                    }
-                                    if (optionsHook.options?.showExecutionGraph) {
-                                      openModal('executionGraph')
-                                    } else {
-                                      optionsHook.startExecution().then(() => {
-                                        runsHook.loadRuns()
-                                        tasksHook.loadTasks()
-                                        toastsHook.showToast('Workflow run started', 'success')
-                                      }).catch(e => toastsHook.showToast('Execution control failed: ' + (e instanceof Error ? e.message : String(e)), 'error'))
-                                    }
-                                  }
-                                }}
-                                onPauseExecution={async (runId: string) => {
-                                  toastsHook.showToast('Pausing workflow...', 'info')
-                                  const success = await workflowControl.pause(runId)
-                                  if (success) {
-                                    toastsHook.showToast('Workflow paused', 'success')
-                                    runsHook.loadRuns()
-                                  } else {
-                                    toastsHook.showToast(workflowControl.error || 'Failed to pause workflow', 'error')
-                                  }
-                                }}
-                                onResumeExecution={async (runId: string) => {
-                                  toastsHook.showToast('Resuming workflow...', 'info')
-                                  const success = await workflowControl.resume(runId)
-                                  if (success) {
-                                    toastsHook.showToast('Workflow resumed', 'success')
-                                    runsHook.loadRuns()
-                                  } else {
-                                    toastsHook.showToast(workflowControl.error || 'Failed to resume workflow', 'error')
-                                  }
-                                }}
-                                onStopExecution={(type: 'graceful' | 'destructive') => {
-                                  workflowControl.requestStop(type)
-                                }}
-                                onOpenOptions={() => openModal('options')}
-                                onOpenContainerConfig={() => setShowContainerConfigModal(true)}
-                                onOpenTemplateModal={() => openModal('task', { mode: 'create', createStatus: 'template' })}
-                                onOpenTaskModal={() => openModal('task', { mode: 'create', createStatus: 'backlog' })}
-                                onArchiveAllDone={async () => {
-                                  if (!confirm(`Archive all ${tasksHook.groupedTasks?.done?.length ?? 0} done task(s)?`)) return
-                                  await tasksHook.archiveAllDone()
-                                  toastsHook.showToast('All done tasks archived', 'success')
-                                }}
-                                onTogglePlanningChat={planningChatHook.togglePanel}
+                                onToggleExecution={onToggleExecution}
+                                onPauseExecution={onPauseExecution}
+                                onResumeExecution={onResumeExecution}
+                                onStopExecution={onStopExecution}
+                                onOpenOptions={onOpenOptions}
+                                onOpenContainerConfig={onOpenContainerConfig}
+                                onOpenTemplateModal={onOpenTemplateModal}
+                                onOpenTaskModal={onOpenTaskModal}
+                                onArchiveAllDone={onArchiveAllDoneSidebar}
+                                onTogglePlanningChat={onTogglePlanningChat}
                               />
 
                               <main className="main-content">
@@ -982,105 +855,29 @@ function App() {
                                   groups={taskGroupsHook.activeGroups}
                                   groupMembers={groupMembers}
                                   activeGroupId={taskGroupsHook.activeGroupId}
-                                  onOpenTask={(id: string, e?: React.MouseEvent) => {
-                                    if (e && (e.ctrlKey || e.metaKey)) {
-                                      multiSelectHook.toggleSelection(id, e)
-                                    } else {
-                                      openModal('task', { taskId: id, mode: 'edit' })
-                                    }
-                                  }}
-                                  onOpenTemplateModal={() => openModal('task', { mode: 'create', createStatus: 'template' })}
-                                  onOpenTaskModal={() => openModal('task', { mode: 'create', createStatus: 'backlog' })}
-                                  onDeployTemplate={(id: string, e: React.MouseEvent) => {
-                                    const ctrlHeld = e.ctrlKey || e.metaKey
-                                    const shiftHeld = e.shiftKey
-
-                                    if (!ctrlHeld) {
-                                      // Normal flow - open modal for editing
-                                      openModal('task', { mode: 'deploy', seedTaskId: id })
-                                      return
-                                    }
-
-                                    // CTRL held - deploy immediately without modal
-                                    const template = tasksHook.getTaskById(id)
-                                    if (!template) return
-
-                                    // Create task data from template (exclude id, idx, status, timestamps)
-                                    const { id: _, idx, status, createdAt, updatedAt, completedAt, sessionId, sessionUrl, ...templateData } = template
-
-                                    tasksHook.createTask({ ...templateData, status: 'backlog' })
-                                      .then(() => {
-                                        toastsHook.showToast('Template deployed', 'success')
-
-                                        // CTRL+SHIFT - also delete the template after deployment
-                                        if (shiftHeld) {
-                                          return tasksHook.deleteTask(id).then(() => {
-                                            toastsHook.showToast('Template deleted after deployment', 'success')
-                                          })
-                                        }
-                                      })
-                                      .catch(e => {
-                                        toastsHook.showToast(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
-                                      })
-                                  }}
-                                  onOpenTaskSessions={(id: string) => openModal('taskSessions', { taskId: id })}
-                                  onApprovePlan={(id: string) => openModal('approve', { taskId: id })}
-                                  onRequestRevision={(id: string) => openModal('revision', { taskId: id })}
-                                  onStartSingle={(id: string) => openModal('startSingle', { taskId: id })}
-                                  onRepairTask={(id: string, action: string) => tasksHook.repairTask(id, action)}
-                                  onMarkDone={(id: string) => tasksHook.updateTask(id, { status: 'done', completedAt: Math.floor(Date.now() / 1000) })}
-                                  onResetTask={async (id: string) => {
-                                    try {
-                                      const result = await tasksHook.resetTask(id)
-                                      // If task was in a group, show restore modal
-                                      if (result.wasInGroup && result.group) {
-                                        setPendingRestoreTask(result.task)
-                                        setPendingRestoreGroup(result.group)
-                                        setShowRestoreModal(true)
-                                      }
-                                    } catch (e) {
-                                      toastsHook.showToast("Reset task failed: " + (e instanceof Error ? e.message : String(e)), "error")
-                                    }
-                                  }}
-                                  onConvertToTemplate={(id: string, event?: React.MouseEvent) => {
-                                    const task = tasksHook.getTaskById(id)
-                                    const taskName = task?.name || 'this task'
-                                    const ctrlHeld = event?.ctrlKey || event?.metaKey || false
-                                    showConfirmation('convertToTemplate', id, taskName, ctrlHeld)
-                                  }}
-                                  onArchiveTask={(id: string, event?: React.MouseEvent) => {
-                                    const task = tasksHook.getTaskById(id)
-                                    const taskName = task?.name || 'this task'
-                                    const ctrlHeld = event?.ctrlKey || event?.metaKey || false
-                                    showConfirmation('delete', id, taskName, ctrlHeld)
-                                  }}
-                                  onArchiveAllDone={async () => {
-                                    if (!confirm(`Archive all ${tasksHook.groupedTasks?.done?.length ?? 0} done task(s)?`)) return
-                                    await tasksHook.archiveAllDone()
-                                    toastsHook.showToast('All done tasks archived', 'success')
-                                  }}
-                                  onViewRuns={(id: string) => openModal('bestOfNDetail', { taskId: id })}
-                                  onContinueReviews={(id: string) => tasksHook.repairTask(id, 'continue_with_more_reviews')}
-                                  onChangeColumnSort={(status: string, sort: string) => {
-                                    const newSorts = { ...(optionsHook.options?.columnSorts || {}), [status]: sort }
-                                    optionsHook.updateOptions({ columnSorts: newSorts })
-                                  }}
-                                  onVirtualCardClick={(groupId) => taskGroupsHook.openGroup(groupId)}
-                                  onDeleteGroup={(groupId) => taskGroupsHook.deleteGroup(groupId)}
-                                  onStartGroup={(groupId) => taskGroupsHook.startGroup(groupId)}
-                                  onCloseGroupPanel={() => taskGroupsHook.openGroup(null)}
-                                  onRemoveTaskFromGroup={(taskId) => {
-                                    const groupId = taskGroupsHook.activeGroupId
-                                    if (groupId) {
-                                      taskGroupsHook.removeTasksFromGroup(groupId, [taskId])
-                                    }
-                                  }}
-                                  onAddTasksToGroup={(taskIds) => {
-                                    const groupId = taskGroupsHook.activeGroupId
-                                    if (groupId) {
-                                      taskGroupsHook.addTasksToGroup(groupId, taskIds)
-                                    }
-                                  }}
+                                  onOpenTask={onOpenTask}
+                                  onOpenTemplateModal={onOpenTemplateModal}
+                                  onOpenTaskModal={onOpenTaskModal}
+                                  onDeployTemplate={onDeployTemplate}
+                                  onOpenTaskSessions={onOpenTaskSessions}
+                                  onApprovePlan={onApprovePlan}
+                                  onRequestRevision={onRequestRevision}
+                                  onStartSingle={onStartSingle}
+                                  onRepairTask={onRepairTask}
+                                  onMarkDone={onMarkDone}
+                                  onResetTask={onResetTask}
+                                  onConvertToTemplate={onConvertToTemplate}
+                                  onArchiveTask={onArchiveTask}
+                                  onArchiveAllDone={onArchiveAllDoneBoard}
+                                  onViewRuns={onViewRuns}
+                                  onContinueReviews={onContinueReviews}
+                                  onChangeColumnSort={onChangeColumnSort}
+                                  onVirtualCardClick={onVirtualCardClick}
+                                  onDeleteGroup={onDeleteGroup}
+                                  onStartGroup={onStartGroup}
+                                  onCloseGroupPanel={onCloseGroupPanel}
+                                  onRemoveTaskFromGroup={onRemoveTaskFromGroup}
+                                  onAddTasksToGroup={onAddTasksToGroup}
                                 />
 
                                 <TabbedLogPanel
@@ -1090,27 +887,10 @@ function App() {
                                   runs={runsHook.runs}
                                   staleRuns={runsHook.staleRuns}
                                   onClear={toastsHook.clearLogs}
-                                  onArchiveRun={async (id: string) => {
-                                    try {
-                                      await runsHook.archiveRun(id)
-                                      toastsHook.showToast('Run archived', 'success')
-                                    } catch (e) {
-                                      toastsHook.showToast('Failed to archive run: ' + (e instanceof Error ? e.message : String(e)), 'error')
-                                    }
-                                  }}
-                                  onArchiveAllStaleRuns={async () => {
-                                    const staleCount = runsHook.staleRuns?.length ?? 0
-                                    if (staleCount === 0) return
-                                    if (!confirm(`Archive ${staleCount} stale workflow run${staleCount > 1 ? 's' : ''}?`)) return
-                                    try {
-                                      await Promise.all(runsHook.staleRuns.map(run => runsHook.archiveRun(run.id)))
-                                      toastsHook.showToast(`${staleCount} stale run${staleCount > 1 ? 's' : ''} archived`, 'success')
-                                    } catch (e) {
-                                      toastsHook.showToast('Failed to archive runs: ' + (e instanceof Error ? e.message : String(e)), 'error')
-                                    }
-                                  }}
-                                  onHighlightRun={(runId: string) => setHighlightedRunId(runId)}
-                                  onClearHighlight={() => setHighlightedRunId(null)}
+                                  onArchiveRun={onArchiveRun}
+                                  onArchiveAllStaleRuns={onArchiveAllStaleRuns}
+                                  onHighlightRun={onHighlightRun}
+                                  onClearHighlight={onClearHighlight}
                                 />
                               </main>
 
@@ -1122,12 +902,9 @@ function App() {
 
                               <GroupActionBar
                                 selectedCount={multiSelectHook.selectedCount}
-                                onCreateGroup={() => {
-                                  const selectedIds = multiSelectHook.getSelectedIds()
-                                  openGroupCreateModal(selectedIds)
-                                }}
-                                onBatchEdit={() => openModal('batchEdit', { taskIds: multiSelectHook.getSelectedIds() })}
-                                onClear={multiSelectHook.clearSelection}
+                                onCreateGroup={onCreateGroup}
+                                onBatchEdit={onBatchEdit}
+                                onClear={onClearSelection}
                               />
 
                               {activeModal === 'task' && (

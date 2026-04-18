@@ -73,22 +73,26 @@ export function useTaskGroups() {
    */
   const createGroup = useCallback(async (taskIds: string[], name?: string) => {
     const tempId = `temp-${Date.now()}`
-    const tempGroup: TaskGroup = {
-      id: tempId,
-      name: name || `Group ${groups.length + 1}`,
-      color: '#6366f1',
-      status: 'active',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      completedAt: null,
-    }
+    let tempGroupName: string
 
-    // Optimistic update
-    setGroups(prev => [...prev, tempGroup])
+    // Use functional setState to avoid dependency on groups.length
+    setGroups(prev => {
+      tempGroupName = name || `Group ${prev.length + 1}`
+      const tempGroup: TaskGroup = {
+        id: tempId,
+        name: tempGroupName,
+        color: '#6366f1',
+        status: 'active',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        completedAt: null,
+      }
+      return [...prev, tempGroup]
+    })
 
     try {
       const group = await api.createTaskGroup({
-        name: tempGroup.name,
+        name: tempGroupName!,
         taskIds,
       })
 
@@ -103,7 +107,7 @@ export function useTaskGroups() {
       showToast(`Failed to create group: ${message}`, 'error')
       throw e
     }
-  }, [api, groups.length, showToast])
+  }, [api, showToast])
 
   /**
    * Set the active group for panel display

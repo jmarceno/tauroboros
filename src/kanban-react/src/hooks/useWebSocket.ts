@@ -102,6 +102,9 @@ export function useWebSocket() {
     wsRef.current = null
     setWs(null)
     setIsConnected(false)
+    // Reset intentionalCloseRef after disconnect completes
+    // This ensures a fresh reconnection state for next connect()
+    intentionalCloseRef.current = false
   }, [])
 
   const on = useCallback((type: WSMessageType, handler: MessageHandler) => {
@@ -124,9 +127,17 @@ export function useWebSocket() {
     connect()
 
     return () => {
-      disconnect()
+      // Comprehensive cleanup: clear all timers and close connection
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+      // Prevent reconnection attempts during cleanup
+      intentionalCloseRef.current = true
+      wsRef.current?.close()
+      wsRef.current = null
     }
-  }, [])
+  }, [connect, disconnect])
 
   return {
     ws,

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import Fuse from "fuse.js"
 import type { ModelEntry, ModelCatalog } from "@/types"
 import { useApi } from "./useApi"
@@ -6,6 +6,7 @@ import { useApi } from "./useApi"
 export function useModelSearch() {
   const api = useApi()
   const getModels = api.getModels
+  const hasLoadedRef = useRef(false)
   const [catalog, setCatalog] = useState<ModelCatalog>({ providers: [] })
   const [searchIndex, setSearchIndex] = useState<ModelEntry[]>([])
   const [fuse, setFuse] = useState<Fuse<ModelEntry> | null>(null)
@@ -120,10 +121,13 @@ export function useModelSearch() {
   }, [catalog])
 
   useEffect(() => {
-    loadModels()
-    // Only run once on mount - loadModels has stable references via useCallback
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    // Ref-guarded single mount pattern - guarantees single execution
+    // without suppressing eslint exhaustive-deps rule
+    if (!hasLoadedRef.current) {
+      hasLoadedRef.current = true
+      loadModels()
+    }
+  }, [loadModels])
 
   return {
     catalog,
