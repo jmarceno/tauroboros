@@ -670,4 +670,638 @@ describe("PiKanbanDB", () => {
       db.close()
     })
   })
+
+  describe("stats methods", () => {
+    describe("getUsageStats", () => {
+      it("returns zero stats for empty database", () => {
+        const { db } = createTempDb()
+
+        const stats = db.getUsageStats("lifetime")
+        expect(stats.totalTokens).toBe(0)
+        expect(stats.totalCost).toBe(0)
+        expect(stats.tokenChange).toBe(0)
+        expect(stats.costChange).toBe(0)
+
+        db.close()
+      })
+
+      it("calculates lifetime stats correctly", () => {
+        const { db } = createTempDb()
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createWorkflowSession({
+          id: "stats-session-1",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+        })
+
+        db.createSessionMessage({
+          sessionId: "stats-session-1",
+          timestamp: now - 86400 * 10,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "first" },
+          totalTokens: 1000,
+          costTotal: 0.05,
+        })
+
+        db.createSessionMessage({
+          sessionId: "stats-session-1",
+          timestamp: now - 86400 * 5,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "second" },
+          totalTokens: 2000,
+          costTotal: 0.10,
+        })
+
+        const stats = db.getUsageStats("lifetime")
+        expect(stats.totalTokens).toBe(3000)
+        expect(stats.totalCost).toBeCloseTo(0.15, 10)
+        expect(stats.tokenChange).toBe(0)
+        expect(stats.costChange).toBe(0)
+
+        db.close()
+      })
+
+      it("calculates 24h stats with period comparison", () => {
+        const { db } = createTempDb()
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createWorkflowSession({
+          id: "stats-session-24h",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+        })
+
+        db.createSessionMessage({
+          sessionId: "stats-session-24h",
+          timestamp: now - 86400 - 3600,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "previous" },
+          totalTokens: 1000,
+          costTotal: 0.05,
+        })
+
+        db.createSessionMessage({
+          sessionId: "stats-session-24h",
+          timestamp: now - 3600,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "current" },
+          totalTokens: 2000,
+          costTotal: 0.10,
+        })
+
+        const stats = db.getUsageStats("24h")
+        expect(stats.totalTokens).toBe(2000)
+        expect(stats.totalCost).toBeCloseTo(0.10, 10)
+        expect(stats.tokenChange).toBe(100)
+        expect(stats.costChange).toBe(100)
+
+        db.close()
+      })
+
+      it("calculates 7d stats with period comparison", () => {
+        const { db } = createTempDb()
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createWorkflowSession({
+          id: "stats-session-7d",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+        })
+
+        db.createSessionMessage({
+          sessionId: "stats-session-7d",
+          timestamp: now - 86400 * 8,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "previous" },
+          totalTokens: 4000,
+          costTotal: 0.20,
+        })
+
+        db.createSessionMessage({
+          sessionId: "stats-session-7d",
+          timestamp: now - 86400 * 3,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "current" },
+          totalTokens: 2000,
+          costTotal: 0.10,
+        })
+
+        const stats = db.getUsageStats("7d")
+        expect(stats.totalTokens).toBe(2000)
+        expect(stats.totalCost).toBeCloseTo(0.10, 10)
+        expect(stats.tokenChange).toBe(-50)
+        expect(stats.costChange).toBe(-50)
+
+        db.close()
+      })
+
+      it("calculates 30d stats with period comparison", () => {
+        const { db } = createTempDb()
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createWorkflowSession({
+          id: "stats-session-30d",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+        })
+
+        db.createSessionMessage({
+          sessionId: "stats-session-30d",
+          timestamp: now - 86400 * 35,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "previous" },
+          totalTokens: 5000,
+          costTotal: 0.25,
+        })
+
+        db.createSessionMessage({
+          sessionId: "stats-session-30d",
+          timestamp: now - 86400 * 15,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "current" },
+          totalTokens: 10000,
+          costTotal: 0.50,
+        })
+
+        const stats = db.getUsageStats("30d")
+        expect(stats.totalTokens).toBe(10000)
+        expect(stats.totalCost).toBeCloseTo(0.50, 10)
+        expect(stats.tokenChange).toBe(100)
+        expect(stats.costChange).toBe(100)
+
+        db.close()
+      })
+    })
+
+    describe("getTaskStats", () => {
+      it("returns zero stats for empty database", () => {
+        const { db } = createTempDb()
+
+        const stats = db.getTaskStats()
+        expect(stats.completed).toBe(0)
+        expect(stats.failed).toBe(0)
+        expect(stats.averageReviews).toBe(0)
+
+        db.close()
+      })
+
+      it("counts completed and failed tasks correctly", () => {
+        const { db } = createTempDb()
+
+        db.createTask({ id: "stats-task-1", name: "Task 1", prompt: "P1", status: "done" })
+        db.createTask({ id: "stats-task-2", name: "Task 2", prompt: "P2", status: "done" })
+        db.createTask({ id: "stats-task-3", name: "Task 3", prompt: "P3", status: "failed" })
+        db.createTask({ id: "stats-task-4", name: "Task 4", prompt: "P4", status: "backlog" })
+
+        const stats = db.getTaskStats()
+        expect(stats.completed).toBe(2)
+        expect(stats.failed).toBe(1)
+        expect(stats.averageReviews).toBe(0)
+
+        db.close()
+      })
+
+      it("calculates average reviews for completed tasks", () => {
+        const { db } = createTempDb()
+
+        db.createTask({ id: "review-task-1", name: "Task 1", prompt: "P1", status: "done" })
+        db.updateTask("review-task-1", { reviewCount: 2 })
+        db.createTask({ id: "review-task-2", name: "Task 2", prompt: "P2", status: "done" })
+        db.updateTask("review-task-2", { reviewCount: 4 })
+        db.createTask({ id: "review-task-3", name: "Task 3", prompt: "P3", status: "done" })
+        db.updateTask("review-task-3", { reviewCount: 0 })
+
+        const stats = db.getTaskStats()
+        expect(stats.completed).toBe(3)
+        expect(stats.averageReviews).toBe(2)
+
+        db.close()
+      })
+    })
+
+    describe("getModelUsageByResponsibility", () => {
+      it("returns empty stats when no sessions exist", () => {
+        const { db } = createTempDb()
+
+        const stats = db.getModelUsageByResponsibility()
+        expect(stats.plan).toEqual([])
+        expect(stats.execution).toEqual([])
+        expect(stats.review).toEqual([])
+
+        db.close()
+      })
+
+      it("categorizes planning sessions correctly", () => {
+        const { db } = createTempDb()
+
+        db.createWorkflowSession({
+          id: "plan-session-1",
+          sessionKind: "planning",
+          cwd: "/tmp/work",
+          model: "claude-3-5",
+        })
+
+        db.createWorkflowSession({
+          id: "plan-session-2",
+          sessionKind: "planning",
+          cwd: "/tmp/work",
+          model: "claude-3-5",
+        })
+
+        db.createWorkflowSession({
+          id: "plan-session-3",
+          sessionKind: "plan",
+          cwd: "/tmp/work",
+          model: "o4-mini",
+        })
+
+        const stats = db.getModelUsageByResponsibility()
+        expect(stats.plan).toHaveLength(2)
+        expect(stats.plan.find(m => m.model === "claude-3-5")?.count).toBe(2)
+        expect(stats.plan.find(m => m.model === "o4-mini")?.count).toBe(1)
+        expect(stats.execution).toEqual([])
+        expect(stats.review).toEqual([])
+
+        db.close()
+      })
+
+      it("categorizes execution sessions correctly", () => {
+        const { db } = createTempDb()
+
+        db.createWorkflowSession({
+          id: "exec-session-1",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+          model: "o3-mini",
+        })
+
+        db.createWorkflowSession({
+          id: "exec-session-2",
+          sessionKind: "task_run_worker",
+          cwd: "/tmp/work",
+          model: "o3-mini",
+        })
+
+        db.createWorkflowSession({
+          id: "exec-session-3",
+          sessionKind: "task_run_final_applier",
+          cwd: "/tmp/work",
+          model: "default", // Should be excluded
+        })
+
+        const stats = db.getModelUsageByResponsibility()
+        // Results are grouped by (session_kind, model), so o3-mini appears twice (once for task, once for task_run_worker)
+        expect(stats.execution).toHaveLength(2)
+        expect(stats.execution.every(e => e.model === "o3-mini")).toBe(true)
+        expect(stats.execution.reduce((sum, e) => sum + e.count, 0)).toBe(2)
+
+        db.close()
+      })
+
+      it("categorizes review sessions correctly", () => {
+        const { db } = createTempDb()
+
+        db.createWorkflowSession({
+          id: "review-session-1",
+          sessionKind: "review_scratch",
+          cwd: "/tmp/work",
+          model: "o4-mini",
+        })
+
+        db.createWorkflowSession({
+          id: "review-session-2",
+          sessionKind: "task_run_reviewer",
+          cwd: "/tmp/work",
+          model: "o4-mini",
+        })
+
+        const stats = db.getModelUsageByResponsibility()
+        // Results are grouped by (session_kind, model), so o4-mini appears twice (once for each session kind)
+        expect(stats.review).toHaveLength(2)
+        expect(stats.review.every(r => r.model === "o4-mini")).toBe(true)
+        expect(stats.review.reduce((sum, r) => sum + r.count, 0)).toBe(2)
+
+        db.close()
+      })
+
+      it("sorts results by count descending", () => {
+        const { db } = createTempDb()
+
+        db.createWorkflowSession({
+          id: "sort-session-1",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+          model: "popular-model",
+        })
+
+        db.createWorkflowSession({
+          id: "sort-session-2",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+          model: "popular-model",
+        })
+
+        db.createWorkflowSession({
+          id: "sort-session-3",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+          model: "rare-model",
+        })
+
+        const stats = db.getModelUsageByResponsibility()
+        expect(stats.execution[0]?.model).toBe("popular-model")
+        expect(stats.execution[0]?.count).toBe(2)
+        expect(stats.execution[1]?.model).toBe("rare-model")
+        expect(stats.execution[1]?.count).toBe(1)
+
+        db.close()
+      })
+
+      it("excludes default and empty models", () => {
+        const { db } = createTempDb()
+
+        db.createWorkflowSession({
+          id: "exclude-session-1",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+          model: "default",
+        })
+
+        db.createWorkflowSession({
+          id: "exclude-session-2",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+          model: "",
+        })
+
+        db.createWorkflowSession({
+          id: "exclude-session-3",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+          model: "valid-model",
+        })
+
+        const stats = db.getModelUsageByResponsibility()
+        expect(stats.execution).toHaveLength(1)
+        expect(stats.execution[0]?.model).toBe("valid-model")
+
+        db.close()
+      })
+    })
+
+    describe("getAverageTaskDuration", () => {
+      it("returns zero for empty database", () => {
+        const { db } = createTempDb()
+
+        const duration = db.getAverageTaskDuration()
+        expect(duration).toBe(0)
+
+        db.close()
+      })
+
+      it("returns zero when no completed tasks", () => {
+        const { db } = createTempDb()
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createTask({
+          id: "duration-task-1",
+          name: "Task 1",
+          prompt: "P1",
+          status: "backlog",
+          createdAt: now - 3600,
+        })
+
+        const duration = db.getAverageTaskDuration()
+        expect(duration).toBe(0)
+
+        db.close()
+      })
+
+      it("calculates average duration correctly", () => {
+        const { db } = createTempDb()
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createTask({
+          id: "duration-task-1",
+          name: "Task 1",
+          prompt: "P1",
+          status: "done",
+        })
+        db.updateTask("duration-task-1", { completedAt: now })
+        db.getRawHandle().prepare("UPDATE tasks SET created_at = ? WHERE id = ?").run(now - 3600, "duration-task-1")
+
+        db.createTask({
+          id: "duration-task-2",
+          name: "Task 2",
+          prompt: "P2",
+          status: "done",
+        })
+        db.updateTask("duration-task-2", { completedAt: now })
+        db.getRawHandle().prepare("UPDATE tasks SET created_at = ? WHERE id = ?").run(now - 7200, "duration-task-2")
+
+        const duration = db.getAverageTaskDuration()
+        expect(duration).toBe(5400) // Average of 3600 and 7200 seconds
+
+        db.close()
+      })
+    })
+
+    describe("getHourlyUsageTimeSeries", () => {
+      it("returns empty array for empty database", () => {
+        const { db } = createTempDb()
+
+        const series = db.getHourlyUsageTimeSeries()
+        expect(series).toEqual([])
+
+        db.close()
+      })
+
+      it("returns hourly data for last 24 hours", () => {
+        const { db } = createTempDb()
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createWorkflowSession({
+          id: "hourly-session",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+        })
+
+        db.createSessionMessage({
+          sessionId: "hourly-session",
+          timestamp: now - 7200,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "msg1" },
+          totalTokens: 1000,
+          costTotal: 0.05,
+        })
+
+        db.createSessionMessage({
+          sessionId: "hourly-session",
+          timestamp: now - 5400,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "msg2" },
+          totalTokens: 500,
+          costTotal: 0.025,
+        })
+
+        db.createSessionMessage({
+          sessionId: "hourly-session",
+          timestamp: now - 18000,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "msg3" },
+          totalTokens: 2000,
+          costTotal: 0.10,
+        })
+
+        db.createSessionMessage({
+          sessionId: "hourly-session",
+          timestamp: now - 90000,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "msg4" },
+          totalTokens: 3000,
+          costTotal: 0.15,
+        })
+
+        const series = db.getHourlyUsageTimeSeries()
+        expect(series.length).toBe(2)
+
+        expect(series[0]?.tokens).toBe(2000)
+        expect(series[0]?.cost).toBeCloseTo(0.10, 10)
+        expect(series[1]?.tokens).toBe(1500)
+        expect(series[1]?.cost).toBeCloseTo(0.075, 10)
+
+        expect(typeof series[0]?.hour).toBe("string")
+        expect(series[0]?.hour).toContain("T")
+        expect(series[0]?.hour).toContain("Z")
+
+        db.close()
+      })
+    })
+
+    describe("getDailyUsageTimeSeries", () => {
+      it("returns empty array for empty database", () => {
+        const { db } = createTempDb()
+
+        const series = db.getDailyUsageTimeSeries(30)
+        expect(series).toEqual([])
+
+        db.close()
+      })
+
+      it("returns daily data for specified days", () => {
+        const { db } = createTempDb()
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createWorkflowSession({
+          id: "daily-session",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+        })
+
+        db.createSessionMessage({
+          sessionId: "daily-session",
+          timestamp: now - 86400,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "msg1" },
+          totalTokens: 1000,
+          costTotal: 0.05,
+        })
+
+        db.createSessionMessage({
+          sessionId: "daily-session",
+          timestamp: now - 90000,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "msg2" },
+          totalTokens: 500,
+          costTotal: 0.025,
+        })
+
+        db.createSessionMessage({
+          sessionId: "daily-session",
+          timestamp: now - 86400 * 3,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "msg3" },
+          totalTokens: 2000,
+          costTotal: 0.10,
+        })
+
+        db.createSessionMessage({
+          sessionId: "daily-session",
+          timestamp: now - 86400 * 35,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "msg4" },
+          totalTokens: 3000,
+          costTotal: 0.15,
+        })
+
+        const series = db.getDailyUsageTimeSeries(30)
+        expect(series.length).toBe(2)
+
+        expect(series[0]?.date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+        expect(series[0]?.tokens).toBe(2000)
+        expect(series[0]?.cost).toBeCloseTo(0.10, 10)
+        expect(series[1]?.tokens).toBe(1500)
+        expect(series[1]?.cost).toBeCloseTo(0.075, 10)
+
+        db.close()
+      })
+
+      it("respects days parameter", () => {
+        const { db } = createTempDb()
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createWorkflowSession({
+          id: "daily-session-2",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+        })
+
+        db.createSessionMessage({
+          sessionId: "daily-session-2",
+          timestamp: now - 86400 * 5,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "msg1" },
+          totalTokens: 1000,
+          costTotal: 0.05,
+        })
+
+        db.createSessionMessage({
+          sessionId: "daily-session-2",
+          timestamp: now - 86400 * 15,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "msg2" },
+          totalTokens: 2000,
+          costTotal: 0.10,
+        })
+
+        const series7d = db.getDailyUsageTimeSeries(7)
+        expect(series7d.length).toBe(1)
+        expect(series7d[0]?.tokens).toBe(1000)
+
+        const series30d = db.getDailyUsageTimeSeries(30)
+        expect(series30d.length).toBe(2)
+
+        db.close()
+      })
+    })
+  })
 })

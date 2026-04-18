@@ -42,6 +42,18 @@ function createTestSettings(): InfrastructureSettings {
 
 const tempDirs: string[] = []
 
+/** Safely extract a string property from API response data */
+function getStringProperty(data: unknown, key: string): string {
+  if (data === null || typeof data !== "object") {
+    throw new Error(`Expected object with property "${key}", got ${data === null ? "null" : typeof data}`)
+  }
+  const value = (data as Record<string, unknown>)[key]
+  if (typeof value !== "string") {
+    throw new Error(`Expected property "${key}" to be string, got ${typeof value}`)
+  }
+  return value
+}
+
 function createTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
   tempDirs.push(dir)
@@ -69,7 +81,14 @@ import { createInterface } from "readline"
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity })
 rl.on("line", (line) => {
   let request = null
-  try { request = JSON.parse(line) } catch { return }
+  try {
+    request = JSON.parse(line)
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    console.error("Mock PI: Failed to parse JSON request: " + errMsg)
+    console.error("Mock PI: Invalid line: " + line)
+    return
+  }
   const id = request?.id
   const type = request?.type
 
@@ -227,7 +246,7 @@ describe("PiKanbanServer API", () => {
       })
       expect(createTaskRes.response.status).toBe(201)
       expect(createTaskRes.data.name).toBe("Server API test task")
-      const taskId = createTaskRes.data.id as string
+      const taskId = getStringProperty(createTaskRes.data, "id")
 
       const listTasksRes = await api("/api/tasks")
       expect(listTasksRes.response.status).toBe(200)
@@ -356,7 +375,7 @@ describe("PiKanbanServer API", () => {
         }),
       })
       expect(bonTaskRes.response.status).toBe(201)
-      const bonTaskId = bonTaskRes.data.id as string
+      const bonTaskId = getStringProperty(bonTaskRes.data, "id")
 
       db.createTaskRun({
         id: "bon-run-worker",
@@ -1564,6 +1583,413 @@ describe("PiKanbanServer API", () => {
 
         expect(moveRes.status).toBe(400)
         expect(moveData.error).toContain("groupId must be a string, null, or undefined")
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+  })
+
+  describe("Stats API", () => {
+    it("GET /api/stats/usage returns usage stats with default lifetime range", async () => {
+      const root = createTempDir("tauroboros-stats-usage-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      const port = await server.start(0)
+
+      try {
+        // Seed some usage data
+        const now = Math.floor(Date.now() / 1000)
+        db.createWorkflowSession({
+          id: "stats-api-session",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+        })
+        db.createSessionMessage({
+          sessionId: "stats-api-session",
+          timestamp: now - 86400,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "test" },
+          totalTokens: 5000,
+          costTotal: 0.25,
+        })
+
+        const response = await fetch(`http://127.0.0.1:${port}/api/stats/usage`)
+        expect(response.status).toBe(200)
+
+        const data = await response.json()
+        expect(typeof data.totalTokens).toBe("number")
+        expect(typeof data.totalCost).toBe("number")
+        expect(typeof data.tokenChange).toBe("number")
+        expect(typeof data.costChange).toBe("number")
+        expect(data.totalTokens).toBe(5000)
+        expect(data.totalCost).toBeCloseTo(0.25, 10)
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("GET /api/stats/usage accepts valid range query parameter", async () => {
+      const root = createTempDir("tauroboros-stats-range-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      const port = await server.start(0)
+
+      try {
+        const ranges = ["24h", "7d", "30d", "lifetime"]
+        for (const range of ranges) {
+          const response = await fetch(`http://127.0.0.1:${port}/api/stats/usage?range=${range}`)
+          expect(response.status).toBe(200)
+          const data = await response.json()
+          expect(typeof data.totalTokens).toBe("number")
+          expect(typeof data.totalCost).toBe("number")
+        }
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("GET /api/stats/usage returns 400 for invalid range", async () => {
+      const root = createTempDir("tauroboros-stats-invalid-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      const port = await server.start(0)
+
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/api/stats/usage?range=invalid`)
+        expect(response.status).toBe(400)
+
+        const data = await response.json()
+        expect(data.error).toContain("Invalid range")
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("GET /api/stats/tasks returns task completion stats", async () => {
+      const root = createTempDir("tauroboros-stats-tasks-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      const port = await server.start(0)
+
+      try {
+        // Seed task data - need to update after creation to set reviewCount
+        db.createTask({ id: "api-task-1", name: "Task 1", prompt: "P1", status: "done" })
+        db.updateTask("api-task-1", { reviewCount: 2 })
+        db.createTask({ id: "api-task-2", name: "Task 2", prompt: "P2", status: "done" })
+        db.updateTask("api-task-2", { reviewCount: 0 })
+        db.createTask({ id: "api-task-3", name: "Task 3", prompt: "P3", status: "failed" })
+        db.createTask({ id: "api-task-4", name: "Task 4", prompt: "P4", status: "backlog" })
+
+        const response = await fetch(`http://127.0.0.1:${port}/api/stats/tasks`)
+        expect(response.status).toBe(200)
+
+        const data = await response.json()
+        expect(typeof data.completed).toBe("number")
+        expect(typeof data.failed).toBe("number")
+        expect(typeof data.averageReviews).toBe("number")
+        expect(data.completed).toBe(2)
+        expect(data.failed).toBe(1)
+        expect(data.averageReviews).toBe(1) // (2+0)/2 = 1
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("GET /api/stats/models returns model usage by responsibility", async () => {
+      const root = createTempDir("tauroboros-stats-models-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      const port = await server.start(0)
+
+      try {
+        // Seed session data with different models and kinds
+        db.createWorkflowSession({
+          id: "api-plan-session",
+          sessionKind: "planning",
+          cwd: "/tmp/work",
+          model: "claude-3-5",
+        })
+        db.createWorkflowSession({
+          id: "api-exec-session",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+          model: "o3-mini",
+        })
+        db.createWorkflowSession({
+          id: "api-review-session",
+          sessionKind: "task_run_reviewer",
+          cwd: "/tmp/work",
+          model: "o4-mini",
+        })
+
+        const response = await fetch(`http://127.0.0.1:${port}/api/stats/models`)
+        expect(response.status).toBe(200)
+
+        const data = await response.json()
+        expect(Array.isArray(data.plan)).toBe(true)
+        expect(Array.isArray(data.execution)).toBe(true)
+        expect(Array.isArray(data.review)).toBe(true)
+
+        expect(data.plan.some((m: { model: string }) => m.model === "claude-3-5")).toBe(true)
+        expect(data.execution.some((m: { model: string }) => m.model === "o3-mini")).toBe(true)
+        expect(data.review.some((m: { model: string }) => m.model === "o4-mini")).toBe(true)
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("GET /api/stats/duration returns average task duration in milliseconds", async () => {
+      const root = createTempDir("tauroboros-stats-duration-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      const port = await server.start(0)
+
+      try {
+        const now = Math.floor(Date.now() / 1000)
+
+        // Seed completed tasks with different durations
+        // Need to update timestamps after creation since createTask sets created_at automatically
+        db.createTask({
+          id: "api-duration-1",
+          name: "Task 1",
+          prompt: "P1",
+          status: "done",
+        })
+        db.updateTask("api-duration-1", { completedAt: now })
+        db.getRawHandle().prepare("UPDATE tasks SET created_at = ? WHERE id = ?").run(now - 3600, "api-duration-1")
+
+        db.createTask({
+          id: "api-duration-2",
+          name: "Task 2",
+          prompt: "P2",
+          status: "done",
+        })
+        db.updateTask("api-duration-2", { completedAt: now })
+        db.getRawHandle().prepare("UPDATE tasks SET created_at = ? WHERE id = ?").run(now - 7200, "api-duration-2")
+
+        const response = await fetch(`http://127.0.0.1:${port}/api/stats/duration`)
+        expect(response.status).toBe(200)
+
+        // The endpoint returns a number directly
+        const data = await response.json()
+        expect(typeof data).toBe("number")
+        expect(data).toBeGreaterThan(0)
+        // Average of 3600 and 7200 = 5400 seconds
+        expect(data).toBe(5400)
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("GET /api/stats/timeseries/hourly returns hourly usage data", async () => {
+      const root = createTempDir("tauroboros-stats-hourly-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      const port = await server.start(0)
+
+      try {
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createWorkflowSession({
+          id: "api-hourly-session",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+        })
+
+        db.createSessionMessage({
+          sessionId: "api-hourly-session",
+          timestamp: now - 7200,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "test" },
+          totalTokens: 1000,
+          costTotal: 0.05,
+        })
+
+        const response = await fetch(`http://127.0.0.1:${port}/api/stats/timeseries/hourly`)
+        expect(response.status).toBe(200)
+
+        const data = await response.json()
+        expect(Array.isArray(data)).toBe(true)
+
+        if (data.length > 0) {
+          expect(typeof data[0].hour).toBe("string")
+          expect(typeof data[0].tokens).toBe("number")
+          expect(typeof data[0].cost).toBe("number")
+        }
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("GET /api/stats/timeseries/daily returns daily usage data with default 30 days", async () => {
+      const root = createTempDir("tauroboros-stats-daily-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      const port = await server.start(0)
+
+      try {
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createWorkflowSession({
+          id: "api-daily-session",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+        })
+
+        db.createSessionMessage({
+          sessionId: "api-daily-session",
+          timestamp: now - 86400,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "test" },
+          totalTokens: 5000,
+          costTotal: 0.25,
+        })
+
+        const response = await fetch(`http://127.0.0.1:${port}/api/stats/timeseries/daily`)
+        expect(response.status).toBe(200)
+
+        const data = await response.json()
+        expect(Array.isArray(data)).toBe(true)
+
+        if (data.length > 0) {
+          expect(typeof data[0].date).toBe("string")
+          expect(typeof data[0].tokens).toBe("number")
+          expect(typeof data[0].cost).toBe("number")
+        }
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("GET /api/stats/timeseries/daily respects days query parameter", async () => {
+      const root = createTempDir("tauroboros-stats-daily-days-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      const port = await server.start(0)
+
+      try {
+        const now = Math.floor(Date.now() / 1000)
+
+        db.createWorkflowSession({
+          id: "api-daily-days-session",
+          sessionKind: "task",
+          cwd: "/tmp/work",
+        })
+
+        // Add message 5 days ago
+        db.createSessionMessage({
+          sessionId: "api-daily-days-session",
+          timestamp: now - 86400 * 5,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "5 days ago" },
+          totalTokens: 1000,
+          costTotal: 0.05,
+        })
+
+        // Add message 20 days ago
+        db.createSessionMessage({
+          sessionId: "api-daily-days-session",
+          timestamp: now - 86400 * 20,
+          role: "assistant",
+          messageType: "assistant_response",
+          contentJson: { text: "20 days ago" },
+          totalTokens: 2000,
+          costTotal: 0.10,
+        })
+
+        // Query with 7 days - should only get 1 entry
+        const response7d = await fetch(`http://127.0.0.1:${port}/api/stats/timeseries/daily?days=7`)
+        const data7d = await response7d.json()
+        expect(Array.isArray(data7d)).toBe(true)
+
+        // Query with 30 days - should get both entries
+        const response30d = await fetch(`http://127.0.0.1:${port}/api/stats/timeseries/daily?days=30`)
+        const data30d = await response30d.json()
+        expect(Array.isArray(data30d)).toBe(true)
+        expect(data30d.length).toBeGreaterThanOrEqual(data7d.length)
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("GET /api/stats/timeseries/daily clamps days parameter to valid range", async () => {
+      const root = createTempDir("tauroboros-stats-daily-clamp-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      const port = await server.start(0)
+
+      try {
+        // Test with days=0 (should clamp to 1)
+        const response0 = await fetch(`http://127.0.0.1:${port}/api/stats/timeseries/daily?days=0`)
+        expect(response0.status).toBe(200)
+
+        // Test with days=500 (should clamp to 365)
+        const response500 = await fetch(`http://127.0.0.1:${port}/api/stats/timeseries/daily?days=500`)
+        expect(response500.status).toBe(200)
+
+        const data = await response500.json()
+        expect(Array.isArray(data)).toBe(true)
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
+
+    it("handles empty database gracefully for all stats endpoints", async () => {
+      const root = createTempDir("tauroboros-stats-empty-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      const port = await server.start(0)
+
+      try {
+        // Test all endpoints with empty database
+        const usageRes = await fetch(`http://127.0.0.1:${port}/api/stats/usage`)
+        expect(usageRes.status).toBe(200)
+        const usageData = await usageRes.json()
+        expect(usageData.totalTokens).toBe(0)
+        expect(usageData.totalCost).toBe(0)
+
+        const tasksRes = await fetch(`http://127.0.0.1:${port}/api/stats/tasks`)
+        expect(tasksRes.status).toBe(200)
+        const tasksData = await tasksRes.json()
+        expect(tasksData.completed).toBe(0)
+        expect(tasksData.failed).toBe(0)
+
+        const modelsRes = await fetch(`http://127.0.0.1:${port}/api/stats/models`)
+        expect(modelsRes.status).toBe(200)
+        const modelsData = await modelsRes.json()
+        expect(modelsData.plan).toEqual([])
+        expect(modelsData.execution).toEqual([])
+        expect(modelsData.review).toEqual([])
+
+        const durationRes = await fetch(`http://127.0.0.1:${port}/api/stats/duration`)
+        expect(durationRes.status).toBe(200)
+        const durationData = await durationRes.json()
+        expect(durationData).toBe(0)
+
+        const hourlyRes = await fetch(`http://127.0.0.1:${port}/api/stats/timeseries/hourly`)
+        expect(hourlyRes.status).toBe(200)
+        const hourlyData = await hourlyRes.json()
+        expect(hourlyData).toEqual([])
+
+        const dailyRes = await fetch(`http://127.0.0.1:${port}/api/stats/timeseries/daily`)
+        expect(dailyRes.status).toBe(200)
+        const dailyData = await dailyRes.json()
+        expect(dailyData).toEqual([])
       } finally {
         server.stop()
         db.close()

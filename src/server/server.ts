@@ -10,7 +10,7 @@ import { discoverPiModels } from "../pi/model-discovery.ts"
 import { isTaskAwaitingPlanApproval } from "../task-state.ts"
 import type { BestOfNConfig, ImageStatusPayload, Task, TaskRun, ThinkingLevel, WSMessage, SessionMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
-import type { PackageDefinition } from "../db/types.ts"
+import type { PackageDefinition, StatsTimeRange } from "../db/types.ts"
 import { runStartupRecovery } from "../recovery/startup-recovery.ts"
 import { ContainerImageManager, loadContainerConfig, saveContainerConfig } from "../runtime/container-image-manager.ts"
 import { PiContainerManager } from "../runtime/container-manager.ts"
@@ -57,6 +57,9 @@ function isSelectionMode(value: unknown): value is "pick_best" | "synthesize" | 
   return value === "pick_best" || value === "synthesize" || value === "pick_or_synthesize"
 }
 
+function isStatsTimeRange(value: unknown): value is StatsTimeRange {
+  return value === "24h" || value === "7d" || value === "30d" || value === "lifetime"
+}
 interface BestOfNSlotInput {
   model?: unknown
   count?: unknown
@@ -1230,6 +1233,44 @@ export class PiKanbanServer {
       }))
 
       return json(graph)
+    })
+
+    // ---- Stats API Endpoints ----
+
+    // GET /api/stats/usage?range=24h|7d|30d|lifetime
+    this.router.get("/api/stats/usage", ({ url, json }) => {
+      const rangeParam = url.searchParams.get("range") ?? "lifetime"
+      if (!isStatsTimeRange(rangeParam)) {
+        return json({ error: "Invalid range. Use: 24h, 7d, 30d, or lifetime" }, 400)
+      }
+      return json(this.db.getUsageStats(rangeParam))
+    })
+
+    // GET /api/stats/tasks
+    this.router.get("/api/stats/tasks", ({ json }) => {
+      return json(this.db.getTaskStats())
+    })
+
+    // GET /api/stats/models
+    this.router.get("/api/stats/models", ({ json }) => {
+      return json(this.db.getModelUsageByResponsibility())
+    })
+
+    // GET /api/stats/duration
+    this.router.get("/api/stats/duration", ({ json }) => {
+      const duration = this.db.getAverageTaskDuration()
+      return json(duration)
+    })
+
+    // GET /api/stats/timeseries/hourly
+    this.router.get("/api/stats/timeseries/hourly", ({ json }) => {
+      return json(this.db.getHourlyUsageTimeSeries())
+    })
+
+    // GET /api/stats/timeseries/daily?days=30
+    this.router.get("/api/stats/timeseries/daily", ({ url, json }) => {
+      const days = Math.min(Math.max(Number(url.searchParams.get("days") ?? 30), 1), 365)
+      return json(this.db.getDailyUsageTimeSeries(days))
     })
 
     this.router.get("/api/tasks/:id/runs", ({ params, json, sessionUrlFor }) => {
