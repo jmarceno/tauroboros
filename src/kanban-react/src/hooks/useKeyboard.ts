@@ -14,6 +14,8 @@ interface KeyboardOptions {
   isEditableFocused?: () => boolean
   isGroupPanelOpen?: () => boolean
   selectedCount?: () => number
+  /** Whether the kanban board is the active tab - workflow shortcuts only work when true */
+  isKanbanActive?: () => boolean
 }
 
 export type { KeyboardOptions }
@@ -87,24 +89,32 @@ export function useKeyboard(options: KeyboardOptions) {
 
       const key = e.key.toUpperCase()
 
+      // Check if kanban is active for workflow-related shortcuts
+      const isKanbanActive = options.isKanbanActive?.() ?? true
+
       switch (key) {
         case 'T':
+          if (!isKanbanActive) return
           e.preventDefault()
           options.onCreateTemplate?.()
           break
         case 'B':
+          if (!isKanbanActive) return
           e.preventDefault()
           options.onCreateBacklog?.()
           break
         case 'S':
+          if (!isKanbanActive) return
           e.preventDefault()
           options.onStartWorkflow?.()
           break
         case 'D':
+          if (!isKanbanActive) return
           e.preventDefault()
           options.onArchiveDone?.()
           break
         case 'P':
+          // Planning chat can work on any tab
           e.preventDefault()
           options.onTogglePlanningChat?.()
           break

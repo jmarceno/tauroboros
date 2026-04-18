@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useApi } from '@/hooks'
 import type { Task, WorkflowRun } from '@/types'
 import { formatLocalDateTime } from '@/utils/date'
-import { SessionModal } from '@/components/modals/SessionModal'
 
 type ArchivedTask = Omit<Task, 'sessionId' | 'completedAt'> & {
   sessionId: string | null
@@ -35,18 +34,17 @@ interface ArchivedRun {
   expanded: boolean
 }
 
-interface SessionModalState {
-  isOpen: boolean
-  sessionId: string | null
+interface ArchivedTasksTabProps {
+  /** Callback to open the task sessions modal - shows ALL sessions for a task */
+  onOpenTaskSessions?: (taskId: string) => void
 }
 
-export function ArchivedTasksTab() {
+export function ArchivedTasksTab({ onOpenTaskSessions }: ArchivedTasksTabProps) {
   const api = useApi()
   const [archivedRuns, setArchivedRuns] = useState<ArchivedRun[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [sessionModal, setSessionModal] = useState<SessionModalState>({ isOpen: false, sessionId: null })
   const [selectedTask, setSelectedTask] = useState<ArchivedTask | null>(null)
 
   const loadArchivedTasks = useCallback(async () => {
@@ -124,14 +122,6 @@ export function ArchivedTasksTab() {
   const totalArchivedTasks = useMemo(() => 
     archivedRuns.reduce((sum, run) => sum + run.tasks.length, 0)
   , [archivedRuns])
-
-  const openSessionModal = useCallback((sessionId: string) => {
-    setSessionModal({ isOpen: true, sessionId })
-  }, [])
-
-  const closeSessionModal = useCallback(() => {
-    setSessionModal({ isOpen: false, sessionId: null })
-  }, [])
 
   const openTaskDetail = useCallback((task: ArchivedTask) => {
     setSelectedTask(task)
@@ -321,15 +311,15 @@ export function ArchivedTasksTab() {
                                     {task.reviewCount} {task.reviewCount === 1 ? 'review' : 'reviews'}
                                   </span>
                                 )}
-                                {task.sessionId && (
+                                {task.sessionId && onOpenTaskSessions && (
                                   <button
                                     className="text-xs text-accent-info hover:text-accent-primary flex items-center gap-1"
-                                    onClick={() => openSessionModal(task.sessionId!)}
+                                    onClick={() => onOpenTaskSessions(task.id)}
                                   >
                                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
                                     </svg>
-                                    View Session
+                                    View Sessions
                                   </button>
                                 )}
                               </div>
@@ -441,15 +431,15 @@ export function ArchivedTasksTab() {
               )}
             </div>
             <div className="flex justify-end gap-2 px-4 py-3 border-t border-dark-surface3">
-              {selectedTask.sessionId && (
+              {selectedTask.sessionId && onOpenTaskSessions && (
                 <button 
                   className="btn btn-primary"
                   onClick={() => {
                     closeTaskDetail()
-                    openSessionModal(selectedTask.sessionId!)
+                    onOpenTaskSessions(selectedTask.id)
                   }}
                 >
-                  View Session
+                  View Sessions
                 </button>
               )}
               <button className="btn" onClick={closeTaskDetail}>
@@ -458,13 +448,6 @@ export function ArchivedTasksTab() {
             </div>
           </div>
         </div>
-      )}
-
-      {sessionModal.isOpen && sessionModal.sessionId && (
-        <SessionModal
-          sessionId={sessionModal.sessionId}
-          onClose={closeSessionModal}
-        />
       )}
     </div>
   )

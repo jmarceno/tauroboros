@@ -444,6 +444,7 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
     isGroupPanelOpen: () => taskGroupsHook.activeGroupId !== null,
     selectedCount: () => multiSelectHook.selectedCount,
     onSwitchTab,
+    isKanbanActive: () => activeTab === 'kanban',
     onStartWorkflow: async () => {
       const grouped = tasksHook.groupedTasks
       const executableTasks = (grouped?.backlog?.length ?? 0) +
@@ -931,7 +932,7 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
 
                                 {activeTab === 'containers' && <ContainersTab />}
 
-                                {activeTab === 'archived' && <ArchivedTasksTab />}
+                                {activeTab === 'archived' && <ArchivedTasksTab onOpenTaskSessions={onOpenTaskSessions} />}
 
                                 {activeTab === 'stats' && <StatsTab />}
 

@@ -1450,6 +1450,19 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           finishedAt: nowUnix(),
         })
         if (finalRun) this.broadcast({ type: "run_updated", payload: finalRun })
+        
+        // If this was a group execution, mark the group as completed
+        if (run && run.kind === "group_tasks" && run.groupId) {
+          const completedGroup = this.db.updateTaskGroup(run.groupId, {
+            status: "completed",
+            completedAt: nowUnix(),
+          })
+          if (completedGroup) {
+            this.broadcast({ type: "task_group_updated", payload: completedGroup })
+            this.broadcast({ type: "group_execution_complete", payload: { groupId: run.groupId } })
+          }
+        }
+        
         this.broadcast({ type: "execution_complete", payload: {} })
       }
     } catch (error) {

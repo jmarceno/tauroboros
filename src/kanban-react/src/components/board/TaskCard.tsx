@@ -196,14 +196,16 @@ export const TaskCard = memo(function TaskCard({
 
   const cardRef = useRef<HTMLDivElement>(null)
 
-  const hasLocalSession =
-    !!task.sessionId &&
-    task.status !== 'backlog' &&
-    task.status !== 'template'
+  // Badges MUST always show for non-backlog, non-template tasks - this is the single source of truth
+  // NEVER gate badge visibility on data availability - show them always
+  const shouldShowBadges = task.status !== 'backlog' && task.status !== 'template'
+
+  // hasLocalSession used for interaction purposes (click handlers, etc.)
+  const hasLocalSession = shouldShowBadges && !!task.sessionId
 
   // Intersection observer for lazy loading - only for initial data fetch
   useEffect(() => {
-    if (!cardRef.current || !hasLocalSession) return
+    if (!cardRef.current || !shouldShowBadges) return
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -224,7 +226,7 @@ export const TaskCard = memo(function TaskCard({
       observer.disconnect()
       stopWatchingTask(task.id)
     }
-  }, [task.id, hasLocalSession, startWatchingTask, stopWatchingTask, loadLastUpdate])
+  }, [task.id, shouldShowBadges, startWatchingTask, stopWatchingTask, loadLastUpdate])
 
   // Get real-time last update from context (WebSocket-powered)
   const lastUpdate = getLastUpdate(task.id)
@@ -235,13 +237,14 @@ export const TaskCard = memo(function TaskCard({
 
   // Get aggregated usage data from context
   const usageData = useMemo(() => {
-    if (!hasLocalSession) return null
+    if (!shouldShowBadges) return null
     return getTaskUsage(task.id)
-  }, [task.id, hasLocalSession, getTaskUsage])
+  }, [task.id, shouldShowBadges, getTaskUsage])
 
-  const hasUsageData = usageData !== null && (usageData.totalTokens > 0 || usageData.totalCost > 0)
-  const formattedTokens = usageData ? formatTokenCount(usageData.totalTokens) : ''
-  const formattedCost = usageData ? formatCost(usageData.totalCost) : ''
+  // Always show formatted values when badges should be visible
+  // If no data yet, show loading state or zeros - but NEVER hide the badge
+  const formattedTokens = usageData ? formatTokenCount(usageData.totalTokens) : '0'
+  const formattedCost = usageData ? formatCost(usageData.totalCost) : '$0'
 
   const isAnomalousReviewTask =
     task.status === 'review' &&
@@ -648,12 +651,13 @@ export const TaskCard = memo(function TaskCard({
         </button>
       )}
 
-      {/* Cost and tokens badge - aggregated across all sessions */}
-      {hasUsageData && (
+      {/* Cost and tokens badge - ALWAYS shown for non-backlog tasks */}
+      {/* Badge visibility is based purely on task status, never on data availability */}
+      {shouldShowBadges && (
         <div className="flex items-center gap-2 mt-1 text-xs">
           <span
             className="px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full text-dark-text-secondary flex items-center gap-1"
-            title={`${formattedTokens} tokens across all sessions`}
+            title={usageData ? `${formattedTokens} tokens across all sessions` : 'Loading usage data...'}
           >
             💰 {formattedCost}
           </span>
@@ -666,8 +670,8 @@ export const TaskCard = memo(function TaskCard({
         </div>
       )}
 
-      {/* Last Update badge - shows when the last message was received */}
-      {lastUpdate !== null && lastUpdateFormatted && hasLocalSession && (
+      {/* Last Update badge - ALWAYS shown for non-backlog tasks when available */}
+      {lastUpdate !== null && lastUpdateFormatted && shouldShowBadges && (
         <div className="flex items-center gap-2 mt-1 text-xs">
           <span
             className={`px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full flex items-center gap-1 task-last-update-badge ${lastUpdateAgeClass}`}

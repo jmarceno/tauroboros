@@ -12,12 +12,12 @@ vi.mock('@/hooks', () => ({
   }),
 }))
 
-// Mock the SessionModal component
-vi.mock('@/components/modals/SessionModal', () => ({
-  SessionModal: ({ sessionId, onClose }: { sessionId: string; onClose: () => void }) => (
-    <div data-testid="session-modal">
-      <span>Session: {sessionId}</span>
-      <button onClick={onClose} data-testid="close-session-modal">Close</button>
+// Mock the TaskSessionsModal component
+vi.mock('@/components/modals/TaskSessionsModal', () => ({
+  TaskSessionsModal: ({ taskId, onClose }: { taskId: string; onClose: () => void }) => (
+    <div data-testid="task-sessions-modal">
+      <span>Task Sessions: {taskId}</span>
+      <button onClick={onClose} data-testid="close-task-sessions-modal">Close</button>
     </div>
   ),
 }))
@@ -254,11 +254,12 @@ describe('ArchivedTasksTab', () => {
     })
   })
 
-  it('opens session modal when clicking View Session button', async () => {
+  it('calls onOpenTaskSessions when clicking View Sessions button', async () => {
+    const mockOnOpenTaskSessions = vi.fn()
     mockGetArchivedTasks.mockResolvedValue(mockArchivedTasksResponse)
 
     await act(async () => {
-      render(<ArchivedTasksTab />)
+      render(<ArchivedTasksTab onOpenTaskSessions={mockOnOpenTaskSessions} />)
     })
 
     await waitFor(() => {
@@ -275,20 +276,13 @@ describe('ArchivedTasksTab', () => {
       expect(screen.getByText('Archived Task One')).toBeInTheDocument()
     })
 
-    // Click View Session button
-    const viewSessionButton = screen.getAllByText('View Session')[0]
-    fireEvent.click(viewSessionButton)
+    // Click View Sessions button
+    const viewSessionsButton = screen.getAllByText('View Sessions')[0]
+    fireEvent.click(viewSessionsButton)
 
+    // Should call the callback with task ID (not session ID)
     await waitFor(() => {
-      expect(screen.getByTestId('session-modal')).toBeInTheDocument()
-      expect(screen.getByText('Session: session-1')).toBeInTheDocument()
-    })
-
-    // Close the modal
-    fireEvent.click(screen.getByTestId('close-session-modal'))
-    
-    await waitFor(() => {
-      expect(screen.queryByTestId('session-modal')).not.toBeInTheDocument()
+      expect(mockOnOpenTaskSessions).toHaveBeenCalledWith('task-1')
     })
   })
 
