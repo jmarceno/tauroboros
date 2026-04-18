@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import type { PlanningSession, PlanningPrompt, SessionMessage, ThinkingLevel } from "@/types"
+import type { PlanningChatContextType } from "@/contexts/AppContext"
 import { useApi } from "./useApi"
 import type { useWebSocket } from "./useWebSocket"
 import { ErrorCode, isErrorCode, detectErrorCodeFromMessage } from "../../../shared/error-codes"
@@ -32,7 +33,7 @@ interface PendingMessage {
   maxRetries: number
 }
 
-export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
+export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>): PlanningChatContextType {
   const api = useApi()
 
   const [isOpen, setIsOpen] = useState(false)

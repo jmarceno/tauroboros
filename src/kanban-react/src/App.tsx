@@ -7,6 +7,7 @@ import {
   ModalContext, ContainerStatusContext, SessionUsageContext, TaskLastUpdateContext,
   TaskGroupsContext,
 } from '@/contexts/AppContext'
+import { TabProvider } from '@/contexts/TabContext'
 
 // Direct imports from hook files (avoid barrel file)
 import { useTasks } from '@/hooks/useTasks'
@@ -524,14 +525,27 @@ function App() {
   }, [])
 
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const syncErrorCountRef = useRef(0)
+  const MAX_SYNC_ERRORS = 5
+
   useEffect(() => {
     syncIntervalRef.current = setInterval(() => {
       if (wsHook.isConnected) {
-        tasksHook.loadTasks().catch((e) => {
-          console.error(`Failed to sync tasks: ${e instanceof Error ? e.message : String(e)}`)
-        })
-        runsHook.loadRuns().catch((e) => {
-          console.error(`Failed to sync runs: ${e instanceof Error ? e.message : String(e)}`)
+        Promise.all([
+          tasksHook.loadTasks(),
+          runsHook.loadRuns()
+        ]).catch((e) => {
+          syncErrorCountRef.current += 1
+          const errorMessage = e instanceof Error ? e.message : String(e)
+          toastsHook.addLog(`Sync failed (${syncErrorCountRef.current}/${MAX_SYNC_ERRORS}): ${errorMessage}`, 'error')
+          
+          if (syncErrorCountRef.current >= MAX_SYNC_ERRORS) {
+            toastsHook.showToast(`Auto-sync disabled after ${MAX_SYNC_ERRORS} consecutive failures. Check connection.`, 'error')
+            if (syncIntervalRef.current) {
+              clearInterval(syncIntervalRef.current)
+              syncIntervalRef.current = null
+            }
+          }
         })
       }
     }, 30000)
@@ -541,7 +555,7 @@ function App() {
         clearInterval(syncIntervalRef.current)
       }
     }
-  }, [wsHook.isConnected])
+  }, [wsHook.isConnected, tasksHook.loadTasks, runsHook.loadRuns, toastsHook])
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -811,16 +825,17 @@ function App() {
   const onClearSelection = useCallback(() => multiSelectHook.clearSelection(), [multiSelectHook])
 
   return (
-    <TasksContext.Provider value={tasksHook as unknown as React.ContextType<typeof TasksContext>}>
+    <TabProvider>
+    <TasksContext.Provider value={tasksHook}>
       <RunsContext.Provider value={runsHook}>
-        <OptionsContext.Provider value={optionsHook as unknown as React.ContextType<typeof OptionsContext>}>
+        <OptionsContext.Provider value={optionsHook}>
           <ToastContext.Provider value={toastsHook}>
             <ModelSearchContext.Provider value={modelSearchHook}>
               <SessionContext.Provider value={sessionHook}>
-                <WebSocketContext.Provider value={wsHook as unknown as React.ContextType<typeof WebSocketContext>}>
+                <WebSocketContext.Provider value={wsHook}>
                   <WorkflowControlContext.Provider value={workflowControl}>
                     <MultiSelectContext.Provider value={multiSelectHook}>
-                      <PlanningChatContext.Provider value={planningChatHook as unknown as React.ContextType<typeof PlanningChatContext>}>
+                      <PlanningChatContext.Provider value={planningChatHook}>
                         <ModalContext.Provider value={modalContextValue}>
                           <ContainerStatusContext.Provider value={containerStatusContextValue}>
                             <SessionUsageContext.Provider value={sessionUsageHook}>
@@ -1091,6 +1106,7 @@ function App() {
         </OptionsContext.Provider>
       </RunsContext.Provider>
     </TasksContext.Provider>
+    </TabProvider>
   )
 }
 

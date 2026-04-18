@@ -27,6 +27,7 @@ import {
   queryKeys,
   type ResetTaskResult,
 } from '@/queries'
+import type { TasksContextType } from '@/contexts/AppContext'
 import type { Task, TaskStatus, BestOfNSummary, ColumnSortPreferences, ColumnSortOption, UpdateTaskDTO } from '@/types'
 
 // Static sort functions
@@ -40,7 +41,7 @@ const sortFns: Record<ColumnSortOption, (a: Task, b: Task) => number> = {
   'updated-desc': (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0),
 }
 
-export function useTasks(columnSorts?: ColumnSortPreferences) {
+export function useTasks(columnSorts?: ColumnSortPreferences): TasksContextType {
   const queryClient = useQueryClient()
   
   // Use TanStack Query for tasks

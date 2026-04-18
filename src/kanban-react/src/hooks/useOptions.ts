@@ -9,9 +9,9 @@ import {
   useStartExecutionMutation,
   useStopExecutionMutation,
 } from '@/queries'
-import type { Options } from '@/types'
+import type { OptionsContextType } from '@/contexts/AppContext'
 
-export function useOptions() {
+export function useOptions(): OptionsContextType {
   // Use TanStack Query
   const { data: options, isLoading, error } = useOptionsQuery()
 
