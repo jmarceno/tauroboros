@@ -109,7 +109,7 @@ const DEFAULT_OPTIONS: Options = {
   codeStylePrompt: "",
   telegramBotToken: "",
   telegramChatId: "",
-  telegramNotificationsEnabled: true,
+  telegramNotificationLevel: "all",
   maxReviews: 2,
   columnSorts: undefined,
 }
@@ -1449,6 +1449,19 @@ const MIGRATIONS: Migration[] = [
       // Add group_id column to workflow_runs table
       `ALTER TABLE workflow_runs ADD COLUMN group_id TEXT;`,
       `CREATE INDEX IF NOT EXISTS idx_workflow_runs_group_id ON workflow_runs(group_id);`,
+    ],
+  },
+  {
+    version: 26,
+    description: "Migrate telegram_notifications_enabled to telegram_notification_level for granular notification control",
+    statements: [
+      // Migrate existing boolean value to new level format
+      // true -> 'all' (preserve current behavior for users who had notifications enabled)
+      // false -> 'failures' (minimum useful level for users who had notifications disabled)
+      `UPDATE options SET value = 'all' WHERE key = 'telegram_notifications_enabled' AND value = 'true';`,
+      `UPDATE options SET value = 'failures' WHERE key = 'telegram_notifications_enabled' AND value = 'false';`,
+      // Delete the old boolean key after migration
+      `DELETE FROM options WHERE key = 'telegram_notifications_enabled';`,
     ],
   },
 ]
@@ -2874,7 +2887,7 @@ export class PiKanbanDB {
       codeStylePrompt: getValue("code_style_prompt") || DEFAULT_CODE_STYLE_PROMPT,
       telegramBotToken: getValue("telegram_bot_token"),
       telegramChatId: getValue("telegram_chat_id"),
-      telegramNotificationsEnabled: getBoolean("telegram_notifications_enabled"),
+      telegramNotificationLevel: this.asTelegramNotificationLevel(values.get("telegram_notification_level")),
       maxReviews: getNumber("max_reviews"),
       maxJsonParseRetries: getNumber("max_json_parse_retries") || 5,
       columnSorts,
@@ -2900,6 +2913,7 @@ export class PiKanbanDB {
     if (partial.showExecutionGraph !== undefined) upsert.run("show_execution_graph", String(partial.showExecutionGraph))
     if (partial.port !== undefined) upsert.run("port", String(partial.port))
     if (partial.thinkingLevel !== undefined) upsert.run("thinking_level", partial.thinkingLevel)
+    if (partial.telegramNotificationLevel !== undefined) upsert.run("telegram_notification_level", partial.telegramNotificationLevel)
     if (partial.planThinkingLevel !== undefined) upsert.run("plan_thinking_level", partial.planThinkingLevel)
     if (partial.executionThinkingLevel !== undefined) upsert.run("execution_thinking_level", partial.executionThinkingLevel)
     if (partial.reviewThinkingLevel !== undefined) upsert.run("review_thinking_level", partial.reviewThinkingLevel)
@@ -2907,7 +2921,6 @@ export class PiKanbanDB {
     if (partial.codeStylePrompt !== undefined) upsert.run("code_style_prompt", partial.codeStylePrompt)
     if (partial.telegramBotToken !== undefined) upsert.run("telegram_bot_token", partial.telegramBotToken)
     if (partial.telegramChatId !== undefined) upsert.run("telegram_chat_id", partial.telegramChatId)
-    if (partial.telegramNotificationsEnabled !== undefined) upsert.run("telegram_notifications_enabled", String(partial.telegramNotificationsEnabled))
     if (partial.maxReviews !== undefined) upsert.run("max_reviews", String(partial.maxReviews))
     if (partial.maxJsonParseRetries !== undefined) upsert.run("max_json_parse_retries", String(partial.maxJsonParseRetries))
     if (partial.columnSorts !== undefined) upsert.run("column_sorts", JSON.stringify(partial.columnSorts))
@@ -3029,6 +3042,12 @@ export class PiKanbanDB {
     return this.db
   }
 
+  private asTelegramNotificationLevel(value: unknown): TelegramNotificationLevel {
+    return value === "all" || value === "failures" || value === "done_and_failures" || value === "workflow_done_and_failures"
+      ? value
+      : "all"
+  }
+
   private getNextTaskIndex(): number {
     const row = this.db.prepare("SELECT COALESCE(MAX(idx), -1) AS max_idx FROM tasks").get() as { max_idx: number }
     return Number(row.max_idx ?? -1) + 1
@@ -3060,7 +3079,7 @@ export class PiKanbanDB {
     upsert.run("code_style_prompt", DEFAULT_OPTIONS.codeStylePrompt)
     upsert.run("telegram_bot_token", DEFAULT_OPTIONS.telegramBotToken)
     upsert.run("telegram_chat_id", DEFAULT_OPTIONS.telegramChatId)
-    upsert.run("telegram_notifications_enabled", String(DEFAULT_OPTIONS.telegramNotificationsEnabled))
+    upsert.run("telegram_notification_level", DEFAULT_OPTIONS.telegramNotificationLevel)
     upsert.run("max_reviews", String(DEFAULT_OPTIONS.maxReviews))
   }
 

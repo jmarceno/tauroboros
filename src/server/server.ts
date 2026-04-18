@@ -16,7 +16,8 @@ import { ContainerImageManager, loadContainerConfig, saveContainerConfig } from 
 import { PiContainerManager } from "../runtime/container-manager.ts"
 import { SmartRepairService, type SmartRepairAction } from "../runtime/smart-repair.ts"
 import { PlanningSessionManager, type ContextAttachment } from "../runtime/planning-session.ts"
-import { sendTelegramNotification } from "../telegram.ts"
+import { sendTelegramNotification, sendTelegramWorkflowSummary, shouldSendNotification, type NotificationContext } from "../telegram.ts"
+import type { TelegramNotificationLevel } from "../telegram.ts"
 import { loadPausedRunState, loadPausedSessionState } from "../runtime/session-pause-state.ts"
 import { Router } from "./router.ts"
 import type { RequestContext } from "./types.ts"
@@ -197,6 +198,7 @@ export class PiKanbanServer {
   private readonly settings?: InfrastructureSettings
   private readonly projectRoot: string
   private readonly planningSessionManager: PlanningSessionManager
+  private _currentRunId: string | null = null
 
   getImageManager(): ContainerImageManager | null {
     return this.imageManager ?? null
@@ -311,11 +313,20 @@ export class PiKanbanServer {
     this.db.setTaskStatusChangeListener((taskId: string, oldStatus: string, newStatus: string) => {
       const task = this.db.getTask(taskId)
       if (!task) return
-      const opts = this.db.getOptions()
-      if (!opts.telegramNotificationsEnabled || !opts.telegramBotToken || !opts.telegramChatId) return
+      const options = this.db.getOptions()
+      if (!options.telegramBotToken || !options.telegramChatId) return
+
+      // Check if notification should be sent based on notification level
+      const context: NotificationContext = {
+        isWorkflowDone: this._currentRunId !== null,
+      }
+      
+      if (!shouldSendNotification(options.telegramNotificationLevel, oldStatus as any, newStatus as any, context)) {
+        return
+      }
 
       sendTelegramNotification(
-        { botToken: opts.telegramBotToken, chatId: opts.telegramChatId },
+        { botToken: options.telegramBotToken, chatId: options.telegramChatId },
         task.name,
         oldStatus,
         newStatus,
@@ -363,6 +374,53 @@ export class PiKanbanServer {
 
   broadcast(message: WSMessage): void {
     this.wsHub.broadcast(message)
+
+    // Track workflow start/completion for notification context
+    if (message.type === "execution_started") {
+      // Find the current active run
+      const runs = this.db.getWorkflowRuns()
+      const activeRun = runs.find(r => r.status === "running")
+      this._currentRunId = activeRun?.id ?? null
+    } else if (message.type === "execution_complete") {
+      // Workflow completed - send summary notification if level is "workflow_done_and_failures"
+      if (this._currentRunId) {
+        const run = this.db.getWorkflowRun(this._currentRunId)
+        if (run) {
+          const options = this.db.getOptions()
+          const notificationLevel = options.telegramNotificationLevel
+          
+          // Only send workflow summary for workflow_done_and_failures level
+          if (notificationLevel === "workflow_done_and_failures" && options.telegramBotToken && options.telegramChatId) {
+            // Count task outcomes in this workflow
+            let completed = 0
+            let failed = 0
+            let stuck = 0
+            
+            for (const taskId of run.taskOrder ?? []) {
+              const task = this.db.getTask(taskId)
+              if (task) {
+                if (task.status === "done") completed++
+                else if (task.status === "failed") failed++
+                else if (task.status === "stuck") stuck++
+              }
+            }
+            
+            sendTelegramWorkflowSummary(
+              { botToken: options.telegramBotToken, chatId: options.telegramChatId },
+              run.displayName || "Workflow",
+              run.taskOrder?.length ?? 0,
+              completed,
+              failed,
+              stuck,
+              (msg: string) => console.debug(msg)
+            ).catch((err: unknown) => {
+              console.error("[telegram] workflow summary notification failed:", err)
+            })
+          }
+        }
+        this._currentRunId = null
+      }
+    }
   }
 
   async start(port = this.defaultPort): Promise<number> {

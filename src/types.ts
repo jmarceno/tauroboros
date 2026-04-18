@@ -1,5 +1,7 @@
 export type TaskStatus = "template" | "backlog" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
 
+export type TelegramNotificationLevel = "all" | "failures" | "done_and_failures" | "workflow_done_and_failures"
+
 export type TaskGroupStatus = "active" | "completed" | "archived"
 
 export type ThinkingLevel = "default" | "low" | "medium" | "high"
@@ -219,7 +221,7 @@ export interface Options {
   codeStylePrompt: string
   telegramBotToken: string
   telegramChatId: string
-  telegramNotificationsEnabled: boolean
+  telegramNotificationLevel: TelegramNotificationLevel
   maxReviews: number
   maxJsonParseRetries: number
   columnSorts?: ColumnSortPreferences

@@ -1,6 +1,7 @@
 export type TaskStatus = "template" | "backlog" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
 export type TaskGroupStatus = "active" | "running" | "completed" | "archived"
 export type ThinkingLevel = "default" | "low" | "medium" | "high"
+export type TelegramNotificationLevel = "all" | "failures" | "done_and_failures" | "workflow_done_and_failures"
 export type ExecutionStrategy = "standard" | "best_of_n"
 export type SelectionMode = "pick_best" | "synthesize" | "pick_or_synthesize"
 export type RunStatus = "running" | "stopping" | "paused" | "failed" | "completed"
@@ -177,7 +178,7 @@ export interface Options {
   executionThinkingLevel: ThinkingLevel
   reviewThinkingLevel: ThinkingLevel
   repairThinkingLevel: ThinkingLevel
-  telegramNotificationsEnabled?: boolean
+  telegramNotificationLevel?: TelegramNotificationLevel
   telegramBotToken?: string
   telegramChatId?: string
   columnSorts?: ColumnSortPreferences

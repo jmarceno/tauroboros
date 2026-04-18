@@ -4,7 +4,7 @@ import { useApi } from '@/hooks'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
 import { HelpButton } from '../common/HelpButton'
-import type { Options, ThinkingLevel } from '@/types'
+import type { Options, ThinkingLevel, TelegramNotificationLevel } from '@/types'
 import { DEFAULT_CODE_STYLE_PROMPT } from '@/types'
 
 interface OptionsModalProps {
@@ -57,7 +57,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
           executionThinkingLevel: currentOpts.executionThinkingLevel || 'default',
           reviewThinkingLevel: currentOpts.reviewThinkingLevel || 'default',
           repairThinkingLevel: currentOpts.repairThinkingLevel || 'default',
-          telegramNotificationsEnabled: currentOpts.telegramNotificationsEnabled ?? false,
+          telegramNotificationLevel: currentOpts.telegramNotificationLevel || 'all',
           telegramBotToken: currentOpts.telegramBotToken || '',
           telegramChatId: currentOpts.telegramChatId || '',
         })
@@ -368,16 +368,27 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group border border-dark-surface3 rounded-lg p-3">
               <div className="label-row">
                 <label>Telegram Notifications</label>
-                <HelpButton tooltip="Send a Telegram message when a task changes state. Leave both fields empty to disable notifications." />
+                <HelpButton tooltip="Configure when to receive Telegram notifications about task and workflow status changes. Leave bot token and chat ID empty to disable notifications." />
               </div>
-              <label className="checkbox-item mb-2">
-                <input
-                  type="checkbox"
-                  checked={formData.telegramNotificationsEnabled ?? false}
-                  onChange={(e) => updateField('telegramNotificationsEnabled', e.target.checked)}
-                />
-                <span>Enable Telegram notifications</span>
-              </label>
+              <div className="mb-3">
+                <label className="text-xs text-dark-text-muted mb-1 block">Notification Level</label>
+                <select
+                  className="form-select"
+                  value={formData.telegramNotificationLevel || 'all'}
+                  onChange={(e) => updateField('telegramNotificationLevel', e.target.value as TelegramNotificationLevel)}
+                >
+                  <option value="all">Every state change</option>
+                  <option value="failures">Only failures</option>
+                  <option value="done_and_failures">Only when tasks done and failures</option>
+                  <option value="workflow_done_and_failures">Only on workflow done and failures</option>
+                </select>
+                <p className="text-xs text-dark-text-muted mt-1">
+                  {formData.telegramNotificationLevel === 'all' && 'Receive notifications for every task status change.'}
+                  {formData.telegramNotificationLevel === 'failures' && 'Only receive notifications when a task fails or gets stuck.'}
+                  {formData.telegramNotificationLevel === 'done_and_failures' && 'Receive notifications when tasks complete, fail, or get stuck.'}
+                  {formData.telegramNotificationLevel === 'workflow_done_and_failures' && 'Receive a workflow summary when complete, plus notifications for failures.'}
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs text-dark-text-muted mb-1 block">Bot Token</label>

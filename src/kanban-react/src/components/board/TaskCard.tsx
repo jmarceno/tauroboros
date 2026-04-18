@@ -32,8 +32,6 @@ interface TaskCardProps {
   onContinueReviews: () => void
 }
 
-<<<<<<< HEAD
-=======
 // Hook for lazy loading session data only when card is visible
 function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
   const api = useApi()
