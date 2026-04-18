@@ -543,6 +543,16 @@ The port is read from the `options` table under the `port` key (default: 3789).
 | `POST` | `/api/prompt-templates` | Create/update prompt template |
 | `GET` | `/api/planning/sessions` | List planning sessions |
 | `POST` | `/api/planning/sessions` | Create planning session |
+| `GET` | `/api/task-groups` | List all task groups |
+| `POST` | `/api/task-groups` | Create a new task group |
+| `GET` | `/api/task-groups/:id` | Get group with tasks |
+| `PATCH` | `/api/task-groups/:id` | Update group (name, color, status) |
+| `DELETE` | `/api/task-groups/:id` | Delete group |
+| `POST` | `/api/task-groups/:id/tasks` | Add tasks to group |
+| `DELETE` | `/api/task-groups/:id/tasks` | Remove tasks from group |
+| `POST` | `/api/task-groups/:id/start` | Start group execution |
+| `GET` | `/api/tasks/:id/group` | Get task's group membership |
+| `POST` | `/api/tasks/:id/move-to-group` | Move task to/from a group |
 | `GET` | `/api/container/image-status` | Get container image status |
 | `POST` | `/api/container/config` | Update container config |
 | `GET` | `/healthz` | Health check |
@@ -861,3 +871,133 @@ After setup, report:
 - any important dependencies you added
 - any assumptions you made while translating the source material
 - any ambiguities that still need user input
+
+## Task Groups
+
+Task Groups are virtual workflows that allow you to execute multiple related tasks together as a coordinated unit. Groups are useful when:
+
+- Multiple tasks need to be executed together in a specific order
+- Tasks share a common theme or goal
+- You want to track and manage related work as a single unit
+
+### Task Group Model
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Unique identifier |
+| `name` | Display name shown on the virtual card |
+| `color` | Hex color for visual identification (e.g., `#6366f1`) |
+| `status` | `active`, `completed`, or `archived` |
+| `createdAt` | Unix timestamp when created |
+| `updatedAt` | Unix timestamp of last update |
+| `completedAt` | Unix timestamp when completed (null if not done) |
+
+### Group Execution
+
+Groups execute tasks in dependency order, similar to regular workflow execution:
+
+1. Validates all group tasks are in `backlog` or `template` status
+2. Checks for external dependencies (tasks outside the group that must complete first)
+3. Creates a `group_tasks` workflow run
+4. Executes tasks in order with dependency resolution
+5. Broadcasts progress updates via WebSocket
+
+### Task Group API Endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/task-groups` | List all task groups |
+| `POST` | `/api/task-groups` | Create a new group |
+| `GET` | `/api/task-groups/:id` | Get group with tasks |
+| `PATCH` | `/api/task-groups/:id` | Update group properties |
+| `DELETE` | `/api/task-groups/:id` | Delete group |
+| `POST` | `/api/task-groups/:id/tasks` | Add tasks to group |
+| `DELETE` | `/api/task-groups/:id/tasks` | Remove tasks from group |
+| `POST` | `/api/task-groups/:id/start` | Start group execution |
+| `GET` | `/api/tasks/:id/group` | Get task's group membership |
+
+### Creating a Task Group
+
+To create a group with tasks:
+
+```bash
+# Step 1: Create the tasks first
+curl -X POST http://localhost:<port>/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Task 1", "prompt": "Do thing A", "status": "backlog"}'
+
+curl -X POST http://localhost:<port>/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Task 2", "prompt": "Do thing B", "status": "backlog"}'
+
+# Step 2: Create the group with task IDs
+curl -X POST http://localhost:<port>/api/task-groups \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Feature X", "color": "#6366f1", "taskIds": ["task-id-1", "task-id-2"]}'
+```
+
+**Note**: Tasks can only belong to ONE group at a time. Adding a task to a group automatically removes it from any previous group.
+
+### Recommended Workflow with Groups
+
+When planning a feature that involves multiple related tasks:
+
+1. **Plan the work** - Break down the feature into logical tasks
+2. **Create tasks** - Use the task creation API to create each task
+3. **Create the group** - Wrap related tasks in a group with a meaningful name
+4. **Review the plan** - Open the group panel to verify task order and dependencies
+5. **Start execution** - Click "Start Group Workflow" to execute all tasks in order
+
+### Creating a Group from Planning Chat
+
+When using the Planning Chat's "Create Tasks" button, the agent will:
+
+1. Analyze the planning conversation to extract implementation tasks
+2. Create appropriate tasks using the API
+3. **Automatically create a Task Group** if multiple related tasks are identified
+4. Place all tasks inside the group
+5. Report the created group and tasks to the user
+
+The agent is instructed to:
+
+- Name the group based on the feature/project being planned
+- Choose an appropriate color for visual identification
+- Add all related tasks to the group
+- Ensure tasks have proper dependencies if specified
+
+### Group Status Lifecycle
+
+| Status | Meaning |
+| --- | --- |
+| `active` | Group is ready to execute or is executing |
+| `completed` | All tasks in the group have finished successfully |
+| `archived` | Group has been archived (tasks may still be visible) |
+
+### Group Constraints
+
+- **No running workflows**: A group cannot start if another workflow is already running
+- **Valid task status**: All tasks must be in `backlog` or `template` status
+- **No external dependencies**: Tasks cannot have unmet dependencies on tasks outside the group
+- **Valid container images**: If using container mode, all tasks must have valid container images
+- **Single membership**: Each task can only belong to one group at a time
+
+### Debugging Group Issues
+
+Common issues and solutions:
+
+| Issue | Cause | Solution |
+| --- | --- | --- |
+| "A workflow is already running" | Another workflow/groups is executing | Stop current workflow first |
+| "Some tasks are not in backlog status" | Tasks moved to review/done/etc | Move tasks back to backlog |
+| "external dependencies" error | Group tasks depend on non-group tasks | Complete dependencies first, or move them into the group |
+| "invalid container images" | Container image not found | Build image or select valid image in task settings |
+
+### When to Use Groups vs Individual Tasks
+
+| Scenario | Recommendation |
+| --- | --- |
+| Single independent task | Create individual task |
+| Multiple related tasks that should run together | Create group with tasks |
+| Tasks that can be executed in parallel | Individual tasks with dependencies |
+| Feature with multiple subtasks | Group containing all subtasks |
+| Template tasks for reuse | Individual template tasks (not grouped) |

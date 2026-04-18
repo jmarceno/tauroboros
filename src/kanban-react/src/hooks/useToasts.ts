@@ -1,15 +1,16 @@
-import { useState, useCallback } from 'react'
-import type { Toast, ToastVariant, LogEntry } from '@/types'
+import { useState, useCallback, useRef, useMemo } from "react"
+import type { Toast, ToastVariant, LogEntry } from "@/types"
+import { formatLocalTime } from "@/utils/date"
 
 export function useToasts() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [logs, setLogs] = useState<LogEntry[]>([])
-  const nextIdRef = { current: 1 }
+  const nextIdRef = useRef(1)
 
   const MAX_LOG_ENTRIES = 500
 
   const addLog = useCallback((message: string, variant: ToastVariant = 'info') => {
-    const ts = new Date().toLocaleTimeString()
+    const ts = formatLocalTime(Math.floor(Date.now() / 1000))
     setLogs(prev => {
       const newLogs = [...prev, { ts, message, variant }]
       if (newLogs.length > MAX_LOG_ENTRIES) {
@@ -28,7 +29,7 @@ export function useToasts() {
 
     if (duration > 0) {
       setTimeout(() => {
-        removeToast(id)
+        setToasts(curr => curr.filter(t => t.id !== id))
       }, duration)
     }
 
@@ -43,12 +44,14 @@ export function useToasts() {
     setLogs([])
   }, [])
 
-  return {
+  const contextValue = useMemo(() => ({
     toasts,
     logs,
     showToast,
     removeToast,
     addLog,
     clearLogs,
-  }
+  }), [toasts, logs, showToast, removeToast, addLog, clearLogs])
+
+  return contextValue
 }

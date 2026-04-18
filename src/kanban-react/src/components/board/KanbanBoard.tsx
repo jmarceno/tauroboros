@@ -1,9 +1,12 @@
-import { useMemo, memo } from 'react'
-import type { Task, TaskStatus, BestOfNSummary } from '@/types'
-import { KanbanColumn } from './KanbanColumn'
-import type { useDragDrop } from '@/hooks/useDragDrop'
+import { useMemo, memo } from "react"
+import type { Task, TaskStatus, BestOfNSummary, TaskGroup, ColumnSortPreferences } from "@/types"
+import { KanbanColumn } from "./KanbanColumn"
+import { VirtualCard } from "./VirtualCard"
+import { GroupPanel } from "./GroupPanel"
+import type { useDragDrop } from "@/hooks/useDragDrop"
 
 interface KanbanBoardProps {
+  logPanelCollapsed?: boolean
   tasks: Task[]
   bonSummaries: Record<string, BestOfNSummary>
   getTaskRunColor: (taskId: string) => string | null
@@ -11,9 +14,13 @@ interface KanbanBoardProps {
   dragDrop: ReturnType<typeof useDragDrop>
   isMultiSelecting?: boolean
   getIsSelected?: (taskId: string) => boolean
-  columnSorts?: Record<string, string>
+  columnSorts?: ColumnSortPreferences
   highlightedRunId?: string | null
   isTaskInRun?: (taskId: string, runId: string | null) => boolean
+  // Group-related props
+  groups?: TaskGroup[]
+  groupMembers?: Record<string, string[]>
+  activeGroupId?: string | null
   onOpenTask: (id: string, e?: React.MouseEvent) => void
   onOpenTemplateModal: () => void
   onOpenTaskModal: () => void
@@ -31,6 +38,15 @@ interface KanbanBoardProps {
   onViewRuns: (id: string) => void
   onContinueReviews: (id: string) => void
   onChangeColumnSort: (status: string, sort: string) => void
+  // Group handlers
+  onVirtualCardClick?: (groupId: string) => void
+  onDeleteGroup?: (groupId: string) => void
+  onStartGroup?: (groupId: string) => void
+  onCloseGroupPanel?: () => void
+  onRemoveTaskFromGroup?: (taskId: string) => void
+  onAddTasksToGroup?: (taskIds: string[]) => void
+  onCreateGroupFromSelection?: () => void
+  onRenameGroup?: (groupId: string, newName: string) => Promise<void>
 }
 
 const columns: { status: TaskStatus; title: string }[] = [
@@ -70,6 +86,7 @@ const columnColors: Record<string, string> = {
 }
 
 export const KanbanBoard = memo(function KanbanBoard({
+  logPanelCollapsed = false,
   tasks,
   bonSummaries,
   getTaskRunColor,
@@ -80,6 +97,11 @@ export const KanbanBoard = memo(function KanbanBoard({
   columnSorts,
   highlightedRunId,
   isTaskInRun,
+  // Group props
+  groups = [],
+  groupMembers = {},
+  activeGroupId = null,
+  // Handlers
   onOpenTask,
   onOpenTemplateModal,
   onOpenTaskModal,
@@ -97,30 +119,44 @@ export const KanbanBoard = memo(function KanbanBoard({
   onViewRuns,
   onContinueReviews,
   onChangeColumnSort,
+  // Group handlers
+  onVirtualCardClick,
+  onDeleteGroup,
+  onStartGroup,
+  onCloseGroupPanel,
+  onRemoveTaskFromGroup,
+  onAddTasksToGroup,
+  onCreateGroupFromSelection,
+  onRenameGroup,
 }: KanbanBoardProps) {
-  const groupedTasks = useMemo(() => {
-    if (!tasks || !Array.isArray(tasks)) {
-      return {
-        template: [],
-        backlog: [],
-        executing: [],
-        review: [],
-        'code-style': [],
-        done: [],
-      } as Record<TaskStatus, Task[]>
-    }
 
-    const groups: Record<TaskStatus, Task[]> = {
-      template: [],
-      backlog: [],
-      executing: [],
-      review: [],
-      'code-style': [],
-      done: [],
+  const groupedTaskIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const taskIds of Object.values(groupMembers)) {
+      for (const taskId of taskIds) {
+        ids.add(taskId)
+      }
+    }
+    return ids
+  }, [groupMembers])
+
+  const groupedTasks = useMemo(() => {
+    const groups = {
+      template: [] as Task[],
+      backlog: [] as Task[],
+      executing: [] as Task[],
+      review: [] as Task[],
+      'code-style': [] as Task[],
+      done: [] as Task[],
+      failed: [] as Task[],
+      stuck: [] as Task[],
     }
 
     for (const task of tasks) {
-      if (!task) continue
+      if (task.status === 'backlog' && groupedTaskIds.has(task.id)) {
+        continue
+      }
+
       if (task.status === 'failed' || task.status === 'stuck') {
         groups.review.push(task)
       } else if (task.status === 'code-style') {
@@ -131,48 +167,133 @@ export const KanbanBoard = memo(function KanbanBoard({
     }
 
     return groups
-  }, [tasks])
+  }, [tasks, groupedTaskIds])
+
+  const activeGroup = useMemo(() => {
+    if (!activeGroupId) return null
+    return groups.find(g => g.id === activeGroupId) || null
+  }, [groups, activeGroupId])
+
+  const activeGroupTasks = useMemo(() => {
+    if (!activeGroupId || !groupMembers[activeGroupId]) return []
+    const memberIds = new Set(groupMembers[activeGroupId])
+    return tasks.filter(t => memberIds.has(t.id))
+  }, [activeGroupId, groupMembers, tasks])
+
+  const activeGroups = useMemo(() =>
+    groups.filter(g => g.status === 'active'),
+    [groups]
+  )
 
   return (
     <div className="kanban-wrapper">
-      <div className="kanban-scroll">
+      <div className={`kanban-scroll${logPanelCollapsed ? ' pb-10' : ''}`}>
         <div className="kanban-container">
-          {columns.map(column => (
-            <KanbanColumn
-              key={`${column.status}-${groupedTasks[column.status].length}`}
-              status={column.status}
-              title={column.title}
-              helpText={columnHelpText[column.status]}
-              iconSvg={columnIcons[column.status]}
-              iconColor={columnColors[column.status]}
-              tasks={groupedTasks[column.status]}
-              bonSummaries={bonSummaries}
-              getTaskRunColor={getTaskRunColor}
-              isTaskMutationLocked={isTaskMutationLocked}
-              dragDrop={dragDrop}
-              isMultiSelecting={isMultiSelecting}
-              getIsSelected={getIsSelected}
-              currentSort={columnSorts?.[column.status] || 'manual'}
-              highlightedRunId={highlightedRunId}
-              isTaskInRun={isTaskInRun}
-              onOpenTask={onOpenTask}
-              onChangeSort={(sort) => onChangeColumnSort(column.status, sort)}
-              onOpenTemplateModal={onOpenTemplateModal}
-              onOpenTaskModal={onOpenTaskModal}
-              onDeployTemplate={onDeployTemplate}
-              onOpenTaskSessions={onOpenTaskSessions}
-              onApprovePlan={onApprovePlan}
-              onRequestRevision={onRequestRevision}
-              onStartSingle={onStartSingle}
-              onRepairTask={onRepairTask}
-              onMarkDone={onMarkDone}
-              onResetTask={onResetTask}
-              onConvertToTemplate={onConvertToTemplate}
-              onArchiveTask={onArchiveTask}
-              onArchiveAllDone={onArchiveAllDone}
-              onViewRuns={onViewRuns}
-              onContinueReviews={onContinueReviews}
-            />
+          {columns.map((column) => (
+            <div
+              key={column.status}
+              className={`kanban-column-wrapper ${column.status === 'backlog' ? 'is-relative' : ''}`}
+            >
+              <KanbanColumn
+                status={column.status}
+                title={column.title}
+                helpText={columnHelpText[column.status]}
+                iconSvg={columnIcons[column.status]}
+                iconColor={columnColors[column.status]}
+                tasks={groupedTasks[column.status]}
+                bonSummaries={bonSummaries}
+                getTaskRunColor={getTaskRunColor}
+                isTaskMutationLocked={isTaskMutationLocked}
+                dragDrop={dragDrop}
+                isMultiSelecting={isMultiSelecting}
+                getIsSelected={getIsSelected}
+                currentSort={columnSorts?.[column.status] || 'manual'}
+                highlightedRunId={highlightedRunId}
+                isTaskInRun={isTaskInRun}
+                groups={groups}
+                footerContent={
+                  column.status === 'backlog' && activeGroups.length === 0 ? (
+                    <div className="virtual-cards-empty-footer" aria-live="polite">
+                      <p className="text-xs text-dark-text-muted italic">
+                        No groups yet. Select 2+ tasks and press{' '}
+                        <kbd className="px-1 py-0.5 bg-dark-surface2 border border-dark-border rounded text-[10px] font-mono">Ctrl+G</kbd>{' '}
+                        to create one.
+                      </p>
+                    </div>
+                  ) : undefined
+                }
+                onOpenTask={onOpenTask}
+                onChangeSort={(sort) => onChangeColumnSort(column.status, sort)}
+                onOpenTemplateModal={onOpenTemplateModal}
+                onOpenTaskModal={onOpenTaskModal}
+                onDeployTemplate={onDeployTemplate}
+                onOpenTaskSessions={onOpenTaskSessions}
+                onApprovePlan={onApprovePlan}
+                onRequestRevision={onRequestRevision}
+                onStartSingle={onStartSingle}
+                onRepairTask={onRepairTask}
+                onMarkDone={onMarkDone}
+                onResetTask={onResetTask}
+                onConvertToTemplate={onConvertToTemplate}
+                onArchiveTask={onArchiveTask}
+                onArchiveAllDone={onArchiveAllDone}
+                onViewRuns={onViewRuns}
+                onContinueReviews={onContinueReviews}
+              >
+                {column.status === 'backlog' && activeGroups.length > 0 && (
+                  <div className="virtual-cards-section">
+                    <div className="virtual-cards-header">
+                      <span className="text-xs font-medium text-dark-text-muted uppercase tracking-wider">
+                        Virtual Workflows
+                      </span>
+                    </div>
+                    <div className="virtual-cards-list">
+                      {activeGroups.map(group => (
+                        <VirtualCard
+                          key={group.id}
+                          group={group}
+                          taskCount={groupMembers[group.id]?.length ?? 0}
+                          onClick={() => onVirtualCardClick?.(group.id)}
+                          onDelete={() => onDeleteGroup?.(group.id)}
+                          onStart={() => onStartGroup?.(group.id)}
+                        />
+                      ))}
+                    </div>
+                    <div className="virtual-cards-divider" />
+                  </div>
+                )}
+              </KanbanColumn>
+
+              {/* Floating Group Panel - positioned immediately after Backlog column */}
+              {column.status === 'backlog' && activeGroup && (
+                <GroupPanel
+                  group={activeGroup}
+                  tasks={activeGroupTasks}
+                  bonSummaries={bonSummaries}
+                  getTaskRunColor={getTaskRunColor}
+                  isTaskMutationLocked={isTaskMutationLocked}
+                  isOpen={!!activeGroupId}
+                  onClose={() => onCloseGroupPanel?.()}
+                  onStartGroup={() => onStartGroup?.(activeGroup.id)}
+                  onOpenTask={onOpenTask}
+                  onDeployTemplate={onDeployTemplate}
+                  onOpenTaskSessions={onOpenTaskSessions}
+                  onApprovePlan={onApprovePlan}
+                  onRequestRevision={onRequestRevision}
+                  onStartSingle={onStartSingle}
+                  onRepairTask={onRepairTask}
+                  onMarkDone={onMarkDone}
+                  onResetTask={onResetTask}
+                  onConvertToTemplate={onConvertToTemplate}
+                  onArchiveTask={onArchiveTask}
+                  onViewRuns={onViewRuns}
+                  onContinueReviews={onContinueReviews}
+                  onDeleteGroup={() => onDeleteGroup?.(activeGroup.id)}
+                  onRenameGroup={onRenameGroup}
+                  dragDrop={dragDrop}
+                />
+              )}
+            </div>
           ))}
         </div>
       </div>

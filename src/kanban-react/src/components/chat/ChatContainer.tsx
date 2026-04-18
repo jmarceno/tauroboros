@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { ChatSession, ContextAttachment } from '@/hooks/usePlanningChat'
-import type { PlanningSession, ThinkingLevel } from '@/types'
+import type { PlanningSession } from '@/types'
+import { formatLocalTime, formatLocalDate, formatCompactDateTime } from '@/utils/date'
 import { useApi } from '@/hooks/useApi'
 import { useOptions } from '@/hooks/useOptions'
 import { useModelSearch } from '@/hooks/useModelSearch'
@@ -27,6 +28,7 @@ export function ChatContainer() {
   const [showModelSelector, setShowModelSelector] = useState(false)
   const [selectedModel, setSelectedModel] = useState('')
   const [selectedThinkingLevel, setSelectedThinkingLevel] = useState<'default' | 'low' | 'medium' | 'high'>('default')
+  const [modelError, setModelError] = useState<string | null>(null)
 
   const resizeStartX = useRef(0)
   const resizeStartWidth = useRef(0)
@@ -82,6 +84,7 @@ export function ChatContainer() {
       await options.loadOptions()
     }
     setShowModelSelector(true)
+    setModelError(null)
     const defaultModel = options.options?.planModel?.trim() || ''
     const defaultThinkingLevel = options.options?.planThinkingLevel || 'default'
     setSelectedModel(defaultModel)
@@ -151,11 +154,11 @@ export function ChatContainer() {
     yesterday.setDate(yesterday.getDate() - 1)
 
     if (date.toDateString() === now.toDateString()) {
-      return `Today, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      return `Today, ${formatLocalTime(timestamp)}`
     } else if (date.toDateString() === yesterday.toDateString()) {
-      return `Yesterday, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      return `Yesterday, ${formatLocalTime(timestamp)}`
     } else {
-      return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      return formatCompactDateTime(timestamp)
     }
   }
 
@@ -173,16 +176,37 @@ export function ChatContainer() {
   const activeSessionsCount = allSessions.filter(s => s.status === 'active' || s.status === 'starting').length
 
   const confirmModelAndCreate = async () => {
-    let model = selectedModel
+    let model = selectedModel.trim()
+
+    // Clear any previous error
+    setModelError(null)
+
+    // If no model selected, try to normalize/validate it
     if (!model) {
       const normalized = modelSearch.normalizeValue(selectedModel)
-      if (!normalized) return
+      if (!normalized) {
+        // Show error and don't close modal - let user select a valid model
+        setModelError('Please select a valid AI model')
+        return
+      }
       model = normalized
     }
 
+    // Validate that we have a non-empty model
+    if (!model) {
+      setModelError('Please select a valid AI model')
+      return
+    }
+
     setShowModelSelector(false)
+    setModelError(null)
     await planningChat.createNewSession(model, selectedThinkingLevel)
     setActiveTab('chat')
+  }
+
+  const handleModelSelectorClose = () => {
+    setShowModelSelector(false)
+    setModelError(null)
   }
 
   const getTabStatusClass = (session: ChatSession) => {
@@ -212,8 +236,7 @@ export function ChatContainer() {
   if (!planningChat.isOpen) {
     return (
       <button
-        className="chat-toggle"
-        style={{ right: '0' }}
+        className="chat-toggle right-0"
         onClick={() => planningChat.openPanel()}
       >
         <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -232,8 +255,8 @@ export function ChatContainer() {
   return (
     <>
       <div
-        className={`chat-panel open ${isResizing ? 'resizing' : ''}`}
-        style={{ width: `${panelWidth}px`, right: '0' }}
+        className={`chat-panel open right-0 ${isResizing ? 'resizing' : ''}`}
+        style={{ width: `${panelWidth}px` }}
       >
         <div className="chat-resize-handle" onMouseDown={startResize} title="Drag to resize" />
 
@@ -411,6 +434,7 @@ export function ChatContainer() {
         <div
           className="minimized-dock"
           style={{ right: `${panelWidth + 20}px` }}
+          data-panel-width={panelWidth}
         >
           {planningChat.minimizedSessions.map(session => (
             <button
@@ -431,7 +455,7 @@ export function ChatContainer() {
       {showModelSelector && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={(e) => { if (e.target === e.currentTarget) setShowModelSelector(false) }}
+          onClick={(e) => { if (e.target === e.currentTarget) handleModelSelectorClose() }}
         >
           <div className="bg-dark-surface border border-dark-border rounded-lg shadow-xl w-[400px] max-w-[90vw] p-4">
             <h3 className="text-lg font-medium text-dark-text mb-2">New Planning Chat</h3>
@@ -443,7 +467,10 @@ export function ChatContainer() {
               modelValue={selectedModel}
               label="Model"
               help="The AI model to use for this planning session"
-              onUpdate={setSelectedModel}
+              onUpdate={(value) => {
+                setSelectedModel(value)
+                setModelError(null)  // Clear error when user makes a selection
+              }}
             />
 
             <ThinkingLevelSelect
@@ -453,13 +480,22 @@ export function ChatContainer() {
               onUpdate={setSelectedThinkingLevel}
             />
 
+            {modelError && (
+              <div className="mt-3 p-2 rounded bg-accent-danger/10 border border-accent-danger/30 text-accent-danger text-sm flex items-center gap-2">
+                <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {modelError}
+              </div>
+            )}
+
             <div className="flex items-center justify-end gap-2 mt-4">
-              <button className="btn btn-sm" onClick={() => setShowModelSelector(false)}>
+              <button className="btn btn-sm" onClick={handleModelSelectorClose}>
                 Cancel
               </button>
               <button
                 className="btn btn-primary btn-sm"
-                disabled={!selectedModel}
+                disabled={!selectedModel.trim()}
                 onClick={confirmModelAndCreate}
               >
                 Start Chat

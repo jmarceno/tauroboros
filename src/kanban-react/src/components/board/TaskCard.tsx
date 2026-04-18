@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useCallback, memo, useState, useRef } from 'react'
-import type { Task, BestOfNSummary } from '@/types'
-import type { useDragDrop } from '@/hooks/useDragDrop'
-import { useOptionsContext, useTasksContext } from '@/contexts/AppContext'
-import { useApi } from '@/hooks/useApi'
+import { useEffect, useMemo, useCallback, memo, useRef, useState } from "react"
+import type { Task, BestOfNSummary } from "@/types"
+import type { useDragDrop } from "@/hooks/useDragDrop"
+import { useOptionsContext, useTasksContext, useSessionUsageContext, useTaskLastUpdateContext } from "@/contexts/AppContext"
+import { useApi } from "@/hooks/useApi"
+import { formatLocalDateTime, formatRelativeTime } from "@/utils/date"
 
 interface TaskCardProps {
   task: Task
@@ -14,6 +15,8 @@ interface TaskCardProps {
   isSelected?: boolean
   isMultiSelecting?: boolean
   isHighlighted?: boolean
+  group?: { id: string; name: string; color: string }
+  showGroupIndicator?: boolean
   onOpen: (e?: React.MouseEvent) => void
   onDeploy: (e: React.MouseEvent) => void
   onOpenTaskSessions: () => void
@@ -38,11 +41,19 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
   const observerRef = useRef<IntersectionObserver | null>(null)
   const cardRef = useRef<HTMLDivElement | null>(null)
   const hasLoadedRef = useRef(false)
+  // Use refs to track current values and prevent stale closures
+  const taskIdRef = useRef(taskId)
+  const hasSessionRef = useRef(hasSession)
+
+  // Keep refs synchronized with latest prop values
+  taskIdRef.current = taskId
+  hasSessionRef.current = hasSession
 
   // Set up intersection observer
   useEffect(() => {
-    if (!cardRef.current || !hasSession) return
+    if (!cardRef.current || !hasSessionRef.current) return
 
+    const currentCardRef = cardRef.current
     observerRef.current = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
@@ -52,23 +63,24 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
       { threshold: 0.1, rootMargin: '100px' }
     )
 
-    observerRef.current.observe(cardRef.current)
+    observerRef.current.observe(currentCardRef)
 
     return () => {
       observerRef.current?.disconnect()
     }
-  }, [hasSession])
+  }, []) // Empty deps - uses hasSessionRef to avoid stale closure
 
   // Load data when card becomes visible
   useEffect(() => {
-    if (!isVisible || !taskId || hasLoadedRef.current) return
+    if (!isVisible || !taskIdRef.current || hasLoadedRef.current) return
 
     hasLoadedRef.current = true
+    const currentTaskId = taskIdRef.current
 
     // Load session usage data
     const loadUsage = async () => {
       try {
-        const sessions = await api.getTaskSessions(taskId)
+        const sessions = await api.getTaskSessions(currentTaskId)
         let totalTokens = 0
         let totalCost = 0
 
@@ -77,7 +89,8 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
           try {
             const usage = await api.getSessionUsage(session.id)
             return usage
-          } catch {
+          } catch (err) {
+            console.error(`Failed to load usage for session ${session.id}:`, err)
             return null
           }
         })
@@ -91,51 +104,35 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
         })
 
         setUsageData({ totalTokens, totalCost })
-      } catch {
-        // Silently fail
+      } catch (err) {
+        console.error('Failed to load session usage data:', err)
       }
     }
 
     // Load last update timestamp
     const loadLastUpdate = async () => {
       try {
-        const response = await fetch(`/api/tasks/${taskId}/last-update`)
+        const response = await fetch(`/api/tasks/${currentTaskId}/last-update`)
         if (response.ok) {
           const data = await response.json() as { lastUpdateAt: number | null }
           if (data.lastUpdateAt !== null) {
             setLastUpdate(data.lastUpdateAt)
           }
         }
-      } catch {
-        // Silently fail
+      } catch (err) {
+        console.error('Failed to load last update timestamp:', err)
       }
     }
 
     // Execute both requests
     loadUsage()
     loadLastUpdate()
-  }, [isVisible, taskId, api])
+  }, [isVisible, api]) // Only depend on isVisible and stable api
 
   return { cardRef, usageData, lastUpdate }
 }
 
 // Format helpers
-function formatRelativeTime(timestamp: number): string {
-  const diffMs = Date.now() - timestamp * 1000
-  const diffSec = Math.floor(diffMs / 1000)
-
-  if (diffSec < 10) return 'just now'
-  if (diffSec < 60) return `${diffSec}s ago`
-
-  const diffMin = Math.floor(diffSec / 60)
-  if (diffMin < 60) return `${diffMin}m ago`
-
-  const diffHour = Math.floor(diffMin / 60)
-  if (diffHour < 24) return `${diffHour}h ago`
-
-  const diffDay = Math.floor(diffHour / 24)
-  return `${diffDay}d ago`
-}
 
 function getUpdateAgeClass(timestamp: number): string {
   const diffMs = Date.now() - timestamp * 1000
@@ -176,6 +173,8 @@ export const TaskCard = memo(function TaskCard({
   isSelected,
   isMultiSelecting,
   isHighlighted,
+  group,
+  showGroupIndicator,
   onOpen,
   onDeploy,
   onOpenTaskSessions,
@@ -192,92 +191,88 @@ export const TaskCard = memo(function TaskCard({
 }: TaskCardProps) {
   const { options } = useOptionsContext()
   const { tasks } = useTasksContext()
+  const { startWatchingTask, stopWatchingTask, getTaskUsage } = useSessionUsageContext()
+  const { getLastUpdate, loadLastUpdate } = useTaskLastUpdateContext()
 
-  const hasLocalSession = useMemo(() =>
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  const hasLocalSession =
     !!task.sessionId &&
     task.status !== 'backlog' &&
     task.status !== 'template'
-  , [task.sessionId, task.status])
 
-  // Lazy load session data only when card is visible
-  const { cardRef, usageData, lastUpdate } = useLazySessionData(task.id, hasLocalSession)
+  // Intersection observer for lazy loading - only for initial data fetch
+  useEffect(() => {
+    if (!cardRef.current || !hasLocalSession) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          // Start watching task for usage updates
+          startWatchingTask(task.id)
+          // Load last update from backend
+          loadLastUpdate(task.id)
+          // Don't disconnect observer - we want to keep watching
+        }
+      },
+      { threshold: 0.1, rootMargin: '100px' }
+    )
+
+    observer.observe(cardRef.current)
+
+    return () => {
+      observer.disconnect()
+      stopWatchingTask(task.id)
+    }
+  }, [task.id, hasLocalSession, startWatchingTask, stopWatchingTask, loadLastUpdate])
+
+  // Get real-time last update from context (WebSocket-powered)
+  const lastUpdate = getLastUpdate(task.id)
 
   // Format last update
-  const lastUpdateFormatted = useMemo(() =>
-    lastUpdate ? formatRelativeTime(lastUpdate) : null,
-  [lastUpdate])
+  const lastUpdateFormatted = lastUpdate ? formatRelativeTime(lastUpdate) : null
+  const lastUpdateAgeClass = lastUpdate ? getUpdateAgeClass(lastUpdate) : null
 
-  const lastUpdateAgeClass = useMemo(() =>
-    lastUpdate ? getUpdateAgeClass(lastUpdate) : null,
-  [lastUpdate])
+  // Get aggregated usage data from context
+  const usageData = useMemo(() => {
+    if (!hasLocalSession) return null
+    return getTaskUsage(task.id)
+  }, [task.id, hasLocalSession, getTaskUsage])
 
-  // Format usage data - show for all non-backlog/non-template tasks with session
-  // even if token count is 0 (e.g., freshly started executing tasks)
-  const hasUsageData = usageData !== null
-  const formattedTokens = useMemo(() =>
-    usageData ? formatTokenCount(usageData.totalTokens) : '',
-  [usageData])
+  const hasUsageData = usageData !== null && (usageData.totalTokens > 0 || usageData.totalCost > 0)
+  const formattedTokens = usageData ? formatTokenCount(usageData.totalTokens) : ''
+  const formattedCost = usageData ? formatCost(usageData.totalCost) : ''
 
-  const formattedCost = useMemo(() =>
-    usageData ? formatCost(usageData.totalCost) : '',
-  [usageData])
-
-  const isAnomalousReviewTask = useMemo(() =>
+  const isAnomalousReviewTask =
     task.status === 'review' &&
     !task.awaitingPlanApproval &&
     task.executionStrategy !== 'best_of_n'
-  , [task.status, task.awaitingPlanApproval, task.executionStrategy])
 
-  const isOrphanExecutingTask = useMemo(() =>
-    !isLocked && task.status === 'executing'
-  , [isLocked, task.status])
+  const isOrphanExecutingTask = !isLocked && task.status === 'executing'
+  const hasPlanOutput = task.executionPhase === 'plan_complete_waiting_approval'
 
-  const hasPlanOutput = useMemo(() =>
-    task.executionPhase === 'plan_complete_waiting_approval'
-  , [task.executionPhase])
-
-  const canSendToExecution = useMemo(() =>
+  const canSendToExecution =
     task.planmode === true &&
     hasPlanOutput &&
     task.executionPhase !== 'implementation_done' &&
     (task.status === 'review' || task.status === 'executing' || task.status === 'failed' || task.status === 'stuck')
-  , [task.planmode, hasPlanOutput, task.executionPhase, task.status])
 
-  const canRepairToDone = useMemo(() =>
+  const canRepairToDone =
     task.status !== 'done' &&
     task.executionStrategy !== 'best_of_n' &&
     task.awaitingPlanApproval !== true &&
     (task.errorMessage !== null || task.reviewCount > 0)
-  , [task.status, task.executionStrategy, task.awaitingPlanApproval, task.errorMessage, task.reviewCount])
 
-  const showInlineActionBar = useMemo(() =>
+  const showInlineActionBar =
     !isLocked &&
     (task.status === 'review' || task.status === 'executing' || task.status === 'failed' || task.status === 'stuck')
-  , [isLocked, task.status])
 
-  const effectiveMaxReviews = useMemo(() =>
-    task.maxReviewRunsOverride ?? options?.maxReviews ?? 2
-  , [task.maxReviewRunsOverride, options?.maxReviews])
-
-  const effectiveMaxJsonParseRetries = useMemo(() =>
-    options?.maxJsonParseRetries ?? 5
-  , [options?.maxJsonParseRetries])
-
-  const isNearReviewLimit = useMemo(() =>
-    task.reviewCount >= effectiveMaxReviews - 1
-  , [task.reviewCount, effectiveMaxReviews])
-
-  const isAtReviewLimit = useMemo(() =>
-    task.reviewCount >= effectiveMaxReviews
-  , [task.reviewCount, effectiveMaxReviews])
-
-  const hasJsonParseRetries = useMemo(() =>
-    task.jsonParseRetryCount > 0 && task.status === 'review'
-  , [task.jsonParseRetryCount, task.status])
-
-  const isNearJsonParseLimit = useMemo(() =>
-    task.jsonParseRetryCount >= effectiveMaxJsonParseRetries - 1
-  , [task.jsonParseRetryCount, effectiveMaxJsonParseRetries])
+  const effectiveMaxReviews = task.maxReviewRunsOverride ?? options?.maxReviews ?? 2
+  const effectiveMaxJsonParseRetries = options?.maxJsonParseRetries ?? 5
+  const isNearReviewLimit = task.reviewCount >= effectiveMaxReviews - 1
+  const isAtReviewLimit = task.reviewCount >= effectiveMaxReviews
+  const hasJsonParseRetries = task.jsonParseRetryCount > 0 && task.status === 'review'
+  const isNearJsonParseLimit = task.jsonParseRetryCount >= effectiveMaxJsonParseRetries - 1
 
   const depIds = useMemo(() => {
     return (task.requirements || [])
@@ -286,11 +281,10 @@ export const TaskCard = memo(function TaskCard({
       .map(dep => `#${dep.idx + 1}`)
   }, [task.requirements, tasks])
 
-  const hasNonDefaultThinkingLevel = useMemo(() => {
-    return task.thinkingLevel !== 'default' ||
-      task.planThinkingLevel !== 'default' ||
-      task.executionThinkingLevel !== 'default'
-  }, [task.thinkingLevel, task.planThinkingLevel, task.executionThinkingLevel])
+  const hasNonDefaultThinkingLevel =
+    task.thinkingLevel !== 'default' ||
+    task.planThinkingLevel !== 'default' ||
+    task.executionThinkingLevel !== 'default'
 
   const thinkingLevelSummary = useMemo(() => {
     const levels: string[] = []
@@ -309,7 +303,7 @@ export const TaskCard = memo(function TaskCard({
   }, [task.thinkingLevel, task.planThinkingLevel, task.executionThinkingLevel])
 
   // Status color for the task indicator
-  const statusColor = useMemo(() => {
+  const statusColor = (() => {
     switch (task.status) {
       case 'stuck':
       case 'failed':
@@ -319,18 +313,35 @@ export const TaskCard = memo(function TaskCard({
       default:
         return 'low'
     }
-  }, [task.status])
+  })()
 
-  const handleDragStart = useCallback((e: React.DragEvent) => {
+  const handleDragStart = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     if (!canDrag) return
-    dragDrop.handleDragStart(task.id)
-    ;(e.target as HTMLElement).classList.add('dragging')
-    e.dataTransfer.effectAllowed = 'move'
-  }, [canDrag, dragDrop, task.id])
 
-  const handleDragEnd = useCallback((e: React.DragEvent) => {
+    // Determine drag source context based on where the task is being dragged from:
+    // - If rendered inside a GroupPanel (group prop provided): source is 'group'
+    // - Otherwise (rendered in a column): source is 'column'
+    // Note: We use the 'group' prop to determine this, not task.groupId, because
+    // a task can have groupId but still be displayed in a column (filtered view)
+    const context = group
+      ? { source: 'group' as const, groupId: group.id }
+      : { source: 'column' as const, status: task.status }
+
+    dragDrop.handleDragStart(task.id, context)
+    e.currentTarget.classList.add('dragging')
+
+    // Set data transfer with context for external handling
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', task.id)
+    e.dataTransfer.setData('application/json', JSON.stringify({
+      taskId: task.id,
+      source: context,
+    }))
+  }, [canDrag, dragDrop, task.id, task.status, group])
+
+  const handleDragEnd = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     dragDrop.handleDragEnd()
-    ;(e.target as HTMLElement).classList.remove('dragging')
+    e.currentTarget.classList.remove('dragging')
   }, [dragDrop])
 
   const getStatusIcon = useCallback(() => {
@@ -385,7 +396,7 @@ export const TaskCard = memo(function TaskCard({
       className={`task-card ${isSelected ? 'dragging' : ''} ${isHighlighted ? 'highlighted' : ''}`}
       data-task-id={task.id}
       data-task-status={task.status}
-      style={runColor ? { borderLeft: `3px solid ${runColor}` } : undefined}
+      data-run-color={runColor || undefined}
       draggable={canDrag && !isMultiSelecting}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
@@ -472,6 +483,18 @@ export const TaskCard = memo(function TaskCard({
         {task.errorMessage && (
           <span className="task-tag border-accent-danger/30 text-accent-danger">
             error
+          </span>
+        )}
+        {group && showGroupIndicator && (
+          <span
+            className="task-tag flex items-center gap-1"
+            data-group-tag-color={group.color}
+            title={`Member of group: ${group.name}`}
+          >
+            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            {group.name}
           </span>
         )}
       </div>
@@ -644,11 +667,11 @@ export const TaskCard = memo(function TaskCard({
       )}
 
       {/* Last Update badge - shows when the last message was received */}
-      {lastUpdateFormatted && hasLocalSession && (
+      {lastUpdate !== null && lastUpdateFormatted && hasLocalSession && (
         <div className="flex items-center gap-2 mt-1 text-xs">
           <span
             className={`px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full flex items-center gap-1 task-last-update-badge ${lastUpdateAgeClass}`}
-            title={`Last message received at ${new Date(lastUpdate! * 1000).toLocaleString()}`}
+            title={`Last message received at ${formatLocalDateTime(lastUpdate)}`}
           >
             🕐 {lastUpdateFormatted}
           </span>
@@ -658,7 +681,7 @@ export const TaskCard = memo(function TaskCard({
       {/* Completed date */}
       {task.completedAt && (
         <div className="text-xs text-dark-text-muted mt-1">
-          Completed: {new Date(task.completedAt * 1000).toLocaleString()}
+          Completed: {formatLocalDateTime(task.completedAt)}
         </div>
       )}
 

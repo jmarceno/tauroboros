@@ -1,11 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import type { PlanningSession, PlanningPrompt, SessionMessage, ThinkingLevel } from '@/types'
-import { useApi } from './useApi'
-import type { useWebSocket } from './useWebSocket'
-import { ErrorCode, isErrorCode, detectErrorCodeFromMessage } from '../../../shared/error-codes'
+import { useState, useCallback, useEffect, useRef, useMemo } from "react"
+import type { PlanningSession, PlanningPrompt, SessionMessage, ThinkingLevel } from "@/types"
+import { useApi } from "./useApi"
+import type { useWebSocket } from "./useWebSocket"
+import { ErrorCode, isErrorCode, detectErrorCodeFromMessage } from "../../../shared/error-codes"
 
 export interface ContextAttachment {
-  type: 'file' | 'screenshot' | 'task'
+  type: "file" | "screenshot" | "task"
   name: string
   content?: string
   filePath?: string
@@ -101,7 +101,6 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
 
     try {
       const planningSession = await api.createPlanningSession({
-        cwd: window.location.pathname,
         model,
         thinkingLevel: thinkingLevel as ThinkingLevel | undefined,
       })
@@ -567,6 +566,17 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
     }
   }, [wsHook, handlePlanningSessionCreated, handlePlanningSessionUpdated, handlePlanningSessionClosed, handlePlanningSessionMessage])
 
+  // Global cleanup on unmount - clear all refs to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      // Clear all pending message queues
+      pendingMessagesRef.current.clear()
+      // Clear all reconnection tracking sets
+      reconnectingRef.current.clear()
+      sendingRef.current.clear()
+    }
+  }, [])
+
   /**
    * Add an existing session from history to active sessions
    */
@@ -587,7 +597,7 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
     setActiveSessionId(session.id)
   }, [])
 
-  return {
+  const contextValue = useMemo(() => ({
     isOpen,
     width,
     isResizing,
@@ -620,5 +630,15 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
     reconnectSession,
     setSessionModel,
     addExistingSession,
-  }
+  }), [
+    isOpen, width, isResizing, sessions, activeSessionId, planningPrompt, isLoadingPrompt,
+    activeSession, visibleSessions, minimizedSessions, hasSessions,
+    openPanel, closePanel, togglePanel, setWidth, createNewSession, switchToSession,
+    minimizeSession, closeSession, renameSession, addMessageToSession, loadPlanningPrompt,
+    savePlanningPrompt, handlePlanningSessionCreated, handlePlanningSessionUpdated,
+    handlePlanningSessionClosed, handlePlanningSessionMessage, sendMessage, createTasksFromChat,
+    reconnectSession, setSessionModel, addExistingSession
+  ])
+
+  return contextValue
 }

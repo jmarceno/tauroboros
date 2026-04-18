@@ -16,13 +16,13 @@
 import { test, expect } from "@playwright/test"
 import { execSync } from "child_process"
 
-const DB_PATH = './data/tasks.db"
+const DB_PATH = "./data/tasks.db"
 
-test.describe('Container Configuration System', () => {
+test.describe("Container Configuration System", () => {
   test.beforeEach(async ({ page }) => {
     // Ensure server is running and load the page
     // Playwright config sets baseURL to http://localhost:3000
-    await page.goto('/')
+    await page.goto("/")
     await page.waitForLoadState('networkidle')
     // Wait for Vue app to mount and show the main UI
     await expect(page.locator('.sidebar')).toBeVisible({ timeout: 10000 })
@@ -158,7 +158,7 @@ test.describe('Container Configuration System', () => {
       await expect(textarea).toBeVisible({ timeout: 10000 })
 
       // Type custom Dockerfile content
-      const testContent = 'FROM alpine:latest\nRUN echo "Hello Test""
+      const testContent = "FROM alpine:latest\nRUN echo 'Hello Test'"
       await textarea.fill(testContent)
 
       // Verify content was entered
@@ -337,7 +337,7 @@ test.describe('Container Configuration System', () => {
           const deleteResponse = await page.evaluate(async (pkgName) => {
             try {
               const res = await fetch(`/api/container/packages/${encodeURIComponent(pkgName)}`, {
-                method: 'DELETE"
+                method: "DELETE"
               })
               return { status: res.status, data: await res.json(), ok: res.ok }
             } catch (e) {
@@ -373,7 +373,7 @@ test.describe('Container Configuration System', () => {
         // Get a profile first
         const profilesRes = await fetch('/api/container/profiles')
         const profilesData = await profilesRes.json()
-        const profileId = profilesData.profiles[0]?.id || 'default"
+        const profileId = profilesData.profiles[0]?.id || "default"
 
         // Now fetch Dockerfile for that profile
         const res = await fetch(`/api/container/dockerfile/${profileId}`)
@@ -414,7 +414,7 @@ test.describe('Container Configuration System', () => {
       expect(dockerfileContent.length).toBeGreaterThan(50)
 
       // Edit the Dockerfile
-      const modifiedContent = dockerfileContent + '\n# Custom test comment"
+      const modifiedContent = dockerfileContent + "\n# Custom test comment"
       await textarea.fill(modifiedContent)
       await page.waitForTimeout(1000)
 

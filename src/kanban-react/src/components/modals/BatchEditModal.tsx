@@ -101,13 +101,16 @@ export function BatchEditModal({ taskIds, onClose }: BatchEditModalProps) {
 
   const [isLoading, setIsLoading] = useState(false)
 
-  // Ref to track if we've initialized the form to prevent flickering
-  const hasInitializedRef = useRef(false)
+  // Refs to track initialization to prevent flickering and duplicate loads
+  const hasInitializedFormRef = useRef(false)
+  const hasLoadedBranchesRef = useRef(false)
 
-  // Compute initial form state from selected tasks - only once on mount using ref
+  // Compute initial form state from selected tasks - only once per unique taskIds
   useEffect(() => {
-    if (hasInitializedRef.current) return
-    hasInitializedRef.current = true
+    // Create a stable key from taskIds to handle React StrictMode double-mounting
+    const taskKey = taskIds.slice().sort().join(',')
+    if (hasInitializedFormRef.current) return
+    hasInitializedFormRef.current = true
 
     const selectedTasks = tasks.tasks.filter(t => taskIds.includes(t.id))
     if (selectedTasks.length === 0) return
@@ -208,10 +211,15 @@ export function BatchEditModal({ taskIds, onClose }: BatchEditModalProps) {
     }
 
     setForm(newForm)
+    // Use taskKey as dependency - only re-run if actual taskIds change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // Empty deps - only run once on mount
+  }, [taskIds.join(',')])
 
+  // Load branches only once - prevent infinite re-renders from api reference changes
   useEffect(() => {
+    if (hasLoadedBranchesRef.current) return
+    hasLoadedBranchesRef.current = true
+
     setBranchesLoading(true)
     setBranchesError(null)
     api.getBranches()
@@ -224,7 +232,7 @@ export function BatchEditModal({ taskIds, onClose }: BatchEditModalProps) {
       .finally(() => {
         setBranchesLoading(false)
       })
-  }, [api])
+  }, []) // Empty deps - use ref to ensure single load
 
   useEffect(() => {
     (Object.keys(checkboxRefs) as Array<keyof typeof checkboxRefs>).forEach(key => {

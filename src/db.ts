@@ -56,6 +56,10 @@ import type {
   WorkflowRunIndicators,
   JsonOutFailEntry,
   CreateWorkflowRunIndicatorsInput,
+  CreateTaskGroupDTO,
+  UpdateTaskGroupDTO,
+  TaskGroup,
+  TaskGroupMember,
 } from "./db/types.ts"
 import { renderTemplate } from "./prompts/renderer.ts"
 import { parseModelSelection } from "./runtime/model-utils.ts"
@@ -105,7 +109,7 @@ const DEFAULT_OPTIONS: Options = {
   codeStylePrompt: "",
   telegramBotToken: "",
   telegramChatId: "",
-  telegramNotificationsEnabled: true,
+  telegramNotificationLevel: "all",
   maxReviews: 2,
   columnSorts: undefined,
 }
@@ -469,6 +473,12 @@ function asPiSessionStatus(value: unknown): PiSessionStatus {
     : "active"
 }
 
+function asTaskGroupStatus(value: unknown): TaskGroup["status"] {
+  return value === "active" || value === "completed" || value === "archived"
+    ? value
+    : "active"
+}
+
 function asMessageType(value: unknown): MessageType {
   const valid: MessageType[] = [
     "text",
@@ -553,6 +563,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     archivedAt: row.archived_at === null || row.archived_at === undefined ? null : Number(row.archived_at),
     containerImage: row.container_image ? String(row.container_image) : undefined,
     codeStyleReview: Number(row.code_style_review ?? 0) === 1,
+    groupId: row.group_id ? String(row.group_id) : undefined,
   }
 }
 
@@ -620,6 +631,7 @@ function rowToWorkflowRun(row: Record<string, unknown>): WorkflowRun {
     isArchived: Number(row.is_archived ?? 0) === 1,
     archivedAt: row.archived_at === null || row.archived_at === undefined ? null : Number(row.archived_at),
     color: row.color ? String(row.color) : "#888888",
+    groupId: row.group_id ? String(row.group_id) : undefined,
   }
 }
 
@@ -927,7 +939,7 @@ const MIGRATIONS: Migration[] = [
         review_activity TEXT NOT NULL DEFAULT 'idle',
         is_archived INTEGER NOT NULL DEFAULT 0,
         archived_at INTEGER
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);`,
       `CREATE INDEX IF NOT EXISTS idx_tasks_idx ON tasks(idx);`,
@@ -953,7 +965,7 @@ const MIGRATIONS: Migration[] = [
         is_archived INTEGER NOT NULL DEFAULT 0,
         archived_at INTEGER,
         color TEXT NOT NULL DEFAULT '#888888'
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);`,
       `CREATE INDEX IF NOT EXISTS idx_workflow_runs_current_task_id ON workflow_runs(current_task_id);`,
@@ -979,7 +991,7 @@ const MIGRATIONS: Migration[] = [
         exit_signal TEXT,
         error_message TEXT,
         FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE SET NULL
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_task_id ON workflow_sessions(task_id);`,
       `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_status ON workflow_sessions(status);`,
@@ -1013,7 +1025,7 @@ const MIGRATIONS: Migration[] = [
         raw_event_json TEXT,
         FOREIGN KEY(session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE,
         FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE SET NULL
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_session_messages_session_id ON session_messages(session_id);`,
       `CREATE INDEX IF NOT EXISTS idx_session_messages_task_id ON session_messages(task_id);`,
@@ -1023,7 +1035,7 @@ const MIGRATIONS: Migration[] = [
       CREATE TABLE IF NOT EXISTS options (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
-      );
+      )
       `,
       `
       CREATE TABLE IF NOT EXISTS prompt_templates (
@@ -1036,7 +1048,7 @@ const MIGRATIONS: Migration[] = [
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_prompt_templates_key ON prompt_templates(key);`,
       `CREATE INDEX IF NOT EXISTS idx_prompt_templates_active ON prompt_templates(is_active);`,
@@ -1050,7 +1062,7 @@ const MIGRATIONS: Migration[] = [
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         FOREIGN KEY(prompt_template_id) REFERENCES prompt_templates(id) ON DELETE CASCADE,
         UNIQUE(prompt_template_id, version)
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_prompt_template_versions_template_id ON prompt_template_versions(prompt_template_id);`,
     ],
@@ -1080,7 +1092,7 @@ const MIGRATIONS: Migration[] = [
         updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
         completed_at INTEGER,
         FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_task_runs_task_id ON task_runs(task_id);`,
       `CREATE INDEX IF NOT EXISTS idx_task_runs_phase ON task_runs(phase);`,
@@ -1100,7 +1112,7 @@ const MIGRATIONS: Migration[] = [
         updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
         FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
         FOREIGN KEY(worker_run_id) REFERENCES task_runs(id) ON DELETE CASCADE
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_task_candidates_task_id ON task_candidates(task_id);`,
       `CREATE INDEX IF NOT EXISTS idx_task_candidates_worker_run_id ON task_candidates(worker_run_id);`,
@@ -1143,7 +1155,7 @@ const MIGRATIONS: Migration[] = [
         raw_event_json TEXT,
         FOREIGN KEY(session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE,
         UNIQUE(session_id, seq)
-      );
+      )
       `,
       `
       INSERT INTO session_messages_v3 (
@@ -1207,7 +1219,7 @@ const MIGRATIONS: Migration[] = [
         session_status,
         workflow_phase,
         raw_event_json
-      FROM session_messages;
+      FROM session_messages
       `,
       `DROP TABLE session_messages;`,
       `ALTER TABLE session_messages_v3 RENAME TO session_messages;`,
@@ -1233,7 +1245,7 @@ const MIGRATIONS: Migration[] = [
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_planning_prompts_key ON planning_prompts(key);`,
       `CREATE INDEX IF NOT EXISTS idx_planning_prompts_active ON planning_prompts(is_active);`,
@@ -1246,7 +1258,7 @@ const MIGRATIONS: Migration[] = [
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         FOREIGN KEY(planning_prompt_id) REFERENCES planning_prompts(id) ON DELETE CASCADE,
         UNIQUE(planning_prompt_id, version)
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_planning_prompt_versions_prompt_id ON planning_prompt_versions(planning_prompt_id);`,
     ],
@@ -1264,7 +1276,7 @@ const MIGRATIONS: Migration[] = [
         install_order INTEGER DEFAULT 0,
         added_at INTEGER NOT NULL DEFAULT (unixepoch()),
         source TEXT DEFAULT 'manual'
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_container_packages_category ON container_packages(category);`,
       `CREATE INDEX IF NOT EXISTS idx_container_packages_order ON container_packages(install_order);`,
@@ -1277,7 +1289,7 @@ const MIGRATIONS: Migration[] = [
         packages_hash TEXT,
         error_message TEXT,
         image_tag TEXT
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_container_builds_status ON container_builds(status);`,
     ],
@@ -1321,7 +1333,7 @@ const MIGRATIONS: Migration[] = [
         context_json TEXT NOT NULL,
         pause_reason TEXT,
         FOREIGN KEY (session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_paused_sessions_task_id ON paused_session_states(task_id);`,
       `CREATE INDEX IF NOT EXISTS idx_paused_sessions_session_id ON paused_session_states(session_id);`,
@@ -1343,7 +1355,7 @@ const MIGRATIONS: Migration[] = [
         paused_at INTEGER NOT NULL,
         execution_phase TEXT NOT NULL DEFAULT 'executing',
         FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_paused_run_states_run_id ON paused_run_states(run_id);`,
       `CREATE INDEX IF NOT EXISTS idx_paused_run_states_paused_at ON paused_run_states(paused_at);`,
@@ -1358,7 +1370,7 @@ const MIGRATIONS: Migration[] = [
         id TEXT PRIMARY KEY,
         json_out_fails TEXT NOT NULL DEFAULT '{"json-output-fails":[]}',
         FOREIGN KEY (id) REFERENCES workflow_sessions(id) ON DELETE CASCADE
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_workflow_runs_indicators_id ON workflow_runs_indicators(id);`,
     ],
@@ -1393,6 +1405,63 @@ const MIGRATIONS: Migration[] = [
       `UPDATE tasks SET code_style_review = 0 WHERE code_style_review IS NULL;`,
       // Ensure code_style_prompt exists in options with empty string default
       `INSERT OR REPLACE INTO options (key, value) VALUES ('code_style_prompt', '');`,
+    ],
+  },
+  {
+    version: 25,
+    description: "Add task_groups and task_group_members tables for task grouping feature",
+    statements: [
+      // task_groups table
+      `
+      CREATE TABLE IF NOT EXISTS task_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL DEFAULT '#888888',
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        completed_at INTEGER
+      )
+      `,
+      // task_group_members table
+      `
+      CREATE TABLE IF NOT EXISTS task_group_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        idx INTEGER NOT NULL DEFAULT 0,
+        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        FOREIGN KEY(group_id) REFERENCES task_groups(id) ON DELETE CASCADE,
+        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+        UNIQUE(group_id, task_id)
+      )
+      `,
+      // Indexes for task_groups
+      `CREATE INDEX IF NOT EXISTS idx_task_groups_status ON task_groups(status);`,
+      `CREATE INDEX IF NOT EXISTS idx_task_groups_name ON task_groups(name);`,
+      // Indexes for task_group_members
+      `CREATE INDEX IF NOT EXISTS idx_task_group_members_group_id ON task_group_members(group_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_task_group_members_task_id ON task_group_members(task_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_task_group_members_group_idx ON task_group_members(group_id, idx);`,
+      // Add group_id column to tasks table
+      `ALTER TABLE tasks ADD COLUMN group_id TEXT;`,
+      `CREATE INDEX IF NOT EXISTS idx_tasks_group_id ON tasks(group_id);`,
+      // Add group_id column to workflow_runs table
+      `ALTER TABLE workflow_runs ADD COLUMN group_id TEXT;`,
+      `CREATE INDEX IF NOT EXISTS idx_workflow_runs_group_id ON workflow_runs(group_id);`,
+    ],
+  },
+  {
+    version: 26,
+    description: "Migrate telegram_notifications_enabled to telegram_notification_level for granular notification control",
+    statements: [
+      // Migrate existing boolean value to new level format
+      // true -> 'all' (preserve current behavior for users who had notifications enabled)
+      // false -> 'failures' (minimum useful level for users who had notifications disabled)
+      `UPDATE options SET value = 'all' WHERE key = 'telegram_notifications_enabled' AND value = 'true';`,
+      `UPDATE options SET value = 'failures' WHERE key = 'telegram_notifications_enabled' AND value = 'false';`,
+      // Delete the old boolean key after migration
+      `DELETE FROM options WHERE key = 'telegram_notifications_enabled';`,
     ],
   },
 ]
@@ -2081,8 +2150,8 @@ export class PiKanbanDB {
         INSERT INTO workflow_runs (
           id, kind, status, display_name, target_task_id, task_order_json,
           current_task_id, current_task_index, pause_requested, stop_requested,
-          error_message, created_at, started_at, updated_at, finished_at, color
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          error_message, created_at, started_at, updated_at, finished_at, color, group_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         input.id,
@@ -2101,6 +2170,7 @@ export class PiKanbanDB {
         now,
         input.finishedAt ?? null,
         input.color ?? "#888888",
+        input.groupId ?? null,
       )
 
     return this.getWorkflowRun(input.id) as WorkflowRun
@@ -2814,10 +2884,10 @@ export class PiKanbanDB {
       executionThinkingLevel: asThinkingLevel(values.get("execution_thinking_level")),
       reviewThinkingLevel: asThinkingLevel(values.get("review_thinking_level")),
       repairThinkingLevel: asThinkingLevel(values.get("repair_thinking_level")),
-      codeStylePrompt: getValue("code_style_prompt"),
+      codeStylePrompt: getValue("code_style_prompt") || DEFAULT_CODE_STYLE_PROMPT,
       telegramBotToken: getValue("telegram_bot_token"),
       telegramChatId: getValue("telegram_chat_id"),
-      telegramNotificationsEnabled: getBoolean("telegram_notifications_enabled"),
+      telegramNotificationLevel: this.asTelegramNotificationLevel(values.get("telegram_notification_level")),
       maxReviews: getNumber("max_reviews"),
       maxJsonParseRetries: getNumber("max_json_parse_retries") || 5,
       columnSorts,
@@ -2843,6 +2913,7 @@ export class PiKanbanDB {
     if (partial.showExecutionGraph !== undefined) upsert.run("show_execution_graph", String(partial.showExecutionGraph))
     if (partial.port !== undefined) upsert.run("port", String(partial.port))
     if (partial.thinkingLevel !== undefined) upsert.run("thinking_level", partial.thinkingLevel)
+    if (partial.telegramNotificationLevel !== undefined) upsert.run("telegram_notification_level", partial.telegramNotificationLevel)
     if (partial.planThinkingLevel !== undefined) upsert.run("plan_thinking_level", partial.planThinkingLevel)
     if (partial.executionThinkingLevel !== undefined) upsert.run("execution_thinking_level", partial.executionThinkingLevel)
     if (partial.reviewThinkingLevel !== undefined) upsert.run("review_thinking_level", partial.reviewThinkingLevel)
@@ -2850,7 +2921,6 @@ export class PiKanbanDB {
     if (partial.codeStylePrompt !== undefined) upsert.run("code_style_prompt", partial.codeStylePrompt)
     if (partial.telegramBotToken !== undefined) upsert.run("telegram_bot_token", partial.telegramBotToken)
     if (partial.telegramChatId !== undefined) upsert.run("telegram_chat_id", partial.telegramChatId)
-    if (partial.telegramNotificationsEnabled !== undefined) upsert.run("telegram_notifications_enabled", String(partial.telegramNotificationsEnabled))
     if (partial.maxReviews !== undefined) upsert.run("max_reviews", String(partial.maxReviews))
     if (partial.maxJsonParseRetries !== undefined) upsert.run("max_json_parse_retries", String(partial.maxJsonParseRetries))
     if (partial.columnSorts !== undefined) upsert.run("column_sorts", JSON.stringify(partial.columnSorts))
@@ -2972,6 +3042,12 @@ export class PiKanbanDB {
     return this.db
   }
 
+  private asTelegramNotificationLevel(value: unknown): TelegramNotificationLevel {
+    return value === "all" || value === "failures" || value === "done_and_failures" || value === "workflow_done_and_failures"
+      ? value
+      : "all"
+  }
+
   private getNextTaskIndex(): number {
     const row = this.db.prepare("SELECT COALESCE(MAX(idx), -1) AS max_idx FROM tasks").get() as { max_idx: number }
     return Number(row.max_idx ?? -1) + 1
@@ -3003,7 +3079,7 @@ export class PiKanbanDB {
     upsert.run("code_style_prompt", DEFAULT_OPTIONS.codeStylePrompt)
     upsert.run("telegram_bot_token", DEFAULT_OPTIONS.telegramBotToken)
     upsert.run("telegram_chat_id", DEFAULT_OPTIONS.telegramChatId)
-    upsert.run("telegram_notifications_enabled", String(DEFAULT_OPTIONS.telegramNotificationsEnabled))
+    upsert.run("telegram_notification_level", DEFAULT_OPTIONS.telegramNotificationLevel)
     upsert.run("max_reviews", String(DEFAULT_OPTIONS.maxReviews))
   }
 
@@ -3766,6 +3842,400 @@ export class PiKanbanDB {
     this.db.prepare("UPDATE workflow_runs_indicators SET json_out_fails = ? WHERE id = ?").run(updatedJson, sessionId)
   }
 
+  // ---- Task Groups ----
+
+  /**
+   * List all non-archived groups with task counts
+   * Returns groups ordered by created_at DESC with taskCount included
+   */
+  getTaskGroups(): Array<TaskGroup & { taskCount: number }> {
+    const rows = this.db.prepare(`
+      SELECT tg.*, COUNT(tgm.task_id) as task_count
+      FROM task_groups tg
+      LEFT JOIN task_group_members tgm ON tg.id = tgm.group_id
+      WHERE tg.status != 'archived'
+      GROUP BY tg.id
+      ORDER BY tg.created_at DESC
+    `).all() as Record<string, unknown>[]
+
+    return rows.map(row => ({
+      ...rowToTaskGroup(row),
+      taskCount: Number(row.task_count ?? 0),
+    }))
+  }
+
+  /**
+   * Get single group with task IDs
+   * Returns TaskGroup with taskIds array, or null if not found
+   */
+  getTaskGroup(id: string): (TaskGroup & { taskIds: string[] }) | null {
+    const row = this.db.prepare("SELECT * FROM task_groups WHERE id = ?").get(id) as Record<string, unknown> | null
+    if (!row) return null
+
+    const taskIds = this.getTaskGroupMemberIds(id)
+
+    return {
+      ...rowToTaskGroup(row),
+      taskIds,
+    }
+  }
+
+  /**
+   * Create new group with optional members
+   * Validates all task IDs exist before creation
+   * Wraps in transaction: create group → add members → update tasks.group_id
+   */
+  createTaskGroup(input: CreateTaskGroupDTO): TaskGroup & { taskIds: string[] } {
+    const now = nowUnix()
+    const id = input.id ?? randomUUID().slice(0, 8)
+    const createdAt = input.createdAt ?? now
+
+    // Validation
+    if (!input.name || input.name.trim().length === 0) {
+      throw new Error("Task group name is required and cannot be empty")
+    }
+    if (input.name.length > 100) {
+      throw new Error("Task group name must be 100 characters or less")
+    }
+
+    const color = input.color ?? '#888888'
+    if (color && !/^#[0-9A-Fa-f]{6}$/.test(color)) {
+      throw new Error("Color must be a valid hex color format (e.g., #888888)")
+    }
+
+    // Validate member task IDs if provided
+    const memberTaskIds = input.memberTaskIds ?? []
+    if (memberTaskIds.length > 0) {
+      for (const taskId of memberTaskIds) {
+        const task = this.getTask(taskId)
+        if (!task) {
+          throw new Error(`Task with ID "${taskId}" does not exist`)
+        }
+        if (task.groupId && task.groupId !== id) {
+          throw new Error(`Task "${taskId}" is already in another group`)
+        }
+      }
+    }
+
+    // Transaction: create group, add members, update tasks
+    const tx = this.db.transaction((groupId: string, taskIds: string[]) => {
+      // Create group
+      this.db
+        .prepare(`
+          INSERT INTO task_groups (
+            id, name, color, status, created_at, updated_at, completed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          groupId,
+          input.name.trim(),
+          color,
+          input.status ?? 'active',
+          createdAt,
+          now,
+          input.completedAt ?? null,
+        )
+
+      // Add members
+      for (let i = 0; i < taskIds.length; i++) {
+        const taskId = taskIds[i]
+        this.db
+          .prepare(`
+            INSERT INTO task_group_members (group_id, task_id, idx, added_at)
+            VALUES (?, ?, ?, ?)
+          `)
+          .run(groupId, taskId, i, now)
+
+        // Update task's group_id
+        this.db.prepare("UPDATE tasks SET group_id = ? WHERE id = ?").run(groupId, taskId)
+      }
+
+      return groupId
+    })
+
+    tx(id, memberTaskIds)
+
+    return this.getTaskGroup(id) as TaskGroup & { taskIds: string[] }
+  }
+
+  /**
+   * Update group properties
+   * Validates group exists, validates name/color if provided
+   * Auto-updates updated_at timestamp
+   */
+  updateTaskGroup(id: string, input: UpdateTaskGroupDTO): (TaskGroup & { taskIds: string[] }) | null {
+    const group = this.getTaskGroup(id)
+    if (!group) {
+      throw new Error(`Task group with ID "${id}" does not exist`)
+    }
+
+    const sets: string[] = []
+    const values: any[] = []
+
+    if (input.name !== undefined) {
+      if (!input.name || input.name.trim().length === 0) {
+        throw new Error("Task group name cannot be empty")
+      }
+      if (input.name.length > 100) {
+        throw new Error("Task group name must be 100 characters or less")
+      }
+      sets.push("name = ?")
+      values.push(input.name.trim())
+    }
+
+    if (input.color !== undefined) {
+      if (!/^#[0-9A-Fa-f]{6}$/.test(input.color)) {
+        throw new Error("Color must be a valid hex color format (e.g., #888888)")
+      }
+      sets.push("color = ?")
+      values.push(input.color)
+    }
+
+    if (input.status !== undefined) {
+      sets.push("status = ?")
+      values.push(input.status)
+    }
+
+    if (input.completedAt !== undefined) {
+      sets.push("completed_at = ?")
+      values.push(input.completedAt)
+    }
+
+    if (sets.length === 0) return group
+
+    sets.push("updated_at = unixepoch()")
+    values.push(id)
+
+    this.db.prepare(`UPDATE task_groups SET ${sets.join(", ")} WHERE id = ?`).run(...values)
+    return this.getTaskGroup(id)
+  }
+
+  /**
+   * Delete group (cascades to members via FK)
+   * Clears group_id on all related tasks before deletion
+   */
+  deleteTaskGroup(id: string): boolean {
+    const group = this.getTaskGroup(id)
+    if (!group) {
+      return false
+    }
+
+    // Clear group_id on all tasks in this group
+    this.db.prepare("UPDATE tasks SET group_id = NULL WHERE group_id = ?").run(id)
+
+    // Delete group (cascade will clean up task_group_members)
+    const result = this.db.prepare("DELETE FROM task_groups WHERE id = ?").run(id)
+    return result.changes > 0
+  }
+
+  /**
+   * Add multiple tasks to existing group
+   * Validates all task IDs exist and are not already in another group
+   * Returns count of added tasks
+   */
+  addTasksToGroup(groupId: string, taskIds: string[]): number {
+    if (taskIds.length === 0) return 0
+
+    const group = this.getTaskGroup(groupId)
+    if (!group) {
+      throw new Error(`Task group with ID "${groupId}" does not exist`)
+    }
+
+    // Validate all tasks
+    for (const taskId of taskIds) {
+      const task = this.getTask(taskId)
+      if (!task) {
+        throw new Error(`Task with ID "${taskId}" does not exist`)
+      }
+      if (task.groupId && task.groupId !== groupId) {
+        throw new Error(`Task "${taskId}" is already in another group`)
+      }
+    }
+
+    const now = nowUnix()
+    const startIdx = this.getNextTaskIndexInGroup(groupId)
+
+    const tx = this.db.transaction((ids: string[], startIndex: number) => {
+      let added = 0
+      for (let i = 0; i < ids.length; i++) {
+        const taskId = ids[i]
+        this.db
+          .prepare(`
+            INSERT INTO task_group_members (group_id, task_id, idx, added_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(group_id, task_id) DO UPDATE SET
+              idx = excluded.idx,
+              added_at = excluded.added_at
+          `)
+          .run(groupId, taskId, startIndex + i, now)
+
+        // Update task's group_id
+        this.db.prepare("UPDATE tasks SET group_id = ? WHERE id = ?").run(groupId, taskId)
+        added++
+      }
+      return added
+    })
+
+    return tx(taskIds, startIdx)
+  }
+
+  /**
+   * Remove multiple tasks from group
+   * Clears group_id on removed tasks
+   * Reorders remaining members to maintain contiguous indices
+   */
+  removeTasksFromGroup(groupId: string, taskIds: string[]): number {
+    if (taskIds.length === 0) return 0
+
+    const group = this.getTaskGroup(groupId)
+    if (!group) {
+      throw new Error(`Task group with ID "${groupId}" does not exist`)
+    }
+
+    const tx = this.db.transaction((ids: string[]) => {
+      let removed = 0
+
+      // Remove tasks from members table
+      for (const taskId of ids) {
+        const result = this.db
+          .prepare("DELETE FROM task_group_members WHERE group_id = ? AND task_id = ?")
+          .run(groupId, taskId)
+
+        if (result.changes > 0) {
+          removed++
+          // Clear task's group_id
+          this.db.prepare("UPDATE tasks SET group_id = NULL WHERE id = ? AND group_id = ?").run(taskId, groupId)
+        }
+      }
+
+      // Reorder remaining members
+      if (removed > 0) {
+        const remaining = this.db
+          .prepare("SELECT task_id FROM task_group_members WHERE group_id = ? ORDER BY idx ASC")
+          .all(groupId) as Array<{ task_id: string }>
+
+        for (let i = 0; i < remaining.length; i++) {
+          this.db
+            .prepare("UPDATE task_group_members SET idx = ? WHERE group_id = ? AND task_id = ?")
+            .run(i, groupId, remaining[i].task_id)
+        }
+      }
+
+      return removed
+    })
+
+    return tx(taskIds)
+  }
+
+  /**
+   * Get all members of a group
+   * Returns TaskGroupMember[] ordered by idx ASC
+   */
+  getTaskGroupMembers(groupId: string): TaskGroupMember[] {
+    const group = this.getTaskGroup(groupId)
+    if (!group) {
+      throw new Error(`Task group with ID "${groupId}" does not exist`)
+    }
+
+    const rows = this.db
+      .prepare("SELECT * FROM task_group_members WHERE group_id = ? ORDER BY idx ASC")
+      .all(groupId) as Record<string, unknown>[]
+
+    return rows.map(rowToTaskGroupMember)
+  }
+
+  /**
+   * Get just task IDs in order
+   * Returns string[] of task IDs in index order
+   */
+  getTaskGroupMemberIds(groupId: string): string[] {
+    const rows = this.db
+      .prepare("SELECT task_id FROM task_group_members WHERE group_id = ? ORDER BY idx ASC")
+      .all(groupId) as Record<string, unknown>[]
+
+    return rows.map(row => String(row.task_id))
+  }
+
+  /**
+   * Get group a task belongs to
+   * Returns { groupId: string | null; group?: TaskGroup }
+   */
+  getTaskGroupMembership(taskId: string): { groupId: string | null; group?: TaskGroup } {
+    const task = this.getTask(taskId)
+    if (!task) {
+      throw new Error(`Task with ID "${taskId}" does not exist`)
+    }
+
+    if (!task.groupId) {
+      return { groupId: null }
+    }
+
+    const group = this.getTaskGroup(task.groupId)
+    if (!group) {
+      // Group reference exists but group was deleted - clean up
+      this.db.prepare("UPDATE tasks SET group_id = NULL WHERE id = ?").run(taskId)
+      return { groupId: null }
+    }
+
+    return { groupId: task.groupId, group: { ...group, taskIds: undefined } as TaskGroup }
+  }
+
+  // ---- Single Task Group Operations (legacy/utility methods) ----
+
+  addTaskToGroup(groupId: string, taskId: string, idx?: number): TaskGroupMember | null {
+    const group = this.getTaskGroup(groupId)
+    if (!group) return null
+
+    const now = nowUnix()
+    const taskIdx = idx ?? this.getNextTaskIndexInGroup(groupId)
+
+    const result = this.db
+      .prepare(`
+        INSERT INTO task_group_members (group_id, task_id, idx, added_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(group_id, task_id) DO UPDATE SET
+          idx = excluded.idx,
+          added_at = excluded.added_at
+      `)
+      .run(groupId, taskId, taskIdx, now)
+
+    // Update task's group_id
+    this.db.prepare("UPDATE tasks SET group_id = ? WHERE id = ?").run(groupId, taskId)
+
+    const row = this.db.prepare("SELECT * FROM task_group_members WHERE id = ?").get(result.lastInsertRowid) as Record<string, unknown>
+    return row ? rowToTaskGroupMember(row) : null
+  }
+
+  removeTaskFromGroup(groupId: string, taskId: string): boolean {
+    const result = this.db
+      .prepare("DELETE FROM task_group_members WHERE group_id = ? AND task_id = ?")
+      .run(groupId, taskId)
+
+    // Clear task's group_id if it was in this group
+    this.db.prepare("UPDATE tasks SET group_id = NULL WHERE id = ? AND group_id = ?").run(taskId, groupId)
+
+    return result.changes > 0
+  }
+
+  getTasksInGroup(groupId: string): Array<{ taskId: string; idx: number; addedAt: number }> {
+    const rows = this.db
+      .prepare("SELECT task_id, idx, added_at FROM task_group_members WHERE group_id = ? ORDER BY idx ASC")
+      .all(groupId) as Record<string, unknown>[]
+
+    return rows.map(row => ({
+      taskId: String(row.task_id),
+      idx: Number(row.idx ?? 0),
+      addedAt: Number(row.added_at ?? 0),
+    }))
+  }
+
+  private getNextTaskIndexInGroup(groupId: string): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(MAX(idx), -1) AS max_idx FROM task_group_members WHERE group_id = ?")
+      .get(groupId) as { max_idx: number }
+    return Number(row.max_idx ?? -1) + 1
+  }
+
 }
 
 // Row converters for indicators
@@ -3800,5 +4270,28 @@ function rowToContainerBuild(row: Record<string, unknown>): ContainerBuild {
     errorMessage: row.error_message ? String(row.error_message) : null,
     imageTag: row.image_tag ? String(row.image_tag) : null,
     logs: row.logs ? String(row.logs) : null,
+  }
+}
+
+// Row converters for task group types
+function rowToTaskGroup(row: Record<string, unknown>): TaskGroup {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    color: String(row.color ?? '#888888'),
+    status: asTaskGroupStatus(row.status),
+    createdAt: Number(row.created_at ?? 0),
+    updatedAt: Number(row.updated_at ?? 0),
+    completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at),
+  }
+}
+
+function rowToTaskGroupMember(row: Record<string, unknown>): TaskGroupMember {
+  return {
+    id: Number(row.id),
+    groupId: String(row.group_id),
+    taskId: String(row.task_id),
+    idx: Number(row.idx ?? 0),
+    addedAt: Number(row.added_at ?? 0),
   }
 }

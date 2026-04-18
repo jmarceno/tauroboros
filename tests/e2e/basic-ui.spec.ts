@@ -9,7 +9,7 @@
  * NO API calls - all interactions through the web UI
  */
 
-import { test, expect } from "@playwright/test';
+import { test, expect } from "@playwright/test";
 
 test.describe('Basic UI Functionality', () => {
   test.beforeEach(async ({ page }) => {

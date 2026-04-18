@@ -1,5 +1,12 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import type { WSMessage, WSMessageType } from '@/types'
+/**
+ * WebSocket Hook - Real-time updates with TanStack Query integration
+ * 
+ * This hook now focuses ONLY on connection management and message routing.
+ * All state management is handled by TanStack Query cache invalidation.
+ */
+
+import { useState, useCallback, useEffect, useRef, useMemo } from "react"
+import type { WSMessage, WSMessageType } from "@/types"
 
 type MessageHandler = (payload: unknown) => void
 
@@ -7,12 +14,12 @@ export function useWebSocket() {
   const [ws, setWs] = useState<WebSocket | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [reconnectAttempts, setReconnectAttempts] = useState(0)
+  
   const handlers = useRef(new Map<WSMessageType, Set<MessageHandler>>())
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reconnectCallbackRef = useRef<(() => void) | null>(null)
   const intentionalCloseRef = useRef(false)
   const wsRef = useRef<WebSocket | null>(null)
-  // Use ref to track current reconnect attempts to avoid stale closures
   const reconnectAttemptsRef = useRef(0)
 
   const MAX_RECONNECT_ATTEMPTS = 50
@@ -102,6 +109,7 @@ export function useWebSocket() {
     wsRef.current = null
     setWs(null)
     setIsConnected(false)
+    intentionalCloseRef.current = false
   }, [])
 
   const on = useCallback((type: WSMessageType, handler: MessageHandler) => {
@@ -124,11 +132,17 @@ export function useWebSocket() {
     connect()
 
     return () => {
-      disconnect()
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+      intentionalCloseRef.current = true
+      wsRef.current?.close()
+      wsRef.current = null
     }
-  }, [])
+  }, [connect])
 
-  return {
+  const contextValue = useMemo(() => ({
     ws,
     isConnected,
     reconnectAttempts,
@@ -136,5 +150,9 @@ export function useWebSocket() {
     disconnect,
     on,
     onReconnect,
-  }
+  }), [ws, isConnected, reconnectAttempts, connect, disconnect, on, onReconnect])
+
+  return contextValue
 }
+
+export type WebSocketHook = ReturnType<typeof useWebSocket>

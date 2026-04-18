@@ -4,7 +4,15 @@ import type {
   BestOfNSummary, ColumnSortPreferences, Options,
   ModelCatalog, Toast, LogEntry, ControlState,
   TaskRunContext, PlanningPrompt, ChatSession, SessionUsageRollup,
+  TaskGroup, TaskGroupWithTasks,
 } from '@/types'
+
+// Reset task result type
+interface ResetTaskResult {
+  task: Task
+  group?: TaskGroup
+  wasInGroup: boolean
+}
 
 // Tasks context type
 interface TasksContextType {
@@ -23,7 +31,9 @@ interface TasksContextType {
   deleteTask: (id: string) => Promise<{ id: string; archived?: boolean }>
   reorderTask: (id: string, newIdx: number) => Promise<void>
   archiveAllDone: () => Promise<{ archived: number; deleted: number }>
-  resetTask: (id: string) => Promise<Task>
+  resetTask: (id: string) => Promise<ResetTaskResult>
+  resetTaskToGroup: (id: string) => Promise<Task>
+  moveTaskToGroup: (id: string, groupId: string | null) => Promise<Task>
   approvePlan: (id: string, message?: string) => Promise<Task>
   requestPlanRevision: (id: string, feedback: string) => Promise<Task>
   repairTask: (id: string, action: string, options?: { errorMessage?: string; smartRepairHints?: string; additionalReviewCount?: number }) => Promise<{ ok: boolean; action: string; reason?: string; task: Task }>
@@ -105,6 +115,7 @@ interface SessionContextType {
 }
 
 // WebSocket context type
+import type { WSMessageType } from '@/types'
 type MessageHandler = (payload: unknown) => void
 
 interface WebSocketContextType {
@@ -113,7 +124,7 @@ interface WebSocketContextType {
   reconnectAttempts: number
   connect: () => void
   disconnect: () => void
-  on: (type: string, handler: MessageHandler) => () => void
+  on: (type: WSMessageType, handler: MessageHandler) => () => void
   onReconnect: (callback: () => void) => void
 }
 
@@ -146,6 +157,8 @@ interface WorkflowControlContextType {
   clearRun: () => void
 }
 
+import type { MultiSelectMode } from "@/hooks/useMultiSelect"
+
 // Multi-select context type
 interface MultiSelectContextType {
   selectedTaskIds: Set<string>
@@ -156,6 +169,10 @@ interface MultiSelectContextType {
   clearSelection: () => void
   isSelected: (taskId: string) => boolean
   getSelectedIds: () => string[]
+  mode: MultiSelectMode
+  startGroupCreation: () => boolean
+  confirmGroupCreation: () => string[]
+  cancelGroupCreation: () => void
 }
 
 // Planning chat context type
@@ -221,6 +238,9 @@ interface SessionUsageContextType {
   clearCache: () => void
   startWatching: (sessionId: string) => void
   stopWatching: (sessionId: string) => void
+  startWatchingTask: (taskId: string) => Promise<void>
+  stopWatchingTask: (taskId: string) => void
+  getTaskUsage: (taskId: string) => { totalTokens: number; totalCost: number }
   formatTokenCount: (count: number) => string
   formatCost: (cost: number) => string
 }
@@ -232,6 +252,29 @@ interface TaskLastUpdateContextType {
   formatLastUpdate: (timestamp: number) => string
   getUpdateAgeClass: (timestamp: number) => string
   loadLastUpdate: (taskId: string) => Promise<void>
+}
+
+// Task groups context type
+interface TaskGroupsContextType {
+  groups: TaskGroup[]
+  loading: boolean
+  error: string | null
+  activeGroupId: string | null
+  activeGroup: TaskGroup | null
+  activeGroups: TaskGroup[]
+  completedGroups: TaskGroup[]
+  loadGroups: () => Promise<TaskGroup[]>
+  createGroup: (taskIds: string[], name?: string) => Promise<TaskGroup>
+  openGroup: (groupId: string | null) => void
+  loadGroupDetails: (groupId: string) => Promise<TaskGroupWithTasks>
+  addTasksToGroup: (groupId: string, taskIds: string[]) => Promise<TaskGroup>
+  removeTasksFromGroup: (groupId: string, taskIds: string[]) => Promise<TaskGroup>
+  startGroup: (groupId: string) => Promise<unknown>
+  deleteGroup: (groupId: string) => Promise<void>
+  updateGroup: (groupId: string, updates: { name?: string; color?: string }) => Promise<TaskGroup>
+  getGroupById: (id: string) => TaskGroup | undefined
+  updateGroupFromWebSocket: (group: TaskGroup) => void
+  removeGroupFromWebSocket: (groupId: string) => void
 }
 
 // Create contexts
@@ -249,6 +292,7 @@ export const ModalContext = createContext<ModalContextType | undefined>(undefine
 export const ContainerStatusContext = createContext<ContainerStatusContextType | undefined>(undefined)
 export const SessionUsageContext = createContext<SessionUsageContextType | undefined>(undefined)
 export const TaskLastUpdateContext = createContext<TaskLastUpdateContextType | undefined>(undefined)
+export const TaskGroupsContext = createContext<TaskGroupsContextType | undefined>(undefined)
 
 // Export hook functions
 export function useTasksContext() {
@@ -332,5 +376,11 @@ export function useSessionUsageContext() {
 export function useTaskLastUpdateContext() {
   const context = useContext(TaskLastUpdateContext)
   if (!context) throw new Error('useTaskLastUpdateContext must be used within TaskLastUpdateProvider')
+  return context
+}
+
+export function useTaskGroupsContext() {
+  const context = useContext(TaskGroupsContext)
+  if (!context) throw new Error('useTaskGroupsContext must be used within TaskGroupsProvider')
   return context
 }

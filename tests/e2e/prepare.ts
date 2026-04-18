@@ -5,12 +5,12 @@
  * Usage: bun run tests/e2e/prepare.ts [container]
  */
 
-import { mkdtempSync, writeFileSync, mkdirSync, cpSync, rmSync, existsSync, readFileSync, statSync } from "fs';
-import { tmpdir } from "os';
-import { join, resolve } from "path';
-import { execSync } from "child_process';
-import { fileURLToPath } from "url';
-import { BASE_IMAGES } from "../../src/config/base-images.ts';
+import { mkdtempSync, writeFileSync, mkdirSync, cpSync, rmSync, existsSync, readFileSync, statSync } from "fs";
+import { tmpdir } from "os";
+import { join, resolve } from "path";
+import { execSync } from "child_process";
+import { fileURLToPath } from "url";
+import { BASE_IMAGES } from "../../src/config/base-images.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = resolve(__filename, '..');

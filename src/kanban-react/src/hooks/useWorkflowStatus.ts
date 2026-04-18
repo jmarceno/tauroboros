@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from "react"
 
 export function useWorkflowStatus() {
   const [hasRunningWorkflows, setHasRunningWorkflows] = useState(false)
 
   const checkStatus = useCallback(async () => {
     try {
-      const response = await fetch('/api/workflow/status')
+      const response = await fetch("/api/workflow/status")
       if (response.ok) {
         const data = await response.json()
         setHasRunningWorkflows(data.hasRunningWorkflows)
@@ -21,8 +21,10 @@ export function useWorkflowStatus() {
     return () => clearInterval(interval)
   }, [checkStatus])
 
-  return {
+  const contextValue = useMemo(() => ({
     hasRunningWorkflows,
     checkStatus,
-  }
+  }), [hasRunningWorkflows, checkStatus])
+
+  return contextValue
 }

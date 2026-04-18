@@ -1,5 +1,5 @@
-import type { Task } from "./types"
-import { getPlanExecutionEligibility } from "./task-state"
+import type { Task } from "./types.ts"
+import { getPlanExecutionEligibility } from "./task-state.ts"
 
 export function getExecutableTasks(tasks: Task[]): Task[] {
   const taskMap = new Map<string, Task>()

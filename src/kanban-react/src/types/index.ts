@@ -1,12 +1,14 @@
-export type TaskStatus = 'template' | 'backlog' | 'executing' | 'review' | 'code-style' | 'done' | 'failed' | 'stuck'
-export type ThinkingLevel = 'default' | 'low' | 'medium' | 'high'
-export type ExecutionStrategy = 'standard' | 'best_of_n'
-export type SelectionMode = 'pick_best' | 'synthesize' | 'pick_or_synthesize'
-export type RunStatus = 'running' | 'stopping' | 'paused' | 'failed' | 'completed'
-export type SessionStatus = 'pending' | 'active' | 'completed' | 'failed'
-export type MessageRole = 'assistant' | 'user' | 'system' | 'tool'
-export type TaskPhase = 'not_started' | 'planning' | 'plan_complete_waiting_approval' | 'implementation_pending' | 'implementation_done' | 'reviewing'
-export type BestOfNSubstage = 'idle' | 'workers_running' | 'reviewers_running' | 'final_apply_running' | 'blocked_for_manual_review' | 'completed'
+export type TaskStatus = "template" | "backlog" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
+export type TaskGroupStatus = "active" | "running" | "completed" | "archived"
+export type ThinkingLevel = "default" | "low" | "medium" | "high"
+export type TelegramNotificationLevel = "all" | "failures" | "done_and_failures" | "workflow_done_and_failures"
+export type ExecutionStrategy = "standard" | "best_of_n"
+export type SelectionMode = "pick_best" | "synthesize" | "pick_or_synthesize"
+export type RunStatus = "running" | "stopping" | "paused" | "failed" | "completed"
+export type SessionStatus = "pending" | "active" | "completed" | "failed"
+export type MessageRole = "assistant" | "user" | "system" | "tool"
+export type TaskPhase = "not_started" | "planning" | "plan_complete_waiting_approval" | "implementation_pending" | "implementation_done" | "reviewing"
+export type BestOfNSubstage = "idle" | "workers_running" | "reviewers_running" | "final_apply_running" | "blocked_for_manual_review" | "completed"
 
 export interface Task {
   id: string
@@ -46,6 +48,7 @@ export interface Task {
   updatedAt: number
   reviewActivity?: 'idle' | 'running'
   containerImage?: string
+  groupId?: string
 }
 
 export interface ContainerImage {
@@ -175,7 +178,7 @@ export interface Options {
   executionThinkingLevel: ThinkingLevel
   reviewThinkingLevel: ThinkingLevel
   repairThinkingLevel: ThinkingLevel
-  telegramNotificationsEnabled?: boolean
+  telegramNotificationLevel?: TelegramNotificationLevel
   telegramBotToken?: string
   telegramChatId?: string
   columnSorts?: ColumnSortPreferences
@@ -354,6 +357,15 @@ export type WSMessageType =
   | 'container_build_cancelled'
   | 'container_profile_created'
   | 'container_profile_applied'
+  // Task Group events (unified task_group_* naming)
+  | 'task_group_created'
+  | 'task_group_updated'
+  | 'task_group_deleted'
+  | 'task_group_members_added'
+  | 'task_group_members_removed'
+  // Group execution events
+  | 'group_execution_started'
+  | 'group_execution_complete'
 
 export interface WSMessage {
   type: WSMessageType
@@ -473,6 +485,29 @@ export interface CreatePlanningSessionDTO {
 }
 
 // Toast Types
+export interface TaskGroup {
+  id: string
+  name: string
+  color: string
+  status: TaskGroupStatus
+  createdAt: number
+  updatedAt: number
+  completedAt: number | null
+}
+
+export interface TaskGroupMember {
+  id: number
+  groupId: string
+  taskId: string
+  idx: number
+  addedAt: number
+}
+
+export interface TaskGroupWithTasks extends TaskGroup {
+  tasks?: Task[]
+  members?: TaskGroupMember[]
+}
+
 export type ToastVariant = 'info' | 'success' | 'error'
 
 export interface Toast {
@@ -497,3 +532,22 @@ export interface TaskRunContext {
   slotIndex: number
   attemptIndex: number
 }
+
+// Default prompts - duplicated from backend types.ts for frontend use
+export const DEFAULT_CODE_STYLE_PROMPT = `You are a code style enforcement agent. Review the code in the workspace and apply fixes to ensure compliance.
+
+STANDARD RULES:
+- Follow existing project conventions
+- Use consistent indentation (match existing files)
+- Remove trailing whitespace
+- Ensure consistent quote style
+- Add missing semicolons where required by the language
+- Fix obvious linting issues
+
+APPROACH:
+1. First, read the relevant source files
+2. Identify any style violations
+3. Use the edit tool to fix all issues
+4. Confirm when complete
+
+IMPORTANT: You must actively use the edit tool to make changes. Do not just report issues - fix them.`

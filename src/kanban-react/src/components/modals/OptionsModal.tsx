@@ -4,7 +4,8 @@ import { useApi } from '@/hooks'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
 import { HelpButton } from '../common/HelpButton'
-import type { Options, ThinkingLevel } from '@/types'
+import type { Options, ThinkingLevel, TelegramNotificationLevel } from '@/types'
+import { DEFAULT_CODE_STYLE_PROMPT } from '@/types'
 
 interface OptionsModalProps {
   onClose: () => void
@@ -44,7 +45,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
           command: currentOpts.command || '',
           commitPrompt: currentOpts.commitPrompt || '',
           extraPrompt: currentOpts.extraPrompt || '',
-          codeStylePrompt: currentOpts.codeStylePrompt || '',
+          codeStylePrompt: currentOpts.codeStylePrompt || DEFAULT_CODE_STYLE_PROMPT,
           parallelTasks: currentOpts.parallelTasks ?? 1,
           maxReviews: currentOpts.maxReviews ?? 3,
           maxJsonParseRetries: currentOpts.maxJsonParseRetries ?? 5,
@@ -56,7 +57,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
           executionThinkingLevel: currentOpts.executionThinkingLevel || 'default',
           reviewThinkingLevel: currentOpts.reviewThinkingLevel || 'default',
           repairThinkingLevel: currentOpts.repairThinkingLevel || 'default',
-          telegramNotificationsEnabled: currentOpts.telegramNotificationsEnabled ?? false,
+          telegramNotificationLevel: currentOpts.telegramNotificationLevel || 'all',
           telegramBotToken: currentOpts.telegramBotToken || '',
           telegramChatId: currentOpts.telegramChatId || '',
         })
@@ -87,7 +88,12 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
 
     setIsSaving(true)
     try {
-      await optionsHook.saveOptions(formData as Partial<Options>)
+      // Normalize empty code style prompt to default - avoid silent fallbacks
+      const optionsToSave: Partial<Options> = {
+        ...formData,
+        codeStylePrompt: formData.codeStylePrompt?.trim() ? formData.codeStylePrompt : DEFAULT_CODE_STYLE_PROMPT,
+      }
+      await optionsHook.saveOptions(optionsToSave)
       toasts.showToast('Options saved successfully', 'success')
       onClose()
     } catch (e) {
@@ -116,14 +122,14 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal w-[min(560px,calc(100vw-40px))]" style={{ maxHeight: 'calc(100vh - 40px)' }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal w-[min(560px,calc(100vw-40px))] max-h-[calc(100vh-40px)]" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>Options</h2>
           <button className="icon-btn" onClick={onClose}>×</button>
         </div>
 
         <form onSubmit={handleSubmit}>
-          <div className="modal-body space-y-3" style={{ maxHeight: 'calc(100vh - 180px)', overflowY: 'auto' }}>
+          <div className="modal-body space-y-3 max-h-[calc(100vh-180px)] overflow-y-auto">
             {/* Default Branch */}
             <div className="form-group">
               <div className="label-row">
@@ -320,8 +326,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
                 <HelpButton tooltip="Instructions used when the workflow asks the agent to prepare a git commit. Use {{base_ref}} anywhere you want the current base branch inserted automatically." />
               </div>
               <textarea
-                className="form-textarea font-mono text-xs"
-                style={{ minHeight: '180px' }}
+                className="form-textarea font-mono text-xs min-h-textarea-xl"
                 placeholder="Instructions for committing changes..."
                 value={formData.commitPrompt || ''}
                 onChange={(e) => updateField('commitPrompt', e.target.value)}
@@ -332,11 +337,10 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group">
               <div className="label-row">
                 <label>Code Style Prompt</label>
-                <HelpButton tooltip="Instructions for code style enforcement. The agent will review code and apply fixes to comply with these rules. Uses the Review Model." />
+                <HelpButton tooltip="Instructions for code style enforcement. The agent will review code and apply fixes to comply with these rules. Uses the Review Model. If left empty, the default prompt will be used." />
               </div>
               <textarea
-                className="form-textarea font-mono text-xs"
-                style={{ minHeight: '120px' }}
+                className="form-textarea font-mono text-xs min-h-textarea-lg"
                 placeholder="Code style rules..."
                 value={formData.codeStylePrompt || ''}
                 onChange={(e) => updateField('codeStylePrompt', e.target.value)}
@@ -350,8 +354,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
                 <HelpButton tooltip="Additional instructions that will be appended to every task prompt sent to the agent." />
               </div>
               <textarea
-                className="form-textarea font-mono text-xs"
-                style={{ minHeight: '100px' }}
+                className="form-textarea font-mono text-xs min-h-textarea-md"
                 placeholder="Additional context or instructions for all tasks..."
                 value={formData.extraPrompt || ''}
                 onChange={(e) => updateField('extraPrompt', e.target.value)}
@@ -362,16 +365,27 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group border border-dark-surface3 rounded-lg p-3">
               <div className="label-row">
                 <label>Telegram Notifications</label>
-                <HelpButton tooltip="Send a Telegram message when a task changes state. Leave both fields empty to disable notifications." />
+                <HelpButton tooltip="Configure when to receive Telegram notifications about task and workflow status changes. Leave bot token and chat ID empty to disable notifications." />
               </div>
-              <label className="checkbox-item mb-2">
-                <input
-                  type="checkbox"
-                  checked={formData.telegramNotificationsEnabled ?? false}
-                  onChange={(e) => updateField('telegramNotificationsEnabled', e.target.checked)}
-                />
-                <span>Enable Telegram notifications</span>
-              </label>
+              <div className="mb-3">
+                <label className="text-xs text-dark-text-muted mb-1 block">Notification Level</label>
+                <select
+                  className="form-select"
+                  value={formData.telegramNotificationLevel || 'all'}
+                  onChange={(e) => updateField('telegramNotificationLevel', e.target.value as TelegramNotificationLevel)}
+                >
+                  <option value="all">Every state change</option>
+                  <option value="failures">Only failures</option>
+                  <option value="done_and_failures">Only when tasks done and failures</option>
+                  <option value="workflow_done_and_failures">Only on workflow done and failures</option>
+                </select>
+                <p className="text-xs text-dark-text-muted mt-1">
+                  {formData.telegramNotificationLevel === 'all' && 'Receive notifications for every task status change.'}
+                  {formData.telegramNotificationLevel === 'failures' && 'Only receive notifications when a task fails or gets stuck.'}
+                  {formData.telegramNotificationLevel === 'done_and_failures' && 'Receive notifications when tasks complete, fail, or get stuck.'}
+                  {formData.telegramNotificationLevel === 'workflow_done_and_failures' && 'Receive a workflow summary when complete, plus notifications for failures.'}
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs text-dark-text-muted mb-1 block">Bot Token</label>

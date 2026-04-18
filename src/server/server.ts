@@ -16,7 +16,8 @@ import { ContainerImageManager, loadContainerConfig, saveContainerConfig } from 
 import { PiContainerManager } from "../runtime/container-manager.ts"
 import { SmartRepairService, type SmartRepairAction } from "../runtime/smart-repair.ts"
 import { PlanningSessionManager, type ContextAttachment } from "../runtime/planning-session.ts"
-import { sendTelegramNotification } from "../telegram.ts"
+import { sendTelegramNotification, sendTelegramWorkflowSummary, shouldSendNotification, type NotificationContext } from "../telegram.ts"
+import type { TelegramNotificationLevel } from "../telegram.ts"
 import { loadPausedRunState, loadPausedSessionState } from "../runtime/session-pause-state.ts"
 import { Router } from "./router.ts"
 import type { RequestContext } from "./types.ts"
@@ -32,10 +33,11 @@ const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
 const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "autoCommit", "deleteWorktree", "skipPermissionAsking"] as const
 
-type RunControlFn = (runId: string) => Promise<any>
-type StartFn = () => Promise<any>
-type StartSingleFn = (taskId: string) => Promise<any>
-type StopFn = () => Promise<any>
+type RunControlFn = (runId: string) => Promise<unknown>
+type StartFn = () => Promise<unknown>
+type StartSingleFn = (taskId: string) => Promise<unknown>
+type StartGroupFn = (groupId: string) => Promise<WorkflowRun>
+type StopFn = () => Promise<unknown>
 type StopRunFn = (runId: string, options?: { destructive?: boolean }) => Promise<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>
 
 function isBoolean(value: unknown): value is boolean {
@@ -52,6 +54,41 @@ function isExecutionStrategy(value: unknown): value is "standard" | "best_of_n" 
 
 function isSelectionMode(value: unknown): value is "pick_best" | "synthesize" | "pick_or_synthesize" {
   return value === "pick_best" || value === "synthesize" || value === "pick_or_synthesize"
+}
+
+// Task Group validation helpers
+function isTaskGroupStatus(value: unknown): value is "active" | "completed" | "archived" {
+  return value === "active" || value === "completed" || value === "archived"
+}
+
+function isValidHexColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9A-Fa-f]{6}$/.test(value)
+}
+
+function validateTaskGroupName(name: unknown): { valid: boolean; error?: string } {
+  if (typeof name !== "string") return { valid: false, error: "name must be a string" }
+  if (name.trim().length === 0) return { valid: false, error: "name cannot be empty" }
+  if (name.length > 100) return { valid: false, error: "name must be 100 characters or less" }
+  return { valid: true }
+}
+
+function validateTaskIds(taskIds: unknown, db: PiKanbanDB): { valid: boolean; error?: string; invalidIds?: string[] } {
+  if (!Array.isArray(taskIds)) return { valid: false, error: "taskIds must be an array" }
+  if (taskIds.length === 0) return { valid: true }
+
+  const invalidIds: string[] = []
+  for (const id of taskIds) {
+    if (typeof id !== "string") {
+      invalidIds.push(String(id))
+      continue
+    }
+    if (!db.getTask(id)) invalidIds.push(id)
+  }
+
+  if (invalidIds.length > 0) {
+    return { valid: false, error: `Invalid or non-existent task IDs: ${invalidIds.join(', ')}`, invalidIds }
+  }
+  return { valid: true }
 }
 
 interface BestOfNSlotInput {
@@ -106,11 +143,19 @@ function validateBestOfNConfig(config: unknown): { valid: boolean; error?: strin
     return { valid: false, error: "selectionMode must be pick_best, synthesize, or pick_or_synthesize" }
   }
 
-  const totalWorkers = cfg.workers.reduce((sum: number, slot: any) => {
-    if (slot.count === undefined || slot.count === null) {
+  const totalWorkers = cfg.workers.reduce((sum: number, slot: unknown) => {
+    if (typeof slot !== 'object' || slot === null) {
+      throw new Error(`Worker slot must be an object: ${JSON.stringify(slot)}`)
+    }
+    const slotObj = slot as Record<string, unknown>
+    const count = slotObj.count
+    if (count === undefined || count === null) {
       throw new Error(`Worker slot is missing 'count' field: ${JSON.stringify(slot)}`)
     }
-    return sum + Number(slot.count)
+    if (typeof count !== 'number') {
+      throw new Error(`Worker slot 'count' must be a number: ${JSON.stringify(slot)}`)
+    }
+    return sum + count
   }, 0)
   if (typeof cfg.minSuccessfulWorkers !== "number" || cfg.minSuccessfulWorkers < 1 || cfg.minSuccessfulWorkers > totalWorkers) {
     return { valid: false, error: "minSuccessfulWorkers must be between 1 and total worker count" }
@@ -119,9 +164,12 @@ function validateBestOfNConfig(config: unknown): { valid: boolean; error?: strin
   return { valid: true }
 }
 
-function getInvalidTaskBooleanField(body: any): string | null {
+function getInvalidTaskBooleanField(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return null
+  const bodyObj = body as Record<string, unknown>
   for (const field of TASK_BOOLEAN_FIELDS) {
-    if (body?.[field] !== undefined && !isBoolean(body[field])) return field
+    const value = bodyObj[field]
+    if (value !== undefined && !isBoolean(value)) return field
   }
   return null
 }
@@ -149,6 +197,7 @@ export class PiKanbanServer {
   private server: Bun.Server<unknown> | null = null
   private readonly onStart: StartFn
   private readonly onStartSingle: StartSingleFn
+  private readonly onStartGroup: StartGroupFn | null
   private readonly onStop: StopFn
   private readonly onPauseRun: RunControlFn | null
   private readonly onResumeRun: RunControlFn | null
@@ -160,6 +209,7 @@ export class PiKanbanServer {
   private readonly settings?: InfrastructureSettings
   private readonly projectRoot: string
   private readonly planningSessionManager: PlanningSessionManager
+  private _currentRunId: string | null = null
 
   getImageManager(): ContainerImageManager | null {
     return this.imageManager ?? null
@@ -208,6 +258,7 @@ export class PiKanbanServer {
       port?: number
       onStart?: StartFn
       onStartSingle?: StartSingleFn
+      onStartGroup?: StartGroupFn
       onStop?: StopFn
       onPauseRun?: RunControlFn
       onResumeRun?: RunControlFn
@@ -223,6 +274,7 @@ export class PiKanbanServer {
     this.smartRepair = new SmartRepairService(this.db, opts.settings)
     this.onStart = opts.onStart ?? (async () => null)
     this.onStartSingle = opts.onStartSingle ?? (async () => null)
+    this.onStartGroup = opts.onStartGroup ?? null
     this.onStop = opts.onStop ?? (async () => null)
     this.onPauseRun = opts.onPauseRun ?? null
     this.onResumeRun = opts.onResumeRun ?? null
@@ -272,11 +324,32 @@ export class PiKanbanServer {
     this.db.setTaskStatusChangeListener((taskId: string, oldStatus: string, newStatus: string) => {
       const task = this.db.getTask(taskId)
       if (!task) return
-      const opts = this.db.getOptions()
-      if (!opts.telegramNotificationsEnabled || !opts.telegramBotToken || !opts.telegramChatId) return
+      const options = this.db.getOptions()
+      if (!options.telegramBotToken || !options.telegramChatId) return
+
+      // Check if notification should be sent based on notification level
+      const context: NotificationContext = {
+        isWorkflowDone: this._currentRunId !== null,
+      }
+      
+      // Validate status values before passing to shouldSendNotification
+      const validStatuses = ["template", "backlog", "executing", "review", "code-style", "done", "failed", "stuck"] as const
+      if (!validStatuses.includes(oldStatus as typeof validStatuses[number]) || 
+          !validStatuses.includes(newStatus as typeof validStatuses[number])) {
+        return
+      }
+      
+      if (!shouldSendNotification(
+        options.telegramNotificationLevel, 
+        oldStatus as typeof validStatuses[number], 
+        newStatus as typeof validStatuses[number], 
+        context
+      )) {
+        return
+      }
 
       sendTelegramNotification(
-        { botToken: opts.telegramBotToken, chatId: opts.telegramChatId },
+        { botToken: options.telegramBotToken, chatId: options.telegramChatId },
         task.name,
         oldStatus,
         newStatus,
@@ -324,6 +397,53 @@ export class PiKanbanServer {
 
   broadcast(message: WSMessage): void {
     this.wsHub.broadcast(message)
+
+    // Track workflow start/completion for notification context
+    if (message.type === "execution_started") {
+      // Find the current active run
+      const runs = this.db.getWorkflowRuns()
+      const activeRun = runs.find(r => r.status === "running")
+      this._currentRunId = activeRun?.id ?? null
+    } else if (message.type === "execution_complete") {
+      // Workflow completed - send summary notification if level is "workflow_done_and_failures"
+      if (this._currentRunId) {
+        const run = this.db.getWorkflowRun(this._currentRunId)
+        if (run) {
+          const options = this.db.getOptions()
+          const notificationLevel = options.telegramNotificationLevel
+          
+          // Only send workflow summary for workflow_done_and_failures level
+          if (notificationLevel === "workflow_done_and_failures" && options.telegramBotToken && options.telegramChatId) {
+            // Count task outcomes in this workflow
+            let completed = 0
+            let failed = 0
+            let stuck = 0
+            
+            for (const taskId of run.taskOrder ?? []) {
+              const task = this.db.getTask(taskId)
+              if (task) {
+                if (task.status === "done") completed++
+                else if (task.status === "failed") failed++
+                else if (task.status === "stuck") stuck++
+              }
+            }
+            
+            sendTelegramWorkflowSummary(
+              { botToken: options.telegramBotToken, chatId: options.telegramChatId },
+              run.displayName || "Workflow",
+              run.taskOrder?.length ?? 0,
+              completed,
+              failed,
+              stuck,
+              (msg: string) => console.debug(msg)
+            ).catch((err: unknown) => {
+              console.error("[telegram] workflow summary notification failed:", err)
+            })
+          }
+        }
+        this._currentRunId = null
+      }
+    }
   }
 
   async start(port = this.defaultPort): Promise<number> {
@@ -739,8 +859,23 @@ export class PiKanbanServer {
         body.bestOfNSubstage = "idle"
       }
 
+      // When converting a task to template, remove it from its group
+      let removedFromGroupId: string | null = null
+      if (body?.status === "template" && existing.groupId) {
+        removedFromGroupId = existing.groupId
+        this.db.removeTaskFromGroup(existing.groupId, params.id)
+        body.groupId = null
+      }
+
       const task = this.db.updateTask(params.id, body)
       if (!task) return json({ error: "Task not found" }, 404)
+
+      // Broadcast group removal events after task update
+      if (removedFromGroupId) {
+        broadcast({ type: "task_group_members_removed", payload: { groupId: removedFromGroupId, taskIds: [task.id] } })
+        broadcast({ type: "group_task_removed", payload: { groupId: removedFromGroupId, taskId: task.id } })
+      }
+
       const normalized = normalizeTaskForClient(task, sessionUrlFor)
       broadcast({ type: "task_updated", payload: normalized })
       return json(normalized)
@@ -1329,6 +1464,14 @@ export class PiKanbanServer {
       const task = this.db.getTask(params.id)
       if (!task) return json({ error: "Task not found" }, 404)
 
+      const activeRun = this.db.getActiveWorkflowRunForTask(params.id)
+      if (activeRun) {
+        return json({ error: `Cannot modify task \"${task.name}\" while it is executing in run ${activeRun.id}.` }, 409)
+      }
+
+      // Check if task belongs to a group before resetting
+      const membership = this.db.getTaskGroupMembership(params.id)
+
       const reset = this.db.updateTask(task.id, {
         status: "backlog",
         reviewCount: 0,
@@ -1345,6 +1488,139 @@ export class PiKanbanServer {
       if (!reset) return json({ error: "Task not found" }, 404)
       const normalized = normalizeTaskForClient(reset, sessionUrlFor)
       broadcast({ type: "task_updated", payload: normalized })
+
+      // Return enriched response if task was in a group
+      if (membership.groupId && membership.group) {
+        return json({
+          task: normalized,
+          group: membership.group,
+          wasInGroup: true,
+        })
+      }
+
+      return json({ task: normalized, wasInGroup: false })
+    })
+
+    this.router.post("/api/tasks/:id/reset-to-group", async ({ params, json, sessionUrlFor, broadcast }) => {
+      const task = this.db.getTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
+
+      const activeRun = this.db.getActiveWorkflowRunForTask(params.id)
+      if (activeRun) {
+        return json({ error: `Cannot modify task \"${task.name}\" while it is executing in run ${activeRun.id}.` }, 409)
+      }
+
+      // Get current group membership before resetting
+      const membership = this.db.getTaskGroupMembership(params.id)
+      if (!membership.groupId || !membership.group) {
+        return json({ error: "Task was not in a group" }, 400)
+      }
+
+      const groupId = membership.groupId
+      const group = membership.group
+
+      // Reset task to backlog
+      const reset = this.db.updateTask(task.id, {
+        status: "backlog",
+        reviewCount: 0,
+        errorMessage: null,
+        completedAt: null,
+        sessionId: null,
+        sessionUrl: null,
+        worktreeDir: null,
+        executionPhase: "not_started",
+        awaitingPlanApproval: false,
+        planRevisionCount: 0,
+      })
+
+      if (!reset) return json({ error: "Task not found" }, 404)
+
+      // Re-add task to its previous group
+      this.db.addTaskToGroup(groupId, task.id)
+
+      const normalized = normalizeTaskForClient(reset, sessionUrlFor)
+      broadcast({ type: "task_updated", payload: normalized })
+      broadcast({ type: "group_task_added", payload: { groupId, taskId: task.id } })
+      broadcast({ type: "task_group_members_added", payload: { groupId, taskIds: [task.id] } })
+
+      return json({
+        task: normalized,
+        group,
+        restoredToGroup: true,
+      })
+    })
+
+    this.router.post("/api/tasks/:id/move-to-group", async ({ params, req, json, sessionUrlFor, broadcast }) => {
+      const task = this.db.getTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
+
+      const activeRun = this.db.getActiveWorkflowRunForTask(params.id)
+      if (activeRun) {
+        return json({ error: `Cannot modify task \"${task.name}\" while it is executing in run ${activeRun.id}.` }, 409)
+      }
+
+      let body: unknown
+      try {
+        body = await req.json()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Invalid JSON body: ${message}` }, 400)
+      }
+      
+      if (body === null || typeof body !== 'object') {
+        return json({ error: "Request body must be an object" }, 400)
+      }
+      
+      const bodyObj = body as Record<string, unknown>
+      const groupIdRaw = bodyObj.groupId
+      
+      // Validate groupId type: must be string, null, or undefined
+      if (groupIdRaw !== undefined && groupIdRaw !== null && typeof groupIdRaw !== 'string') {
+        return json({ error: "groupId must be a string, null, or undefined" }, 400)
+      }
+      
+      const groupId: string | null | undefined = groupIdRaw
+
+      // If groupId is null, remove from current group
+      if (groupId === null) {
+        if (task.groupId) {
+          this.db.removeTaskFromGroup(task.groupId, task.id)
+          broadcast({ type: "group_task_removed", payload: { groupId: task.groupId, taskId: task.id } })
+          broadcast({ type: "task_group_members_removed", payload: { groupId: task.groupId, taskIds: [task.id] } })
+        }
+        const updated = this.db.updateTask(task.id, { groupId: null })
+        const normalized = normalizeTaskForClient(updated ?? task, sessionUrlFor)
+        broadcast({ type: "task_updated", payload: normalized })
+        return json(normalized)
+      }
+
+      // Validate groupId is a string
+      if (typeof groupId !== "string") {
+        return json({ error: "groupId must be a string or null" }, 400)
+      }
+
+      // Validate group exists
+      const group = this.db.getTaskGroup(groupId)
+      if (!group) {
+        return json({ error: "Group not found" }, 404)
+      }
+
+      // Remove from previous group if different
+      if (task.groupId && task.groupId !== groupId) {
+        this.db.removeTaskFromGroup(task.groupId, task.id)
+        broadcast({ type: "group_task_removed", payload: { groupId: task.groupId, taskId: task.id } })
+        broadcast({ type: "task_group_members_removed", payload: { groupId: task.groupId, taskIds: [task.id] } })
+      }
+
+      // Add to new group
+      this.db.addTaskToGroup(groupId, task.id)
+
+      const updated = this.db.getTask(task.id)
+      const normalized = normalizeTaskForClient(updated ?? task, sessionUrlFor)
+      broadcast({ type: "task_updated", payload: normalized })
+      broadcast({ type: "group_task_added", payload: { groupId, taskId: task.id } })
+      broadcast({ type: "task_group_members_added", payload: { groupId, taskIds: [task.id] } })
+
       return json(normalized)
     })
 
@@ -1720,6 +1996,7 @@ export class PiKanbanServer {
 - The TaurOboros server is running on port: **${serverPort}**
 - Base URL: http://localhost:${serverPort}
 - Use the HTTP API endpoints to create tasks (POST /api/tasks)
+- Use the Task Groups API to organize related tasks (POST /api/task-groups)
 
 **Task Creation Guidelines:**
 - Create small, outcome-based tasks that can be completed independently
@@ -1728,7 +2005,28 @@ export class PiKanbanServer {
 - Include clear, actionable prompts for each task
 - Consider using plan-mode (planmode: true) for tasks that need approval before implementation
 
-Please confirm when you've created the tasks, and provide a summary of what was created.`
+**IMPORTANT - Create a Task Group:**
+If the implementation plan involves multiple related tasks:
+1. Create ALL tasks first using POST /api/tasks
+2. Then create a **Task Group** using POST /api/task-groups with:
+   - "name": A descriptive name for the feature/project (e.g., "Feature X")
+   - "color": A hex color for visual identification (e.g., "#6366f1")
+   - "taskIds": Array of the created task IDs to add to the group
+3. Use POST /api/task-groups/:id/tasks to add tasks if the group was created without them
+
+**Group Creation Example:**
+\`\`\`bash
+# Create tasks first
+curl -X POST http://localhost:${serverPort}/api/tasks -H "Content-Type: application/json" -d '{"name": "Task 1", "prompt": "Do thing A", "status": "backlog"}'
+curl -X POST http://localhost:${serverPort}/api/tasks -H "Content-Type: application/json" -d '{"name": "Task 2", "prompt": "Do thing B", "status": "backlog"}'
+
+# Create group with tasks
+curl -X POST http://localhost:${serverPort}/api/task-groups -H "Content-Type: application/json" -d '{"name": "Feature X", "color": "#6366f1", "taskIds": ["task-id-1", "task-id-2"]}'
+\`\`\`
+
+The group allows you to execute all related tasks together with a single click using the "Start Group Workflow" button.
+
+Please confirm when you've created the tasks and group, and provide a summary of what was created.`
 
         await planningSession.sendMessage({
           content: taskSetupPrompt,
@@ -2335,6 +2633,226 @@ Please confirm when you've created the tasks, and provide a summary of what was 
     })
 
     // ---- End Container Configuration Routes ----
+
+    // ---- Task Group Routes ----
+
+    this.router.get("/api/task-groups", ({ json }) => {
+      const groups = this.db.getTaskGroups()
+      return json(groups)
+    })
+
+    this.router.post("/api/task-groups", async ({ req, json, broadcast }) => {
+      const body = await req.json()
+
+      const nameValidation = validateTaskGroupName(body?.name)
+      if (!nameValidation.valid) return json({ error: nameValidation.error }, 400)
+
+      if (body?.color !== undefined && !isValidHexColor(body.color)) {
+        return json({ error: "color must be a valid hex color (e.g., #888888)" }, 400)
+      }
+
+      if (body?.status !== undefined && !isTaskGroupStatus(body.status)) {
+        return json({ error: "status must be active, completed, or archived" }, 400)
+      }
+
+      let memberTaskIds: string[] = []
+      if (body?.taskIds !== undefined) {
+        const taskValidation = validateTaskIds(body.taskIds, this.db)
+        if (!taskValidation.valid) return json({ error: taskValidation.error }, 400)
+        memberTaskIds = body.taskIds as string[]
+      }
+
+      try {
+        const group = this.db.createTaskGroup({
+          name: String(body.name).trim(),
+          color: body.color,
+          status: body.status,
+          memberTaskIds,
+        })
+
+        broadcast({ type: "task_group_created", payload: group })
+        return json(group, 201)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: message }, 409)
+      }
+    })
+
+    this.router.get("/api/task-groups/:id", ({ params, json, sessionUrlFor }) => {
+      const group = this.db.getTaskGroup(params.id)
+      if (!group) return json({ error: "Task group not found" }, 404)
+
+      const tasks = group.taskIds.map(taskId => {
+        const task = this.db.getTask(taskId)
+        return task ? normalizeTaskForClient(task, sessionUrlFor) : null
+      }).filter(Boolean)
+
+      return json({ ...group, tasks })
+    })
+
+    this.router.patch("/api/task-groups/:id", async ({ params, req, json, broadcast }) => {
+      const existing = this.db.getTaskGroup(params.id)
+      if (!existing) return json({ error: "Task group not found" }, 404)
+
+      const body = await req.json()
+
+      if (body?.name !== undefined) {
+        const nameValidation = validateTaskGroupName(body.name)
+        if (!nameValidation.valid) return json({ error: nameValidation.error }, 400)
+      }
+
+      if (body?.color !== undefined && !isValidHexColor(body.color)) {
+        return json({ error: "color must be a valid hex color (e.g., #888888)" }, 400)
+      }
+
+      if (body?.status !== undefined && !isTaskGroupStatus(body.status)) {
+        return json({ error: "status must be active, completed, or archived" }, 400)
+      }
+
+      try {
+        const updated = this.db.updateTaskGroup(params.id, {
+          name: body?.name !== undefined ? String(body.name).trim() : undefined,
+          color: body?.color,
+          status: body?.status,
+          completedAt: body?.status === "completed" ? Math.floor(Date.now() / 1000) : undefined,
+        })
+
+        if (!updated) return json({ error: "Failed to update task group" }, 500)
+
+        broadcast({ type: "task_group_updated", payload: updated })
+        return json(updated)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: message }, 500)
+      }
+    })
+
+    this.router.delete("/api/task-groups/:id", ({ params, json, broadcast }) => {
+      const group = this.db.getTaskGroup(params.id)
+      if (!group) return json({ error: "Task group not found" }, 404)
+
+      const success = this.db.deleteTaskGroup(params.id)
+      if (!success) return json({ error: "Failed to delete task group" }, 500)
+
+      broadcast({ type: "task_group_deleted", payload: { id: params.id } })
+      return new Response(null, { status: 204 })
+    })
+
+    this.router.post("/api/task-groups/:id/tasks", async ({ params, req, json, broadcast }) => {
+      const group = this.db.getTaskGroup(params.id)
+      if (!group) return json({ error: "Task group not found" }, 404)
+
+      const body = await req.json()
+
+      if (!body?.taskIds || !Array.isArray(body.taskIds)) {
+        return json({ error: "taskIds array is required" }, 400)
+      }
+
+      const taskValidation = validateTaskIds(body.taskIds, this.db)
+      if (!taskValidation.valid) return json({ error: taskValidation.error }, 400)
+
+      try {
+        const addedCount = this.db.addTasksToGroup(params.id, body.taskIds)
+        const updated = this.db.getTaskGroup(params.id)
+
+        broadcast({ type: "task_group_members_added", payload: { groupId: params.id, taskIds: body.taskIds, addedCount } })
+        return json(updated)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes("already in another group")) {
+          return json({ error: message }, 409)
+        }
+        return json({ error: message }, 500)
+      }
+    })
+
+    this.router.delete("/api/task-groups/:id/tasks", async ({ params, req, json, broadcast }) => {
+      const group = this.db.getTaskGroup(params.id)
+      if (!group) return json({ error: "Task group not found" }, 404)
+
+      const body = await req.json()
+
+      if (!body?.taskIds || !Array.isArray(body.taskIds)) {
+        return json({ error: "taskIds array is required" }, 400)
+      }
+
+      try {
+        const removedCount = this.db.removeTasksFromGroup(params.id, body.taskIds)
+        const updated = this.db.getTaskGroup(params.id)
+
+        broadcast({ type: "task_group_members_removed", payload: { groupId: params.id, taskIds: body.taskIds, removedCount } })
+        return json(updated)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: message }, 500)
+      }
+    })
+
+    this.router.post("/api/task-groups/:id/start", async ({ params, json, broadcast }) => {
+      const group = this.db.getTaskGroup(params.id)
+      if (!group) return json({ error: "Task group not found" }, 404)
+
+      if (group.taskIds.length === 0) {
+        return json({ error: "Cannot start group with no tasks" }, 400)
+      }
+
+      if (this.db.hasRunningWorkflows()) {
+        return json({ error: "A workflow is already running. Stop it first." }, 409)
+      }
+
+      const tasks = group.taskIds.map(id => this.db.getTask(id)).filter(Boolean)
+      const nonBacklogTasks = tasks.filter(t => t!.status !== "backlog" && t!.status !== "template")
+      if (nonBacklogTasks.length > 0) {
+        return json({
+          error: "Some tasks are not in backlog status",
+          tasks: nonBacklogTasks.map(t => ({ id: t!.id, name: t!.name, status: t!.status }))
+        }, 409)
+      }
+
+      if (!this.onStartGroup) {
+        return json({ error: "Group execution handler not available" }, 503)
+      }
+
+      try {
+        const run = await this.onStartGroup(params.id)
+        broadcast({ type: "run_created", payload: run })
+        broadcast({ type: "group_execution_started", payload: { groupId: params.id, taskIds: group.taskIds, startedAt: Date.now() } })
+        broadcast({ type: "execution_started", payload: {} })
+        return json(run)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        // Check for specific error types to return appropriate status codes
+        if (message.includes("not found")) {
+          return json({ error: message }, 404)
+        }
+        if (message.includes("external dependencies") || message.includes("blocked")) {
+          return json({ error: message }, 409)
+        }
+        if (message.includes("invalid container images") || message.includes("container image")) {
+          return json({ error: message }, 409)
+        }
+        if (message.includes("Already executing")) {
+          return json({ error: message }, 409)
+        }
+        return json({ error: message }, 500)
+      }
+    })
+
+    this.router.get("/api/tasks/:id/group", ({ params, json }) => {
+      if (!this.db.getTask(params.id)) {
+        return json({ error: "Task not found" }, 404)
+      }
+
+      const membership = this.db.getTaskGroupMembership(params.id)
+
+      if (!membership.groupId) {
+        return json({ groupId: null, group: null })
+      }
+
+      return json(membership)
+    })
+
+    // ---- End Task Group Routes ----
   }
 
   private async getPodmanImages(): Promise<Array<{ tag: string; createdAt: number; size: string }>> {

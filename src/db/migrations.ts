@@ -12,7 +12,7 @@ function ensureMigrationTable(db: Database): void {
       version INTEGER PRIMARY KEY,
       description TEXT NOT NULL,
       applied_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
+    )
   `)
 }
 

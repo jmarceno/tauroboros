@@ -10,6 +10,7 @@ import { BASE_IMAGES } from "../config/base-images.ts"
 import { projectPiEventToSessionMessage } from "./message-projection.ts"
 import { MessageStreamer } from "./message-streamer.ts"
 import type { PiEventListener, ExtensionUIRequestHandler } from "./pi-process.ts"
+import { CollectEventsTimeoutError } from "./pi-process.ts"
 import type { PiRpcRequest, PiRpcResponse } from "./pi-rpc.ts"
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -287,7 +288,9 @@ export class ContainerPiProcess {
 
       const timer = setTimeout(() => {
         unsubscribe()
-        reject(new Error(`Timeout collecting events`))
+        // Use CollectEventsTimeoutError to preserve collected events
+        // This allows the orchestrator to determine if the task was "essentially complete"
+        reject(new CollectEventsTimeoutError(events, timeoutMs))
       }, timeoutMs)
 
       const unsubscribe = this.onEvent((event) => {

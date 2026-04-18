@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useApi } from '@/hooks'
 import type { ContainerImage, Task } from '@/types'
+import { formatLocalDateTime } from '@/utils/date'
 
 interface ContainerProfile {
   id: string
@@ -303,7 +304,7 @@ export function ContainerConfigModal({ isOpen, onClose }: ContainerConfigModalPr
 
   const formatDate = (timestamp: number | null) => {
     if (!timestamp) return '-'
-    return new Date(timestamp * 1000).toLocaleString()
+    return formatLocalDateTime(timestamp)
   }
 
   const formatStatus = (status: string) => {

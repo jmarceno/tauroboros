@@ -13,9 +13,9 @@ import { PiSessionManager } from "./runtime/session-manager.ts"
 import { PiReviewSessionRunner } from "./runtime/review-session.ts"
 import { CodeStyleSessionRunner } from "./runtime/codestyle-session.ts"
 import { BestOfNRunner } from "./runtime/best-of-n.ts"
-import { WorktreeLifecycle, resolveTargetBranch, listWorktrees, type WorktreeInfo } from "./runtime/worktree.ts"
+import { WorktreeLifecycle, resolveTargetBranch, listWorktrees, type WorktreeInfo, WorktreeError } from "./runtime/worktree.ts"
 import type { PiContainerManager } from "./runtime/container-manager.ts"
-import { PiRpcProcess } from "./runtime/pi-process.ts"
+import { PiRpcProcess, CollectEventsTimeoutError } from "./runtime/pi-process.ts"
 import { ContainerPiProcess } from "./runtime/container-pi-process.ts"
 import {
   savePausedRunState,
@@ -42,6 +42,86 @@ function stripAndNormalize(value: string): string {
 
 function tagOutput(tag: string, text: string): string {
   return text.trim() ? `\n[${tag}]\n${text.trim()}\n` : ""
+}
+
+/**
+ * Determine if a task that timed out was "essentially complete" based on collected events.
+ * This heuristic checks if meaningful work was done before the timeout occurred.
+ */
+/**
+ * Check if an error is a merge conflict failure.
+ */
+function isMergeConflictError(error: unknown): boolean {
+  if (error instanceof WorktreeError) {
+    return error.code === "MERGE_FAILED" || 
+           (error.gitOutput?.includes("CONFLICT") ?? false) ||
+           (error.gitOutput?.includes("conflict") ?? false)
+  }
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase()
+    return msg.includes("merge failed") || 
+           msg.includes("conflict") || 
+           msg.includes("automatic merge failed")
+  }
+  return false
+}
+
+function checkEssentialCompletion(collectedEvents: Record<string, unknown>[]): {
+  isEssentiallyComplete: boolean
+  reason: string
+} {
+  if (collectedEvents.length === 0) {
+    return { isEssentiallyComplete: false, reason: "No events collected" }
+  }
+
+  // Event types that indicate substantial work was done
+  const workIndicators = new Set([
+    "tool_start",      // Tool execution started
+    "tool_complete",   // Tool execution completed
+    "text",            // Text output
+    "message_update",  // Assistant message
+    "file_write",      // File was written
+    "bash_command",    // Bash command executed
+    "git_commit",      // Git commit was made
+  ])
+
+  // Count meaningful events
+  let workEventCount = 0
+  let hasFileWrite = false
+  let hasGitCommit = false
+  let hasToolComplete = false
+  let hasMessageUpdate = false
+
+  for (const event of collectedEvents) {
+    const eventType = event.type as string
+    if (workIndicators.has(eventType)) {
+      workEventCount++
+    }
+    if (eventType === "file_write") hasFileWrite = true
+    if (eventType === "git_commit") hasGitCommit = true
+    if (eventType === "tool_complete") hasToolComplete = true
+    if (eventType === "message_update") hasMessageUpdate = true
+  }
+
+  // Heuristic: If we have at least 5 work events AND
+  // either a file write, git commit, tool completion, or substantial messages,
+  // consider the task essentially complete
+  if (workEventCount >= 5 && (hasFileWrite || hasGitCommit || hasToolComplete || hasMessageUpdate)) {
+    return {
+      isEssentiallyComplete: true,
+      reason: `Task made substantial progress (${workEventCount} work events, fileWrite=${hasFileWrite}, gitCommit=${hasGitCommit}, toolComplete=${hasToolComplete})`,
+    }
+  }
+
+  // Lower threshold for git commit specifically (if commit happened, task is essentially done)
+  if (hasGitCommit) {
+    return { isEssentiallyComplete: true, reason: "Git commit was made before timeout" }
+  }
+
+  return {
+    isEssentiallyComplete: false,
+    reason: `Insufficient progress indicators (${workEventCount} work events, need at least 5 with file/tool/message activity)`,
+  }
 }
 
 async function runShellCommand(command: string, cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
@@ -392,6 +472,145 @@ export class PiOrchestrator {
     this.broadcast({ type: "execution_started", payload: {} })
 
     void this.runInBackground(run.id, chain.map((task) => task.id))
+    return run
+  }
+
+  /**
+   * Validate that all tasks in the given array exist in the database.
+   * Returns the loaded Task objects.
+   * Throws an error if any task is not found.
+   */
+  private validateGroupTasksExist(taskIds: string[]): Task[] {
+    const tasks: Task[] = []
+    const missingIds: string[] = []
+
+    for (const taskId of taskIds) {
+      const task = this.db.getTask(taskId)
+      if (!task) {
+        missingIds.push(taskId)
+      } else {
+        tasks.push(task)
+      }
+    }
+
+    if (missingIds.length > 0) {
+      throw new Error(`One or more tasks in group were not found in database: ${missingIds.join(', ')}`)
+    }
+
+    return tasks
+  }
+
+  /**
+   * Find dependencies that are outside the group.
+   * Returns array of objects with task and its external dependency.
+   */
+  private findExternalDependencies(
+    groupTasks: Task[],
+    allTasks: Task[],
+  ): Array<{ task: Task; dependency: string }> {
+    const groupTaskIds = new Set(groupTasks.map((t) => t.id))
+    const allTaskIds = new Set(allTasks.map((t) => t.id))
+    const externalDeps: Array<{ task: Task; dependency: string }> = []
+
+    for (const task of groupTasks) {
+      for (const depId of task.requirements) {
+        // Check if dependency is NOT in the group AND is a valid task (exists in allTasks)
+        if (!groupTaskIds.has(depId) && allTaskIds.has(depId)) {
+          externalDeps.push({ task, dependency: depId })
+        }
+      }
+    }
+
+    return externalDeps
+  }
+
+  /**
+   * Start execution of a task group.
+   * Loads group members, validates dependencies, checks container images,
+   * and executes tasks in dependency order.
+   */
+  async startGroup(groupId: string): Promise<WorkflowRun> {
+    // Phase 1: Clean up any stale runs before checking if already executing
+    await this.cleanupStaleRuns()
+
+    // Defensive check: If still running but current run is not actually active in DB, force reset
+    if (this.running && this.currentRunId) {
+      const activeRun = this.db.getWorkflowRun(this.currentRunId)
+      if (!activeRun || (activeRun.status !== "running" && activeRun.status !== "stopping")) {
+        console.log(`[orchestrator] startGroup: Force resetting stale running flag (run ${this.currentRunId} status: ${activeRun?.status ?? "not found"})`)
+        this.running = false
+      }
+    }
+
+    if (this.running) throw new Error("Already executing")
+
+    // Load group - throws if not found
+    const group = this.db.getTaskGroup(groupId)
+    if (!group) {
+      throw new Error(`Task group with ID "${groupId}" not found`)
+    }
+
+    if (group.taskIds.length === 0) {
+      throw new Error(`Cannot start group "${group.name}": group has no tasks`)
+    }
+
+    // Validate all tasks exist
+    const groupTasks = this.validateGroupTasksExist(group.taskIds)
+
+    // Check for external dependencies
+    const allTasks = this.db.getTasks()
+    const externalDeps = this.findExternalDependencies(groupTasks, allTasks)
+
+    if (externalDeps.length > 0) {
+      // Get unique task names that have external dependencies
+      const taskNamesWithExternalDeps = [...new Set(externalDeps.map((d) => d.task.name))]
+      throw new Error(
+        `Group execution blocked: ${externalDeps.length} tasks have external dependencies that must be completed first: ${taskNamesWithExternalDeps.join(', ')}`
+      )
+    }
+
+    // Validate container images for all group tasks
+    const imageValidation = await this.validateWorkflowImages(group.taskIds)
+    if (!imageValidation.valid) {
+      // Log event for each invalid task before throwing
+      for (const invalid of imageValidation.invalid) {
+        await this.logTaskEvent(invalid.taskId, "execution_blocked", {
+          reason: "missing_container_image",
+          image: invalid.image,
+          message: `Task execution blocked: Container image '${invalid.image}' not found`,
+          recommendation: "Build the image in Image Builder or select a valid image in task settings",
+        })
+      }
+      const details = imageValidation.invalid
+        .map((i) => `"${i.taskName}" (${i.taskId}): ${i.image}`)
+        .join("; ")
+      throw new Error(`Cannot start group: The following tasks have invalid container images: ${details}`)
+    }
+
+    // Create workflow run with kind=group_tasks
+    const run = this.db.createWorkflowRun({
+      id: randomUUID().slice(0, 8),
+      kind: "group_tasks",
+      status: "running",
+      displayName: `Group: ${group.name}`,
+      groupId: group.id,
+      taskOrder: group.taskIds,
+      currentTaskId: group.taskIds[0] ?? null,
+      currentTaskIndex: 0,
+      color: this.db.getNextRunColor(),
+    })
+
+    // Set orchestrator state
+    this.currentRunId = run.id
+    this.running = true
+    this.shouldStop = false
+
+    // Broadcast events
+    this.broadcast({ type: "run_created", payload: run })
+    this.broadcast({ type: "execution_started", payload: {} })
+
+    // Execute in background
+    void this.runInBackground(run.id, group.taskIds)
     return run
   }
 
@@ -1431,6 +1650,93 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       if (this.shouldStop) {
         throw error
       }
+
+      // Special handling for CollectEventsTimeoutError
+      // The task may have timed out but completed substantial work
+      if (error instanceof CollectEventsTimeoutError) {
+        const completionCheck = checkEssentialCompletion(error.collectedEvents)
+        if (completionCheck.isEssentiallyComplete) {
+          console.log(`[orchestrator] Task ${task.name}(${task.id}) timed out but was essentially complete: ${completionCheck.reason}`)
+          // The work was done, just the agent_end event didn't arrive in time
+          // Complete the task normally without running review/commit (they already ran)
+          await this.completeTaskSuccessfully(task, worktreeInfo, options)
+          return
+        } else {
+          console.log(`[orchestrator] Task ${task.name}(${task.id}) timed out with insufficient progress: ${completionCheck.reason}`)
+          const message = `${error.message} - ${completionCheck.reason}`
+          this.db.updateTask(task.id, {
+            status: "failed",
+            errorMessage: message,
+            worktreeDir: worktreeInfo?.directory ?? task.worktreeDir,
+          })
+          this.broadcastTask(task.id)
+          throw error
+        }
+      }
+
+      // Special handling for merge conflicts
+      // Send repair agent to fix the merge instead of failing the task
+      if (isMergeConflictError(error)) {
+        console.log(`[orchestrator] Merge conflict detected for task ${task.name}(${task.id}), attempting repair`)
+        const targetBranch = await resolveTargetBranch({
+          baseDirectory: this.projectRoot,
+          taskBranch: task.branch,
+          optionBranch: options.branch,
+        })
+
+        const repairSuccess = await this.runMergeRepairPrompt(
+          task.id,
+          task,
+          options,
+          worktreeInfo,
+          targetBranch,
+          error instanceof WorktreeError ? error : new Error(String(error)),
+        )
+
+        if (repairSuccess) {
+          console.log(`[orchestrator] Merge repair succeeded for task ${task.name}(${task.id}), completing task`)
+          try {
+            // Try to complete the worktree again (merge should now succeed)
+            await this.worktree.complete(worktreeInfo.directory, {
+              branch: worktreeInfo.branch,
+              targetBranch,
+              shouldMerge: true,
+              shouldRemove: task.deleteWorktree !== false,
+            })
+
+            this.db.updateTask(task.id, {
+              status: "done",
+              completedAt: nowUnix(),
+              worktreeDir: task.deleteWorktree !== false ? null : worktreeInfo.directory,
+              executionPhase: task.planmode ? "implementation_done" : undefined,
+            })
+            this.broadcastTask(task.id)
+            return
+          } catch (completionError) {
+            // If completion still fails after repair, mark as failed
+            const message = completionError instanceof Error ? completionError.message : String(completionError)
+            console.error(`[orchestrator] Worktree completion failed after merge repair: ${message}`)
+            this.db.updateTask(task.id, {
+              status: "failed",
+              errorMessage: `Merge repair succeeded but worktree completion failed: ${message}`,
+              worktreeDir: worktreeInfo?.directory ?? task.worktreeDir,
+            })
+            this.broadcastTask(task.id)
+            throw completionError
+          }
+        } else {
+          // Repair failed - mark as stuck since the task work is done but merge failed
+          console.error(`[orchestrator] Merge repair failed for task ${task.name}(${task.id})`)
+          this.db.updateTask(task.id, {
+            status: "stuck",
+            errorMessage: `Merge conflict could not be resolved automatically. Manual intervention required to merge '${worktreeInfo.branch}' into '${targetBranch}'`,
+            worktreeDir: worktreeInfo?.directory ?? task.worktreeDir,
+          })
+          this.broadcastTask(task.id)
+          throw error
+        }
+      }
+
       const message = error instanceof Error ? error.message : String(error)
       this.db.updateTask(task.id, {
         status: "failed",
@@ -1785,7 +2091,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         cwd: worktreeInfo.directory,
         worktreeDir: worktreeInfo.directory,
         branch: worktreeInfo.branch,
-        codeStylePrompt: task.codeStylePrompt,
+        codeStylePrompt: options.codeStylePrompt,
         model: options.reviewModel,
         thinkingLevel: options.reviewThinkingLevel,
         onOutput: (chunk) => {
@@ -1840,6 +2146,73 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     if (commit.responseText.trim()) {
       this.db.appendAgentOutput(taskId, tagOutput("commit", commit.responseText))
       this.broadcastTask(taskId)
+    }
+  }
+
+  /**
+   * Repair a merge conflict by sending a prompt to the agent.
+   * The agent will resolve the conflicts and complete the merge.
+   */
+  private async runMergeRepairPrompt(
+    taskId: string,
+    task: Task,
+    options: Options,
+    worktreeInfo: WorktreeInfo,
+    targetBranch: string,
+    mergeError: WorktreeError | Error,
+  ): Promise<boolean> {
+    console.log(`[orchestrator] Running merge repair for task ${task.name}(${taskId})`)
+
+    const mergeOutput = mergeError instanceof WorktreeError ? mergeError.gitOutput : ""
+    const repairPrompt = `A merge conflict occurred when merging branch '${worktreeInfo.branch}' into '${targetBranch}'.
+
+Git output:
+${mergeOutput || mergeError.message}
+
+Your task is to:
+1. Check the current git status to understand the conflicts
+2. Resolve all merge conflicts by choosing the appropriate changes (prefer the task branch changes when in doubt)
+3. Stage the resolved files
+4. Complete the merge by creating a merge commit
+5. Ensure the merge is successful
+
+Run git commands as needed to resolve the conflicts. After resolving, verify with 'git status' that there are no remaining conflicts.`
+
+    try {
+      const repair = await this.runSessionPrompt({
+        task,
+        sessionKind: "repair",
+        cwd: worktreeInfo.directory,
+        worktreeDir: worktreeInfo.directory,
+        branch: worktreeInfo.branch,
+        model: options.repairModel !== "default" ? options.repairModel : options.executionModel,
+        thinkingLevel: options.repairThinkingLevel,
+        promptText: repairPrompt,
+      })
+
+      if (repair.responseText.trim()) {
+        this.db.appendAgentOutput(taskId, tagOutput("merge-repair", repair.responseText))
+        this.broadcastTask(taskId)
+      }
+
+      // Verify the merge was resolved by checking git status
+      const status = await this.worktree.inspect(worktreeInfo.directory)
+      if (status.stagedFiles.length > 0 || status.modifiedFiles.length > 0) {
+        // There are still uncommitted changes - try to commit them
+        console.log(`[orchestrator] Merge repair has uncommitted changes, attempting commit`)
+        const commitResult = await runShellCommand(`git commit -m "Resolve merge conflicts"`, worktreeInfo.directory)
+        if (commitResult.exitCode !== 0) {
+          console.warn(`[orchestrator] Automatic commit after merge repair failed: ${commitResult.stderr}`)
+        }
+      }
+
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[orchestrator] Merge repair failed: ${message}`)
+      this.db.appendAgentOutput(taskId, `\n[merge-repair-error]\n${message}\n`)
+      this.broadcastTask(taskId)
+      return false
     }
   }
 
@@ -1914,6 +2287,51 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     this.broadcast({ type: "task_updated", payload: updated })
   }
 
+  /**
+   * Complete a task successfully after work is done.
+   * Used when a task timed out but was essentially complete.
+   * Skips re-running review/commit as they already happened.
+   */
+  private async completeTaskSuccessfully(
+    task: Task,
+    worktreeInfo: WorktreeInfo,
+    options: Options,
+  ): Promise<void> {
+    try {
+      const targetBranch = await resolveTargetBranch({
+        baseDirectory: this.projectRoot,
+        taskBranch: task.branch,
+        optionBranch: options.branch,
+      })
+      await this.worktree.complete(worktreeInfo.directory, {
+        branch: worktreeInfo.branch,
+        targetBranch,
+        shouldMerge: true,
+        shouldRemove: task.deleteWorktree !== false,
+      })
+
+      this.db.updateTask(task.id, {
+        status: "done",
+        completedAt: nowUnix(),
+        worktreeDir: task.deleteWorktree !== false ? null : worktreeInfo.directory,
+        executionPhase: task.planmode ? "implementation_done" : undefined,
+      })
+      this.broadcastTask(task.id)
+      console.log(`[orchestrator] Task ${task.name}(${task.id}) completed successfully after timeout recovery`)
+    } catch (completionError) {
+      // If completion itself fails, mark as failed but preserve the worktree for debugging
+      const message = completionError instanceof Error ? completionError.message : String(completionError)
+      console.error(`[orchestrator] Task ${task.name}(${task.id}) completion failed after timeout: ${message}`)
+      this.db.updateTask(task.id, {
+        status: "failed",
+        errorMessage: `Worktree completion failed after timeout recovery: ${message}`,
+        worktreeDir: worktreeInfo.directory,
+      })
+      this.broadcastTask(task.id)
+      throw completionError
+    }
+  }
+
   appendApprovalNote(taskId: string, note: string): Task | null {
     const task = this.db.getTask(taskId)
     if (!task) return null
@@ -1967,11 +2385,18 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
   /**
    * Validate that all container images for the given tasks exist.
    * Returns an object with valid flag and list of invalid tasks.
+   * Skips validation when container mode is disabled.
    */
   async validateWorkflowImages(taskIds: string[]): Promise<{
     valid: boolean
     invalid: { taskId: string; taskName: string; image: string }[]
   }> {
+    // Skip image validation when container mode is disabled
+    const containerEnabled = this.settings?.workflow?.container?.enabled !== false
+    if (!containerEnabled) {
+      return { valid: true, invalid: [] }
+    }
+
     const invalid: { taskId: string; taskName: string; image: string }[] = []
 
     for (const taskId of taskIds) {

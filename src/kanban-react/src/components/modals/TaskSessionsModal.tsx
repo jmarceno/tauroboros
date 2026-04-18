@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { ModalWrapper } from '../common/ModalWrapper'
-import { useTasksContext, useToastContext, useSessionUsageContext } from '@/contexts/AppContext'
-import { useApi } from '@/hooks'
-import type { Session, TaskRun, SessionMessage } from '@/types'
+import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import { ModalWrapper } from "../common/ModalWrapper"
+import { useTasksContext, useToastContext, useSessionUsageContext } from "@/contexts/AppContext"
+import { useApi } from "@/hooks"
+import { formatLocalTime } from "@/utils/date"
+import type { Session, TaskRun, SessionMessage } from "@/types"
 
 interface TaskSessionsModalProps {
   taskId: string
@@ -269,7 +270,7 @@ export function TaskSessionsModal({ taskId, onClose }: TaskSessionsModalProps) {
 
   const activeSession = activeSessionId ? sessions.get(activeSessionId) : null
 
-  const formatTimestamp = (ts: number) => ts > 0 ? new Date(ts * 1000).toLocaleTimeString() : '—'
+  const formatTimestamp = (ts: number) => ts > 0 ? formatLocalTime(ts) : '—'
   const formatJson = (value: unknown): string => {
     if (value === null || value === undefined) return ''
     if (typeof value === 'string') return value

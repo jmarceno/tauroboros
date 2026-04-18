@@ -1,14 +1,20 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo } from "react"
+
+export type MultiSelectMode = "batch-edit" | "create-group" | null
 
 export function useMultiSelect() {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set())
+  const [mode, setMode] = useState<MultiSelectMode>(null)
 
   const isSelecting = useMemo(() => selectedTaskIds.size > 0, [selectedTaskIds])
   const selectedCount = useMemo(() => selectedTaskIds.size, [selectedTaskIds])
 
   const toggleSelection = useCallback((taskId: string, event: React.MouseEvent): boolean => {
-    // Only handle Ctrl/Cmd+click
-    if (!event.ctrlKey && !event.metaKey) {
+    // Allow direct toggling without Ctrl if in create-group mode
+    const isModifierHeld = event.ctrlKey || event.metaKey
+    const canToggle = isModifierHeld || mode === 'create-group'
+
+    if (!canToggle) {
       return false
     }
 
@@ -22,14 +28,15 @@ export function useMultiSelect() {
       return newSet
     })
     return true
-  }, [])
+  }, [mode])
 
   const selectSingle = useCallback((taskId: string) => {
-    setSelectedTaskIds(new Set([taskId]))
+    setSelectedTaskIds(() => new Set([taskId]))
   }, [])
 
   const clearSelection = useCallback(() => {
-    setSelectedTaskIds(new Set())
+    setSelectedTaskIds(() => new Set())
+    setMode(null)
   }, [])
 
   const isSelected = useCallback((taskId: string): boolean => {
@@ -40,7 +47,25 @@ export function useMultiSelect() {
     return Array.from(selectedTaskIds)
   }, [selectedTaskIds])
 
-  return {
+  const startGroupCreation = useCallback((): boolean => {
+    if (selectedTaskIds.size < 2) return false
+    setMode('create-group')
+    return true
+  }, [selectedTaskIds.size])
+
+  const confirmGroupCreation = useCallback((): string[] => {
+    const ids = getSelectedIds()
+    setMode(null)
+    setSelectedTaskIds(() => new Set())
+    return ids
+  }, [getSelectedIds])
+
+  const cancelGroupCreation = useCallback((): void => {
+    setMode(null)
+  }, [])
+
+  const contextValue = useMemo(() => ({
+    // Existing exports (unchanged)
     selectedTaskIds,
     isSelecting,
     selectedCount,
@@ -49,5 +74,17 @@ export function useMultiSelect() {
     clearSelection,
     isSelected,
     getSelectedIds,
-  }
+
+    // New exports
+    mode,
+    startGroupCreation,
+    confirmGroupCreation,
+    cancelGroupCreation,
+  }), [
+    selectedTaskIds, isSelecting, selectedCount, toggleSelection, selectSingle,
+    clearSelection, isSelected, getSelectedIds, mode, startGroupCreation,
+    confirmGroupCreation, cancelGroupCreation
+  ])
+
+  return contextValue
 }

@@ -13,11 +13,11 @@
  * The test works with both development server and compiled binary.
  */
 
-import { test, expect, Page } from "@playwright/test';
+import { test, expect, Page } from "@playwright/test";
 
 // Test mode - using the compiled binary on port 3791
 const TEST_MODES = [
-  { name: 'binary', port: 3791 },
+  { name: "binary", port: 3791 },
 ];
 
 for (const mode of TEST_MODES) {

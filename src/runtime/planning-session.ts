@@ -120,7 +120,7 @@ export class PlanningSession {
 
     // Generate session file path for conversation persistence
     const piSessionFile = this.session.piSessionFile ?? getSessionFilePath(this.session.id, this.session.cwd)
-    
+
     // Update session with the session file path if not already set
     if (!this.session.piSessionFile) {
       this.session = this.db.updateWorkflowSession(this.session.id, {
@@ -150,24 +150,37 @@ export class PlanningSession {
         this.process.start()
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      // Wait for process to be ready with a timeout
+      await this.waitForProcessReady(10_000)
 
+      // Configure model if specified (with individual command timeout)
       if (model && model !== "default") {
         const modelSelection = parseModelSelection(model)
         if (modelSelection) {
-          await this.process.send({
-            type: "set_model",
-            provider: modelSelection.provider,
-            modelId: modelSelection.modelId,
-          }, 30_000)
+          try {
+            await this.process.send({
+              type: "set_model",
+              provider: modelSelection.provider,
+              modelId: modelSelection.modelId,
+            }, 30_000)
+          } catch (modelError) {
+            // Log but don't fail - session can continue with default model
+            console.warn(`[PlanningSession] Failed to set model ${model}:`, modelError)
+          }
         }
       }
 
+      // Configure thinking level if specified (with individual command timeout)
       if (thinkingLevel && thinkingLevel !== "default") {
-        await this.process.send({
-          type: "set_thinking_level",
-          level: thinkingLevel,
-        }, 30_000)
+        try {
+          await this.process.send({
+            type: "set_thinking_level",
+            level: thinkingLevel,
+          }, 30_000)
+        } catch (thinkingError) {
+          // Log but don't fail - session can continue with default thinking level
+          console.warn(`[PlanningSession] Failed to set thinking level ${thinkingLevel}:`, thinkingError)
+        }
       }
 
       this.session = this.db.updateWorkflowSession(this.session.id, {
@@ -179,6 +192,15 @@ export class PlanningSession {
 
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      // Clean up the failed process if it exists
+      if (this.process) {
+        try {
+          await this.process.close()
+        } catch {
+          // Ignore cleanup errors
+        }
+        this.process = null
+      }
       this.session = this.db.updateWorkflowSession(this.session.id, {
         status: "failed",
         errorMessage: message,
@@ -187,6 +209,40 @@ export class PlanningSession {
       this.onStatusChange?.(this.session)
       throw error
     }
+  }
+
+  /**
+   * Wait for the Pi process to be ready to accept commands.
+   * Uses exponential backoff polling with a timeout.
+   */
+  private async waitForProcessReady(timeoutMs: number): Promise<void> {
+    const startTime = Date.now()
+    const checkInterval = 100 // Start with 100ms
+    let elapsed = 0
+
+    while (elapsed < timeoutMs) {
+      if (!this.process) {
+        throw new Error("Process was closed during startup")
+      }
+
+      // Try to ping the process with a get_messages check
+      try {
+        // Send a simple get_messages command that should respond quickly
+        // This is a lightweight way to verify the process is ready
+        await this.process.send({ type: "get_messages" }, 5_000)
+        // If we get here, the process is ready
+        return
+      } catch {
+        // Process not ready yet, wait and retry
+      }
+
+      // Wait before next check with exponential backoff (capped at 1s)
+      const waitTime = Math.min(checkInterval * Math.pow(1.5, Math.floor(elapsed / 1000)), 1000)
+      await new Promise((resolve) => setTimeout(resolve, waitTime))
+      elapsed = Date.now() - startTime
+    }
+
+    throw new Error(`Process failed to become ready within ${timeoutMs}ms`)
   }
 
   /**
@@ -577,24 +633,37 @@ export class PlanningSession {
         this.process.start()
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      // Wait for process to be ready with a timeout
+      await this.waitForProcessReady(10_000)
 
+      // Configure model if specified (with individual command timeout)
       if (model && model !== "default") {
         const modelSelection = parseModelSelection(model)
         if (modelSelection) {
-          await this.process.send({
-            type: "set_model",
-            provider: modelSelection.provider,
-            modelId: modelSelection.modelId,
-          }, 30_000)
+          try {
+            await this.process.send({
+              type: "set_model",
+              provider: modelSelection.provider,
+              modelId: modelSelection.modelId,
+            }, 30_000)
+          } catch (modelError) {
+            // Log but don't fail - session can continue with default model
+            console.warn(`[PlanningSession] Failed to set model ${model} during reconnect:`, modelError)
+          }
         }
       }
 
+      // Configure thinking level if specified (with individual command timeout)
       if (thinkingLevel && thinkingLevel !== "default") {
-        await this.process.send({
-          type: "set_thinking_level",
-          level: thinkingLevel,
-        }, 30_000)
+        try {
+          await this.process.send({
+            type: "set_thinking_level",
+            level: thinkingLevel,
+          }, 30_000)
+        } catch (thinkingError) {
+          // Log but don't fail - session can continue with default thinking level
+          console.warn(`[PlanningSession] Failed to set thinking level ${thinkingLevel} during reconnect:`, thinkingError)
+        }
       }
 
       this.session = this.db.updateWorkflowSession(this.session.id, {
@@ -606,6 +675,15 @@ export class PlanningSession {
 
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      // Clean up the failed process if it exists
+      if (this.process) {
+        try {
+          await this.process.close()
+        } catch {
+          // Ignore cleanup errors
+        }
+        this.process = null
+      }
       this.session = this.db.updateWorkflowSession(this.session.id, {
         status: "failed",
         errorMessage: message,

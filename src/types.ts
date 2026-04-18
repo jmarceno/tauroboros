@@ -1,5 +1,9 @@
 export type TaskStatus = "template" | "backlog" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
 
+export type TelegramNotificationLevel = "all" | "failures" | "done_and_failures" | "workflow_done_and_failures"
+
+export type TaskGroupStatus = "active" | "completed" | "archived"
+
 export type ThinkingLevel = "default" | "low" | "medium" | "high"
 
 export type ExecutionPhase = "not_started" | "plan_complete_waiting_approval" | "plan_revision_pending" | "implementation_pending" | "implementation_done"
@@ -20,7 +24,7 @@ export type RunStatus = "pending" | "running" | "done" | "failed" | "skipped"
 
 export type SelectionMode = "pick_best" | "synthesize" | "pick_or_synthesize"
 
-export type WorkflowRunKind = "all_tasks" | "single_task" | "workflow_review"
+export type WorkflowRunKind = "all_tasks" | "single_task" | "workflow_review" | "group_tasks"
 
 export type WorkflowRunStatus = "running" | "paused" | "stopping" | "completed" | "failed"
 
@@ -44,6 +48,24 @@ export interface BestOfNConfig {
   minSuccessfulWorkers: number
   selectionMode: SelectionMode
   verificationCommand?: string
+}
+
+export interface TaskGroup {
+  id: string
+  name: string
+  color: string
+  status: TaskGroupStatus
+  createdAt: number
+  updatedAt: number
+  completedAt: number | null
+}
+
+export interface TaskGroupMember {
+  id: number
+  groupId: string
+  taskId: string
+  idx: number
+  addedAt: number
 }
 
 export interface Task {
@@ -88,6 +110,7 @@ export interface Task {
   archivedAt: number | null
   containerImage?: string
   codeStyleReview: boolean
+  groupId?: string
 }
 
 export interface WorkflowRun {
@@ -109,6 +132,7 @@ export interface WorkflowRun {
   isArchived: boolean
   archivedAt: number | null
   color: string
+  groupId?: string
 }
 
 export interface TaskRun {
@@ -197,7 +221,7 @@ export interface Options {
   codeStylePrompt: string
   telegramBotToken: string
   telegramChatId: string
-  telegramNotificationsEnabled: boolean
+  telegramNotificationLevel: TelegramNotificationLevel
   maxReviews: number
   maxJsonParseRetries: number
   columnSorts?: ColumnSortPreferences
@@ -228,7 +252,7 @@ Steps:
    - Final commit message
    - Whether stash was used
    - Whether conflicts were resolved
-   - Any remaining manual follow-up needed`;
+   - Any remaining manual follow-up needed`
 
 export const DEFAULT_CODE_STYLE_PROMPT = `You are a code style enforcement agent. Review the code in the workspace and apply fixes to ensure compliance.
 
@@ -246,7 +270,7 @@ APPROACH:
 3. Use the edit tool to fix all issues
 4. Confirm when complete
 
-IMPORTANT: You must actively use the edit tool to make changes. Do not just report issues - fix them.`;
+IMPORTANT: You must actively use the edit tool to make changes. Do not just report issues - fix them.`
 
 /**
  * Resolves the code style prompt to use.
@@ -304,6 +328,15 @@ export type WSMessageType =
   | "container_build_completed"
   | "container_build_cancelled"
   | "container_profile_applied"
+  // Task Group events
+  | "task_group_created"
+  | "task_group_updated"
+  | "task_group_deleted"
+  | "task_group_members_added"
+  | "task_group_members_removed"
+  // Group execution lifecycle events (broadcast when group execution is implemented)
+  | "group_execution_started"
+  | "group_execution_complete"
 
 export interface WSMessage {
   type: WSMessageType

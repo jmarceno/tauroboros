@@ -1,4 +1,5 @@
-import { mkdirSync, dirname } from "fs"
+import { mkdirSync } from "fs"
+import { dirname } from "path"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
@@ -7,6 +8,22 @@ import { projectPiEventToSessionMessage } from "./message-projection.ts"
 import { MessageStreamer } from "./message-streamer.ts"
 
 export type PiEventListener = (event: Record<string, unknown>) => void
+
+/**
+ * Error thrown when collectEvents times out but has partial events collected.
+ * The orchestrator can use these events to determine if the task was "essentially complete".
+ */
+export class CollectEventsTimeoutError extends Error {
+  readonly collectedEvents: Record<string, unknown>[]
+  readonly originalTimeoutMs: number
+
+  constructor(collectedEvents: Record<string, unknown>[], timeoutMs: number) {
+    super(`Timeout collecting events after ${timeoutMs}ms (collected ${collectedEvents.length} events)`)
+    this.name = "CollectEventsTimeoutError"
+    this.collectedEvents = collectedEvents
+    this.originalTimeoutMs = timeoutMs
+  }
+}
 export type ExtensionUIRequestHandler = (request: {
   id: string
   method: string
@@ -179,7 +196,14 @@ export class PiRpcProcess {
     const payload = { ...command, id }
     const line = `${JSON.stringify(payload)}\n`
 
-    await this.proc.stdin.write(line)
+    // Write to stdin with a timeout to prevent hanging if process is in bad state
+    const writeTimeoutMs = Math.min(5_000, timeoutMs) // Max 5s for write, or less if total timeout is smaller
+    await Promise.race([
+      this.proc.stdin.write(line),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`Stdin write timeout for command ${command.type}`)), writeTimeoutMs)
+      })
+    ])
 
     if (command.type === "prompt" || command.type === "steer" || command.type === "follow_up") {
       this.isIdle = false
@@ -243,7 +267,9 @@ export class PiRpcProcess {
 
       const timer = setTimeout(() => {
         unsubscribe()
-        reject(new Error(`Timeout collecting events`))
+        // Use CollectEventsTimeoutError to preserve collected events
+        // This allows the orchestrator to determine if the task was "essentially complete"
+        reject(new CollectEventsTimeoutError(events, timeoutMs))
       }, timeoutMs)
 
       const unsubscribe = this.onEvent((event) => {

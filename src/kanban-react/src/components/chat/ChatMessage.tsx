@@ -1,5 +1,6 @@
 import { useMemo, useRef, useEffect, useState } from 'react'
 import type { SessionMessage } from '@/types'
+import { formatRelativeTime, formatLocalDate } from '@/utils/date'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 
@@ -92,17 +93,17 @@ export function ChatMessage({ message, showTimestamp }: ChatMessageProps) {
   const isTool = message.role === 'tool' || message.messageType === 'tool_call' || message.messageType === 'tool_result'
 
   const isThinking = useMemo(() => {
-    const content = message.contentJson as Record<string, unknown> || {}
+    const content = message.contentJson || {}
     return content.isThinking === true || message.messageType === 'thinking'
   }, [message.contentJson, message.messageType])
 
   const isStreaming = useMemo(() => {
-    const content = message.contentJson as Record<string, unknown> || {}
+    const content = message.contentJson || {}
     return content.streaming === true
   }, [message.contentJson])
 
   const messageText = useMemo(() => {
-    const content = message.contentJson as Record<string, unknown> || {}
+    const content = message.contentJson || {}
 
     if (isThinking && typeof content.thinking === 'string') {
       return content.thinking
@@ -132,7 +133,8 @@ export function ChatMessage({ message, showTimestamp }: ChatMessageProps) {
         try {
           const result = hljs.highlight(block.content, { language: block.language || 'plaintext' })
           setHighlightedCode(prev => new Map(prev).set(block.content, result.value))
-        } catch {
+        } catch (err) {
+          console.error('Failed to highlight code:', err)
           setHighlightedCode(prev => new Map(prev).set(block.content, block.content))
         }
       }
@@ -168,11 +170,15 @@ export function ChatMessage({ message, showTimestamp }: ChatMessageProps) {
   }
 
   const formatTimestamp = (timestamp: number) => {
-    const date = new Date(timestamp * 1000)
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    return formatRelativeTime(timestamp)
   }
 
   const formatDate = (timestamp: number) => {
+    // Handle invalid timestamps gracefully
+    if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp <= 0) {
+      return 'Unknown date'
+    }
+
     const date = new Date(timestamp * 1000)
     const today = new Date()
     const yesterday = new Date(today)
@@ -183,7 +189,7 @@ export function ChatMessage({ message, showTimestamp }: ChatMessageProps) {
     } else if (date.toDateString() === yesterday.toDateString()) {
       return 'Yesterday'
     } else {
-      return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+      return formatLocalDate(timestamp)
     }
   }
 

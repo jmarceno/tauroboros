@@ -57,6 +57,10 @@ export default {
         'slide-out': 'slideOut 0.3s ease',
         'pulse': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'blink': 'blink 1s infinite',
+        'fade-in-up': 'fadeInUp 0.3s ease-out',
+        'slide-in-from-backlog': 'slideInFromBacklog 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+        'slide-out-to-backlog': 'slideOutToBacklog 0.2s ease-in',
+        'pulse-glow': 'pulseGlow 2s infinite',
       },
       keyframes: {
         spin: {
@@ -78,6 +82,107 @@ export default {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.3' },
         },
+        fadeInUp: {
+          'from': { 
+            opacity: '0',
+            transform: 'translateX(-50%) translateY(1rem)',
+          },
+          'to': { 
+            opacity: '1',
+            transform: 'translateX(-50%) translateY(0)',
+          },
+        },
+        slideInFromBacklog: {
+          'from': {
+            transform: 'translateX(-20px) scale(0.95)',
+            opacity: '0',
+          },
+          'to': {
+            transform: 'translateX(0) scale(1)',
+            opacity: '1',
+          },
+        },
+        slideOutToBacklog: {
+          'from': {
+            transform: 'translateX(0) scale(1)',
+            opacity: '1',
+          },
+          'to': {
+            transform: 'translateX(-20px) scale(0.95)',
+            opacity: '0',
+          },
+        },
+        pulseGlow: {
+          '0%, 100%': {
+            boxShadow: '0 0 8px var(--tw-shadow-color, rgba(0, 212, 255, 0.3))',
+          },
+          '50%': {
+            boxShadow: '0 0 16px var(--tw-shadow-color, rgba(0, 212, 255, 0.6))',
+          },
+        },
+      },
+      boxShadow: {
+        'chat-panel': '-4px 0 20px rgba(0,0,0,0.5)',
+        'chat-toggle': '-2px 0 12px rgba(0, 212, 255, 0.3)',
+        'minimized': '0 4px 12px rgba(0,0,0,0.3)',
+        'group-panel': '4px 0 24px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 212, 255, 0.1)',
+        'card-highlight': '0 0 12px rgba(0, 212, 255, 0.4), 0 0 20px rgba(0, 212, 255, 0.2), inset 0 0 12px rgba(0, 212, 255, 0.1)',
+        'status-dot': '0 0 4px var(--tw-shadow-color, theme(colors.accent.success))',
+        'tab-status-online': '0 0 4px theme(colors.accent.success)',
+      },
+      transitionProperty: {
+        'right': 'right',
+        'background': 'background-color, background',
+      },
+      width: {
+        'sidebar': '240px',
+        'kanban-column': '300px',
+        'chat-min': '350px',
+        'group-panel': '350px',
+        'group-panel-lg': '300px',
+      },
+      maxWidth: {
+        'chat-tab': '160px',
+        'minimized-session': '200px',
+        'modal': 'min(560px, calc(100vw - 40px))',
+        'modal-sm': '400px',
+        'group-panel-mobile': '400px',
+      },
+      height: {
+        'sidebar-header': '3.5rem',
+        'top-bar': '3.5rem',
+        'scrollbar': '6px',
+      },
+      maxHeight: {
+        'modal': 'calc(100vh - 32px)',
+        'modal-body': 'calc(100vh - 160px)',
+        'modal-body-sm': 'calc(100vh - 180px)',
+        'textarea-xl': '180px',
+        'textarea-lg': '120px',
+        'textarea-md': '100px',
+        'panel': '70vh',
+      },
+      minHeight: {
+        'textarea-xl': '180px',
+        'textarea-lg': '120px',
+        'textarea-md': '100px',
+        'kanban-container': '100%',
+        '80': '80px',
+        '96': '96px',
+      },
+      fontSize: {
+        'xxs': '10px',
+      },
+      spacing: {
+        '0.5': '0.125rem',
+        '1.5': '0.375rem',
+        '2.5': '0.625rem',
+        '3.5': '0.875rem',
+      },
+      zIndex: {
+        '40': '40',
+        '50': '50',
+        '100': '100',
       },
     },
   },

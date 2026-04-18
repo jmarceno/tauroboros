@@ -12,6 +12,8 @@ import type {
   SessionMessage,
   Task,
   TaskCandidate,
+  TaskGroup,
+  TaskGroupMember,
   TaskRun,
   TaskStatus,
   ThinkingLevel,
@@ -34,6 +36,8 @@ export type {
   SessionMessage,
   Task,
   TaskCandidate,
+  TaskGroup,
+  TaskGroupMember,
   TaskRun,
   TaskStatus,
   ThinkingLevel,
@@ -175,6 +179,7 @@ export interface CreateWorkflowRunInput {
   startedAt?: number
   finishedAt?: number | null
   color?: string
+  groupId?: string
 }
 
 export interface UpdateWorkflowRunInput {
@@ -188,6 +193,7 @@ export interface UpdateWorkflowRunInput {
   stopRequested?: boolean
   errorMessage?: string | null
   finishedAt?: number | null
+  groupId?: string
 }
 
 export interface CreateTaskInput {
@@ -468,4 +474,34 @@ export interface WorkflowRunIndicators {
 export interface CreateWorkflowRunIndicatorsInput {
   id: string
   jsonOutFails?: Record<string, unknown>
+}
+
+// Task Group Types
+
+export interface CreateTaskGroupDTO {
+  id?: string
+  name: string
+  color?: string
+  status?: TaskGroup["status"]
+  createdAt?: number
+  completedAt?: number | null
+  memberTaskIds?: string[]
+}
+
+export interface UpdateTaskGroupDTO {
+  name?: string
+  color?: string
+  status?: TaskGroup["status"]
+  completedAt?: number | null
+}
+
+export interface AddTasksToGroupDTO {
+  groupId: string
+  taskIds: string[]
+  startIdx?: number
+}
+
+export interface RemoveTasksFromGroupDTO {
+  groupId: string
+  taskIds: string[]
 }
