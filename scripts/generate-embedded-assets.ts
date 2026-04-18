@@ -17,8 +17,7 @@ const DIST_DIR = join(KANBAN_DIR, "dist")
 const ASSETS_DIR = join(DIST_DIR, "assets")
 const OUTPUT_FILE = join(PROJECT_ROOT, "src", "server", "generated-assets.ts")
 
-// Resource directories for embedding
-const EXTENSIONS_DIR = join(PROJECT_ROOT, "extensions")
+// Resource directories for embedding (extensions deprecated)
 const SKILLS_DIR = join(PROJECT_ROOT, "skills")
 const CONFIG_DIR = join(PROJECT_ROOT, "src", "config")
 const DOCKER_DIR = join(PROJECT_ROOT, "docker")
@@ -130,9 +129,6 @@ function generateAssetsModule(allFiles: AssetFile[]): string {
       key = file.relativePath.startsWith("assets/")
         ? `/${file.relativePath}`
         : `/${file.relativePath}`
-    } else if (file.resourceType === "extension") {
-      // Extensions go under /__embedded__/extensions/
-      key = `/__embedded__/extensions/${file.relativePath}`
     } else if (file.resourceType === "skill") {
       // Skills go under /__embedded__/skills/
       key = `/__embedded__/skills/${file.relativePath}`
@@ -182,18 +178,6 @@ function generateAssetsModule(allFiles: AssetFile[]): string {
   lines.push("}")
   lines.push("")
   lines.push("// Resource accessors for extraction")
-  lines.push("export function getAllExtensionAssets(): Array<{ path: string; asset: EmbeddedAsset }> {")
-  lines.push("  const result: Array<{ path: string; asset: EmbeddedAsset }> = []")
-  lines.push('  const prefix = "/__embedded__/extensions/"')
-  lines.push("  for (const [key, asset] of embeddedAssets.entries()) {")
-  lines.push("    if (key.startsWith(prefix) && asset.resourceType === 'extension') {")
-  lines.push("      const relativePath = key.slice(prefix.length)")
-  lines.push("      result.push({ path: relativePath, asset })")
-  lines.push("    }")
-  lines.push("  }")
-  lines.push("  return result")
-  lines.push("}")
-  lines.push("")
   lines.push("export function getAllSkillAssets(): Array<{ path: string; asset: EmbeddedAsset }> {")
   lines.push("  const result: Array<{ path: string; asset: EmbeddedAsset }> = []")
   lines.push('  const prefix = "/__embedded__/skills/"')
@@ -255,16 +239,6 @@ async function main(): Promise<void> {
   const kanbanFiles = collectFiles(DIST_DIR, "", "kanban")
   allFiles.push(...kanbanFiles)
   console.log(`  → Found ${kanbanFiles.length} kanban files`)
-
-  // Collect extension files
-  if (existsSync(EXTENSIONS_DIR)) {
-    console.log("  → Scanning extensions directory...")
-    const extensionFiles = collectFiles(EXTENSIONS_DIR, "", "extension")
-    allFiles.push(...extensionFiles)
-    console.log(`  → Found ${extensionFiles.length} extension files`)
-  } else {
-    console.log("  → No extensions directory found, skipping...")
-  }
 
   // Collect skill files
   if (existsSync(SKILLS_DIR)) {
