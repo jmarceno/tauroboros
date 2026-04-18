@@ -101,7 +101,6 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
 
     try {
       const planningSession = await api.createPlanningSession({
-        cwd: window.location.pathname,
         model,
         thinkingLevel: thinkingLevel as ThinkingLevel | undefined,
       })

@@ -225,10 +225,11 @@ export class PlanningSession {
         throw new Error("Process was closed during startup")
       }
 
-      // Try to ping the process with a noop/status check
+      // Try to ping the process with a get_messages check
       try {
-        // Send a simple status/ping command that should respond quickly
-        await this.process.send({ type: "status" }, 5_000)
+        // Send a simple get_messages command that should respond quickly
+        // This is a lightweight way to verify the process is ready
+        await this.process.send({ type: "get_messages" }, 5_000)
         // If we get here, the process is ready
         return
       } catch {
