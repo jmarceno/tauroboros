@@ -7,6 +7,7 @@ import {
   ModalContext, ContainerStatusContext, SessionUsageContext, TaskLastUpdateContext,
   TaskGroupsContext,
 } from '@/contexts/AppContext'
+
 // Direct imports from hook files (avoid barrel file)
 import { useTasks } from '@/hooks/useTasks'
 import { useRuns } from '@/hooks/useRuns'
@@ -31,7 +32,9 @@ import type { Task, TaskGroup, TaskStatus } from '@/types'
 // Modal data type definitions to replace unsafe 'as' casts
 type ModalType = 'task' | 'options' | 'executionGraph' | 'approve' | 'revision' | 'startSingle' | 'session' | 'taskSessions' | 'bestOfNDetail' | 'batchEdit' | 'planningPrompt'
 
-// Type guards for modal data validation using proper validation functions
+const VALID_MODALS = new Set<ModalType>(['task', 'options', 'executionGraph', 'approve', 'revision', 'startSingle', 'session', 'taskSessions', 'bestOfNDetail', 'batchEdit', 'planningPrompt'])
+
+// Type guards for modal data validation
 function hasMode(data: Record<string, unknown>): data is { mode: string; taskId?: string; createStatus?: string; seedTaskId?: string } {
   return typeof data.mode === 'string'
 }
@@ -74,9 +77,21 @@ import { PlanningPromptModal } from '@/components/modals/PlanningPromptModal'
 import { ContainerConfigModal } from '@/components/modals/ContainerConfigModal'
 import { GroupCreateModal } from '@/components/modals/GroupCreateModal'
 import { RestoreToGroupModal } from '@/components/modals/RestoreToGroupModal'
+import { memo } from 'react'
+import type { TaskModalProps } from '@/components/modals/TaskModal'
+
+const MemoizedTaskModal = memo(function MemoizedTaskModal(props: TaskModalProps) {
+  return <TaskModal {...props} />
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.mode === nextProps.mode &&
+    prevProps.taskId === nextProps.taskId &&
+    prevProps.createStatus === nextProps.createStatus &&
+    prevProps.seedTaskId === nextProps.seedTaskId
+  )
+})
 
 function App() {
-  // Container status
   const [containerStatus, setContainerStatus] = useState<{ enabled: boolean; available: boolean; hasRunningWorkflows: boolean; message: string } | null>(null)
   const isContainerEnabled = containerStatus?.enabled ?? false
 
@@ -105,7 +120,6 @@ function App() {
   const taskLastUpdateHook = useTaskLastUpdate(wsHook)
   const taskGroupsHook = useTaskGroups({ showToast: toastsHook.showToast })
 
-  // Workflow control
   const workflowControl = useWorkflowControl(
     (state) => {
       toastsHook.addLog(`Workflow state: ${state}`, "info")
@@ -152,11 +166,9 @@ function App() {
     return members
   }, [tasksHook.tasks])
 
-  const validModals = new Set<ModalType>(['task', 'options', 'executionGraph', 'approve', 'revision', 'startSingle', 'session', 'taskSessions', 'bestOfNDetail', 'batchEdit', 'planningPrompt'])
-
   const openModal = useCallback((name: string, data?: Record<string, unknown>) => {
-    if (!validModals.has(name as ModalType)) {
-      throw new Error(`Invalid modal name: ${name}. Expected one of: ${Array.from(validModals).join(', ')}`)
+    if (!VALID_MODALS.has(name as ModalType)) {
+      throw new Error(`Invalid modal name: ${name}. Expected one of: ${Array.from(VALID_MODALS).join(', ')}`)
     }
     setActiveModal(name as ModalType)
     setModalData(data ?? {})
@@ -384,7 +396,7 @@ function App() {
     setGroupCreateModalData({ taskIds, defaultName })
     setShowGroupCreateModal(true)
     multiSelectHook.startGroupCreation()
-  }, [taskGroupsHook.activeGroups.length, taskGroupsHook.activeGroups, multiSelectHook, toastsHook])
+  }, [taskGroupsHook.activeGroups, multiSelectHook, toastsHook])
 
   const closeGroupCreateModal = useCallback(() => {
     setShowGroupCreateModal(false)
@@ -473,6 +485,7 @@ function App() {
   })
 
   useEffect(() => {
+    let cancelled = false
     const init = async () => {
       await optionsHook.loadOptions()
 
@@ -484,28 +497,33 @@ function App() {
         loadContainerStatus(),
       ])
 
+      if (cancelled) return
+
       runsHook.setTasksRef(tasksHook.tasks)
 
       const hasPaused = await workflowControl.checkPausedState()
-      if (hasPaused) {
+      if (hasPaused && !cancelled) {
         toastsHook.showToast('Found paused workflow. Click Resume to continue.', 'info')
       }
 
-      if (runsHook.activeRuns?.length > 0) {
+      if (runsHook.activeRuns?.length > 0 && !cancelled) {
         const activeRun = runsHook.activeRuns[0]
         workflowControl.setRun(activeRun)
       }
 
       const hashMatch = window.location.hash.match(/^#session\/(.+)$/)
-      if (hashMatch) {
+      if (hashMatch && !cancelled) {
         const sessionId = decodeURIComponent(hashMatch[1])
         openModal('session', { sessionId })
       }
 
-      toastsHook.addLog('Kanban UI ready', 'info')
+      if (!cancelled) {
+        toastsHook.addLog('Kanban UI ready', 'info')
+      }
     }
     init()
-  }, [])
+    return () => { cancelled = true }
+  }, [openModal, optionsHook, modelSearchHook, runsHook, tasksHook, taskGroupsHook, loadContainerStatus, workflowControl, toastsHook])
 
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   useEffect(() => {
@@ -543,23 +561,9 @@ function App() {
     return () => window.removeEventListener('hashchange', handleHashChange)
   }, [activeModal, openModal, closeModal])
 
-  const tasksContextValue = useMemo(() => tasksHook, [tasksHook])
-  const runsContextValue = useMemo(() => runsHook, [runsHook])
-  const optionsContextValue = useMemo(() => optionsHook, [optionsHook])
-  const toastsContextValue = useMemo(() => toastsHook, [toastsHook])
-  const modelSearchContextValue = useMemo(() => modelSearchHook, [modelSearchHook])
-  const sessionContextValue = useMemo(() => sessionHook, [sessionHook])
-  const wsContextValue = useMemo(() => wsHook, [wsHook])
-  const workflowControlContextValue = useMemo(() => workflowControl, [workflowControl])
-  const multiSelectContextValue = useMemo(() => multiSelectHook, [multiSelectHook])
-  const planningChatContextValue = useMemo(() => planningChatHook, [planningChatHook])
   const modalContextValue = useMemo(() => ({ activeModal, modalData, openModal, closeModal, closeTopmostModal }), [activeModal, modalData, openModal, closeModal, closeTopmostModal])
   const containerStatusContextValue = useMemo(() => ({ containerStatus, isContainerEnabled, loadContainerStatus }), [containerStatus, isContainerEnabled, loadContainerStatus])
-  const sessionUsageContextValue = useMemo(() => sessionUsageHook, [sessionUsageHook])
-  const taskLastUpdateContextValue = useMemo(() => taskLastUpdateHook, [taskLastUpdateHook])
-  const taskGroupsContextValue = useMemo(() => taskGroupsHook, [taskGroupsHook])
 
-  // Memoize Sidebar callbacks
   const onToggleExecution = useCallback(async () => {
     const hasPaused = await workflowControl.checkPausedState()
     if (hasPaused) {
@@ -646,7 +650,6 @@ function App() {
 
   const onTogglePlanningChat = useCallback(() => planningChatHook.togglePanel(), [planningChatHook])
 
-  // Memoize KanbanBoard callbacks
   const onOpenTask = useCallback((id: string, e?: React.MouseEvent) => {
     if (e && (e.ctrlKey || e.metaKey)) {
       multiSelectHook.toggleSelection(id, e)
@@ -777,7 +780,6 @@ function App() {
     await taskGroupsHook.updateGroup(groupId, { name: newName })
   }, [taskGroupsHook])
 
-  // Memoize TabbedLogPanel callbacks
   const onArchiveRun = useCallback(async (id: string) => {
     try {
       await runsHook.archiveRun(id)
@@ -802,7 +804,6 @@ function App() {
   const onHighlightRun = useCallback((runId: string) => setHighlightedRunId(runId), [setHighlightedRunId])
   const onClearHighlight = useCallback(() => setHighlightedRunId(null), [setHighlightedRunId])
 
-  // Memoize GroupActionBar callbacks
   const onCreateGroup = useCallback(() => {
     const selectedIds = multiSelectHook.getSelectedIds()
     openGroupCreateModal(selectedIds)
@@ -812,21 +813,21 @@ function App() {
   const onClearSelection = useCallback(() => multiSelectHook.clearSelection(), [multiSelectHook])
 
   return (
-    <TasksContext.Provider value={tasksContextValue}>
-      <RunsContext.Provider value={runsContextValue}>
-        <OptionsContext.Provider value={optionsContextValue}>
-          <ToastContext.Provider value={toastsContextValue}>
-            <ModelSearchContext.Provider value={modelSearchContextValue}>
-              <SessionContext.Provider value={sessionContextValue}>
-                <WebSocketContext.Provider value={wsContextValue}>
-                  <WorkflowControlContext.Provider value={workflowControlContextValue}>
-                    <MultiSelectContext.Provider value={multiSelectContextValue}>
-                      <PlanningChatContext.Provider value={planningChatContextValue}>
+    <TasksContext.Provider value={tasksHook as unknown as React.ContextType<typeof TasksContext>}>
+      <RunsContext.Provider value={runsHook}>
+        <OptionsContext.Provider value={optionsHook as unknown as React.ContextType<typeof OptionsContext>}>
+          <ToastContext.Provider value={toastsHook}>
+            <ModelSearchContext.Provider value={modelSearchHook}>
+              <SessionContext.Provider value={sessionHook}>
+                <WebSocketContext.Provider value={wsHook as unknown as React.ContextType<typeof WebSocketContext>}>
+                  <WorkflowControlContext.Provider value={workflowControl}>
+                    <MultiSelectContext.Provider value={multiSelectHook}>
+                      <PlanningChatContext.Provider value={planningChatHook as unknown as React.ContextType<typeof PlanningChatContext>}>
                         <ModalContext.Provider value={modalContextValue}>
                           <ContainerStatusContext.Provider value={containerStatusContextValue}>
-                            <SessionUsageContext.Provider value={sessionUsageContextValue}>
-                              <TaskLastUpdateContext.Provider value={taskLastUpdateContextValue}>
-                              <TaskGroupsContext.Provider value={taskGroupsContextValue}>
+                            <SessionUsageContext.Provider value={sessionUsageHook}>
+                              <TaskLastUpdateContext.Provider value={taskLastUpdateHook}>
+                              <TaskGroupsContext.Provider value={taskGroupsHook}>
                               <div className="app-layout bg-dark-bg text-dark-text">
                               <Sidebar
                                 consumedSlots={consumedSlotsValue}
@@ -928,7 +929,7 @@ function App() {
                               />
 
                               {activeModal === 'task' && hasMode(modalData) && ['create', 'edit', 'deploy'].includes(modalData.mode) && (
-                                <TaskModal
+                                <MemoizedTaskModal
                                   mode={modalData.mode as 'create' | 'edit' | 'deploy'}
                                   taskId={hasTaskId(modalData) ? modalData.taskId : undefined}
                                   createStatus={modalData.createStatus === 'template' ? 'template' : 'backlog'}

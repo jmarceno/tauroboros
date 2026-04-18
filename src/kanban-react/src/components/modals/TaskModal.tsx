@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, memo } from 'react'
 import { ModalWrapper } from '../common/ModalWrapper'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
@@ -6,9 +6,9 @@ import { MarkdownEditor } from '../common/MarkdownEditor'
 import { HelpButton } from '../common/HelpButton'
 import { useTasksContext, useOptionsContext, useModelSearchContext, useToastContext } from '@/contexts/AppContext'
 import { useApi } from '@/hooks'
-import type { Task, TaskStatus, ThinkingLevel, ExecutionStrategy, BestOfNSlot } from '@/types'
+import type { ThinkingLevel, ExecutionStrategy, BestOfNSlot } from '@/types'
 
-interface TaskModalProps {
+export interface TaskModalProps {
   mode: 'create' | 'edit' | 'deploy' | 'view'
   taskId?: string
   createStatus?: 'template' | 'backlog'
@@ -16,7 +16,7 @@ interface TaskModalProps {
   onClose: () => void
 }
 
-export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, onClose }: TaskModalProps) {
+export const TaskModal = memo(function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, onClose }: TaskModalProps) {
   const tasks = useTasksContext()
   const optionsContext = useOptionsContext()
   const modelSearch = useModelSearchContext()
@@ -25,15 +25,25 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
   const getBranches = api.getBranches
   const getContainerImages = api.getContainerImages
 
-  const existingTask = taskId ? tasks.getTaskById(taskId) : null
-  const seedTask = seedTaskId ? tasks.getTaskById(seedTaskId) : null
+  const [taskSnapshot] = useState(() => {
+    const existingTask = taskId ? tasks.getTaskById(taskId) : null
+    const seedTask = seedTaskId ? tasks.getTaskById(seedTaskId) : null
+    return {
+      existingTask: existingTask ? { ...existingTask } : null,
+      seedTask: seedTask ? { ...seedTask } : null,
+    }
+  })
+
+  // Use snapshot as the stable source of truth for initial values
+  const existingTask = taskSnapshot.existingTask
+  const seedTask = taskSnapshot.seedTask
 
   const [name, setName] = useState(existingTask?.name || seedTask?.name || '')
   const [prompt, setPrompt] = useState(existingTask?.prompt || seedTask?.prompt || '')
   const [branch, setBranch] = useState('')
   const [planModel, setPlanModel] = useState(existingTask?.planModel || optionsContext.options?.planModel || '')
   const [executionModel, setExecutionModel] = useState(existingTask?.executionModel || optionsContext.options?.executionModel || '')
-  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(existingTask?.thinkingLevel || optionsContext.options?.thinkingLevel || 'default')
+  const [thinkingLevel] = useState<ThinkingLevel>(existingTask?.thinkingLevel || optionsContext.options?.thinkingLevel || 'default')
   const [planThinkingLevel, setPlanThinkingLevel] = useState<ThinkingLevel>(existingTask?.planThinkingLevel || optionsContext.options?.planThinkingLevel || 'default')
   const [executionThinkingLevel, setExecutionThinkingLevel] = useState<ThinkingLevel>(existingTask?.executionThinkingLevel || optionsContext.options?.executionThinkingLevel || 'default')
   const [planmode, setPlanmode] = useState(existingTask?.planmode ?? false)
@@ -78,30 +88,30 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
         setAvailableBranches(branchData.branches || [])
         setAvailableImages(imageData.images || [])
 
-        if (existingTask?.branch) {
-          setBranch(existingTask.branch)
-        } else if (seedTask?.branch) {
-          setBranch(seedTask.branch)
+        if (taskSnapshot.existingTask?.branch) {
+          setBranch(taskSnapshot.existingTask.branch)
+        } else if (taskSnapshot.seedTask?.branch) {
+          setBranch(taskSnapshot.seedTask.branch)
         } else if (branchData.current) {
           setBranch(branchData.current)
         } else if (branchData.branches?.[0]) {
           setBranch(branchData.branches[0])
         }
 
-        if (existingTask?.containerImage) {
-          setContainerImage(existingTask.containerImage)
+        if (taskSnapshot.existingTask?.containerImage) {
+          setContainerImage(taskSnapshot.existingTask.containerImage)
         } else if (optionsContext.options?.container?.image) {
           setContainerImage(optionsContext.options.container.image)
         }
 
-        if (existingTask?.executionStrategy === 'best_of_n' && existingTask.bestOfNConfig) {
-          setBonWorkers(existingTask.bestOfNConfig.workers.map(w => ({ ...w })))
-          setBonReviewers(existingTask.bestOfNConfig.reviewers.map(r => ({ ...r })))
-          setBonFinalApplierModel(existingTask.bestOfNConfig.finalApplier.model)
-          setBonFinalApplierSuffix(existingTask.bestOfNConfig.finalApplier.taskSuffix || '')
-          setBonSelectionMode(existingTask.bestOfNConfig.selectionMode)
-          setBonMinSuccessful(existingTask.bestOfNConfig.minSuccessfulWorkers)
-          setBonVerificationCmd(existingTask.bestOfNConfig.verificationCommand || '')
+        if (taskSnapshot.existingTask?.executionStrategy === 'best_of_n' && taskSnapshot.existingTask.bestOfNConfig) {
+          setBonWorkers(taskSnapshot.existingTask.bestOfNConfig.workers.map(w => ({ ...w })))
+          setBonReviewers(taskSnapshot.existingTask.bestOfNConfig.reviewers.map(r => ({ ...r })))
+          setBonFinalApplierModel(taskSnapshot.existingTask.bestOfNConfig.finalApplier.model)
+          setBonFinalApplierSuffix(taskSnapshot.existingTask.bestOfNConfig.finalApplier.taskSuffix || '')
+          setBonSelectionMode(taskSnapshot.existingTask.bestOfNConfig.selectionMode)
+          setBonMinSuccessful(taskSnapshot.existingTask.bestOfNConfig.minSuccessfulWorkers)
+          setBonVerificationCmd(taskSnapshot.existingTask.bestOfNConfig.verificationCommand || '')
         }
       } catch (e) {
         console.error('Failed to load data:', e)
@@ -111,44 +121,42 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
     }
     loadData()
     return () => { cancelled = true }
-  }, [getBranches, getContainerImages, existingTask, seedTask, optionsContext.options])
+  }, [getBranches, getContainerImages, taskSnapshot, optionsContext.options])
 
-  // Show backlog tasks for adding new dependencies
-  // Also show done tasks that are already dependencies so they can be removed
-  // Memoized to avoid recomputation on every render for large task lists
+  const [tasksSnapshot] = useState(() => tasks.tasks)
+
   const availableRequirements = useMemo(() => {
-    return tasks.tasks.filter(t => {
-      if (isViewOnly) return t.id !== taskId
-      if (t.id === taskId) return false
-      // Always show backlog tasks as potential new dependencies
+    const stableTaskId = taskSnapshot.existingTask?.id ?? taskId
+    return tasksSnapshot.filter(t => {
+      if (isViewOnly) return t.id !== stableTaskId
+      if (t.id === stableTaskId) return false
       if (t.status === 'backlog') return true
-      // Show done tasks only if they are already in requirements (so they can be removed)
       if (t.status === 'done' && requirements.includes(t.id)) return true
       return false
     })
-  }, [tasks.tasks, taskId, isViewOnly, requirements])
+  }, [tasksSnapshot, taskId, isViewOnly, requirements, taskSnapshot.existingTask?.id])
 
   const addBonWorker = () => {
-    setBonWorkers([...bonWorkers, { model: '', count: 1, suffix: '' }])
+    setBonWorkers([...bonWorkers, { model: '', count: 1, taskSuffix: '' }])
   }
 
   const removeBonWorker = (index: number) => {
     setBonWorkers(bonWorkers.filter((_, i) => i !== index))
   }
 
-  const updateBonWorker = (index: number, field: 'model' | 'count' | 'suffix', value: string | number) => {
+  const updateBonWorker = (index: number, field: 'model' | 'count' | 'taskSuffix', value: string | number) => {
     setBonWorkers(bonWorkers.map((w, i) => i === index ? { ...w, [field]: value } : w))
   }
 
   const addBonReviewer = () => {
-    setBonReviewers([...bonReviewers, { model: '', count: 1, suffix: '' }])
+    setBonReviewers([...bonReviewers, { model: '', count: 1, taskSuffix: '' }])
   }
 
   const removeBonReviewer = (index: number) => {
     setBonReviewers(bonReviewers.filter((_, i) => i !== index))
   }
 
-  const updateBonReviewer = (index: number, field: 'model' | 'count' | 'suffix', value: string | number) => {
+  const updateBonReviewer = (index: number, field: 'model' | 'count' | 'taskSuffix', value: string | number) => {
     setBonReviewers(bonReviewers.map((r, i) => i === index ? { ...r, [field]: value } : r))
   }
 
@@ -214,12 +222,12 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
           workers: bonWorkers.map(w => ({
             model: w.model,
             count: w.count || 1,
-            taskSuffix: w.suffix || undefined,
+            taskSuffix: w.taskSuffix || undefined,
           })),
           reviewers: bonReviewers.map(r => ({
             model: r.model,
             count: r.count || 1,
-            taskSuffix: r.suffix || undefined,
+            taskSuffix: r.taskSuffix || undefined,
           })),
           finalApplier: {
             model: modelSearch.normalizeValue(bonFinalApplierModel),
@@ -235,10 +243,10 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
         await tasks.updateTask(taskId, taskData)
         toasts.showToast('Task updated', 'success')
       } else if (isDeploy && seedTaskId) {
-        await tasks.createTask({ ...taskData, status: 'backlog' })
+        await tasks.createTask({ ...taskData, status: 'backlog' } as { name: string; prompt: string; status: 'backlog' })
         toasts.showToast('Template deployed', 'success')
       } else {
-        await tasks.createTask({ ...taskData, status: createStatus })
+        await tasks.createTask({ ...taskData, status: createStatus } as { name: string; prompt: string; status: typeof createStatus })
         toasts.showToast('Task created', 'success')
       }
       onClose()
@@ -414,8 +422,8 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
                       type="text"
                       placeholder="Suffix (optional)"
                       className="form-input flex-1"
-                      value={slot.suffix || ''}
-                      onChange={(e) => updateBonWorker(i, 'suffix', e.target.value)}
+                      value={slot.taskSuffix || ''}
+                      onChange={(e) => updateBonWorker(i, 'taskSuffix', e.target.value)}
                       disabled={isViewOnly}
                     />
                     {!isViewOnly && (
@@ -467,8 +475,8 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
                       type="text"
                       placeholder="Suffix (optional)"
                       className="form-input flex-1"
-                      value={slot.suffix || ''}
-                      onChange={(e) => updateBonReviewer(i, 'suffix', e.target.value)}
+                      value={slot.taskSuffix || ''}
+                      onChange={(e) => updateBonReviewer(i, 'taskSuffix', e.target.value)}
                       disabled={isViewOnly}
                     />
                     {!isViewOnly && (
@@ -648,4 +656,4 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
       </form>
     </ModalWrapper>
   )
-}
+})
