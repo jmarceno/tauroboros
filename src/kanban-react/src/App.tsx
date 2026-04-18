@@ -19,6 +19,7 @@ import type { Task, TaskStatus, WorkflowRun } from "@/types"
 import { Sidebar } from "@/components/board/Sidebar"
 import { TopBar } from "@/components/board/TopBar"
 import { KanbanBoard } from "@/components/board/KanbanBoard"
+import { GroupActionBar } from "@/components/board/GroupActionBar"
 import { TabbedLogPanel } from "@/components/common/TabbedLogPanel"
 import { ToastContainer } from "@/components/common/ToastContainer"
 import { ChatContainer } from "@/components/chat/ChatContainer"
@@ -834,27 +835,15 @@ function App() {
                                 onRemove={toastsHook.removeToast}
                               />
 
-                              {multiSelectHook.isSelecting && (
-                                <div className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-dark-surface border border-dark-border rounded-lg shadow-lg px-4 py-3 flex items-center gap-4 z-50">
-                                  <span className="text-sm font-medium text-dark-text">
-                                    {multiSelectHook.selectedCount} task{multiSelectHook.selectedCount === 1 ? '' : 's'} selected
-                                  </span>
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      className="btn btn-primary btn-sm"
-                                      onClick={() => openModal('batchEdit', { taskIds: multiSelectHook.getSelectedIds() })}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      className="btn btn-sm"
-                                      onClick={multiSelectHook.clearSelection}
-                                    >
-                                      Clear
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
+                              <GroupActionBar
+                                selectedCount={multiSelectHook.selectedCount}
+                                onCreateGroup={() => {
+                                  multiSelectHook.startGroupCreation()
+                                  openModal('batchEdit', { taskIds: multiSelectHook.getSelectedIds() })
+                                }}
+                                onBatchEdit={() => openModal('batchEdit', { taskIds: multiSelectHook.getSelectedIds() })}
+                                onClear={multiSelectHook.clearSelection}
+                              />
 
                               {activeModal === 'task' && (
                                 <TaskModal

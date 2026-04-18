@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import type { SessionMessage } from "@/types"
-import type { useWebSocket } from "./useWebSocket"
+import type { useWebSocket } from "./useWebSocket.ts"
 
 const CACHE_TTL = 60000 // 1 minute cache for last updates
 

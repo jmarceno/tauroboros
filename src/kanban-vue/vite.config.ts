@@ -1,17 +1,17 @@
-import type { UserConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
-import { resolve } from 'path'
+import type { UserConfig } from "vite"
+import vue from "@vitejs/plugin-vue"
+import { resolve } from "path"
 
 // Dev mode requires explicit backend port - dynamic port (0) not supported in dev mode
-const SERVER_PORT = process.env.SERVER_PORT || '3789';
-const DEV_PORT = process.env.DEV_PORT || '5173';
+const SERVER_PORT = process.env.SERVER_PORT || "3789";
+const DEV_PORT = process.env.DEV_PORT || "5173";
 
 // Only check SERVER_PORT for dev mode (when not building)
-const isDev = process.env.NODE_ENV !== 'production' && !process.argv.includes('build');
-if (isDev && (!SERVER_PORT || SERVER_PORT === '0')) {
+const isDev = process.env.NODE_ENV !== "production" && !process.argv.includes("build");
+if (isDev && (!SERVER_PORT || SERVER_PORT === "0")) {
   throw new Error(
-    'Dev mode requires an explicit SERVER_PORT. ' +
-    'Run with: SERVER_PORT=3789 bun run dev'
+    "Dev mode requires an explicit SERVER_PORT. " +
+    "Run with: SERVER_PORT=3789 bun run dev"
   )
 }
 
@@ -19,16 +19,16 @@ const config: UserConfig = {
   plugins: [vue()],
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'src'),
+      "@": resolve(__dirname, "src"),
     },
   },
   build: {
-    outDir: 'dist',
+    outDir: "dist",
     emptyOutDir: true,
     rollupOptions: {
       output: {
         manualChunks: {
-          'vendor': ['vue', 'fuse.js', 'radix-vue'],
+          "vendor": ["vue", "fuse.js", "radix-vue"],
         },
       },
     },
@@ -36,11 +36,11 @@ const config: UserConfig = {
   server: {
     port: parseInt(DEV_PORT, 10),
     proxy: {
-      '/api': {
+      "/api": {
         target: `http://localhost:${SERVER_PORT}`,
         changeOrigin: true,
       },
-      '/ws': {
+      "/ws": {
         target: `ws://localhost:${SERVER_PORT}`,
         ws: true,
       },
