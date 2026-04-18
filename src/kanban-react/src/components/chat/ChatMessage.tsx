@@ -174,6 +174,11 @@ export function ChatMessage({ message, showTimestamp }: ChatMessageProps) {
   }
 
   const formatDate = (timestamp: number) => {
+    // Handle invalid timestamps gracefully
+    if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp <= 0) {
+      return 'Unknown date'
+    }
+
     const date = new Date(timestamp * 1000)
     const today = new Date()
     const yesterday = new Date(today)

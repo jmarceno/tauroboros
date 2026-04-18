@@ -6,15 +6,25 @@
 import type { SessionMessage } from '@/types'
 
 /**
+ * Validates and sanitizes a timestamp value.
+ * Returns a valid timestamp or null if invalid.
+ */
+function sanitizeTimestamp(timestamp: number | null | undefined): number | null {
+  if (timestamp === null || timestamp === undefined) return null
+  const num = Number(timestamp)
+  if (!Number.isFinite(num) || num <= 0) return null
+  return num
+}
+
+/**
  * Formats a timestamp (Unix epoch in seconds) as a human-readable date/time string.
  * Uses browser's local timezone automatically via toLocaleString.
  * Format: "Apr 18, 2026, 10:30:45 AM"
  */
 export function formatLocalDateTime(timestamp: number): string {
-  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
-    throw new Error(`Invalid timestamp: ${timestamp}`)
-  }
-  return new Date(timestamp * 1000).toLocaleString()
+  const sanitized = sanitizeTimestamp(timestamp)
+  if (sanitized === null) return 'Invalid date'
+  return new Date(sanitized * 1000).toLocaleString()
 }
 
 /**
@@ -22,10 +32,9 @@ export function formatLocalDateTime(timestamp: number): string {
  * Format: "Apr 18, 10:30 AM"
  */
 export function formatCompactDateTime(timestamp: number): string {
-  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
-    throw new Error(`Invalid timestamp: ${timestamp}`)
-  }
-  return new Date(timestamp * 1000).toLocaleString('en-US', {
+  const sanitized = sanitizeTimestamp(timestamp)
+  if (sanitized === null) return 'Invalid date'
+  return new Date(sanitized * 1000).toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
@@ -39,10 +48,9 @@ export function formatCompactDateTime(timestamp: number): string {
  * Format: "Apr 18, 2026"
  */
 export function formatLocalDate(timestamp: number): string {
-  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
-    throw new Error(`Invalid timestamp: ${timestamp}`)
-  }
-  return new Date(timestamp * 1000).toLocaleDateString()
+  const sanitized = sanitizeTimestamp(timestamp)
+  if (sanitized === null) return 'Invalid date'
+  return new Date(sanitized * 1000).toLocaleDateString()
 }
 
 /**
@@ -50,17 +58,19 @@ export function formatLocalDate(timestamp: number): string {
  * Format: "10:30:45 AM"
  */
 export function formatLocalTime(timestamp: number): string {
-  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
-    throw new Error(`Invalid timestamp: ${timestamp}`)
-  }
-  return new Date(timestamp * 1000).toLocaleTimeString()
+  const sanitized = sanitizeTimestamp(timestamp)
+  if (sanitized === null) return '--:--'
+  return new Date(sanitized * 1000).toLocaleTimeString()
 }
 
 /**
  * Formats a relative time string (e.g., "5m ago", "2h ago").
  */
 export function formatRelativeTime(timestamp: number): string {
-  const diffMs = Date.now() - timestamp * 1000
+  const sanitized = sanitizeTimestamp(timestamp)
+  if (sanitized === null) return 'unknown'
+
+  const diffMs = Date.now() - sanitized * 1000
   const diffSec = Math.floor(diffMs / 1000)
 
   if (diffSec < 10) return 'just now'
@@ -81,7 +91,10 @@ export function formatRelativeTime(timestamp: number): string {
  * Shows time for messages within the last 24 hours, otherwise shows date+time.
  */
 export function formatMessageTimestamp(message: SessionMessage): string {
-  const date = new Date(message.createdAt * 1000)
+  const sanitized = sanitizeTimestamp(message.createdAt)
+  if (sanitized === null) return 'Unknown'
+
+  const date = new Date(sanitized * 1000)
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffHours = diffMs / (1000 * 60 * 60)

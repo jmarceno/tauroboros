@@ -28,6 +28,7 @@ export function ChatContainer() {
   const [showModelSelector, setShowModelSelector] = useState(false)
   const [selectedModel, setSelectedModel] = useState('')
   const [selectedThinkingLevel, setSelectedThinkingLevel] = useState<'default' | 'low' | 'medium' | 'high'>('default')
+  const [modelError, setModelError] = useState<string | null>(null)
 
   const resizeStartX = useRef(0)
   const resizeStartWidth = useRef(0)
@@ -83,6 +84,7 @@ export function ChatContainer() {
       await options.loadOptions()
     }
     setShowModelSelector(true)
+    setModelError(null)
     const defaultModel = options.options?.planModel?.trim() || ''
     const defaultThinkingLevel = options.options?.planThinkingLevel || 'default'
     setSelectedModel(defaultModel)
@@ -174,16 +176,37 @@ export function ChatContainer() {
   const activeSessionsCount = allSessions.filter(s => s.status === 'active' || s.status === 'starting').length
 
   const confirmModelAndCreate = async () => {
-    let model = selectedModel
+    let model = selectedModel.trim()
+
+    // Clear any previous error
+    setModelError(null)
+
+    // If no model selected, try to normalize/validate it
     if (!model) {
       const normalized = modelSearch.normalizeValue(selectedModel)
-      if (!normalized) return
+      if (!normalized) {
+        // Show error and don't close modal - let user select a valid model
+        setModelError('Please select a valid AI model')
+        return
+      }
       model = normalized
     }
 
+    // Validate that we have a non-empty model
+    if (!model) {
+      setModelError('Please select a valid AI model')
+      return
+    }
+
     setShowModelSelector(false)
+    setModelError(null)
     await planningChat.createNewSession(model, selectedThinkingLevel)
     setActiveTab('chat')
+  }
+
+  const handleModelSelectorClose = () => {
+    setShowModelSelector(false)
+    setModelError(null)
   }
 
   const getTabStatusClass = (session: ChatSession) => {
@@ -432,7 +455,7 @@ export function ChatContainer() {
       {showModelSelector && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={(e) => { if (e.target === e.currentTarget) setShowModelSelector(false) }}
+          onClick={(e) => { if (e.target === e.currentTarget) handleModelSelectorClose() }}
         >
           <div className="bg-dark-surface border border-dark-border rounded-lg shadow-xl w-[400px] max-w-[90vw] p-4">
             <h3 className="text-lg font-medium text-dark-text mb-2">New Planning Chat</h3>
@@ -444,7 +467,10 @@ export function ChatContainer() {
               modelValue={selectedModel}
               label="Model"
               help="The AI model to use for this planning session"
-              onUpdate={setSelectedModel}
+              onUpdate={(value) => {
+                setSelectedModel(value)
+                setModelError(null)  // Clear error when user makes a selection
+              }}
             />
 
             <ThinkingLevelSelect
@@ -454,13 +480,22 @@ export function ChatContainer() {
               onUpdate={setSelectedThinkingLevel}
             />
 
+            {modelError && (
+              <div className="mt-3 p-2 rounded bg-accent-danger/10 border border-accent-danger/30 text-accent-danger text-sm flex items-center gap-2">
+                <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {modelError}
+              </div>
+            )}
+
             <div className="flex items-center justify-end gap-2 mt-4">
-              <button className="btn btn-sm" onClick={() => setShowModelSelector(false)}>
+              <button className="btn btn-sm" onClick={handleModelSelectorClose}>
                 Cancel
               </button>
               <button
                 className="btn btn-primary btn-sm"
-                disabled={!selectedModel}
+                disabled={!selectedModel.trim()}
                 onClick={confirmModelAndCreate}
               >
                 Start Chat
