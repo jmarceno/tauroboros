@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useCallback, memo, useRef } from "react"
+import { useEffect, useMemo, useCallback, memo, useRef, useState } from "react"
 import type { Task, BestOfNSummary } from "@/types"
 import type { useDragDrop } from "@/hooks/useDragDrop"
 import { useOptionsContext, useTasksContext, useSessionUsageContext, useTaskLastUpdateContext } from "@/contexts/AppContext"
+import { useApi } from "@/hooks/useApi"
+import { formatLocalDateTime, formatRelativeTime } from "@/utils/date"
 
 interface TaskCardProps {
   task: Task
@@ -30,23 +32,109 @@ interface TaskCardProps {
   onContinueReviews: () => void
 }
 
-// Format helpers
-function formatRelativeTime(timestamp: number): string {
-  const diffMs = Date.now() - timestamp * 1000
-  const diffSec = Math.floor(diffMs / 1000)
+<<<<<<< HEAD
+=======
+// Hook for lazy loading session data only when card is visible
+function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
+  const api = useApi()
+  const [isVisible, setIsVisible] = useState(false)
+  const [usageData, setUsageData] = useState<{ totalTokens: number; totalCost: number } | null>(null)
+  const [lastUpdate, setLastUpdate] = useState<number | null>(null)
+  const observerRef = useRef<IntersectionObserver | null>(null)
+  const cardRef = useRef<HTMLDivElement | null>(null)
+  const hasLoadedRef = useRef(false)
+  // Use refs to track current values and prevent stale closures
+  const taskIdRef = useRef(taskId)
+  const hasSessionRef = useRef(hasSession)
 
-  if (diffSec < 10) return 'just now'
-  if (diffSec < 60) return `${diffSec}s ago`
+  // Keep refs synchronized with latest prop values
+  taskIdRef.current = taskId
+  hasSessionRef.current = hasSession
 
-  const diffMin = Math.floor(diffSec / 60)
-  if (diffMin < 60) return `${diffMin}m ago`
+  // Set up intersection observer
+  useEffect(() => {
+    if (!cardRef.current || !hasSessionRef.current) return
 
-  const diffHour = Math.floor(diffMin / 60)
-  if (diffHour < 24) return `${diffHour}h ago`
+    const currentCardRef = cardRef.current
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setIsVisible(true)
+        }
+      },
+      { threshold: 0.1, rootMargin: '100px' }
+    )
 
-  const diffDay = Math.floor(diffHour / 24)
-  return `${diffDay}d ago`
+    observerRef.current.observe(currentCardRef)
+
+    return () => {
+      observerRef.current?.disconnect()
+    }
+  }, []) // Empty deps - uses hasSessionRef to avoid stale closure
+
+  // Load data when card becomes visible
+  useEffect(() => {
+    if (!isVisible || !taskIdRef.current || hasLoadedRef.current) return
+
+    hasLoadedRef.current = true
+    const currentTaskId = taskIdRef.current
+
+    // Load session usage data
+    const loadUsage = async () => {
+      try {
+        const sessions = await api.getTaskSessions(currentTaskId)
+        let totalTokens = 0
+        let totalCost = 0
+
+        // Load usage for each session with concurrency control
+        const usagePromises = sessions.map(async (session) => {
+          try {
+            const usage = await api.getSessionUsage(session.id)
+            return usage
+          } catch (err) {
+            console.error(`Failed to load usage for session ${session.id}:`, err)
+            return null
+          }
+        })
+
+        const usages = await Promise.all(usagePromises)
+        usages.forEach((usage) => {
+          if (usage) {
+            totalTokens += usage.totalTokens
+            totalCost += usage.totalCost
+          }
+        })
+
+        setUsageData({ totalTokens, totalCost })
+      } catch (err) {
+        console.error('Failed to load session usage data:', err)
+      }
+    }
+
+    // Load last update timestamp
+    const loadLastUpdate = async () => {
+      try {
+        const response = await fetch(`/api/tasks/${currentTaskId}/last-update`)
+        if (response.ok) {
+          const data = await response.json() as { lastUpdateAt: number | null }
+          if (data.lastUpdateAt !== null) {
+            setLastUpdate(data.lastUpdateAt)
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load last update timestamp:', err)
+      }
+    }
+
+    // Execute both requests
+    loadUsage()
+    loadLastUpdate()
+  }, [isVisible, api]) // Only depend on isVisible and stable api
+
+  return { cardRef, usageData, lastUpdate }
 }
+
+// Format helpers
 
 function getUpdateAgeClass(timestamp: number): string {
   const diffMs = Date.now() - timestamp * 1000
@@ -577,11 +665,11 @@ export const TaskCard = memo(function TaskCard({
       )}
 
       {/* Last Update badge - shows when the last message was received */}
-      {lastUpdateFormatted && hasLocalSession && (
+      {lastUpdate !== null && lastUpdateFormatted && hasLocalSession && (
         <div className="flex items-center gap-2 mt-1 text-xs">
           <span
             className={`px-2 py-0.5 bg-dark-surface2 border border-dark-border rounded-full flex items-center gap-1 task-last-update-badge ${lastUpdateAgeClass}`}
-            title={`Last message received at ${new Date(lastUpdate! * 1000).toLocaleString()}`}
+            title={`Last message received at ${formatLocalDateTime(lastUpdate)}`}
           >
             🕐 {lastUpdateFormatted}
           </span>
@@ -591,7 +679,7 @@ export const TaskCard = memo(function TaskCard({
       {/* Completed date */}
       {task.completedAt && (
         <div className="text-xs text-dark-text-muted mt-1">
-          Completed: {new Date(task.completedAt * 1000).toLocaleString()}
+          Completed: {formatLocalDateTime(task.completedAt)}
         </div>
       )}
 

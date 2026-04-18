@@ -8,6 +8,7 @@ import { chooseDeterministicRepairAction } from "../task-state.ts"
 import { buildRepairVariables } from "../prompts/index.ts"
 import { PiSessionManager } from "./session-manager.ts"
 import { parseStrictJsonObject } from "./strict-json.ts"
+import { formatLocalDateTime } from "../utils/date-format.ts"
 
 export type SmartRepairAction = TaskRepairAction
 
@@ -46,8 +47,8 @@ function buildSessionHistoryText(db: PiKanbanDB, taskId: string): string {
   if (sessions.length === 0) return "(none)"
   return sessions
     .map((session) => {
-      const started = new Date(session.startedAt * 1000).toISOString()
-      const finished = session.finishedAt ? new Date(session.finishedAt * 1000).toISOString() : "ongoing"
+      const started = formatLocalDateTime(session.startedAt)
+      const finished = session.finishedAt ? formatLocalDateTime(session.finishedAt) : "ongoing"
       return `${session.id}: kind=${session.sessionKind}, status=${session.status}, started=${started}, finished=${finished}, model=${session.model}`
     })
     .join("\n")

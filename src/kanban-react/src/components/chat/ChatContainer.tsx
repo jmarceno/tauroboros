@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { ChatSession, ContextAttachment } from '@/hooks/usePlanningChat'
-import type { PlanningSession, ThinkingLevel } from '@/types'
+import type { PlanningSession } from '@/types'
+import { formatLocalTime, formatLocalDate, formatCompactDateTime } from '@/utils/date'
 import { useApi } from '@/hooks/useApi'
 import { useOptions } from '@/hooks/useOptions'
 import { useModelSearch } from '@/hooks/useModelSearch'
@@ -151,11 +152,11 @@ export function ChatContainer() {
     yesterday.setDate(yesterday.getDate() - 1)
 
     if (date.toDateString() === now.toDateString()) {
-      return `Today, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      return `Today, ${formatLocalTime(timestamp)}`
     } else if (date.toDateString() === yesterday.toDateString()) {
-      return `Yesterday, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      return `Yesterday, ${formatLocalTime(timestamp)}`
     } else {
-      return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      return formatCompactDateTime(timestamp)
     }
   }
 
