@@ -51,7 +51,7 @@ function hasTaskIds(data: Record<string, unknown>): data is { taskIds: string[] 
 import { Sidebar } from '@/components/board/Sidebar'
 import { TopBar } from '@/components/board/TopBar'
 import { KanbanBoard } from '@/components/board/KanbanBoard'
-import { TabBar } from '@/components/tabs/TabBar'
+import { TabBar, OptionsTab, ContainersTab, ArchivedTasksTab, StatsTab } from '@/components/tabs'
 import { GroupActionBar } from '@/components/board/GroupActionBar'
 import { TabbedLogPanel } from '@/components/common/TabbedLogPanel'
 import { ToastContainer } from '@/components/common/ToastContainer'
@@ -155,7 +155,6 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
   const isAnyModalOpen = activeModal !== null || showContainerConfigModal || showStopConfirmModal || showConfirmModal || showGroupCreateModal || showRestoreModal
   const consumedSlotsValue = runsHook.consumedRunSlots
   const parallelTasksValue = optionsHook.options?.parallelTasks ?? 1
-  const isConnectedValue = wsHook.isConnected
   const currentActiveRun = runsHook.activeRuns[0] || null
 
   const groupMembers = useMemo(() => {
@@ -662,8 +661,6 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
     workflowControl.requestStop(type)
   }, [workflowControl])
 
-  const onOpenOptions = useCallback(() => openModal('options'), [openModal])
-  const onOpenContainerConfig = useCallback(() => setShowContainerConfigModal(true), [setShowContainerConfigModal])
   const onOpenTemplateModal = useCallback(() => openModal('task', { mode: 'create', createStatus: 'template' }), [openModal])
   const onOpenTaskModal = useCallback(() => openModal('task', { mode: 'create', createStatus: 'backlog' }), [openModal])
 
@@ -862,7 +859,6 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
                               <Sidebar
                                 consumedSlots={consumedSlotsValue}
                                 parallelTasks={parallelTasksValue}
-                                isConnected={isConnectedValue}
                                 controlState={workflowControl.controlState}
                                 canPause={workflowControl.canPause}
                                 canResume={workflowControl.canResume}
@@ -874,13 +870,10 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
                                 doneCount={tasksHook.groupedTasks?.done?.length ?? 0}
                                 activeCount={tasksHook.groupedTasks?.executing?.length ?? 0}
                                 reviewCount={tasksHook.groupedTasks?.review?.length ?? 0}
-                                isContainerEnabled={isContainerEnabled}
                                 onToggleExecution={onToggleExecution}
                                 onPauseExecution={onPauseExecution}
                                 onResumeExecution={onResumeExecution}
                                 onStopExecution={onStopExecution}
-                                onOpenOptions={onOpenOptions}
-                                onOpenContainerConfig={onOpenContainerConfig}
                                 onOpenTemplateModal={onOpenTemplateModal}
                                 onOpenTaskModal={onOpenTaskModal}
                                 onArchiveAllDone={onArchiveAllDoneSidebar}
@@ -934,45 +927,13 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
                                 />
                                 )}
 
-                                {activeTab === 'options' && (
-                                  <div className="flex-1 flex items-center justify-center p-8">
-                                    <div className="text-center">
-                                      <div className="text-6xl mb-4">⚙️</div>
-                                      <h2 className="text-xl font-semibold text-dark-text mb-2">Options Tab</h2>
-                                      <p className="text-dark-text-muted">Options configuration will be integrated here.</p>
-                                    </div>
-                                  </div>
-                                )}
+                                {activeTab === 'options' && <OptionsTab />}
 
-                                {activeTab === 'containers' && (
-                                  <div className="flex-1 flex items-center justify-center p-8">
-                                    <div className="text-center">
-                                      <div className="text-6xl mb-4">🐳</div>
-                                      <h2 className="text-xl font-semibold text-dark-text mb-2">Containers Tab</h2>
-                                      <p className="text-dark-text-muted">Container management will be integrated here.</p>
-                                    </div>
-                                  </div>
-                                )}
+                                {activeTab === 'containers' && <ContainersTab />}
 
-                                {activeTab === 'archived' && (
-                                  <div className="flex-1 flex items-center justify-center p-8">
-                                    <div className="text-center">
-                                      <div className="text-6xl mb-4">📦</div>
-                                      <h2 className="text-xl font-semibold text-dark-text mb-2">Archived Tasks</h2>
-                                      <p className="text-dark-text-muted">Archived tasks view will be integrated here.</p>
-                                    </div>
-                                  </div>
-                                )}
+                                {activeTab === 'archived' && <ArchivedTasksTab />}
 
-                                {activeTab === 'stats' && (
-                                  <div className="flex-1 flex items-center justify-center p-8">
-                                    <div className="text-center">
-                                      <div className="text-6xl mb-4">📊</div>
-                                      <h2 className="text-xl font-semibold text-dark-text mb-2">Statistics</h2>
-                                      <p className="text-dark-text-muted">System statistics will be integrated here.</p>
-                                    </div>
-                                  </div>
-                                )}
+                                {activeTab === 'stats' && <StatsTab />}
 
                                 <TabbedLogPanel
                                   collapsed={logPanelCollapsed}
@@ -1166,7 +1127,6 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
         </OptionsContext.Provider>
       </RunsContext.Provider>
     </TasksContext.Provider>
-    </TabProvider>
   )
 }
 
