@@ -1,6 +1,6 @@
-import { useState, useCallback, useMemo } from "react"
-import type { Task, TaskStatus, BestOfNSummary, ColumnSortOption, ColumnSortPreferences } from "@/types"
-import { useApi } from "./useApi"
+import { useState, useCallback, useMemo } from 'react'
+import type { Task, TaskGroup, TaskStatus, BestOfNSummary, ColumnSortOption, ColumnSortPreferences } from '@/types'
+import { useApi } from './useApi'
 
 export function useTasks(columnSorts?: ColumnSortPreferences) {
   const api = useApi()
@@ -161,12 +161,40 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
     return result
   }, [api, loadTasks])
 
+  interface ResetTaskResult {
+    task: Task
+    group?: TaskGroup
+    wasInGroup: boolean
+  }
+
   /**
-   * Resets a task to backlog status. Preserves configuration fields including
-   * codeStyleReview. Can be called on tasks in any status including 'code-style'.
+   * Resets a task to backlog status. Returns group info if task was in a group
+   * so UI can prompt for restore decision.
    */
-  const resetTask = useCallback(async (id: string) => {
-    const task = await api.resetTask(id)
+  const resetTask = useCallback(async (id: string): Promise<ResetTaskResult> => {
+    const result = await api.resetTaskWithGroupInfo(id)
+    setTasks(prev => prev.map(t => t.id === id ? result.task : t))
+    return {
+      task: result.task,
+      group: result.group,
+      wasInGroup: result.wasInGroup ?? false,
+    }
+  }, [api])
+
+  /**
+   * Resets task to backlog AND restores it to its previous group.
+   */
+  const resetTaskToGroup = useCallback(async (id: string): Promise<Task> => {
+    const result = await api.resetTaskToGroup(id)
+    setTasks(prev => prev.map(t => t.id === id ? result.task : t))
+    return result.task
+  }, [api])
+
+  /**
+   * Moves a task to a specific group, or removes from group if groupId is null.
+   */
+  const moveTaskToGroup = useCallback(async (id: string, groupId: string | null): Promise<Task> => {
+    const task = await api.moveTaskToGroup(id, groupId)
     setTasks(prev => prev.map(t => t.id === id ? task : t))
     return task
   }, [api])
@@ -222,6 +250,8 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
     reorderTask,
     archiveAllDone,
     resetTask,
+    resetTaskToGroup,
+    moveTaskToGroup,
     approvePlan,
     requestPlanRevision,
     repairTask,
@@ -230,8 +260,8 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
   }), [
     tasks, setTasksDirectly, groupedTasks, bonSummaries, isLoading, error,
     getTaskById, getTaskName, loadTasks, refreshBonSummaries, createTask, updateTask,
-    deleteTask, reorderTask, archiveAllDone, resetTask, approvePlan, requestPlanRevision,
-    repairTask, startSingleTask, removeBonSummary
+    deleteTask, reorderTask, archiveAllDone, resetTask, resetTaskToGroup, moveTaskToGroup,
+    approvePlan, requestPlanRevision, repairTask, startSingleTask, removeBonSummary
   ])
 
   return contextValue

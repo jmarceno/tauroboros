@@ -1368,6 +1368,14 @@ export class PiKanbanServer {
       const task = this.db.getTask(params.id)
       if (!task) return json({ error: "Task not found" }, 404)
 
+      const activeRun = this.db.getActiveWorkflowRunForTask(params.id)
+      if (activeRun) {
+        return json({ error: `Cannot modify task \"${task.name}\" while it is executing in run ${activeRun.id}.` }, 409)
+      }
+
+      // Check if task belongs to a group before resetting
+      const membership = this.db.getTaskGroupMembership(params.id)
+
       const reset = this.db.updateTask(task.id, {
         status: "backlog",
         reviewCount: 0,
@@ -1384,6 +1392,126 @@ export class PiKanbanServer {
       if (!reset) return json({ error: "Task not found" }, 404)
       const normalized = normalizeTaskForClient(reset, sessionUrlFor)
       broadcast({ type: "task_updated", payload: normalized })
+
+      // Return enriched response if task was in a group
+      if (membership.groupId && membership.group) {
+        return json({
+          task: normalized,
+          group: membership.group,
+          wasInGroup: true,
+        })
+      }
+
+      return json({ task: normalized, wasInGroup: false })
+    })
+
+    this.router.post("/api/tasks/:id/reset-to-group", async ({ params, json, sessionUrlFor, broadcast }) => {
+      const task = this.db.getTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
+
+      const activeRun = this.db.getActiveWorkflowRunForTask(params.id)
+      if (activeRun) {
+        return json({ error: `Cannot modify task \"${task.name}\" while it is executing in run ${activeRun.id}.` }, 409)
+      }
+
+      // Get current group membership before resetting
+      const membership = this.db.getTaskGroupMembership(params.id)
+      if (!membership.groupId || !membership.group) {
+        return json({ error: "Task was not in a group" }, 400)
+      }
+
+      const groupId = membership.groupId
+      const group = membership.group
+
+      // Reset task to backlog
+      const reset = this.db.updateTask(task.id, {
+        status: "backlog",
+        reviewCount: 0,
+        errorMessage: null,
+        completedAt: null,
+        sessionId: null,
+        sessionUrl: null,
+        worktreeDir: null,
+        executionPhase: "not_started",
+        awaitingPlanApproval: false,
+        planRevisionCount: 0,
+      })
+
+      if (!reset) return json({ error: "Task not found" }, 404)
+
+      // Re-add task to its previous group
+      this.db.addTaskToGroup(groupId, task.id)
+
+      const normalized = normalizeTaskForClient(reset, sessionUrlFor)
+      broadcast({ type: "task_updated", payload: normalized })
+      broadcast({ type: "group_task_added", payload: { groupId, taskId: task.id } })
+      broadcast({ type: "task_group_members_added", payload: { groupId, taskIds: [task.id] } })
+
+      return json({
+        task: normalized,
+        group,
+        restoredToGroup: true,
+      })
+    })
+
+    this.router.post("/api/tasks/:id/move-to-group", async ({ params, req, json, sessionUrlFor, broadcast }) => {
+      const task = this.db.getTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
+
+      const activeRun = this.db.getActiveWorkflowRunForTask(params.id)
+      if (activeRun) {
+        return json({ error: `Cannot modify task \"${task.name}\" while it is executing in run ${activeRun.id}.` }, 409)
+      }
+
+      let body: Record<string, unknown>
+      try {
+        body = await req.json()
+      } catch (err) {
+        return json({ error: "Invalid JSON body" }, 400)
+      }
+
+      const groupId = body?.groupId as string | null | undefined
+
+      // If groupId is null, remove from current group
+      if (groupId === null) {
+        if (task.groupId) {
+          this.db.removeTaskFromGroup(task.groupId, task.id)
+          broadcast({ type: "group_task_removed", payload: { groupId: task.groupId, taskId: task.id } })
+          broadcast({ type: "task_group_members_removed", payload: { groupId: task.groupId, taskIds: [task.id] } })
+        }
+        const updated = this.db.updateTask(task.id, { groupId: null })
+        const normalized = normalizeTaskForClient(updated ?? task, sessionUrlFor)
+        broadcast({ type: "task_updated", payload: normalized })
+        return json(normalized)
+      }
+
+      // Validate groupId is a string
+      if (typeof groupId !== "string") {
+        return json({ error: "groupId must be a string or null" }, 400)
+      }
+
+      // Validate group exists
+      const group = this.db.getTaskGroup(groupId)
+      if (!group) {
+        return json({ error: "Group not found" }, 404)
+      }
+
+      // Remove from previous group if different
+      if (task.groupId && task.groupId !== groupId) {
+        this.db.removeTaskFromGroup(task.groupId, task.id)
+        broadcast({ type: "group_task_removed", payload: { groupId: task.groupId, taskId: task.id } })
+        broadcast({ type: "task_group_members_removed", payload: { groupId: task.groupId, taskIds: [task.id] } })
+      }
+
+      // Add to new group
+      this.db.addTaskToGroup(groupId, task.id)
+
+      const updated = this.db.getTask(task.id)
+      const normalized = normalizeTaskForClient(updated ?? task, sessionUrlFor)
+      broadcast({ type: "task_updated", payload: normalized })
+      broadcast({ type: "group_task_added", payload: { groupId, taskId: task.id } })
+      broadcast({ type: "task_group_members_added", payload: { groupId, taskIds: [task.id] } })
+
       return json(normalized)
     })
 

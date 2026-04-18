@@ -225,6 +225,7 @@ export const KanbanBoard = memo(function KanbanBoard({
               currentSort={columnSorts?.[column.status] || 'manual'}
               highlightedRunId={highlightedRunId}
               isTaskInRun={isTaskInRun}
+              groups={groups}
               onOpenTask={onOpenTask}
               onChangeSort={(sort) => onChangeColumnSort(column.status, sort)}
               onOpenTemplateModal={onOpenTemplateModal}

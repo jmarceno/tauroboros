@@ -1,48 +1,49 @@
-import { useEffect, useState, useCallback, useRef, useMemo } from "react"
-import "./styles/theme.css"
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import './styles/theme.css'
 import {
   TasksContext, RunsContext, OptionsContext, ToastContext,
   ModelSearchContext, SessionContext, WebSocketContext,
   WorkflowControlContext, MultiSelectContext, PlanningChatContext,
   ModalContext, ContainerStatusContext, SessionUsageContext, TaskLastUpdateContext,
   TaskGroupsContext,
-} from "@/contexts/AppContext"
+} from '@/contexts/AppContext'
 import {
   useTasks, useRuns, useOptions, useToasts,
   useModelSearch, useSession, useWebSocket,
   useWorkflowControl, useMultiSelect, usePlanningChat,
   useDragDrop, useKeyboard, useSessionUsage, useTaskLastUpdate,
   useTaskGroups,
-} from "@/hooks"
-import { validateTaskDrop, validateGroupDrop } from "@/utils/dropValidation"
-import type { DropAction } from "@/utils/dropValidation"
-import type { Task, TaskStatus, WorkflowRun, TaskGroup } from "@/types"
+} from '@/hooks'
+import { validateTaskDrop, validateGroupDrop } from '@/utils/dropValidation'
+import type { DropAction } from '@/utils/dropValidation'
+import type { Task, TaskStatus, WorkflowRun, TaskGroup } from '@/types'
 
 // Components
-import { Sidebar } from "@/components/board/Sidebar"
-import { TopBar } from "@/components/board/TopBar"
-import { KanbanBoard } from "@/components/board/KanbanBoard"
-import { GroupActionBar } from "@/components/board/GroupActionBar"
-import { TabbedLogPanel } from "@/components/common/TabbedLogPanel"
-import { ToastContainer } from "@/components/common/ToastContainer"
-import { ChatContainer } from "@/components/chat/ChatContainer"
+import { Sidebar } from '@/components/board/Sidebar'
+import { TopBar } from '@/components/board/TopBar'
+import { KanbanBoard } from '@/components/board/KanbanBoard'
+import { GroupActionBar } from '@/components/board/GroupActionBar'
+import { TabbedLogPanel } from '@/components/common/TabbedLogPanel'
+import { ToastContainer } from '@/components/common/ToastContainer'
+import { ChatContainer } from '@/components/chat/ChatContainer'
 
 // Modals
-import { TaskModal } from "@/components/modals/TaskModal"
-import { OptionsModal } from "@/components/modals/OptionsModal"
-import { ExecutionGraphModal } from "@/components/modals/ExecutionGraphModal"
-import { ApproveModal } from "@/components/modals/ApproveModal"
-import { RevisionModal } from "@/components/modals/RevisionModal"
-import { StartSingleModal } from "@/components/modals/StartSingleModal"
-import { SessionModal } from "@/components/modals/SessionModal"
-import { TaskSessionsModal } from "@/components/modals/TaskSessionsModal"
-import { BestOfNDetailModal } from "@/components/modals/BestOfNDetailModal"
-import { BatchEditModal } from "@/components/modals/BatchEditModal"
-import { ConfirmModal } from "@/components/modals/ConfirmModal"
-import { StopConfirmModal } from "@/components/modals/StopConfirmModal"
-import { PlanningPromptModal } from "@/components/modals/PlanningPromptModal"
-import { ContainerConfigModal } from "@/components/modals/ContainerConfigModal"
-import { GroupCreateModal } from "@/components/modals/GroupCreateModal"
+import { TaskModal } from '@/components/modals/TaskModal'
+import { OptionsModal } from '@/components/modals/OptionsModal'
+import { ExecutionGraphModal } from '@/components/modals/ExecutionGraphModal'
+import { ApproveModal } from '@/components/modals/ApproveModal'
+import { RevisionModal } from '@/components/modals/RevisionModal'
+import { StartSingleModal } from '@/components/modals/StartSingleModal'
+import { SessionModal } from '@/components/modals/SessionModal'
+import { TaskSessionsModal } from '@/components/modals/TaskSessionsModal'
+import { BestOfNDetailModal } from '@/components/modals/BestOfNDetailModal'
+import { BatchEditModal } from '@/components/modals/BatchEditModal'
+import { ConfirmModal } from '@/components/modals/ConfirmModal'
+import { StopConfirmModal } from '@/components/modals/StopConfirmModal'
+import { PlanningPromptModal } from '@/components/modals/PlanningPromptModal'
+import { ContainerConfigModal } from '@/components/modals/ContainerConfigModal'
+import { GroupCreateModal } from '@/components/modals/GroupCreateModal'
+import { RestoreToGroupModal } from '@/components/modals/RestoreToGroupModal'
 
 function App() {
   // Container status
@@ -96,8 +97,13 @@ function App() {
   const [showGroupCreateModal, setShowGroupCreateModal] = useState(false)
   const [groupCreateModalData, setGroupCreateModalData] = useState<{ taskIds: string[]; defaultName?: string }>({ taskIds: [] })
 
+  // Restore to group modal state
+  const [showRestoreModal, setShowRestoreModal] = useState(false)
+  const [pendingRestoreTask, setPendingRestoreTask] = useState<Task | null>(null)
+  const [pendingRestoreGroup, setPendingRestoreGroup] = useState<TaskGroup | null>(null)
+
   // Computed
-  const isAnyModalOpen = activeModal !== null || showContainerConfigModal || showStopConfirmModal || showConfirmModal || showGroupCreateModal
+  const isAnyModalOpen = activeModal !== null || showContainerConfigModal || showStopConfirmModal || showConfirmModal || showGroupCreateModal || showRestoreModal
   const consumedSlotsValue = runsHook.consumedRunSlots
   const parallelTasksValue = optionsHook.options?.parallelTasks ?? 1
   const isConnectedValue = wsHook.isConnected
@@ -133,6 +139,12 @@ function App() {
       closeModal()
       return true
     }
+    if (showRestoreModal) {
+      setShowRestoreModal(false)
+      setPendingRestoreTask(null)
+      setPendingRestoreGroup(null)
+      return true
+    }
     if (showContainerConfigModal) {
       setShowContainerConfigModal(false)
       return true
@@ -152,7 +164,7 @@ function App() {
       return true
     }
     return false
-  }, [activeModal, showContainerConfigModal, showStopConfirmModal, showConfirmModal, showGroupCreateModal, closeModal, multiSelectHook])
+  }, [activeModal, showRestoreModal, showContainerConfigModal, showStopConfirmModal, showConfirmModal, showGroupCreateModal, closeModal, multiSelectHook])
 
   const showConfirmation = useCallback((action: 'delete' | 'convertToTemplate', taskId: string, taskName: string, ctrlHeld: boolean) => {
     if (ctrlHeld) {
@@ -198,6 +210,33 @@ function App() {
     setShowConfirmModal(false)
     setConfirmModalTaskId(null)
   }, [confirmModalAction, confirmModalTaskId, executeConfirmedAction])
+
+  // Handle restore to group choice
+  const handleRestoreToGroup = useCallback(async () => {
+    if (!pendingRestoreTask) return
+    try {
+      await tasksHook.resetTaskToGroup(pendingRestoreTask.id)
+      toastsHook.showToast(`Task restored to group "${pendingRestoreGroup?.name}"`, "success")
+      await tasksHook.loadTasks()
+    } catch (e) {
+      toastsHook.showToast("Restore to group failed: " + (e instanceof Error ? e.message : String(e)), "error")
+    } finally {
+      setShowRestoreModal(false)
+      setPendingRestoreTask(null)
+      setPendingRestoreGroup(null)
+    }
+  }, [pendingRestoreTask, pendingRestoreGroup, tasksHook, toastsHook])
+
+  const handleMoveToBacklog = useCallback(async () => {
+    if (!pendingRestoreTask) return
+    // Remove task from its group when moving to general backlog
+    await tasksHook.moveTaskToGroup(pendingRestoreTask.id, null)
+    toastsHook.showToast("Task moved to general backlog", "info")
+    await tasksHook.loadTasks()
+    setShowRestoreModal(false)
+    setPendingRestoreTask(null)
+    setPendingRestoreGroup(null)
+  }, [pendingRestoreTask, tasksHook, toastsHook])
 
   // Drag and drop handler with group support
   const dragDrop = useDragDrop(async (taskId: string, target: string, action: DropAction) => {
@@ -286,7 +325,16 @@ function App() {
           toastsHook.showToast("Task moved to Done", "success")
           break
         case "reset-to-backlog":
-          await tasksHook.resetTask(taskId)
+          {
+            const result = await tasksHook.resetTask(taskId)
+            // If task was in a group, show restore modal
+            if (result.wasInGroup && result.group) {
+              setPendingRestoreTask(result.task)
+              setPendingRestoreGroup(result.group)
+              setShowRestoreModal(true)
+              return
+            }
+          }
           break
         case "move-to-review":
           await tasksHook.updateTask(taskId, { status: "review" as TaskStatus })
@@ -973,7 +1021,15 @@ function App() {
                                   onStartSingle={(id: string) => openModal('startSingle', { taskId: id })}
                                   onRepairTask={(id: string, action: string) => tasksHook.repairTask(id, action)}
                                   onMarkDone={(id: string) => tasksHook.updateTask(id, { status: 'done', completedAt: Math.floor(Date.now() / 1000) })}
-                                  onResetTask={tasksHook.resetTask}
+                                  onResetTask={async (id: string) => {
+                                    const result = await tasksHook.resetTask(id)
+                                    // If task was in a group, show restore modal
+                                    if (result.wasInGroup && result.group) {
+                                      setPendingRestoreTask(result.task)
+                                      setPendingRestoreGroup(result.group)
+                                      setShowRestoreModal(true)
+                                    }
+                                  }}
                                   onConvertToTemplate={(id: string, event?: React.MouseEvent) => {
                                     const task = tasksHook.getTaskById(id)
                                     const taskName = task?.name || 'this task'
@@ -1143,6 +1199,19 @@ function App() {
                                   onConfirm={handleCreateGroup}
                                 />
                               )}
+
+                              <RestoreToGroupModal
+                                isOpen={showRestoreModal}
+                                onClose={() => {
+                                  setShowRestoreModal(false)
+                                  setPendingRestoreTask(null)
+                                  setPendingRestoreGroup(null)
+                                }}
+                                task={pendingRestoreTask}
+                                group={pendingRestoreGroup}
+                                onRestoreToGroup={handleRestoreToGroup}
+                                onMoveToBacklog={handleMoveToBacklog}
+                              />
 
                               {activeModal === 'planningPrompt' && (
                                 <PlanningPromptModal onClose={closeModal} />

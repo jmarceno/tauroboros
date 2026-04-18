@@ -14,6 +14,8 @@ interface TaskCardProps {
   isSelected?: boolean
   isMultiSelecting?: boolean
   isHighlighted?: boolean
+  group?: { id: string; name: string; color: string }
+  showGroupIndicator?: boolean
   onOpen: (e?: React.MouseEvent) => void
   onDeploy: (e: React.MouseEvent) => void
   onOpenTaskSessions: () => void
@@ -176,6 +178,8 @@ export const TaskCard = memo(function TaskCard({
   isSelected,
   isMultiSelecting,
   isHighlighted,
+  group,
+  showGroupIndicator,
   onOpen,
   onDeploy,
   onOpenTaskSessions,
@@ -485,6 +489,18 @@ export const TaskCard = memo(function TaskCard({
         {task.errorMessage && (
           <span className="task-tag border-accent-danger/30 text-accent-danger">
             error
+          </span>
+        )}
+        {group && showGroupIndicator && (
+          <span
+            className="task-tag flex items-center gap-1"
+            style={{ borderLeft: `3px solid ${group.color}`, borderColor: `${group.color}4D` }}
+            title={`Member of group: ${group.name}`}
+          >
+            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            {group.name}
           </span>
         )}
       </div>

@@ -1,12 +1,12 @@
-import { useCallback } from "react"
+import { useCallback } from 'react'
 import type {
   Task, CreateTaskDTO, UpdateTaskDTO, CreateTaskAndWaitDTO, CreateAndWaitResult, WorkflowRun, Options, BranchList,
   ModelCatalog, ExecutionGraph, Session, SessionMessage, TaskRun,
   Candidate, BestOfNSummary, ReviewStatus, SessionUsageRollup,
   PlanningPrompt, PlanningPromptVersion, PlanningSession, CreatePlanningSessionDTO,
   ContainerImage, TaskGroup, TaskGroupWithTasks, TaskGroupStatus,
-} from "@/types"
-import type { ApiError } from "../../../shared/error-codes.ts"
+} from '@/types'
+import type { ApiError } from '../../../shared/error-codes.ts'
 
 const API_BASE = import.meta.env.VITE_API_URL || location.origin
 
@@ -92,6 +92,12 @@ export function useApi() {
         body: JSON.stringify({ action, ...options }),
       }), [request]),
     resetTask: useCallback((id: string) => request<Task>(`/api/tasks/${id}/reset`, { method: 'POST' }), [request]),
+    resetTaskWithGroupInfo: useCallback((id: string) => request<{ task: Task; group?: TaskGroup; wasInGroup: boolean }>(`/api/tasks/${id}/reset`, { method: 'POST' }), [request]),
+    resetTaskToGroup: useCallback((id: string) => request<{ task: Task; group: TaskGroup; restoredToGroup: boolean }>(`/api/tasks/${id}/reset-to-group`, { method: 'POST' }), [request]),
+    moveTaskToGroup: useCallback((id: string, groupId: string | null) => request<Task>(`/api/tasks/${id}/move-to-group`, {
+      method: 'POST',
+      body: JSON.stringify({ groupId }),
+    }), [request]),
 
     // Task metadata
     getTaskRuns: useCallback((id: string) => request<TaskRun[]>(`/api/tasks/${id}/runs`), [request]),
