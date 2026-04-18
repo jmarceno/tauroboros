@@ -24,6 +24,7 @@ import type { RequestContext } from "./types.ts"
 import { WebSocketHub } from "./websocket.ts"
 import { readEmbeddedFile, embeddedFileExists, getContentType, getIndexHtml } from "./embedded-files.ts"
 import { VERSION, COMMIT_HASH, DISPLAY_VERSION, IS_COMPILED } from "./version.ts"
+import { isTaskGroupStatus, isValidHexColor, validateTaskGroupName, validateTaskIds } from "../db.ts"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -54,41 +55,6 @@ function isExecutionStrategy(value: unknown): value is "standard" | "best_of_n" 
 
 function isSelectionMode(value: unknown): value is "pick_best" | "synthesize" | "pick_or_synthesize" {
   return value === "pick_best" || value === "synthesize" || value === "pick_or_synthesize"
-}
-
-// Task Group validation helpers
-function isTaskGroupStatus(value: unknown): value is "active" | "completed" | "archived" {
-  return value === "active" || value === "completed" || value === "archived"
-}
-
-function isValidHexColor(value: unknown): value is string {
-  return typeof value === "string" && /^#[0-9A-Fa-f]{6}$/.test(value)
-}
-
-function validateTaskGroupName(name: unknown): { valid: boolean; error?: string } {
-  if (typeof name !== "string") return { valid: false, error: "name must be a string" }
-  if (name.trim().length === 0) return { valid: false, error: "name cannot be empty" }
-  if (name.length > 100) return { valid: false, error: "name must be 100 characters or less" }
-  return { valid: true }
-}
-
-function validateTaskIds(taskIds: unknown, db: PiKanbanDB): { valid: boolean; error?: string; invalidIds?: string[] } {
-  if (!Array.isArray(taskIds)) return { valid: false, error: "taskIds must be an array" }
-  if (taskIds.length === 0) return { valid: true }
-
-  const invalidIds: string[] = []
-  for (const id of taskIds) {
-    if (typeof id !== "string") {
-      invalidIds.push(String(id))
-      continue
-    }
-    if (!db.getTask(id)) invalidIds.push(id)
-  }
-
-  if (invalidIds.length > 0) {
-    return { valid: false, error: `Invalid or non-existent task IDs: ${invalidIds.join(', ')}`, invalidIds }
-  }
-  return { valid: true }
 }
 
 interface BestOfNSlotInput {
@@ -530,8 +496,6 @@ export class PiKanbanServer {
   }
 
   private registerRoutes(): void {
-    // Serve index.html for root and for any non-API route (SPA routing)
-    // Uses embedded assets in compiled binary or filesystem in development
     this.router.get("/", async () => {
       const content = await getIndexHtml()
       if (content) {
@@ -540,8 +504,6 @@ export class PiKanbanServer {
       return new Response("index.html not found", { status: 404 })
     })
 
-    // Static file serving for kanban-react assets
-    // Using Bun.file() which works with both regular files and embedded files in compiled binaries
     this.router.get("/assets/:file", async ({ params }) => {
       const filePath = join(KANBAN_DIST, "assets", params.file)
       if (!(await embeddedFileExists(filePath))) {
@@ -974,6 +936,31 @@ export class PiKanbanServer {
       return json({ id: params.id, archived: true })
     })
 
+    // ---- Archived Tasks API ----
+
+    // GET /api/archived/tasks - Returns all archived tasks grouped by workflow run
+    this.router.get("/api/archived/tasks", ({ json, sessionUrlFor }) => {
+      const grouped = this.db.getArchivedTasksGroupedByRun()
+      const runs = Array.from(grouped.entries()).map(([_, data]) => ({
+        run: data.run,
+        tasks: data.tasks.map(task => normalizeTaskForClient(task, sessionUrlFor)),
+      }))
+      return json({ runs })
+    })
+
+    // GET /api/archived/runs - Returns all workflow runs that have archived tasks
+    this.router.get("/api/archived/runs", ({ json }) => {
+      const runs = this.db.getWorkflowRunsWithArchivedTasks()
+      return json({ runs })
+    })
+
+    // GET /api/archived/tasks/:taskId - Returns single archived task details or 404
+    this.router.get("/api/archived/tasks/:taskId", ({ params, json, sessionUrlFor }) => {
+      const task = this.db.getArchivedTask(params.taskId)
+      if (!task) return json({ error: "Task not found" }, 404)
+      return json(normalizeTaskForClient(task, sessionUrlFor))
+    })
+
     this.router.post("/api/start", async ({ json, broadcast }) => {
       try {
         const run = await this.onStart()
@@ -1137,7 +1124,6 @@ export class PiKanbanServer {
       }
     })
 
-    // Note: /api/runs/:id/force-stop is deprecated. Use /api/runs/:id/stop with { destructive: true } instead.
     this.router.post("/api/runs/:id/force-stop", async ({ params, json, broadcast }) => {
       try {
         // Call the unified onStopRun with destructive flag
@@ -2210,8 +2196,6 @@ Please confirm when you've created the tasks and group, and provide a summary of
       }
     })
 
-    // Get container feature availability status
-    // Container mode is the default - only disabled when explicitly set to false
     this.router.get("/api/container/status", ({ json }) => {
       if (!this.settings) {
         throw new Error('Server settings not loaded: cannot determine container status')
@@ -2280,9 +2264,6 @@ Please confirm when you've created the tasks and group, and provide a summary of
       }
     })
 
-    // Validate packages (check if they exist in Alpine repos)
-
-    // Trigger container image build with profile
     this.router.post("/api/container/build", async ({ req, json, broadcast }) => {
       try {
         if (!this.imageManager) {
