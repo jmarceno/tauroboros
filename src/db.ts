@@ -527,13 +527,43 @@ function asPiSessionStatus(value: unknown): PiSessionStatus {
 
 const TASK_GROUP_STATUSES: TaskGroup["status"][] = ["active", "completed", "archived"]
 
-function isTaskGroupStatus(value: unknown): value is TaskGroup["status"] {
+export function isTaskGroupStatus(value: unknown): value is TaskGroup["status"] {
   return typeof value === "string" && TASK_GROUP_STATUSES.includes(value as TaskGroup["status"])
 }
 
 function asTaskGroupStatus(value: unknown): TaskGroup["status"] {
   if (isTaskGroupStatus(value)) return value
   throw new Error(`Invalid task group status: ${JSON.stringify(value)}. Expected one of: ${TASK_GROUP_STATUSES.join(", ")}.`)
+}
+
+export function isValidHexColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9A-Fa-f]{6}$/.test(value)
+}
+
+export function validateTaskGroupName(name: unknown): { valid: boolean; error?: string } {
+  if (typeof name !== "string") return { valid: false, error: "name must be a string" }
+  if (name.trim().length === 0) return { valid: false, error: "name cannot be empty" }
+  if (name.length > 100) return { valid: false, error: "name must be 100 characters or less" }
+  return { valid: true }
+}
+
+export function validateTaskIds(taskIds: unknown, db: PiKanbanDB): { valid: boolean; error?: string; invalidIds?: string[] } {
+  if (!Array.isArray(taskIds)) return { valid: false, error: "taskIds must be an array" }
+  if (taskIds.length === 0) return { valid: true }
+
+  const invalidIds: string[] = []
+  for (const id of taskIds) {
+    if (typeof id !== "string") {
+      invalidIds.push(String(id))
+      continue
+    }
+    if (!db.getTask(id)) invalidIds.push(id)
+  }
+
+  if (invalidIds.length > 0) {
+    return { valid: false, error: `Invalid or non-existent task IDs: ${invalidIds.join(', ')}`, invalidIds }
+  }
+  return { valid: true }
 }
 
 const MESSAGE_TYPES: MessageType[] = [
@@ -619,13 +649,9 @@ const SESSION_MESSAGE_SELECT = `
   LEFT JOIN workflow_sessions ws ON ws.id = sm.session_id
 `
 
-function parseJSONWithFallback<T>(value: unknown, fallback: T): T {
-  if (typeof value !== "string" || value.length === 0) return fallback
-  try {
-    return JSON.parse(value) as T
-  } catch {
-    return fallback
-  }
+function parseJSON<T>(value: unknown): T | null {
+  if (typeof value !== "string" || value.length === 0) return null
+  return JSON.parse(value) as T
 }
 
 function rowToTask(row: Record<string, unknown>): Task {
@@ -645,7 +671,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     autoCommit: Number(row.auto_commit ?? 1) === 1,
     deleteWorktree: Number(row.delete_worktree ?? 1) === 1,
     status: asTaskStatus(row.status),
-    requirements: parseJSONWithFallback<string[]>(row.requirements, []),
+    requirements: parseJSON<string[]>(row.requirements) ?? [],
     agentOutput: String(row.agent_output ?? ""),
     reviewCount: Number(row.review_count ?? 0),
     jsonParseRetryCount: Number(row.json_parse_retry_count ?? 0),
@@ -706,7 +732,7 @@ function rowToTaskRun(row: Record<string, unknown>): TaskRun {
     summary: row.summary ? String(row.summary) : null,
     errorMessage: row.error_message ? String(row.error_message) : null,
     candidateId: row.candidate_id ? String(row.candidate_id) : null,
-    metadataJson: parseJSONWithFallback<Record<string, unknown>>(row.metadata_json, {}),
+    metadataJson: parseJSON<Record<string, unknown>>(row.metadata_json) ?? {},
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at),
@@ -725,9 +751,9 @@ function rowToTaskCandidate(row: Record<string, unknown>): TaskCandidate {
     taskId: String(row.task_id),
     workerRunId: String(row.worker_run_id),
     status: isTaskCandidateStatus(row.status) ? row.status : "available",
-    changedFilesJson: parseJSONWithFallback<string[]>(row.changed_files_json, []),
-    diffStatsJson: parseJSONWithFallback<Record<string, number>>(row.diff_stats_json, {}),
-    verificationJson: parseJSONWithFallback<Record<string, unknown>>(row.verification_json, {}),
+    changedFilesJson: parseJSON<string[]>(row.changed_files_json) ?? [],
+    diffStatsJson: parseJSON<Record<string, number>>(row.diff_stats_json) ?? {},
+    verificationJson: parseJSON<Record<string, unknown>>(row.verification_json) ?? {},
     summary: row.summary ? String(row.summary) : null,
     errorMessage: row.error_message ? String(row.error_message) : null,
     createdAt: Number(row.created_at ?? 0),
@@ -742,7 +768,7 @@ function rowToWorkflowRun(row: Record<string, unknown>): WorkflowRun {
     status: asWorkflowRunStatus(row.status),
     displayName: String(row.display_name ?? ""),
     targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
-    taskOrder: parseJSONWithFallback<string[]>(row.task_order_json, []),
+    taskOrder: parseJSON<string[]>(row.task_order_json) ?? [],
     currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
     currentTaskIndex: Number(row.current_task_index ?? 0),
     pauseRequested: Number(row.pause_requested ?? 0) === 1,
@@ -828,7 +854,7 @@ function rowToSessionMessage(row: Record<string, unknown>): SessionMessage {
     role: asSessionMessageRole(row.role),
     eventName: row.event_name ? String(row.event_name) : null,
     messageType: asMessageType(row.message_type),
-    contentJson: parseJSONWithFallback<Record<string, unknown>>(row.content_json, {}),
+    contentJson: parseJSON<Record<string, unknown>>(row.content_json) ?? {},
     modelProvider: row.model_provider ? String(row.model_provider) : null,
     modelId: row.model_id ? String(row.model_id) : null,
     agentName: row.agent_name ? String(row.agent_name) : null,
@@ -837,18 +863,18 @@ function rowToSessionMessage(row: Record<string, unknown>): SessionMessage {
     cacheReadTokens: row.cache_read_tokens === null || row.cache_read_tokens === undefined ? null : Number(row.cache_read_tokens),
     cacheWriteTokens: row.cache_write_tokens === null || row.cache_write_tokens === undefined ? null : Number(row.cache_write_tokens),
     totalTokens: row.total_tokens === null || row.total_tokens === undefined ? null : Number(row.total_tokens),
-    costJson: parseJSONWithFallback<Record<string, unknown> | null>(row.cost_json, null),
+    costJson: parseJSON<Record<string, unknown>>(row.cost_json),
     costTotal: row.cost_total === null || row.cost_total === undefined ? null : Number(row.cost_total),
     toolCallId: row.tool_call_id ? String(row.tool_call_id) : null,
     toolName: row.tool_name ? String(row.tool_name) : null,
-    toolArgsJson: parseJSONWithFallback<Record<string, unknown> | null>(row.tool_args_json, null),
-    toolResultJson: parseJSONWithFallback<Record<string, unknown> | null>(row.tool_result_json, null),
+    toolArgsJson: parseJSON<Record<string, unknown>>(row.tool_args_json),
+    toolResultJson: parseJSON<Record<string, unknown>>(row.tool_result_json),
     toolStatus: row.tool_status ? String(row.tool_status) : null,
     editDiff: row.edit_diff ? String(row.edit_diff) : null,
     editFilePath: row.edit_file_path ? String(row.edit_file_path) : null,
     sessionStatus: row.session_status ? String(row.session_status) : null,
     workflowPhase: row.workflow_phase ? String(row.workflow_phase) : null,
-    rawEventJson: parseJSONWithFallback<Record<string, unknown> | null>(row.raw_event_json, null),
+    rawEventJson: parseJSON<Record<string, unknown>>(row.raw_event_json),
   }
 }
 
@@ -859,7 +885,7 @@ function rowToPromptTemplate(row: Record<string, unknown>): PromptTemplate {
     name: String(row.name),
     description: String(row.description ?? ""),
     templateText: String(row.template_text),
-    variablesJson: parseJSONWithFallback<string[]>(row.variables_json, []),
+    variablesJson: parseJSON<string[]>(row.variables_json) ?? [],
     isActive: Number(row.is_active ?? 1) === 1,
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
@@ -872,7 +898,7 @@ function rowToPromptTemplateVersion(row: Record<string, unknown>): PromptTemplat
     promptTemplateId: Number(row.prompt_template_id),
     version: Number(row.version),
     templateText: String(row.template_text),
-    variablesJson: parseJSONWithFallback<string[]>(row.variables_json, []),
+    variablesJson: parseJSON<string[]>(row.variables_json) ?? [],
     createdAt: Number(row.created_at ?? 0),
   }
 }
@@ -1931,12 +1957,7 @@ export class PiKanbanDB {
     return updatedTask
   }
 
-  /**
-   * Validates and cleans task requirements by removing any dependency IDs
-   * that don't exist in the database. Returns information about what was cleaned.
-   * This is called automatically during task creation and updates.
-   */
-  validateAndCleanRequirements(requirements: string[], taskName?: string): { cleaned: string[]; removed: string[] } {
+    validateAndCleanRequirements(requirements: string[], taskName?: string): { cleaned: string[]; removed: string[] } {
     if (!requirements || requirements.length === 0) {
       return { cleaned: [], removed: [] }
     }
@@ -2360,6 +2381,11 @@ export class PiKanbanDB {
     return rows.map((r) => rowToTask(r as Record<string, unknown>))
   }
 
+  getArchivedTask(id: string): Task | null {
+    const row = this.db.prepare("SELECT * FROM tasks WHERE id = ? AND is_archived = 1").get(id) as Record<string, unknown> | null
+    return row ? rowToTask(row) : null
+  }
+
   getArchivedTasksByRun(runId: string): Task[] {
     const run = this.getWorkflowRun(runId)
     if (!run || run.taskOrder.length === 0) return []
@@ -2415,11 +2441,7 @@ export class PiKanbanDB {
     return result
   }
 
-  /**
-   * Check if any workflow is currently running or stopping
-   * Returns true if there's at least one active workflow run
-   */
-  hasRunningWorkflows(): boolean {
+    hasRunningWorkflows(): boolean {
     const row = this.db.prepare(
       "SELECT COUNT(*) as count FROM workflow_runs WHERE is_archived = 0 AND status IN ('running', 'stopping')"
     ).get() as { count: number }
@@ -2692,8 +2714,8 @@ export class PiKanbanDB {
         }
         seq += 1
 
-        const rawEventJson = parseJSONWithFallback<Record<string, unknown> | null>(row.raw_event_json, null)
-        const legacyContent = parseJSONWithFallback<Record<string, unknown>>(row.content_json, {})
+        const rawEventJson = parseJSON<Record<string, unknown>>(row.raw_event_json)
+        const legacyContent = parseJSON<Record<string, unknown>>(row.content_json) ?? {}
         const projected = rawEventJson
           ? projectPiEventToSessionMessage({ event: rawEventJson, sessionId })
           : null
@@ -3071,11 +3093,7 @@ export class PiKanbanDB {
     let columnSorts: ColumnSortPreferences | undefined
     const columnSortsJson = values.get("column_sorts")
     if (columnSortsJson) {
-      try {
-        columnSorts = JSON.parse(columnSortsJson) as ColumnSortPreferences
-      } catch {
-        columnSorts = undefined
-      }
+      columnSorts = JSON.parse(columnSortsJson) as ColumnSortPreferences
     }
 
     const getValue = (key: string, treatDefaultAsEmpty = false): string => {
@@ -3272,9 +3290,10 @@ export class PiKanbanDB {
   }
 
   private asTelegramNotificationLevel(value: unknown): TelegramNotificationLevel {
-    return value === "all" || value === "failures" || value === "done_and_failures" || value === "workflow_done_and_failures"
-      ? value
-      : "all"
+    if (value === "all" || value === "failures" || value === "done_and_failures" || value === "workflow_done_and_failures") {
+      return value
+    }
+    throw new Error(`Invalid telegram notification level: ${JSON.stringify(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"`)
   }
 
   private getNextTaskIndex(): number {
@@ -3287,29 +3306,35 @@ export class PiKanbanDB {
       "INSERT INTO options (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
     )
 
-    upsert.run("commit_prompt", DEFAULT_OPTIONS.commitPrompt)
-    upsert.run("extra_prompt", DEFAULT_OPTIONS.extraPrompt)
-    upsert.run("branch", DEFAULT_OPTIONS.branch)
-    upsert.run("plan_model", DEFAULT_OPTIONS.planModel)
-    upsert.run("execution_model", DEFAULT_OPTIONS.executionModel)
-    upsert.run("review_model", DEFAULT_OPTIONS.reviewModel)
-    upsert.run("repair_model", DEFAULT_OPTIONS.repairModel)
-    upsert.run("command", DEFAULT_OPTIONS.command)
-    upsert.run("parallel_tasks", String(DEFAULT_OPTIONS.parallelTasks))
-    upsert.run("auto_delete_normal_sessions", String(DEFAULT_OPTIONS.autoDeleteNormalSessions))
-    upsert.run("auto_delete_review_sessions", String(DEFAULT_OPTIONS.autoDeleteReviewSessions))
-    upsert.run("show_execution_graph", String(DEFAULT_OPTIONS.showExecutionGraph))
-    upsert.run("port", String(DEFAULT_OPTIONS.port))
-    upsert.run("thinking_level", DEFAULT_OPTIONS.thinkingLevel)
-    upsert.run("plan_thinking_level", DEFAULT_OPTIONS.planThinkingLevel)
-    upsert.run("execution_thinking_level", DEFAULT_OPTIONS.executionThinkingLevel)
-    upsert.run("review_thinking_level", DEFAULT_OPTIONS.reviewThinkingLevel)
-    upsert.run("repair_thinking_level", DEFAULT_OPTIONS.repairThinkingLevel)
-    upsert.run("code_style_prompt", DEFAULT_OPTIONS.codeStylePrompt)
-    upsert.run("telegram_bot_token", DEFAULT_OPTIONS.telegramBotToken)
-    upsert.run("telegram_chat_id", DEFAULT_OPTIONS.telegramChatId)
-    upsert.run("telegram_notification_level", DEFAULT_OPTIONS.telegramNotificationLevel)
-    upsert.run("max_reviews", String(DEFAULT_OPTIONS.maxReviews))
+    const entries = [
+      ["commit_prompt", DEFAULT_OPTIONS.commitPrompt],
+      ["extra_prompt", DEFAULT_OPTIONS.extraPrompt],
+      ["branch", DEFAULT_OPTIONS.branch],
+      ["plan_model", DEFAULT_OPTIONS.planModel],
+      ["execution_model", DEFAULT_OPTIONS.executionModel],
+      ["review_model", DEFAULT_OPTIONS.reviewModel],
+      ["repair_model", DEFAULT_OPTIONS.repairModel],
+      ["command", DEFAULT_OPTIONS.command],
+      ["parallel_tasks", String(DEFAULT_OPTIONS.parallelTasks)],
+      ["auto_delete_normal_sessions", String(DEFAULT_OPTIONS.autoDeleteNormalSessions)],
+      ["auto_delete_review_sessions", String(DEFAULT_OPTIONS.autoDeleteReviewSessions)],
+      ["show_execution_graph", String(DEFAULT_OPTIONS.showExecutionGraph)],
+      ["port", String(DEFAULT_OPTIONS.port)],
+      ["thinking_level", DEFAULT_OPTIONS.thinkingLevel],
+      ["plan_thinking_level", DEFAULT_OPTIONS.planThinkingLevel],
+      ["execution_thinking_level", DEFAULT_OPTIONS.executionThinkingLevel],
+      ["review_thinking_level", DEFAULT_OPTIONS.reviewThinkingLevel],
+      ["repair_thinking_level", DEFAULT_OPTIONS.repairThinkingLevel],
+      ["code_style_prompt", DEFAULT_OPTIONS.codeStylePrompt],
+      ["telegram_bot_token", DEFAULT_OPTIONS.telegramBotToken],
+      ["telegram_chat_id", DEFAULT_OPTIONS.telegramChatId],
+      ["telegram_notification_level", DEFAULT_OPTIONS.telegramNotificationLevel],
+      ["max_reviews", String(DEFAULT_OPTIONS.maxReviews)],
+    ] as const
+
+    for (const [key, value] of entries) {
+      upsert.run(key, value)
+    }
   }
 
   private seedPromptTemplates(): void {
@@ -3968,7 +3993,7 @@ export class PiKanbanDB {
     return {
       runId: String(row.run_id),
       kind: asWorkflowRunKind(row.kind),
-      taskOrder: parseJSONWithFallback<string[]>(row.task_order_json, []),
+      taskOrder: parseJSON<string[]>(row.task_order_json) ?? [],
       currentTaskIndex: Number(row.current_task_index ?? 0),
       currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
       targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
@@ -4003,7 +4028,7 @@ export class PiKanbanDB {
     return rows.map((row) => ({
       runId: String(row.run_id),
       kind: asWorkflowRunKind(row.kind),
-      taskOrder: parseJSONWithFallback<string[]>(row.task_order_json, []),
+      taskOrder: parseJSON<string[]>(row.task_order_json) ?? [],
       currentTaskIndex: Number(row.current_task_index ?? 0),
       currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
       targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
@@ -4686,7 +4711,7 @@ function isContainerBuildStatus(value: unknown): value is ContainerBuild["status
 
 // Row converters for indicators
 function rowToWorkflowRunIndicators(row: Record<string, unknown>): WorkflowRunIndicators {
-  const jsonOutFails = parseJSONWithFallback<{ "json-output-fails": JsonOutFailEntry[] }>(row.json_out_fails, { "json-output-fails": [] })
+  const jsonOutFails = parseJSON<{ "json-output-fails": JsonOutFailEntry[] }>(row.json_out_fails) ?? { "json-output-fails": [] }
   return {
     id: String(row.id),
     jsonOutFails,
