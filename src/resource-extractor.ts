@@ -72,7 +72,7 @@ function clearDirectory(dir: string): void {
 
 /**
  * Extract all embedded extensions to .pi/extensions/
- * Always overwrites existing files
+ * Only extracts if not already present (preserves user modifications)
  */
 export function extractEmbeddedExtensions(projectRoot: string): { count: number; paths: string[] } {
   if (!generatedAssets) {
@@ -82,24 +82,27 @@ export function extractEmbeddedExtensions(projectRoot: string): { count: number;
   const extensionsDir = join(projectRoot, ".pi", "extensions")
   ensureDir(extensionsDir)
 
-  // Clear existing extensions (always extract fresh)
-  clearDirectory(extensionsDir)
+  // NOTE: We do NOT clear the directory - user files are preserved
+  // Only extract embedded extensions that don't already exist
 
   const extensionAssets = generatedAssets.getAllExtensionAssets()
   const extractedPaths: string[] = []
 
   for (const { path, asset } of extensionAssets) {
     const targetPath = join(extensionsDir, path)
-    writeAssetToFile(targetPath, asset)
-    extractedPaths.push(targetPath)
+    // Only extract if file doesn't exist (preserves user modifications)
+    if (!existsSync(targetPath)) {
+      writeAssetToFile(targetPath, asset)
+      extractedPaths.push(targetPath)
+    }
   }
 
-  return { count: extensionAssets.length, paths: extractedPaths }
+  return { count: extractedPaths.length, paths: extractedPaths }
 }
 
 /**
  * Extract all embedded skills to .pi/skills/
- * Always overwrites existing files
+ * Only extracts if not already present (preserves user modifications)
  */
 export function extractEmbeddedSkills(projectRoot: string): { count: number; paths: string[] } {
   if (!generatedAssets) {
@@ -109,19 +112,22 @@ export function extractEmbeddedSkills(projectRoot: string): { count: number; pat
   const skillsDir = join(projectRoot, ".pi", "skills")
   ensureDir(skillsDir)
 
-  // Clear existing skills (always extract fresh)
-  clearDirectory(skillsDir)
+  // NOTE: We do NOT clear the directory - user files are preserved
+  // Only extract embedded skills that don't already exist
 
   const skillAssets = generatedAssets.getAllSkillAssets()
   const extractedPaths: string[] = []
 
   for (const { path, asset } of skillAssets) {
     const targetPath = join(skillsDir, path)
-    writeAssetToFile(targetPath, asset)
-    extractedPaths.push(targetPath)
+    // Only extract if file doesn't exist (preserves user modifications)
+    if (!existsSync(targetPath)) {
+      writeAssetToFile(targetPath, asset)
+      extractedPaths.push(targetPath)
+    }
   }
 
-  return { count: skillAssets.length, paths: extractedPaths }
+  return { count: extractedPaths.length, paths: extractedPaths }
 }
 
 /**
@@ -181,33 +187,32 @@ export function extractEmbeddedDocker(projectRoot: string): { count: number; pat
 /**
  * Copy resources from source directories (development mode)
  * Used when running from source code instead of compiled binary
+ * Only copies files that don't already exist (preserves user modifications)
  */
 export function copyResourcesFromSource(projectRoot: string): { extensions: number; skills: number } {
   // In development mode, extensions and skills are at the project root level
   const sourceRoot = projectRoot
 
-  // Copy extensions
+  // Copy extensions - only if they don't exist
   const sourceExtensionsDir = join(sourceRoot, "extensions")
   const targetExtensionsDir = join(projectRoot, ".pi", "extensions")
   let extensionCount = 0
 
   if (existsSync(sourceExtensionsDir)) {
     ensureDir(targetExtensionsDir)
-    clearDirectory(targetExtensionsDir)
-    copyDirectoryRecursive(sourceExtensionsDir, targetExtensionsDir)
-    extensionCount = countFiles(targetExtensionsDir)
+    // NOTE: We do NOT clear the directory - user files are preserved
+    extensionCount = copyDirectoryRecursiveSkipExisting(sourceExtensionsDir, targetExtensionsDir)
   }
 
-  // Copy skills
+  // Copy skills - only if they don't exist
   const sourceSkillsDir = join(sourceRoot, "skills")
   const targetSkillsDir = join(projectRoot, ".pi", "skills")
   let skillCount = 0
 
   if (existsSync(sourceSkillsDir)) {
     ensureDir(targetSkillsDir)
-    clearDirectory(targetSkillsDir)
-    copyDirectoryRecursive(sourceSkillsDir, targetSkillsDir)
-    skillCount = countFiles(targetSkillsDir)
+    // NOTE: We do NOT clear the directory - user files are preserved
+    skillCount = copyDirectoryRecursiveSkipExisting(sourceSkillsDir, targetSkillsDir)
   }
 
   return { extensions: extensionCount, skills: skillCount }
@@ -232,6 +237,34 @@ function copyDirectoryRecursive(source: string, target: string): void {
       writeFileSync(targetPath, content)
     }
   }
+}
+
+/**
+ * Recursively copy a directory, skipping files that already exist
+ * Returns the count of files copied
+ */
+function copyDirectoryRecursiveSkipExisting(source: string, target: string): number {
+  ensureDir(target)
+
+  let copiedCount = 0
+  const entries = readdirSync(source)
+
+  for (const entry of entries) {
+    const sourcePath = join(source, entry)
+    const targetPath = join(target, entry)
+    const stat = statSync(sourcePath)
+
+    if (stat.isDirectory()) {
+      copiedCount += copyDirectoryRecursiveSkipExisting(sourcePath, targetPath)
+    } else if (!existsSync(targetPath)) {
+      // Only copy if file doesn't exist (preserves user modifications)
+      const content = readFileSync(sourcePath)
+      writeFileSync(targetPath, content)
+      copiedCount++
+    }
+  }
+
+  return copiedCount
 }
 
 /**
