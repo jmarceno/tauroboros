@@ -41,6 +41,21 @@ export const VirtualCard = memo(function VirtualCard({
     onStart?.()
   }, [onStart])
 
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onClick()
+    }
+  }, [onClick])
+
+  const formatDate = useCallback((timestamp: number) => {
+    return new Date(timestamp * 1000).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    })
+  }, [])
+
   const getStatusIcon = useCallback((status: TaskGroupStatus) => {
     switch (status) {
       case 'active':
@@ -74,8 +89,13 @@ export const VirtualCard = memo(function VirtualCard({
     <>
       <div
         className="virtual-card"
-        style={{ borderLeftColor: group.color }}
+        style={{ borderLeftColor: group.color, '--group-color': `${group.color}66` } as React.CSSProperties}
         onClick={onClick}
+        onKeyDown={handleKeyDown}
+        tabIndex={0}
+        role="button"
+        aria-label={`${group.name} group with ${taskCount} task${taskCount !== 1 ? 's' : ''}, status ${group.status}. Press Enter to open.`}
+        title={`Created: ${formatDate(group.createdAt)}\nClick to manage group`}
       >
         {/* Header */}
         <div className="virtual-card-header">
@@ -89,7 +109,7 @@ export const VirtualCard = memo(function VirtualCard({
         <div className="virtual-card-body">
           <span className="virtual-card-label">Virtual Workflow</span>
           <span className="text-[11px] text-dark-text-secondary">
-            {taskCount} tasks
+            {taskCount} task{taskCount !== 1 ? 's' : ''}
           </span>
         </div>
 
@@ -100,6 +120,7 @@ export const VirtualCard = memo(function VirtualCard({
               className="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-success transition-colors"
               title="Start group execution"
               onClick={handleStartClick}
+              aria-label={`Start execution for ${group.name}`}
             >
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -111,6 +132,7 @@ export const VirtualCard = memo(function VirtualCard({
             className="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-danger transition-colors ml-auto"
             title="Delete group"
             onClick={handleDeleteClick}
+            aria-label={`Delete ${group.name} group`}
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M6 18L18 6M6 6l12 12" />

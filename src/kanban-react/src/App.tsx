@@ -395,6 +395,9 @@ function App() {
         openGroupCreateModal(multiSelectHook.getSelectedIds())
       }
     },
+    onCloseGroupPanel: () => taskGroupsHook.openGroup(null),
+    isGroupPanelOpen: () => taskGroupsHook.activeGroupId !== null,
+    selectedCount: () => multiSelectHook.selectedCount,
     onStartWorkflow: async () => {
       const grouped = tasksHook.groupedTasks
       const executableTasks = (grouped?.backlog?.length ?? 0) +

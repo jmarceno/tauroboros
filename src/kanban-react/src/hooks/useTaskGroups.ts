@@ -3,6 +3,36 @@ import type { TaskGroup } from "@/types"
 import { useApi } from "./useApi"
 import { useToasts } from "./useToasts"
 
+/**
+ * Parse error message for user-friendly display.
+ * Distinguishes between network errors, validation errors, and server errors.
+ */
+function parseErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    // Network/fetch errors
+    if (
+      error.message.includes('fetch') ||
+      error.message.includes('network') ||
+      error.message.includes('ECONNREFUSED') ||
+      error.message.includes('ETIMEDOUT') ||
+      error.message.includes('ENOTFOUND')
+    ) {
+      return 'Connection failed. Check your network and try again.'
+    }
+    // Server errors (5xx)
+    if (error.message.includes('500') || error.message.includes('502') || error.message.includes('503')) {
+      return 'Server error. Please try again in a moment.'
+    }
+    // Validation errors (4xx)
+    if (error.message.includes('400') || error.message.includes('404') || error.message.includes('409')) {
+      return error.message
+    }
+    return error.message
+  }
+  // Handle non-Error types (strings, objects, etc.)
+  return String(error)
+}
+
 export type GroupState = {
   groups: TaskGroup[]
   loading: boolean
@@ -29,7 +59,7 @@ export function useTaskGroups() {
       setGroups(data)
       return data
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
+      const message = parseErrorMessage(e)
       setError(message)
       showToast(`Failed to load groups: ${message}`, 'error')
       throw e
@@ -69,7 +99,7 @@ export function useTaskGroups() {
     } catch (e) {
       // Revert optimistic update
       setGroups(prev => prev.filter(g => g.id !== tempId))
-      const message = e instanceof Error ? e.message : String(e)
+      const message = parseErrorMessage(e)
       showToast(`Failed to create group: ${message}`, 'error')
       throw e
     }
@@ -90,7 +120,7 @@ export function useTaskGroups() {
       const group = await api.getTaskGroup(groupId)
       return group
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
+      const message = parseErrorMessage(e)
       showToast(`Failed to load group details: ${message}`, 'error')
       throw e
     }
@@ -116,7 +146,7 @@ export function useTaskGroups() {
     } catch (e) {
       // Revert by reloading
       await loadGroups()
-      const message = e instanceof Error ? e.message : String(e)
+      const message = parseErrorMessage(e)
       showToast(`Failed to add tasks: ${message}`, 'error')
       throw e
     }
@@ -142,7 +172,7 @@ export function useTaskGroups() {
     } catch (e) {
       // Revert by reloading
       await loadGroups()
-      const message = e instanceof Error ? e.message : String(e)
+      const message = parseErrorMessage(e)
       showToast(`Failed to remove tasks: ${message}`, 'error')
       throw e
     }
@@ -165,7 +195,7 @@ export function useTaskGroups() {
       showToast(`Started execution for group "${group.name}"`, 'success')
       return run
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
+      const message = parseErrorMessage(e)
       showToast(`Failed to start group: ${message}`, 'error')
       throw e
     }
@@ -196,7 +226,7 @@ export function useTaskGroups() {
     } catch (e) {
       // Revert optimistic removal
       setGroups(prev => [...prev, group])
-      const message = e instanceof Error ? e.message : String(e)
+      const message = parseErrorMessage(e)
       showToast(`Failed to delete group: ${message}`, 'error')
       throw e
     }
@@ -229,7 +259,7 @@ export function useTaskGroups() {
     } catch (e) {
       // Revert optimistic update
       setGroups(prev => prev.map(g => g.id === groupId ? previousGroup : g))
-      const message = e instanceof Error ? e.message : String(e)
+      const message = parseErrorMessage(e)
       showToast(`Failed to update group: ${message}`, 'error')
       throw e
     }

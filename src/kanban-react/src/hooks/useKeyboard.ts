@@ -8,8 +8,11 @@ interface KeyboardOptions {
   onTogglePlanningChat?: () => void
   onCreateGroup?: () => void
   onEscape?: () => boolean
+  onCloseGroupPanel?: () => void
   isModalOpen?: () => boolean
   isEditableFocused?: () => boolean
+  isGroupPanelOpen?: () => boolean
+  selectedCount?: () => number
 }
 
 export function useKeyboard(options: KeyboardOptions) {
@@ -37,6 +40,13 @@ export function useKeyboard(options: KeyboardOptions) {
   useEffect(() => {
     const handleKeydown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // Priority 1: Close group panel if open
+        if (options.isGroupPanelOpen?.()) {
+          options.onCloseGroupPanel?.()
+          e.preventDefault()
+          return
+        }
+        // Priority 2: Call generic escape handler (for modals)
         if (options.onEscape) {
           const closed = options.onEscape()
           if (closed) {
@@ -50,9 +60,23 @@ export function useKeyboard(options: KeyboardOptions) {
       if (options.isModalOpen?.()) return
       if (isEditableControlFocused()) return
       if (options.isEditableFocused?.()) return
+
+      // Ctrl+G: Create group (requires 2+ tasks selected)
+      if ((e.ctrlKey || e.metaKey) && e.key.toUpperCase() === 'G') {
+        const count = options.selectedCount?.() ?? 0
+        if (count >= 2) {
+          e.preventDefault()
+          options.onCreateGroup?.()
+        }
+        return
+      }
+
+      // Skip other shortcuts when modifier keys are held
       if (e.metaKey || e.ctrlKey || e.altKey) return
 
+
       const key = e.key.toUpperCase()
+
 
       switch (key) {
         case 'T':
@@ -74,10 +98,6 @@ export function useKeyboard(options: KeyboardOptions) {
         case 'P':
           e.preventDefault()
           options.onTogglePlanningChat?.()
-          break
-        case 'G':
-          e.preventDefault()
-          options.onCreateGroup?.()
           break
       }
     }

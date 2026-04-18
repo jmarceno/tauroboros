@@ -1038,4 +1038,146 @@
   .virtual-cards-divider {
     @apply my-3 border-t border-dark-border/50;
   }
+
+  .virtual-cards-empty {
+    @apply p-4 text-center border border-dashed border-dark-border rounded-md;
+  }
+
+  /* ============================================
+     GROUP-PANEL COMPONENTS
+     ============================================ */
+
+  .group-panel {
+    @apply fixed top-0 right-0 h-screen w-[350px] bg-dark-surface border-l border-dark-border flex flex-col z-40;
+  }
+
+  .group-panel-enter {
+    animation: slide-in-right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .group-panel-exit {
+    animation: slide-out-right 0.2s ease-in;
+  }
+
+  .group-panel-backdrop {
+    @apply fixed inset-0 bg-black/50 z-30;
+    backdrop-filter: blur(2px);
+  }
+
+  .group-drop-zone {
+    @apply flex-shrink-0 p-3 border-b border-dark-border transition-colors duration-200;
+  }
+
+
+  .group-drop-zone.drag-over {
+    @apply bg-accent-primary/10 border-accent-primary;
+  }
+
+  .group-task-item {
+    @apply p-2.5 bg-dark-bg border border-dark-border rounded-md cursor-pointer transition-all;
+  }
+
+  .group-task-item:hover {
+    @apply border-accent-primary;
+    transform: translateX(2px);
+  }
+
+  .group-task-item:focus {
+    @apply outline-none border-accent-primary;
+  }
+
+  .group-empty-state {
+    @apply flex flex-col items-center justify-center h-full py-12 text-center;
+  }
+
+  .group-empty-icon {
+    @apply w-16 h-16 mb-4 opacity-20 text-dark-text-muted;
+  }
+
+  .group-hint-text {
+    @apply text-xs text-dark-text-muted/60 mt-1;
+  }
+
+  /* Group color utilities */
+  .group-color-indicator {
+    @apply w-3 h-3 rounded-full border border-dark-border flex-shrink-0;
+  }
+
+  .group-tag {
+    @apply flex items-center gap-1 px-2 py-0.5 bg-dark-surface2 border rounded text-[11px];
+    border-left-width: 3px;
+  }
+
+  /* Virtual Card hover glow effect */
+  .virtual-card {
+    @apply relative overflow-hidden;
+  }
+
+  .virtual-card:hover {
+    box-shadow: 0 0 12px var(--group-color, rgba(0, 212, 255, 0.4));
+  }
+
+  .virtual-card-running {
+    animation: pulse-glow 2s infinite;
+  }
+}
+
+/* ============================================
+   ANIMATION KEYFRAMES
+   ============================================ */
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slide-out-right {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 8px var(--group-color, rgba(0, 212, 255, 0.3));
+  }
+  50% {
+    box-shadow: 0 0 16px var(--group-color, rgba(0, 212, 255, 0.6));
+  }
+}
+
+/* ============================================
+   RESPONSIVE BREAKPOINTS
+   ============================================ */
+
+@media (max-width: 1024px) {
+  .group-panel {
+    width: 300px;
+  }
+}
+
+@media (max-width: 768px) {
+  .group-panel {
+    width: 100%;
+    max-width: 400px;
+  }
+
+  .virtual-cards-empty {
+    @apply p-3;
+  }
+
+  .virtual-cards-empty kbd {
+    @apply text-xs;
+  }
 }
