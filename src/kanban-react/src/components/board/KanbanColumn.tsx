@@ -20,6 +20,7 @@ interface KanbanColumnProps {
   currentSort: string
   highlightedRunId?: string | null
   isTaskInRun?: (taskId: string, runId: string | null) => boolean
+  children?: React.ReactNode
   onOpenTask: (id: string, e?: React.MouseEvent) => void
   onChangeSort: (sort: string) => void
   onOpenTemplateModal: () => void
@@ -55,6 +56,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   currentSort,
   highlightedRunId,
   isTaskInRun,
+  children,
   onOpenTask,
   onChangeSort,
   onOpenTemplateModal,
@@ -111,6 +113,7 @@ export const KanbanColumn = memo(function KanbanColumn({
       </div>
 
       <div className="kanban-column-body">
+        {children}
         {tasks.map(task => (
           <TaskCard
             key={task.id}

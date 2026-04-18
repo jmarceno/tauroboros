@@ -3,10 +3,10 @@ export const BASE_IMAGES = {
   piAgent: "pi-agent:latest",
   mockLlm: "mock-llm-server:latest",
   testRunner: "test-runner:latest",
-} as const;
+} as const
 
 export const CONTAINER_DEFAULTS = {
   networkMode: "bridge",
   memoryMb: 512,
   cpuCount: 1,
-} as const;
+} as const

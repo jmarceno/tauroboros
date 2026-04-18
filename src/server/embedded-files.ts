@@ -10,14 +10,14 @@ import { existsSync } from "fs"
 import { dirname, join, basename } from "path"
 import { fileURLToPath } from "url"
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // Static file serving paths - React kanban
-export const KANBAN_DIST = join(__dirname, "..", "kanban-react", "dist");
-export const KANBAN_INDEX = join(KANBAN_DIST, "index.html");
+export const KANBAN_DIST = join(__dirname, "..", "kanban-react", "dist")
+export const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
 // Try to import generated assets (will be available in compiled binary)
-let generatedAssets: typeof import("./generated-assets.ts") | null = null;
+let generatedAssets: typeof import("./generated-assets.ts") | null = null
 try {
   const mod = await import("./generated-assets.ts")
   // Check if the module has the actual implementation or just a placeholder

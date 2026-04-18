@@ -85,7 +85,7 @@ export interface SettingsLoadResult {
 }
 
 function deepMerge<T>(target: T, source: Partial<T>): T {
-  const result = { ...target };
+  const result = { ...target }
 
   for (const key in source) {
     if (source[key] !== undefined) {
@@ -96,14 +96,14 @@ function deepMerge<T>(target: T, source: Partial<T>): T {
         typeof target[key] === "object" &&
         target[key] !== null
       ) {
-        result[key] = deepMerge(target[key], source[key] as Partial<T[typeof key]>);
+        result[key] = deepMerge(target[key], source[key] as Partial<T[typeof key]>)
       } else {
-        result[key] = source[key] as T[typeof key];
+        result[key] = source[key] as T[typeof key]
       }
     }
   }
 
-  return result;
+  return result
 }
 
 function validateFieldType(
@@ -116,18 +116,18 @@ function validateFieldType(
 
   if (expectedType === "number" && actualType === "number") {
     if (Number.isNaN(value)) {
-      warnings.push(`Invalid value at '${path}': must be a valid number, got NaN`);
-      return false;
+      warnings.push(`Invalid value at '${path}': must be a valid number, got NaN`)
+      return false
     }
-    return true;
+    return true
   }
 
   if (expectedType === "integer" && actualType === "number") {
     if (!Number.isInteger(value)) {
-      warnings.push(`Invalid value at '${path}': must be an integer, got ${value}`);
-      return false;
+      warnings.push(`Invalid value at '${path}': must be an integer, got ${value}`)
+      return false
     }
-    return true;
+    return true
   }
 
   if (expectedType === "boolean" && actualType === "boolean") {
@@ -141,11 +141,11 @@ function validateFieldType(
   if (actualType !== expectedType) {
     warnings.push(
       `Invalid type at '${path}': expected ${expectedType}, got ${actualType}`,
-    );
-    return false;
+    )
+    return false
   }
 
-  return true;
+  return true
 }
 
 function extractUnknownFields(
@@ -153,26 +153,26 @@ function extractUnknownFields(
   validKeys: string[],
   path: string,
 ): string[] {
-  const unknown: string[] = [];
+  const unknown: string[] = []
 
   for (const key of Object.keys(obj)) {
-    const fullPath = path ? `${path}.${key}` : key;
+    const fullPath = path ? `${path}.${key}` : key
     if (!validKeys.includes(key)) {
-      unknown.push(fullPath);
+      unknown.push(fullPath)
     }
   }
 
-  return unknown;
+  return unknown
 }
 
 function validateAndExtractUnknown(
   parsed: Record<string, unknown>,
   warnings: string[],
 ): SettingsLoadResult {
-  const unknownFields: string[] = [];
+  const unknownFields: string[] = []
 
-  const validTopKeys = ["skills", "project", "workflow"];
-  unknownFields.push(...extractUnknownFields(parsed, validTopKeys, ""));
+  const validTopKeys = ["skills", "project", "workflow"]
+  unknownFields.push(...extractUnknownFields(parsed, validTopKeys, ""))
 
   if (parsed.skills !== undefined) {
     if (typeof parsed.skills === "object" && parsed.skills !== null) {
@@ -313,18 +313,18 @@ function validateAndExtractUnknown(
   }
 
   // Merge with defaults
-  const merged = deepMerge(DEFAULT_INFRASTRUCTURE_SETTINGS, parsed as Partial<InfrastructureSettings>);
+  const merged = deepMerge(DEFAULT_INFRASTRUCTURE_SETTINGS, parsed as Partial<InfrastructureSettings>)
 
   return {
     settings: merged,
     warnings,
     unknownFields,
-  };
+  }
 }
 
 export function loadInfrastructureSettings(projectRoot: string): SettingsLoadResult {
-  const settingsPath = join(projectRoot, ".tauroboros", "settings.json");
-  const warnings: string[] = [];
+  const settingsPath = join(projectRoot, ".tauroboros", "settings.json")
+  const warnings: string[] = []
 
   if (!existsSync(settingsPath)) {
     return {
@@ -335,24 +335,24 @@ export function loadInfrastructureSettings(projectRoot: string): SettingsLoadRes
   }
 
   try {
-    const raw = readFileSync(settingsPath, "utf-8");
-    let parsed: unknown;
+    const raw = readFileSync(settingsPath, "utf-8")
+    let parsed: unknown
 
     try {
-      parsed = JSON.parse(raw);
+      parsed = JSON.parse(raw)
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Invalid JSON in settings file: ${message}`);
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Invalid JSON in settings file: ${message}`)
     }
 
     if (!parsed || typeof parsed !== "object") {
       throw new Error("Settings must be a JSON object")
     }
 
-    return validateAndExtractUnknown(parsed as Record<string, unknown>, warnings);
+    return validateAndExtractUnknown(parsed as Record<string, unknown>, warnings)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    warnings.push(`Failed to load settings: ${message}. Using defaults.`);
+    const message = error instanceof Error ? error.message : String(error)
+    warnings.push(`Failed to load settings: ${message}. Using defaults.`)
 
     return {
       settings: { ...DEFAULT_INFRASTRUCTURE_SETTINGS },
@@ -366,12 +366,12 @@ export function saveInfrastructureSettings(
   projectRoot: string,
   settings: InfrastructureSettings,
 ): void {
-  const settingsDir = join(projectRoot, ".tauroboros");
-  mkdirSync(settingsDir, { recursive: true });
+  const settingsDir = join(projectRoot, ".tauroboros")
+  mkdirSync(settingsDir, { recursive: true })
 
-  const settingsPath = join(settingsDir, "settings.json");
-  const content = JSON.stringify(settings, null, 2);
-  writeFileSync(settingsPath, content, "utf-8");
+  const settingsPath = join(settingsDir, "settings.json")
+  const content = JSON.stringify(settings, null, 2)
+  writeFileSync(settingsPath, content, "utf-8")
 }
 
 export interface EnsureSettingsOptions {
@@ -382,31 +382,31 @@ export function ensureInfrastructureSettings(
   projectRoot: string,
   options?: EnsureSettingsOptions,
 ): SettingsLoadResult {
-  const settingsPath = join(projectRoot, ".tauroboros", "settings.json");
+  const settingsPath = join(projectRoot, ".tauroboros", "settings.json")
 
-  let result: SettingsLoadResult;
+  let result: SettingsLoadResult
 
   if (existsSync(settingsPath)) {
-    result = loadInfrastructureSettings(projectRoot);
+    result = loadInfrastructureSettings(projectRoot)
 
     // Re-save to ensure file has all defaults and proper formatting
-    saveInfrastructureSettings(projectRoot, result.settings);
+    saveInfrastructureSettings(projectRoot, result.settings)
   } else {
     // Create new with defaults
-    const settings = { ...DEFAULT_INFRASTRUCTURE_SETTINGS };
+    const settings = { ...DEFAULT_INFRASTRUCTURE_SETTINGS }
 
     // Apply container preference if specified
     if (options?.preferContainer === true) {
-      settings.workflow.container.enabled = true;
+      settings.workflow.container.enabled = true
     }
 
     result = {
       settings,
       warnings: ["Created new settings.json with default values"],
       unknownFields: [],
-    };
-    saveInfrastructureSettings(projectRoot, result.settings);
+    }
+    saveInfrastructureSettings(projectRoot, result.settings)
   }
 
-  return result;
+  return result
 }

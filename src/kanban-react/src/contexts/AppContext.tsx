@@ -4,6 +4,7 @@ import type {
   BestOfNSummary, ColumnSortPreferences, Options,
   ModelCatalog, Toast, LogEntry, ControlState,
   TaskRunContext, PlanningPrompt, ChatSession, SessionUsageRollup,
+  TaskGroup, TaskGroupWithTasks,
 } from "@/types"
 
 // Tasks context type
@@ -240,6 +241,29 @@ interface TaskLastUpdateContextType {
   loadLastUpdate: (taskId: string) => Promise<void>
 }
 
+// Task groups context type
+interface TaskGroupsContextType {
+  groups: TaskGroup[]
+  loading: boolean
+  error: string | null
+  activeGroupId: string | null
+  activeGroup: TaskGroup | null
+  activeGroups: TaskGroup[]
+  completedGroups: TaskGroup[]
+  loadGroups: () => Promise<TaskGroup[]>
+  createGroup: (taskIds: string[], name?: string) => Promise<TaskGroup>
+  openGroup: (groupId: string | null) => void
+  loadGroupDetails: (groupId: string) => Promise<TaskGroupWithTasks>
+  addTasksToGroup: (groupId: string, taskIds: string[]) => Promise<TaskGroup>
+  removeTasksFromGroup: (groupId: string, taskIds: string[]) => Promise<TaskGroup>
+  startGroup: (groupId: string) => Promise<unknown>
+  deleteGroup: (groupId: string) => Promise<void>
+  updateGroup: (groupId: string, updates: { name?: string; color?: string }) => Promise<TaskGroup>
+  getGroupById: (id: string) => TaskGroup | undefined
+  updateGroupFromWebSocket: (group: TaskGroup) => void
+  removeGroupFromWebSocket: (groupId: string) => void
+}
+
 // Create contexts
 export const TasksContext = createContext<TasksContextType | undefined>(undefined)
 export const RunsContext = createContext<RunsContextType | undefined>(undefined)
@@ -255,6 +279,7 @@ export const ModalContext = createContext<ModalContextType | undefined>(undefine
 export const ContainerStatusContext = createContext<ContainerStatusContextType | undefined>(undefined)
 export const SessionUsageContext = createContext<SessionUsageContextType | undefined>(undefined)
 export const TaskLastUpdateContext = createContext<TaskLastUpdateContextType | undefined>(undefined)
+export const TaskGroupsContext = createContext<TaskGroupsContextType | undefined>(undefined)
 
 // Export hook functions
 export function useTasksContext() {
@@ -338,5 +363,11 @@ export function useSessionUsageContext() {
 export function useTaskLastUpdateContext() {
   const context = useContext(TaskLastUpdateContext)
   if (!context) throw new Error('useTaskLastUpdateContext must be used within TaskLastUpdateProvider')
+  return context
+}
+
+export function useTaskGroupsContext() {
+  const context = useContext(TaskGroupsContext)
+  if (!context) throw new Error('useTaskGroupsContext must be used within TaskGroupsProvider')
   return context
 }

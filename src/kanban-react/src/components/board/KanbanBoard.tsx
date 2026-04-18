@@ -1,6 +1,8 @@
 import { useMemo, memo } from 'react'
-import type { Task, TaskStatus, BestOfNSummary } from '@/types'
+import type { Task, TaskStatus, BestOfNSummary, TaskGroup, ColumnSortPreferences } from '@/types'
 import { KanbanColumn } from './KanbanColumn'
+import { VirtualCard } from './VirtualCard'
+import { GroupPanel } from './GroupPanel'
 import type { useDragDrop } from '@/hooks/useDragDrop'
 
 interface KanbanBoardProps {
@@ -11,9 +13,13 @@ interface KanbanBoardProps {
   dragDrop: ReturnType<typeof useDragDrop>
   isMultiSelecting?: boolean
   getIsSelected?: (taskId: string) => boolean
-  columnSorts?: Record<string, string>
+  columnSorts?: ColumnSortPreferences
   highlightedRunId?: string | null
   isTaskInRun?: (taskId: string, runId: string | null) => boolean
+  // Group-related props
+  groups?: TaskGroup[]
+  groupMembers?: Record<string, string[]>
+  activeGroupId?: string | null
   onOpenTask: (id: string, e?: React.MouseEvent) => void
   onOpenTemplateModal: () => void
   onOpenTaskModal: () => void
@@ -31,6 +37,14 @@ interface KanbanBoardProps {
   onViewRuns: (id: string) => void
   onContinueReviews: (id: string) => void
   onChangeColumnSort: (status: string, sort: string) => void
+  // Group handlers
+  onVirtualCardClick?: (groupId: string) => void
+  onDeleteGroup?: (groupId: string) => void
+  onStartGroup?: (groupId: string) => void
+  onCloseGroupPanel?: () => void
+  onRemoveTaskFromGroup?: (taskId: string) => void
+  onAddTasksToGroup?: (taskIds: string[]) => void
+  onCreateGroupFromSelection?: () => void
 }
 
 const columns: { status: TaskStatus; title: string }[] = [
@@ -80,6 +94,11 @@ export const KanbanBoard = memo(function KanbanBoard({
   columnSorts,
   highlightedRunId,
   isTaskInRun,
+  // Group props
+  groups = [],
+  groupMembers = {},
+  activeGroupId = null,
+  // Handlers
   onOpenTask,
   onOpenTemplateModal,
   onOpenTaskModal,
@@ -97,7 +116,29 @@ export const KanbanBoard = memo(function KanbanBoard({
   onViewRuns,
   onContinueReviews,
   onChangeColumnSort,
+  // Group handlers
+  onVirtualCardClick,
+  onDeleteGroup,
+  onStartGroup,
+  onCloseGroupPanel,
+  onRemoveTaskFromGroup,
+  onAddTasksToGroup,
+  // onCreateGroupFromSelection is provided for API completeness but handled externally by GroupActionBar
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  onCreateGroupFromSelection: _onCreateGroupFromSelection,
 }: KanbanBoardProps) {
+  // Build a Set of all task IDs that are in any group for O(1) lookup
+  const groupedTaskIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const taskIds of Object.values(groupMembers)) {
+      for (const taskId of taskIds) {
+        ids.add(taskId)
+      }
+    }
+    return ids
+  }, [groupMembers])
+
+  // Group tasks by status, filtering out grouped tasks from backlog
   const groupedTasks = useMemo(() => {
     if (!tasks || !Array.isArray(tasks)) {
       return {
@@ -107,20 +148,30 @@ export const KanbanBoard = memo(function KanbanBoard({
         review: [],
         'code-style': [],
         done: [],
-      } as Record<TaskStatus, Task[]>
+        failed: [],
+        stuck: [],
+      }
     }
 
-    const groups: Record<TaskStatus, Task[]> = {
-      template: [],
-      backlog: [],
-      executing: [],
-      review: [],
-      'code-style': [],
-      done: [],
+    const groups = {
+      template: [] as Task[],
+      backlog: [] as Task[],
+      executing: [] as Task[],
+      review: [] as Task[],
+      'code-style': [] as Task[],
+      done: [] as Task[],
+      failed: [] as Task[],
+      stuck: [] as Task[],
     }
 
     for (const task of tasks) {
       if (!task) continue
+
+      // Filter out tasks that are in a group from the backlog column
+      if (task.status === 'backlog' && groupedTaskIds.has(task.id)) {
+        continue
+      }
+
       if (task.status === 'failed' || task.status === 'stuck') {
         groups.review.push(task)
       } else if (task.status === 'code-style') {
@@ -131,7 +182,26 @@ export const KanbanBoard = memo(function KanbanBoard({
     }
 
     return groups
-  }, [tasks])
+  }, [tasks, groupedTaskIds])
+
+  // Get the active group for the panel
+  const activeGroup = useMemo(() => {
+    if (!activeGroupId) return null
+    return groups.find(g => g.id === activeGroupId) || null
+  }, [groups, activeGroupId])
+
+  // Get tasks for the active group
+  const activeGroupTasks = useMemo(() => {
+    if (!activeGroupId || !groupMembers[activeGroupId] || !tasks || !Array.isArray(tasks)) return []
+    const memberIds = new Set(groupMembers[activeGroupId])
+    return tasks.filter(t => memberIds.has(t.id))
+  }, [activeGroupId, groupMembers, tasks])
+
+  // Filter to only show active groups as virtual cards in backlog
+  const activeGroups = useMemo(() =>
+    groups.filter(g => g.status === 'active'),
+    [groups]
+  )
 
   return (
     <div className="kanban-wrapper">
@@ -172,10 +242,50 @@ export const KanbanBoard = memo(function KanbanBoard({
               onArchiveAllDone={onArchiveAllDone}
               onViewRuns={onViewRuns}
               onContinueReviews={onContinueReviews}
-            />
+            >
+              {/* Render virtual cards in backlog column */}
+              {column.status === 'backlog' && activeGroups.length > 0 && (
+                <div className="virtual-cards-section">
+                  <div className="virtual-cards-header">
+                    <span className="text-xs font-medium text-dark-text-muted uppercase tracking-wider">
+                      Virtual Workflows
+                    </span>
+                  </div>
+                  <div className="virtual-cards-list">
+                    {activeGroups.map(group => (
+                      <VirtualCard
+                        key={group.id}
+                        group={group}
+                        taskCount={groupMembers[group.id]?.length ?? 0}
+                        onClick={() => onVirtualCardClick?.(group.id)}
+                        onDelete={() => onDeleteGroup?.(group.id)}
+                        onStart={() => onStartGroup?.(group.id)}
+                      />
+                    ))}
+                  </div>
+                  <div className="virtual-cards-divider" />
+                </div>
+              )}
+            </KanbanColumn>
           ))}
         </div>
       </div>
+
+      {/* Group Panel - slides in from right when active */}
+      {activeGroup && (
+        <GroupPanel
+          group={activeGroup}
+          tasks={activeGroupTasks}
+          isOpen={!!activeGroupId}
+          onClose={() => onCloseGroupPanel?.()}
+          onRemoveTask={(taskId) => onRemoveTaskFromGroup?.(taskId)}
+          onAddTasks={(taskIds) => onAddTasksToGroup?.(taskIds)}
+          onStartGroup={() => onStartGroup?.(activeGroup.id)}
+          onOpenTask={(id) => onOpenTask(id)}
+          onDeleteGroup={() => onDeleteGroup?.(activeGroup.id)}
+          dragDrop={dragDrop}
+        />
+      )}
     </div>
   )
 })

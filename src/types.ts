@@ -250,7 +250,7 @@ Steps:
    - Final commit message
    - Whether stash was used
    - Whether conflicts were resolved
-   - Any remaining manual follow-up needed`;
+   - Any remaining manual follow-up needed`
 
 export const DEFAULT_CODE_STYLE_PROMPT = `You are a code style enforcement agent. Review the code in the workspace and apply fixes to ensure compliance.
 
@@ -268,7 +268,7 @@ APPROACH:
 3. Use the edit tool to fix all issues
 4. Confirm when complete
 
-IMPORTANT: You must actively use the edit tool to make changes. Do not just report issues - fix them.`;
+IMPORTANT: You must actively use the edit tool to make changes. Do not just report issues - fix them.`
 
 /**
  * Resolves the code style prompt to use.

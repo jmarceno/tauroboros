@@ -27,8 +27,8 @@ const STATUS_EMOJI: Record<string, string> = {
 }
 
 function buildMessage(taskName: string, oldStatus: string, newStatus: string): string {
-  const emoji = STATUS_EMOJI[newStatus] ?? "💬";
-  const time = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  const emoji = STATUS_EMOJI[newStatus] ?? "💬"
+  const time = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC"
   return [
     `${emoji} *Task State Update*`,
     ``,
@@ -36,7 +36,7 @@ function buildMessage(taskName: string, oldStatus: string, newStatus: string): s
     `*From:* \`${oldStatus}\` → *To:* \`${newStatus}\``,
     ``,
     `_${time}_`,
-  ].join("\n");
+  ].join("\n")
 }
 
 export async function sendTelegramNotification(
@@ -47,7 +47,7 @@ export async function sendTelegramNotification(
   logger: (msg: string) => void = console.log
 ): Promise<TelegramSendResult> {
   if (!config.botToken || !config.chatId) {
-    return { success: false, error: "not configured" };
+    return { success: false, error: "not configured" }
   }
 
   const message = buildMessage(taskName, oldStatus, newStatus)
@@ -65,24 +65,24 @@ export async function sendTelegramNotification(
     })
 
     if (!response.ok) {
-      const body = await response.text();
-      logger(`[telegram] send failed: ${response.status} ${body}`);
-      return { success: false, error: `HTTP ${response.status}: ${body}` };
+      const body = await response.text()
+      logger(`[telegram] send failed: ${response.status} ${body}`)
+      return { success: false, error: `HTTP ${response.status}: ${body}` }
     }
 
     let messageId: number | undefined
     try {
-      const data = await response.json() as TelegramApiResponse;
-      messageId = data.result?.message_id;
+      const data = await response.json() as TelegramApiResponse
+      messageId = data.result?.message_id
     } catch {
       // JSON parsing failed - notification was still sent successfully
     }
 
-    logger(`[telegram] notification sent for "${taskName}" (${oldStatus} → ${newStatus})`);
-    return { success: true, messageId };
+    logger(`[telegram] notification sent for "${taskName}" (${oldStatus} → ${newStatus})`)
+    return { success: true, messageId }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger(`[telegram] send error: ${msg}`);
-    return { success: false, error: msg };
+    const msg = err instanceof Error ? err.message : String(err)
+    logger(`[telegram] send error: ${msg}`)
+    return { success: false, error: msg }
   }
 }

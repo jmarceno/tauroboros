@@ -1,19 +1,21 @@
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useCallback, useRef, useMemo } from "react"
 import "./styles/theme.css"
 import {
   TasksContext, RunsContext, OptionsContext, ToastContext,
   ModelSearchContext, SessionContext, WebSocketContext,
   WorkflowControlContext, MultiSelectContext, PlanningChatContext,
   ModalContext, ContainerStatusContext, SessionUsageContext, TaskLastUpdateContext,
+  TaskGroupsContext,
 } from "@/contexts/AppContext"
 import {
   useTasks, useRuns, useOptions, useToasts,
   useModelSearch, useSession, useWebSocket,
   useWorkflowControl, useMultiSelect, usePlanningChat,
   useDragDrop, useKeyboard, useSessionUsage, useTaskLastUpdate,
+  useTaskGroups,
 } from "@/hooks"
 import { validateTaskDrop } from "@/utils/dropValidation"
-import type { Task, TaskStatus, WorkflowRun } from "@/types"
+import type { Task, TaskStatus, WorkflowRun, TaskGroup } from "@/types"
 
 // Components
 import { Sidebar } from "@/components/board/Sidebar"
@@ -66,6 +68,7 @@ function App() {
   const planningChatHook = usePlanningChat(wsHook)
   const sessionUsageHook = useSessionUsage()
   const taskLastUpdateHook = useTaskLastUpdate(wsHook)
+  const taskGroupsHook = useTaskGroups()
 
   // Workflow control
   const workflowControl = useWorkflowControl(
@@ -95,6 +98,20 @@ function App() {
   const parallelTasksValue = optionsHook.options?.parallelTasks ?? 1
   const isConnectedValue = wsHook.isConnected
   const currentActiveRun = runsHook.activeRuns[0] || null
+
+  // Build group members map from tasks with groupId
+  const groupMembers = useMemo(() => {
+    const members: Record<string, string[]> = {}
+    for (const task of tasksHook.tasks) {
+      if (task.groupId) {
+        if (!members[task.groupId]) {
+          members[task.groupId] = []
+        }
+        members[task.groupId].push(task.id)
+      }
+    }
+    return members
+  }, [tasksHook.tasks])
 
   // Modal helpers
   const openModal = useCallback((name: string, data?: Record<string, unknown>) => {
@@ -527,12 +544,55 @@ function App() {
       workflowControl.updateStateFromRuns(runsHook.runs)
     }))
 
+    // Task Group WebSocket handlers
+    unsubscribers.push(wsHook.on('group_created', (payload) => {
+      const group = payload as { id: string; name: string }
+      taskGroupsHook.updateGroupFromWebSocket(group as TaskGroup)
+      toastsHook.addLog(`Group created: ${group.name}`, 'success')
+    }))
+
+    unsubscribers.push(wsHook.on('group_updated', (payload) => {
+      const group = payload as TaskGroup
+      taskGroupsHook.updateGroupFromWebSocket(group)
+    }))
+
+    unsubscribers.push(wsHook.on('group_deleted', (payload) => {
+      const { id } = payload as { id: string }
+      taskGroupsHook.removeGroupFromWebSocket(id)
+      toastsHook.addLog('Group deleted', 'info')
+    }))
+
+    unsubscribers.push(wsHook.on('group_task_added', (payload) => {
+      const { groupId, taskId } = payload as { groupId: string; taskId: string }
+      toastsHook.addLog(`Task added to group`, 'info')
+      // Reload tasks to get updated groupId
+      tasksHook.loadTasks()
+    }))
+
+    unsubscribers.push(wsHook.on('group_task_removed', (payload) => {
+      const { groupId, taskId } = payload as { groupId: string; taskId: string }
+      toastsHook.addLog(`Task removed from group`, 'info')
+      // Reload tasks to get updated groupId
+      tasksHook.loadTasks()
+    }))
+
+    unsubscribers.push(wsHook.on('group_execution_started', (payload) => {
+      const { groupId } = payload as { groupId: string }
+      toastsHook.showToast('Group execution started', 'success')
+    }))
+
+    unsubscribers.push(wsHook.on('group_execution_complete', (payload) => {
+      const { groupId } = payload as { groupId: string }
+      toastsHook.showToast('Group execution completed', 'success')
+    }))
+
     wsHook.onReconnect(() => {
       console.log('[App] Reconnected - syncing state from server')
       Promise.all([
         tasksHook.loadTasks(),
         runsHook.loadRuns(),
         optionsHook.loadOptions(),
+        taskGroupsHook.loadGroups(),
       ]).catch(err => {
         console.error('[App] State resync failed:', err)
       })
@@ -550,6 +610,7 @@ function App() {
       await modelSearchHook.loadModels()
       await runsHook.loadRuns()
       await tasksHook.loadTasks()
+      await taskGroupsHook.loadGroups()
       await loadContainerStatus()
 
       runsHook.setTasksRef(tasksHook.tasks)
@@ -624,6 +685,7 @@ function App() {
                           <ContainerStatusContext.Provider value={{ containerStatus, isContainerEnabled, loadContainerStatus }}>
                             <SessionUsageContext.Provider value={sessionUsageHook}>
                               <TaskLastUpdateContext.Provider value={taskLastUpdateHook}>
+                              <TaskGroupsContext.Provider value={taskGroupsHook}>
                               <div className="app-layout bg-dark-bg text-dark-text">
                               <Sidebar
                                 consumedSlots={consumedSlotsValue}
@@ -725,6 +787,9 @@ function App() {
                                   columnSorts={optionsHook.options?.columnSorts}
                                   highlightedRunId={highlightedRunId}
                                   isTaskInRun={runsHook.isTaskInRun}
+                                  groups={taskGroupsHook.activeGroups}
+                                  groupMembers={groupMembers}
+                                  activeGroupId={taskGroupsHook.activeGroupId}
                                   onOpenTask={(id: string, e?: React.MouseEvent) => {
                                     if (e && (e.ctrlKey || e.metaKey)) {
                                       multiSelectHook.toggleSelection(id, e)
@@ -796,6 +861,22 @@ function App() {
                                     const newSorts = { ...(optionsHook.options?.columnSorts || {}), [status]: sort }
                                     optionsHook.updateOptions({ columnSorts: newSorts })
                                   }}
+                                  onVirtualCardClick={(groupId) => taskGroupsHook.openGroup(groupId)}
+                                  onDeleteGroup={(groupId) => taskGroupsHook.deleteGroup(groupId)}
+                                  onStartGroup={(groupId) => taskGroupsHook.startGroup(groupId)}
+                                  onCloseGroupPanel={() => taskGroupsHook.openGroup(null)}
+                                  onRemoveTaskFromGroup={(taskId) => {
+                                    const groupId = taskGroupsHook.activeGroupId
+                                    if (groupId) {
+                                      taskGroupsHook.removeTasksFromGroup(groupId, [taskId])
+                                    }
+                                  }}
+                                  onAddTasksToGroup={(taskIds) => {
+                                    const groupId = taskGroupsHook.activeGroupId
+                                    if (groupId) {
+                                      taskGroupsHook.addTasksToGroup(groupId, taskIds)
+                                    }
+                                  }}
                                 />
 
                                 <TabbedLogPanel
@@ -838,8 +919,17 @@ function App() {
                               <GroupActionBar
                                 selectedCount={multiSelectHook.selectedCount}
                                 onCreateGroup={() => {
-                                  multiSelectHook.startGroupCreation()
-                                  openModal('batchEdit', { taskIds: multiSelectHook.getSelectedIds() })
+                                  const selectedIds = multiSelectHook.getSelectedIds()
+                                  if (selectedIds.length >= 2) {
+                                    taskGroupsHook.createGroup(selectedIds)
+                                      .then(() => {
+                                        multiSelectHook.clearSelection()
+                                        toastsHook.showToast('Group created successfully', 'success')
+                                      })
+                                      .catch((e) => {
+                                        toastsHook.showToast(`Failed to create group: ${e instanceof Error ? e.message : String(e)}`, 'error')
+                                      })
+                                  }
                                 }}
                                 onBatchEdit={() => openModal('batchEdit', { taskIds: multiSelectHook.getSelectedIds() })}
                                 onClear={multiSelectHook.clearSelection}
@@ -972,6 +1062,7 @@ function App() {
 
                               <ChatContainer />
                               </div>
+                              </TaskGroupsContext.Provider>
                               </TaskLastUpdateContext.Provider>
                             </SessionUsageContext.Provider>
                           </ContainerStatusContext.Provider>
