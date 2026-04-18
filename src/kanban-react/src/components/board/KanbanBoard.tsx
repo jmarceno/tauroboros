@@ -45,6 +45,7 @@ interface KanbanBoardProps {
   onRemoveTaskFromGroup?: (taskId: string) => void
   onAddTasksToGroup?: (taskIds: string[]) => void
   onCreateGroupFromSelection?: () => void
+  onRenameGroup?: (groupId: string, newName: string) => Promise<void>
 }
 
 const columns: { status: TaskStatus; title: string }[] = [
@@ -124,12 +125,9 @@ export const KanbanBoard = memo(function KanbanBoard({
   onRemoveTaskFromGroup,
   onAddTasksToGroup,
   onCreateGroupFromSelection,
+  onRenameGroup,
 }: KanbanBoardProps) {
-  // These group handler props are available but not currently used in this component.
-  // They are part of the public API for future drag-and-drop task management features.
-  void onRemoveTaskFromGroup
-  void onAddTasksToGroup
-  void onCreateGroupFromSelection
+
   const groupedTaskIds = useMemo(() => {
     const ids = new Set<string>()
     for (const taskIds of Object.values(groupMembers)) {
@@ -289,6 +287,7 @@ export const KanbanBoard = memo(function KanbanBoard({
                   onViewRuns={onViewRuns}
                   onContinueReviews={onContinueReviews}
                   onDeleteGroup={() => onDeleteGroup?.(activeGroup.id)}
+                  onRenameGroup={onRenameGroup}
                   dragDrop={dragDrop}
                 />
               )}

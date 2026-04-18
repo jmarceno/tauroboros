@@ -220,6 +220,7 @@ describe('GroupPanel', () => {
     onArchiveTask: vi.fn(),
     onViewRuns: vi.fn(),
     onContinueReviews: vi.fn(),
+    onRenameGroup: vi.fn(),
   }
 
   beforeEach(() => {
@@ -581,6 +582,280 @@ describe('GroupPanel', () => {
 
     const startButton = screen.getByText('Start Group Workflow')
     expect(startButton).not.toBeDisabled()
+  })
+
+  it('shows rename button next to group name', () => {
+    renderWithContexts(
+      <GroupPanel
+        group={mockGroup}
+        tasks={mockTasks}
+        isOpen={true}
+        dragDrop={createMockDragDrop()}
+        {...mockCallbacks}
+      />
+    )
+    const renameButton = screen.getByLabelText('Rename group')
+    expect(renameButton).toBeInTheDocument()
+  })
+
+  it('enters edit mode when rename button is clicked', () => {
+    renderWithContexts(
+      <GroupPanel
+        group={mockGroup}
+        tasks={mockTasks}
+        isOpen={true}
+        dragDrop={createMockDragDrop()}
+        {...mockCallbacks}
+      />
+    )
+    const renameButton = screen.getByLabelText('Rename group')
+    fireEvent.click(renameButton)
+    
+    const input = screen.getByLabelText('Edit group name')
+    expect(input).toBeInTheDocument()
+    expect(input).toHaveValue('Test Group')
+    expect(input).toHaveFocus()
+  })
+
+  it('calls onRenameGroup when Enter is pressed with valid name', async () => {
+    const renameMock = vi.fn().mockResolvedValue(undefined)
+    renderWithContexts(
+      <GroupPanel
+        group={mockGroup}
+        tasks={mockTasks}
+        isOpen={true}
+        dragDrop={createMockDragDrop()}
+        {...mockCallbacks}
+        onRenameGroup={renameMock}
+      />
+    )
+    
+    // Click rename button
+    const renameButton = screen.getByLabelText('Rename group')
+    fireEvent.click(renameButton)
+    
+    // Clear and type new name
+    const input = screen.getByLabelText('Edit group name')
+    fireEvent.change(input, { target: { value: 'New Group Name' } })
+    
+    // Press Enter
+    fireEvent.keyDown(input, { key: 'Enter' })
+    
+    expect(renameMock).toHaveBeenCalledWith('group-1', 'New Group Name')
+  })
+
+  it('exits edit mode and reverts when Escape is pressed', () => {
+    renderWithContexts(
+      <GroupPanel
+        group={mockGroup}
+        tasks={mockTasks}
+        isOpen={true}
+        dragDrop={createMockDragDrop()}
+        {...mockCallbacks}
+      />
+    )
+    
+    // Click rename button
+    const renameButton = screen.getByLabelText('Rename group')
+    fireEvent.click(renameButton)
+    
+    // Type new name
+    const input = screen.getByLabelText('Edit group name')
+    fireEvent.change(input, { target: { value: 'New Name' } })
+    
+    // Press Escape
+    fireEvent.keyDown(input, { key: 'Escape' })
+    
+    // Should be back to display mode
+    expect(screen.queryByLabelText('Edit group name')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Test Group' })).toBeInTheDocument()
+  })
+
+  it('shows error for empty name and stays in edit mode', () => {
+    const renameMock = vi.fn().mockResolvedValue(undefined)
+    renderWithContexts(
+      <GroupPanel
+        group={mockGroup}
+        tasks={mockTasks}
+        isOpen={true}
+        dragDrop={createMockDragDrop()}
+        {...mockCallbacks}
+        onRenameGroup={renameMock}
+      />
+    )
+    
+    // Click rename button
+    const renameButton = screen.getByLabelText('Rename group')
+    fireEvent.click(renameButton)
+    
+    // Clear the name to make it empty
+    const input = screen.getByLabelText('Edit group name')
+    fireEvent.change(input, { target: { value: '' } })
+    
+    // Press Enter with empty name
+    fireEvent.keyDown(input, { key: 'Enter' })
+    
+    // Should show error
+    expect(screen.getByRole('alert')).toHaveTextContent('Name cannot be empty')
+    // Should still be in edit mode
+    expect(screen.getByLabelText('Edit group name')).toBeInTheDocument()
+    // Should NOT call onRenameGroup
+    expect(renameMock).not.toHaveBeenCalled()
+  })
+
+  it('shows error for name exceeding 100 characters', () => {
+    const renameMock = vi.fn().mockResolvedValue(undefined)
+    renderWithContexts(
+      <GroupPanel
+        group={mockGroup}
+        tasks={mockTasks}
+        isOpen={true}
+        dragDrop={createMockDragDrop()}
+        {...mockCallbacks}
+        onRenameGroup={renameMock}
+      />
+    )
+    
+    // Click rename button
+    const renameButton = screen.getByLabelText('Rename group')
+    fireEvent.click(renameButton)
+    
+    // Type name exceeding 100 characters
+    const longName = 'A'.repeat(101)
+    const input = screen.getByLabelText('Edit group name')
+    fireEvent.change(input, { target: { value: longName } })
+    
+    // Press Enter
+    fireEvent.keyDown(input, { key: 'Enter' })
+    
+    // Should show error
+    expect(screen.getByRole('alert')).toHaveTextContent('Name must be 100 characters or less')
+    // Should still be in edit mode
+    expect(screen.getByLabelText('Edit group name')).toBeInTheDocument()
+    // Should NOT call onRenameGroup
+    expect(renameMock).not.toHaveBeenCalled()
+  })
+
+  it('shows error message when onRenameGroup fails', async () => {
+    const renameMock = vi.fn().mockRejectedValue(new Error('Server error'))
+    renderWithContexts(
+      <GroupPanel
+        group={mockGroup}
+        tasks={mockTasks}
+        isOpen={true}
+        dragDrop={createMockDragDrop()}
+        {...mockCallbacks}
+        onRenameGroup={renameMock}
+      />
+    )
+    
+    // Click rename button
+    const renameButton = screen.getByLabelText('Rename group')
+    fireEvent.click(renameButton)
+    
+    // Type new name
+    const input = screen.getByLabelText('Edit group name')
+    fireEvent.change(input, { target: { value: 'New Name' } })
+    
+    // Press Enter
+    fireEvent.keyDown(input, { key: 'Enter' })
+    
+    // Should show error from the rejected promise
+    expect(await screen.findByRole('alert')).toHaveTextContent('Server error')
+    // Should still be in edit mode
+    expect(screen.getByLabelText('Edit group name')).toBeInTheDocument()
+  })
+
+  it('accepts name unchanged from original and exits edit mode without API call', () => {
+    const renameMock = vi.fn().mockResolvedValue(undefined)
+    renderWithContexts(
+      <GroupPanel
+        group={mockGroup}
+        tasks={mockTasks}
+        isOpen={true}
+        dragDrop={createMockDragDrop()}
+        {...mockCallbacks}
+        onRenameGroup={renameMock}
+      />
+    )
+    
+    // Click rename button
+    const renameButton = screen.getByLabelText('Rename group')
+    fireEvent.click(renameButton)
+    
+    // Keep the same name (don't change anything)
+    const input = screen.getByLabelText('Edit group name')
+    expect(input).toHaveValue('Test Group')
+    
+    // Press Enter with same name
+    fireEvent.keyDown(input, { key: 'Enter' })
+    
+    // Should exit edit mode
+    expect(screen.queryByLabelText('Edit group name')).not.toBeInTheDocument()
+    // Should NOT call onRenameGroup since name didn't change
+    expect(renameMock).not.toHaveBeenCalled()
+  })
+
+  it('does not show rename button when onRenameGroup is not provided', () => {
+    renderWithContexts(
+      <GroupPanel
+        group={mockGroup}
+        tasks={mockTasks}
+        isOpen={true}
+        dragDrop={createMockDragDrop()}
+        bonSummaries={{}}
+        getTaskRunColor={vi.fn(() => null)}
+        isTaskMutationLocked={vi.fn(() => false)}
+        onClose={vi.fn()}
+        onStartGroup={vi.fn()}
+        onOpenTask={vi.fn()}
+        onDeleteGroup={vi.fn()}
+        onDeployTemplate={vi.fn()}
+        onOpenTaskSessions={vi.fn()}
+        onApprovePlan={vi.fn()}
+        onRequestRevision={vi.fn()}
+        onStartSingle={vi.fn()}
+        onRepairTask={vi.fn()}
+        onMarkDone={vi.fn()}
+        onResetTask={vi.fn()}
+        onConvertToTemplate={vi.fn()}
+        onArchiveTask={vi.fn()}
+        onViewRuns={vi.fn()}
+        onContinueReviews={vi.fn()}
+      />
+    )
+    
+    // Rename button should not exist
+    expect(screen.queryByLabelText('Rename group')).not.toBeInTheDocument()
+  })
+
+  it('exits edit mode when clicking outside (blur)', async () => {
+    const renameMock = vi.fn().mockResolvedValue(undefined)
+    renderWithContexts(
+      <GroupPanel
+        group={mockGroup}
+        tasks={mockTasks}
+        isOpen={true}
+        dragDrop={createMockDragDrop()}
+        {...mockCallbacks}
+        onRenameGroup={renameMock}
+      />
+    )
+    
+    // Click rename button
+    const renameButton = screen.getByLabelText('Rename group')
+    fireEvent.click(renameButton)
+    
+    // Type new name
+    const input = screen.getByLabelText('Edit group name')
+    fireEvent.change(input, { target: { value: 'New Name' } })
+    
+    // Blur the input
+    fireEvent.blur(input)
+    
+    // Should exit edit mode after delay
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(screen.queryByLabelText('Edit group name')).not.toBeInTheDocument()
   })
 
   it('renders color indicator with correct color', () => {
