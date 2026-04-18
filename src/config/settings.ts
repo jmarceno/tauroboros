@@ -55,7 +55,7 @@ export const DEFAULT_INFRASTRUCTURE_SETTINGS: InfrastructureSettings = {
     name: "tauroboros",
     type: "workflow",
   },
-    workflow: {
+  workflow: {
     server: {
       port: 0,
       dbPath: ".tauroboros/tasks.db",

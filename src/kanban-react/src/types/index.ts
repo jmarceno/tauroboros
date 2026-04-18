@@ -1,5 +1,5 @@
 export type TaskStatus = 'template' | 'backlog' | 'executing' | 'review' | 'code-style' | 'done' | 'failed' | 'stuck'
-export type TaskGroupStatus = 'active' | 'completed' | 'archived'
+export type TaskGroupStatus = 'active' | 'running' | 'completed' | 'archived'
 export type ThinkingLevel = 'default' | 'low' | 'medium' | 'high'
 export type ExecutionStrategy = 'standard' | 'best_of_n'
 export type SelectionMode = 'pick_best' | 'synthesize' | 'pick_or_synthesize'
