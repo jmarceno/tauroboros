@@ -1021,4 +1021,21 @@
   .virtual-card-footer {
     @apply flex items-center justify-between mt-1.5 pt-1.5 border-t border-dark-border;
   }
+
+  /* Virtual Cards Section in Backlog Column */
+  .virtual-cards-section {
+    @apply mb-3;
+  }
+
+  .virtual-cards-header {
+    @apply flex items-center justify-between px-1 mb-2;
+  }
+
+  .virtual-cards-list {
+    @apply space-y-2;
+  }
+
+  .virtual-cards-divider {
+    @apply my-3 border-t border-dark-border/50;
+  }
 }

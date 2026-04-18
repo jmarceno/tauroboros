@@ -3,11 +3,11 @@ import react from "@vitejs/plugin-react"
 import { resolve } from "path"
 
 // Dev mode requires explicit backend port - dynamic port (0) not supported in dev mode
-const SERVER_PORT = process.env.SERVER_PORT || "3789";
-const DEV_PORT = process.env.DEV_PORT || "5174";
+const SERVER_PORT = process.env.SERVER_PORT || "3789"
+const DEV_PORT = process.env.DEV_PORT || "5174"
 
 // Only check SERVER_PORT for dev mode (when not building)
-const isDev = process.env.NODE_ENV !== "production" && !process.argv.includes("build");
+const isDev = process.env.NODE_ENV !== "production" && !process.argv.includes("build")
 if (isDev && (!SERVER_PORT || SERVER_PORT === "0")) {
   throw new Error(
     "Dev mode requires an explicit SERVER_PORT. " +
@@ -62,6 +62,6 @@ const config: UserConfig = {
       },
     },
   },
-};
+}
 
-export default config;
+export default config

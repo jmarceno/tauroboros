@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, writeFileSync, readdirSync, statSync, rmSync } f
 import { join, dirname } from "path"
 
 // Import embedded assets - will be available in compiled binary
-let generatedAssets: typeof import("../server/generated-assets.ts") | null = null;
+let generatedAssets: typeof import("../server/generated-assets.ts") | null = null
 try {
   const mod = await import("../server/generated-assets.ts")
   // Check if the module has the actual implementation or just a placeholder

@@ -79,7 +79,7 @@ const RUN_COLORS = [
   "#ffc048", // Orange
   "#5f27cd", // Purple
   "#00d2d3", // Turquoise
-];
+]
 
 function pickRunColor(usedColors: string[]): string {
   const available = RUN_COLORS.filter(c => !usedColors.includes(c))
@@ -112,7 +112,7 @@ const DEFAULT_OPTIONS: Options = {
   telegramNotificationsEnabled: true,
   maxReviews: 2,
   columnSorts: undefined,
-};
+}
 
 type PromptSeed = {
   key: PromptTemplateKey
@@ -396,7 +396,7 @@ const DEFAULT_PROMPT_TEMPLATES: PromptSeed[] = [
     templateText: `${DEFAULT_COMMIT_PROMPT}\n\n{{keep_worktree_note}}`,
     variablesJson: ["base_ref", "keep_worktree_note"],
   },
-];
+]
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -516,7 +516,7 @@ const SESSION_MESSAGE_SELECT = `
     ws.task_run_id AS task_run_id
   FROM session_messages sm
   LEFT JOIN workflow_sessions ws ON ws.id = sm.session_id
-`;
+`
 
 function rowToTask(row: Record<string, unknown>): Task {
   return {
@@ -821,7 +821,7 @@ When the user is ready to create tasks, help them structure:
 
 ## Tool Access
 
-You have access to file exploration tools to understand the codebase structure when needed. Use them to provide context-aware planning suggestions.`;
+You have access to file exploration tools to understand the codebase structure when needed. Use them to provide context-aware planning suggestions.`
 
 // Container Configuration Assistant system prompt
 const CONTAINER_CONFIG_SYSTEM_PROMPT = `You are a Container Configuration Assistant helping users customize their Pi Agent container image.
@@ -893,7 +893,7 @@ When suggesting packages, categorize them appropriately:
 
 ## Response Style
 
-Be conversational but focused. Don't overwhelm with technical details unless asked. Use clear, concise explanations.`;
+Be conversational but focused. Don't overwhelm with technical details unless asked. Use clear, concise explanations.`
 
 const MIGRATIONS: Migration[] = [
   {
@@ -939,7 +939,7 @@ const MIGRATIONS: Migration[] = [
         review_activity TEXT NOT NULL DEFAULT 'idle',
         is_archived INTEGER NOT NULL DEFAULT 0,
         archived_at INTEGER
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);`,
       `CREATE INDEX IF NOT EXISTS idx_tasks_idx ON tasks(idx);`,
@@ -965,7 +965,7 @@ const MIGRATIONS: Migration[] = [
         is_archived INTEGER NOT NULL DEFAULT 0,
         archived_at INTEGER,
         color TEXT NOT NULL DEFAULT '#888888'
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);`,
       `CREATE INDEX IF NOT EXISTS idx_workflow_runs_current_task_id ON workflow_runs(current_task_id);`,
@@ -991,7 +991,7 @@ const MIGRATIONS: Migration[] = [
         exit_signal TEXT,
         error_message TEXT,
         FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE SET NULL
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_task_id ON workflow_sessions(task_id);`,
       `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_status ON workflow_sessions(status);`,
@@ -1025,7 +1025,7 @@ const MIGRATIONS: Migration[] = [
         raw_event_json TEXT,
         FOREIGN KEY(session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE,
         FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE SET NULL
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_session_messages_session_id ON session_messages(session_id);`,
       `CREATE INDEX IF NOT EXISTS idx_session_messages_task_id ON session_messages(task_id);`,
@@ -1035,7 +1035,7 @@ const MIGRATIONS: Migration[] = [
       CREATE TABLE IF NOT EXISTS options (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
-      );
+      )
       `,
       `
       CREATE TABLE IF NOT EXISTS prompt_templates (
@@ -1048,7 +1048,7 @@ const MIGRATIONS: Migration[] = [
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_prompt_templates_key ON prompt_templates(key);`,
       `CREATE INDEX IF NOT EXISTS idx_prompt_templates_active ON prompt_templates(is_active);`,
@@ -1062,7 +1062,7 @@ const MIGRATIONS: Migration[] = [
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         FOREIGN KEY(prompt_template_id) REFERENCES prompt_templates(id) ON DELETE CASCADE,
         UNIQUE(prompt_template_id, version)
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_prompt_template_versions_template_id ON prompt_template_versions(prompt_template_id);`,
     ],
@@ -1092,7 +1092,7 @@ const MIGRATIONS: Migration[] = [
         updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
         completed_at INTEGER,
         FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_task_runs_task_id ON task_runs(task_id);`,
       `CREATE INDEX IF NOT EXISTS idx_task_runs_phase ON task_runs(phase);`,
@@ -1112,7 +1112,7 @@ const MIGRATIONS: Migration[] = [
         updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
         FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
         FOREIGN KEY(worker_run_id) REFERENCES task_runs(id) ON DELETE CASCADE
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_task_candidates_task_id ON task_candidates(task_id);`,
       `CREATE INDEX IF NOT EXISTS idx_task_candidates_worker_run_id ON task_candidates(worker_run_id);`,
@@ -1155,7 +1155,7 @@ const MIGRATIONS: Migration[] = [
         raw_event_json TEXT,
         FOREIGN KEY(session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE,
         UNIQUE(session_id, seq)
-      );
+      )
       `,
       `
       INSERT INTO session_messages_v3 (
@@ -1219,7 +1219,7 @@ const MIGRATIONS: Migration[] = [
         session_status,
         workflow_phase,
         raw_event_json
-      FROM session_messages;
+      FROM session_messages
       `,
       `DROP TABLE session_messages;`,
       `ALTER TABLE session_messages_v3 RENAME TO session_messages;`,
@@ -1245,7 +1245,7 @@ const MIGRATIONS: Migration[] = [
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_planning_prompts_key ON planning_prompts(key);`,
       `CREATE INDEX IF NOT EXISTS idx_planning_prompts_active ON planning_prompts(is_active);`,
@@ -1258,7 +1258,7 @@ const MIGRATIONS: Migration[] = [
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         FOREIGN KEY(planning_prompt_id) REFERENCES planning_prompts(id) ON DELETE CASCADE,
         UNIQUE(planning_prompt_id, version)
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_planning_prompt_versions_prompt_id ON planning_prompt_versions(planning_prompt_id);`,
     ],
@@ -1276,7 +1276,7 @@ const MIGRATIONS: Migration[] = [
         install_order INTEGER DEFAULT 0,
         added_at INTEGER NOT NULL DEFAULT (unixepoch()),
         source TEXT DEFAULT 'manual'
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_container_packages_category ON container_packages(category);`,
       `CREATE INDEX IF NOT EXISTS idx_container_packages_order ON container_packages(install_order);`,
@@ -1289,7 +1289,7 @@ const MIGRATIONS: Migration[] = [
         packages_hash TEXT,
         error_message TEXT,
         image_tag TEXT
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_container_builds_status ON container_builds(status);`,
     ],
@@ -1333,7 +1333,7 @@ const MIGRATIONS: Migration[] = [
         context_json TEXT NOT NULL,
         pause_reason TEXT,
         FOREIGN KEY (session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_paused_sessions_task_id ON paused_session_states(task_id);`,
       `CREATE INDEX IF NOT EXISTS idx_paused_sessions_session_id ON paused_session_states(session_id);`,
@@ -1355,7 +1355,7 @@ const MIGRATIONS: Migration[] = [
         paused_at INTEGER NOT NULL,
         execution_phase TEXT NOT NULL DEFAULT 'executing',
         FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_paused_run_states_run_id ON paused_run_states(run_id);`,
       `CREATE INDEX IF NOT EXISTS idx_paused_run_states_paused_at ON paused_run_states(paused_at);`,
@@ -1370,7 +1370,7 @@ const MIGRATIONS: Migration[] = [
         id TEXT PRIMARY KEY,
         json_out_fails TEXT NOT NULL DEFAULT '{"json-output-fails":[]}',
         FOREIGN KEY (id) REFERENCES workflow_sessions(id) ON DELETE CASCADE
-      );
+      )
       `,
       `CREATE INDEX IF NOT EXISTS idx_workflow_runs_indicators_id ON workflow_runs_indicators(id);`,
     ],
@@ -1421,7 +1421,7 @@ const MIGRATIONS: Migration[] = [
         created_at INTEGER NOT NULL DEFAULT (unixepoch()),
         updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
         completed_at INTEGER
-      );
+      )
       `,
       // task_group_members table
       `
@@ -1434,7 +1434,7 @@ const MIGRATIONS: Migration[] = [
         FOREIGN KEY(group_id) REFERENCES task_groups(id) ON DELETE CASCADE,
         FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
         UNIQUE(group_id, task_id)
-      );
+      )
       `,
       // Indexes for task_groups
       `CREATE INDEX IF NOT EXISTS idx_task_groups_status ON task_groups(status);`,
@@ -1451,7 +1451,7 @@ const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_workflow_runs_group_id ON workflow_runs(group_id);`,
     ],
   },
-];
+]
 
 export class PiKanbanDB {
   private readonly db: Database

@@ -47,6 +47,7 @@ export interface Task {
   updatedAt: number
   reviewActivity?: 'idle' | 'running'
   containerImage?: string
+  groupId?: string
 }
 
 export interface ContainerImage {

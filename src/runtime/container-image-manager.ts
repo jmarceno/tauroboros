@@ -114,7 +114,7 @@ WORKDIR /workspace
 
 # Default command
 CMD ["sh"]
-`;
+`
 
 /**
  * ContainerImageManager handles the lifecycle of the container image.
