@@ -1,8 +1,35 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
-import type { Task, TaskGroup, TaskStatus, BestOfNSummary, ColumnSortOption, ColumnSortPreferences } from '@/types'
-import { useApi } from './useApi'
+/**
+ * Tasks Hook - TanStack Query Wrapper
+ * 
+ * This hook provides a simplified interface over TanStack Query for task management.
+ * It eliminates all manual state management, race conditions, and stale closures.
+ */
 
-// Static sort functions - module level constant, no need for useMemo
+import { useMemo, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import {
+  useTasksQuery,
+  useBestOfNSummariesQuery,
+  useCreateTaskMutation,
+  useUpdateTaskMutation,
+  useDeleteTaskMutation,
+  useReorderTaskMutation,
+  useArchiveAllDoneMutation,
+  useResetTaskMutation,
+  useResetTaskToGroupMutation,
+  useMoveTaskToGroupMutation,
+  useApprovePlanMutation,
+  useRequestPlanRevisionMutation,
+  useRepairTaskMutation,
+  useStartSingleTaskMutation,
+  useSelectCandidateMutation,
+  useAbortBestOfNMutation,
+  queryKeys,
+  type ResetTaskResult,
+} from '@/queries'
+import type { Task, TaskStatus, BestOfNSummary, ColumnSortPreferences, ColumnSortOption, UpdateTaskDTO } from '@/types'
+
+// Static sort functions
 const sortFns: Record<ColumnSortOption, (a: Task, b: Task) => number> = {
   'manual': (a, b) => a.idx - b.idx,
   'name-asc': (a, b) => a.name.localeCompare(b.name),
@@ -14,26 +41,37 @@ const sortFns: Record<ColumnSortOption, (a: Task, b: Task) => number> = {
 }
 
 export function useTasks(columnSorts?: ColumnSortPreferences) {
-  const api = useApi()
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [bonSummaries, setBonSummaries] = useState<Record<string, BestOfNSummary>>({})
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const queryClient = useQueryClient()
+  
+  // Use TanStack Query for tasks
+  const { data: tasks = [], isLoading, error } = useTasksQuery()
 
-  // Mounted ref to prevent setState on unmounted component
-  const isMountedRef = useRef(true)
-  useEffect(() => {
-    return () => {
-      isMountedRef.current = false
-    }
-  }, [])
+  // Get BestOfN summaries for relevant tasks
+  const bonTaskIds = useMemo(() => 
+    tasks.filter(t => t.executionStrategy === 'best_of_n').map(t => t.id),
+    [tasks]
+  )
+  
+  const { data: bonSummaries = {} } = useBestOfNSummariesQuery(bonTaskIds)
 
-  const getSortForColumn = useCallback((status: TaskStatus): ColumnSortOption => {
-    if (!columnSorts) return 'manual'
-    return columnSorts[status] || 'manual'
-  }, [columnSorts])
+  // Mutations
+  const createTaskMutation = useCreateTaskMutation()
+  const updateTaskMutation = useUpdateTaskMutation()
+  const deleteTaskMutation = useDeleteTaskMutation()
+  const reorderTaskMutation = useReorderTaskMutation()
+  const archiveAllDoneMutation = useArchiveAllDoneMutation()
+  const resetTaskMutation = useResetTaskMutation()
+  const resetTaskToGroupMutation = useResetTaskToGroupMutation()
+  const moveTaskToGroupMutation = useMoveTaskToGroupMutation()
+  const approvePlanMutation = useApprovePlanMutation()
+  const requestPlanRevisionMutation = useRequestPlanRevisionMutation()
+  const repairTaskMutation = useRepairTaskMutation()
+  const startSingleTaskMutation = useStartSingleTaskMutation()
+  const selectCandidateMutation = useSelectCandidateMutation()
+  const abortBestOfNMutation = useAbortBestOfNMutation()
 
-  const getGroupedTasks = useCallback((): Record<TaskStatus | 'failed' | 'stuck', Task[]> => {
+  // Memoized grouped tasks
+  const groupedTasks = useMemo((): Record<TaskStatus | 'failed' | 'stuck', Task[]> => {
     const groups: Record<TaskStatus | 'failed' | 'stuck', Task[]> = {
       template: [],
       backlog: [],
@@ -60,7 +98,7 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
 
     // Apply column-specific sorting
     for (const status of Object.keys(groups) as Array<keyof typeof groups>) {
-      const sortKey = getSortForColumn(status as TaskStatus)
+      const sortKey = columnSorts?.[status as TaskStatus] ?? 'manual'
       const sortFn = sortFns[sortKey]
       if (sortFn) {
         groups[status].sort(sortFn)
@@ -68,210 +106,103 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
     }
 
     return groups
-  }, [tasks, sortFns, getSortForColumn])
+  }, [tasks, columnSorts])
 
-  const groupedTasks = useMemo(() => getGroupedTasks(), [getGroupedTasks])
-
+  // Simple lookup functions
   const getTaskById = useCallback((id: string) => tasks.find(t => t.id === id), [tasks])
   const getTaskName = useCallback((id: string) => getTaskById(id)?.name || id, [getTaskById])
 
+  // Refresh functions - just invalidate queries
   const loadTasks = useCallback(async () => {
-    setIsLoading(true)
-    setError(null)
-    try {
-      const data = await api.getTasks()
-      // Only update state if component is still mounted
-      if (isMountedRef.current) {
-        setTasks(data)
-        await refreshBonSummaries(data)
-      }
-      return data
-    } catch (e) {
-      if (isMountedRef.current) {
-        setError(e instanceof Error ? e.message : String(e))
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsLoading(false)
-      }
-    }
-  }, [api])
+    await queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+  }, [queryClient])
 
   const refreshBonSummaries = useCallback(async (taskList?: Task[], specificTaskIds?: string[]) => {
-    // Don't proceed if component is unmounted
-    if (!isMountedRef.current) return
-
     const targetIds = specificTaskIds ?? taskList
       ?.filter(t => t.executionStrategy === 'best_of_n')
       .map(t => t.id) ?? []
-
-    if (targetIds.length === 0) {
-      if (isMountedRef.current) {
-        setBonSummaries({})
-      }
-      return
-    }
-
-    const results = await Promise.all(
-      targetIds.map(async (id) => {
-        try {
-          const summary = await api.getBestOfNSummary(id)
-          return { id, summary }
-        } catch {
-          return { id, summary: null }
-        }
-      })
-    )
-
-    // Only update state if still mounted
-    if (isMountedRef.current) {
-      setBonSummaries(prev => {
-        const next = { ...prev }
-        for (const { id, summary } of results) {
-          if (summary) {
-            next[id] = summary
-          }
-        }
-        return next
+    
+    if (targetIds.length > 0) {
+      await queryClient.invalidateQueries({ 
+        queryKey: [...queryKeys.tasks.all, 'bestOfNSummaries', targetIds.sort()]
       })
     }
-  }, [api])
+  }, [queryClient])
 
-  /**
-   * Creates a new task. Supports codeStyleReview field and all valid TaskStatus values
-   * including 'code-style' for workflow-managed code style review state.
-   */
-  const createTask = useCallback(async (data: Parameters<typeof api.createTask>[0]) => {
-    const task = await api.createTask(data)
-    setTasks(prev => {
-      if (prev.find(t => t.id === task.id)) return prev
-      return [...prev, task]
-    })
-    return task
-  }, [api])
+  // Action wrappers with same interface as before
+  const createTask = useCallback(async (data: Parameters<typeof createTaskMutation.mutateAsync>[0]) => {
+    return await createTaskMutation.mutateAsync(data)
+  }, [createTaskMutation])
 
-  /**
-   * Updates a task. Supports status transitions to/from 'code-style' and updates
-   * to the codeStyleReview configuration field.
-   */
-  const updateTask = useCallback(async (id: string, data: Parameters<typeof api.updateTask>[1]) => {
-    const task = await api.updateTask(id, data)
-    setTasks(prev => prev.map(t => t.id === id ? task : t))
-    if (task.executionStrategy === 'best_of_n') {
-      await refreshBonSummaries(undefined, [task.id])
-    }
-    return task
-  }, [api, refreshBonSummaries])
+  const updateTask = useCallback(async (id: string, data: UpdateTaskDTO) => {
+    return await updateTaskMutation.mutateAsync({ id, data })
+  }, [updateTaskMutation])
 
   const deleteTask = useCallback(async (id: string) => {
-    const result = await api.deleteTask(id)
-    setBonSummaries(prev => {
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-    setTasks(prev => prev.filter(t => t.id !== id))
-    return result
-  }, [api])
+    return await deleteTaskMutation.mutateAsync(id)
+  }, [deleteTaskMutation])
 
   const reorderTask = useCallback(async (id: string, newIdx: number) => {
-    await api.reorderTask(id, newIdx)
-    await loadTasks()
-  }, [api, loadTasks])
+    await reorderTaskMutation.mutateAsync({ id, newIdx })
+  }, [reorderTaskMutation])
 
   const archiveAllDone = useCallback(async () => {
-    const result = await api.archiveAllDone()
-    await loadTasks()
-    return result
-  }, [api, loadTasks])
+    return await archiveAllDoneMutation.mutateAsync()
+  }, [archiveAllDoneMutation])
 
-  interface ResetTaskResult {
-    task: Task
-    group?: TaskGroup
-    wasInGroup: boolean
-  }
-
-  /**
-   * Resets a task to backlog status. Returns group info if task was in a group
-   * so UI can prompt for restore decision.
-   * 
-   * Throws if the API response is missing required wasInGroup field.
-   */
   const resetTask = useCallback(async (id: string): Promise<ResetTaskResult> => {
-    const result = await api.resetTaskWithGroupInfo(id)
-    
-    // Validate API response - wasInGroup must be a boolean
-    if (typeof result.wasInGroup !== 'boolean') {
-      throw new Error(`Invalid API response: wasInGroup must be a boolean, got ${typeof result.wasInGroup}`)
-    }
-    
-    setTasks(prev => prev.map(t => t.id === id ? result.task : t))
-    return {
-      task: result.task,
-      group: result.group,
-      wasInGroup: result.wasInGroup,
-    }
-  }, [api])
+    return await resetTaskMutation.mutateAsync(id)
+  }, [resetTaskMutation])
 
-  /**
-   * Resets task to backlog AND restores it to its previous group.
-   */
   const resetTaskToGroup = useCallback(async (id: string): Promise<Task> => {
-    const result = await api.resetTaskToGroup(id)
-    setTasks(prev => prev.map(t => t.id === id ? result.task : t))
-    return result.task
-  }, [api])
+    return await resetTaskToGroupMutation.mutateAsync(id)
+  }, [resetTaskToGroupMutation])
 
-  /**
-   * Moves a task to a specific group, or removes from group if groupId is null.
-   */
   const moveTaskToGroup = useCallback(async (id: string, groupId: string | null): Promise<Task> => {
-    const task = await api.moveTaskToGroup(id, groupId)
-    setTasks(prev => prev.map(t => t.id === id ? task : t))
-    return task
-  }, [api])
+    return await moveTaskToGroupMutation.mutateAsync({ id, groupId })
+  }, [moveTaskToGroupMutation])
 
   const approvePlan = useCallback(async (id: string, message?: string) => {
-    const task = await api.approvePlan(id, message)
-    setTasks(prev => prev.map(t => t.id === id ? task : t))
-    return task
-  }, [api])
+    return await approvePlanMutation.mutateAsync({ id, message })
+  }, [approvePlanMutation])
 
   const requestPlanRevision = useCallback(async (id: string, feedback: string) => {
-    const task = await api.requestPlanRevision(id, feedback)
-    setTasks(prev => prev.map(t => t.id === id ? task : t))
-    return task
-  }, [api])
+    return await requestPlanRevisionMutation.mutateAsync({ id, feedback })
+  }, [requestPlanRevisionMutation])
 
-  const repairTask = useCallback(async (id: string, action: string, options?: Parameters<typeof api.repairTask>[2]) => {
-    const result = await api.repairTask(id, action, options)
-    setTasks(prev => prev.map(t => t.id === id ? result.task : t))
-    return result
-  }, [api])
+  const repairTask = useCallback(async (id: string, action: string, options?: { errorMessage?: string; smartRepairHints?: string; additionalReviewCount?: number }) => {
+    return await repairTaskMutation.mutateAsync({ id, action, options })
+  }, [repairTaskMutation])
 
   const startSingleTask = useCallback(async (id: string) => {
-    return await api.startSingleTask(id)
-  }, [api])
+    return await startSingleTaskMutation.mutateAsync(id)
+  }, [startSingleTaskMutation])
 
   const setTasksDirectly = useCallback((newTasks: Task[]) => {
-    setTasks(newTasks)
-  }, [])
+    // For direct state setting, update the query cache
+    queryClient.setQueryData(queryKeys.tasks.lists(), newTasks)
+  }, [queryClient])
 
   const removeBonSummary = useCallback((id: string) => {
-    setBonSummaries(prev => {
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-  }, [])
+    // Remove from cache
+    queryClient.setQueryData<Record<string, BestOfNSummary>>(
+      [...queryKeys.tasks.all, 'bestOfNSummaries'],
+      (old) => {
+        if (!old) return {}
+        const next = { ...old }
+        delete next[id]
+        return next
+      }
+    )
+  }, [queryClient])
 
-  const contextValue = useMemo(() => ({
+  return {
     tasks,
     setTasks: setTasksDirectly,
     groupedTasks,
     bonSummaries,
     isLoading,
-    error,
+    error: error?.message ?? null,
     getTaskById,
     getTaskName,
     loadTasks,
@@ -289,13 +220,5 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
     repairTask,
     startSingleTask,
     removeBonSummary,
-  }), [
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    tasks, setTasksDirectly, groupedTasks, bonSummaries,
-    getTaskById, getTaskName, loadTasks, refreshBonSummaries, createTask, updateTask,
-    deleteTask, reorderTask, archiveAllDone, resetTask, resetTaskToGroup, moveTaskToGroup,
-    approvePlan, requestPlanRevision, repairTask, startSingleTask, removeBonSummary
-  ])
-
-  return contextValue
+  }
 }

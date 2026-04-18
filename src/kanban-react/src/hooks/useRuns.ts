@@ -1,21 +1,35 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from "react"
-import type { WorkflowRun, Task } from "@/types"
-import { useApi } from "./useApi"
+/**
+ * Workflow Runs Hook - TanStack Query Wrapper
+ */
+
+import { useState, useMemo, useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import {
+  useRunsQuery,
+  usePauseRunMutation,
+  useResumeRunMutation,
+  useStopRunMutation,
+  useForceStopRunMutation,
+  useArchiveRunMutation,
+  queryKeys,
+} from '@/queries'
+import type { WorkflowRun, Task } from '@/types'
 
 export function useRuns() {
-  const api = useApi()
-  const [runs, setRuns] = useState<WorkflowRun[]>([])
+  const queryClient = useQueryClient()
+  
+  // Keep track of tasks for stale run detection
   const [tasksRef, setTasksRef] = useState<Task[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // Mounted ref to prevent setState on unmounted component
-  const isMountedRef = useRef(true)
-  useEffect(() => {
-    return () => {
-      isMountedRef.current = false
-    }
-  }, [])
+  
+  // Use TanStack Query for runs
+  const { data: runs = [], isLoading, error } = useRunsQuery()
+  
+  // Mutations
+  const pauseRunMutation = usePauseRunMutation()
+  const resumeRunMutation = useResumeRunMutation()
+  const stopRunMutation = useStopRunMutation()
+  const forceStopRunMutation = useForceStopRunMutation()
+  const archiveRunMutation = useArchiveRunMutation()
 
   const isStaleRun = useCallback((run: WorkflowRun): boolean => {
     if (run.status !== 'running' && run.status !== 'stopping' && run.status !== 'paused') {
@@ -34,6 +48,7 @@ export function useRuns() {
     return !hasExecutingTask
   }, [tasksRef])
 
+  // Computed values
   const activeRuns = useMemo(() =>
     runs.filter(r => r.status === 'running' || r.status === 'stopping' || r.status === 'paused'),
     [runs]
@@ -52,6 +67,7 @@ export function useRuns() {
     ).length
   }, [runs, isStaleRun])
 
+  // Helper functions
   const getTaskRunLock = useCallback((taskId: string) => {
     return runs.find(r =>
       (r.status === 'running' || r.status === 'stopping') &&
@@ -77,39 +93,8 @@ export function useRuns() {
     const run = runs.find(r => r.id === runId)
     if (!run) return false
     if (!run.taskOrder) return false
-
-    // Check if task is directly in the run
-    if (run.taskOrder.includes(taskId)) return true
-
-    // Check if task is a dependency of any task in the run
-    // Build a map of all tasks for dependency lookup
-    const taskMap = new Map(tasksRef.map(t => [t.id, t]))
-
-    // Collect all dependency IDs for tasks in this run
-    const visited = new Set<string>()
-    const toVisit = [...run.taskOrder]
-
-    while (toVisit.length > 0) {
-      const currentId = toVisit.pop()!
-      if (visited.has(currentId)) continue
-      visited.add(currentId)
-
-      const task = taskMap.get(currentId)
-      if (!task) continue
-
-      // Check if this task depends on the target task
-      if (task.requirements?.includes(taskId)) return true
-
-      // Add this task's dependencies to visit queue (for transitive deps)
-      for (const depId of task.requirements || []) {
-        if (!visited.has(depId)) {
-          toVisit.push(depId)
-        }
-      }
-    }
-
-    return false
-  }, [runs, tasksRef])
+    return run.taskOrder.includes(taskId)
+  }, [runs])
 
   const getRunProgressLabel = useCallback((run: WorkflowRun) => {
     const total = run.taskOrder?.length ?? 0
@@ -118,84 +103,60 @@ export function useRuns() {
     return `${completed}/${total} tasks complete`
   }, [])
 
+  // Actions
   const loadRuns = useCallback(async () => {
-    setIsLoading(true)
-    setError(null)
-    try {
-      const data = await api.getRuns()
-      // Only update state if component is still mounted
-      if (isMountedRef.current) {
-        setRuns(data)
-      }
-    } catch (e) {
-      if (isMountedRef.current) {
-        setError(e instanceof Error ? e.message : String(e))
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsLoading(false)
-      }
-    }
-  }, [api])
+    await queryClient.invalidateQueries({ queryKey: queryKeys.runs.lists() })
+  }, [queryClient])
 
   const pauseRun = useCallback(async (id: string) => {
-    const run = await api.pauseRun(id)
-    if (isMountedRef.current) {
-      setRuns(prev => prev.map(r => r.id === id ? run : r))
-    }
-    return run
-  }, [api])
+    return await pauseRunMutation.mutateAsync(id)
+  }, [pauseRunMutation])
 
   const resumeRun = useCallback(async (id: string) => {
-    const run = await api.resumeRun(id)
-    if (isMountedRef.current) {
-      setRuns(prev => prev.map(r => r.id === id ? run : r))
-    }
-    return run
-  }, [api])
+    return await resumeRunMutation.mutateAsync(id)
+  }, [resumeRunMutation])
 
   const stopRun = useCallback(async (id: string) => {
-    const run = await api.stopRun(id)
-    if (isMountedRef.current) {
-      setRuns(prev => prev.map(r => r.id === id ? run : r))
-    }
-    return run
-  }, [api])
+    return await stopRunMutation.mutateAsync({ id, destructive: false })
+  }, [stopRunMutation])
 
   const archiveRun = useCallback(async (id: string) => {
-    await api.archiveRun(id)
-    if (isMountedRef.current) {
-      setRuns(prev => prev.filter(r => r.id !== id))
-    }
-  }, [api])
+    await archiveRunMutation.mutateAsync(id)
+  }, [archiveRunMutation])
 
+  // WebSocket update handler - updates cache directly
   const updateRunFromWebSocket = useCallback((run: WorkflowRun) => {
-    setRuns(prev => {
-      const idx = prev.findIndex(r => r.id === run.id)
+    queryClient.setQueryData(queryKeys.runs.detail(run.id), run)
+    queryClient.setQueryData<WorkflowRun[]>(queryKeys.runs.lists(), (old) => {
+      if (!old) return [run]
+      const idx = old.findIndex(r => r.id === run.id)
       if (idx >= 0) {
-        return prev.map(r => r.id === run.id ? run : r)
-      } else {
-        return [run, ...prev]
+        return old.map(r => r.id === run.id ? run : r)
       }
+      return [run, ...old]
     })
-  }, [])
+  }, [queryClient])
 
   const removeRun = useCallback((id: string) => {
-    setRuns(prev => prev.filter(r => r.id !== id))
-  }, [])
+    queryClient.removeQueries({ queryKey: queryKeys.runs.detail(id) })
+    queryClient.setQueryData<WorkflowRun[]>(queryKeys.runs.lists(), (old) => {
+      if (!old) return []
+      return old.filter(r => r.id !== id)
+    })
+  }, [queryClient])
 
   const setTasksReference = useCallback((tasks: Task[]) => {
     setTasksRef(tasks)
   }, [])
 
-  const contextValue = useMemo(() => ({
+  return {
     runs,
     activeRuns,
     staleRuns,
     hasStaleRuns,
     consumedRunSlots,
     isLoading,
-    error,
+    error: error?.message ?? null,
     setTasksRef: setTasksReference,
     isStaleRun,
     getTaskRunLock,
@@ -210,13 +171,5 @@ export function useRuns() {
     archiveRun,
     updateRunFromWebSocket,
     removeRun,
-  }), [
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    runs, activeRuns, staleRuns, hasStaleRuns, consumedRunSlots,
-    setTasksReference, isStaleRun, getTaskRunLock, isTaskMutationLocked, getTaskRunColor,
-    isTaskInRun, getRunProgressLabel, loadRuns, pauseRun, resumeRun, stopRun, archiveRun,
-    updateRunFromWebSocket, removeRun
-  ])
-
-  return contextValue
+  }
 }

@@ -473,16 +473,7 @@ function App() {
     isModalOpen: () => isAnyModalOpen,
   })
 
-  useWebSocketHandlers({
-    wsHook,
-    tasksHook,
-    runsHook,
-    optionsHook,
-    toastsHook,
-    sessionHook,
-    taskGroupsHook,
-    workflowControl,
-  })
+  useWebSocketHandlers(wsHook)
 
   // Use ref to ensure init only runs once, preventing infinite re-renders
   const hasInitializedRef = useRef(false)

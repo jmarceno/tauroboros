@@ -115,6 +115,7 @@ interface SessionContextType {
 }
 
 // WebSocket context type
+import type { WSMessageType } from '@/types'
 type MessageHandler = (payload: unknown) => void
 
 interface WebSocketContextType {
@@ -123,7 +124,7 @@ interface WebSocketContextType {
   reconnectAttempts: number
   connect: () => void
   disconnect: () => void
-  on: (type: string, handler: MessageHandler) => () => void
+  on: (type: WSMessageType, handler: MessageHandler) => () => void
   onReconnect: (callback: () => void) => void
 }
 
