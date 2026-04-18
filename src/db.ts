@@ -1464,6 +1464,14 @@ const MIGRATIONS: Migration[] = [
       `DELETE FROM options WHERE key = 'telegram_notifications_enabled';`,
     ],
   },
+  {
+    version: 27,
+    description: "Add indexes for archived tasks queries",
+    statements: [
+      `CREATE INDEX IF NOT EXISTS idx_tasks_is_archived ON tasks(is_archived);`,
+      `CREATE INDEX IF NOT EXISTS idx_tasks_archived_at ON tasks(archived_at);`,
+    ],
+  },
 ]
 
 export class PiKanbanDB {
@@ -2184,6 +2192,70 @@ export class PiKanbanDB {
   getWorkflowRuns(): WorkflowRun[] {
     const rows = this.db.prepare("SELECT * FROM workflow_runs WHERE is_archived = 0 ORDER BY started_at DESC, created_at DESC").all() as Record<string, unknown>[]
     return rows.map(rowToWorkflowRun)
+  }
+
+  // ---- Archived Tasks ----
+
+  getArchivedTasks(): Task[] {
+    const stmt = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 1 ORDER BY archived_at DESC")
+    const rows = stmt.all() as unknown[]
+    if (!Array.isArray(rows)) throw new Error("getArchivedTasks: expected array result from database")
+    return rows.map((r) => rowToTask(r as Record<string, unknown>))
+  }
+
+  getArchivedTasksByRun(runId: string): Task[] {
+    const run = this.getWorkflowRun(runId)
+    if (!run || run.taskOrder.length === 0) return []
+
+    const placeholders = run.taskOrder.map(() => "?").join(",")
+    const stmt = this.db.prepare(
+      `SELECT * FROM tasks WHERE id IN (${placeholders}) AND is_archived = 1 ORDER BY archived_at DESC`
+    )
+    const rows = stmt.all(...run.taskOrder) as unknown[]
+    if (!Array.isArray(rows)) throw new Error("getArchivedTasksByRun: expected array result from database")
+    return rows.map((r) => rowToTask(r as Record<string, unknown>))
+  }
+
+  getWorkflowRunsWithArchivedTasks(): WorkflowRun[] {
+    const runsStmt = this.db.prepare("SELECT * FROM workflow_runs ORDER BY finished_at DESC, created_at DESC")
+    const runsResult = runsStmt.all() as unknown[]
+    if (!Array.isArray(runsResult)) throw new Error("getWorkflowRunsWithArchivedTasks: expected array result from database")
+
+    const runsWithArchived: WorkflowRun[] = []
+
+    for (const row of runsResult) {
+      const runRow = row as Record<string, unknown>
+      const taskOrder = parseJSON<string[]>(runRow.task_order_json, [])
+      if (taskOrder.length === 0) continue
+
+      const placeholders = taskOrder.map(() => "?").join(",")
+      const countStmt = this.db.prepare(`SELECT COUNT(*) as cnt FROM tasks WHERE id IN (${placeholders}) AND is_archived = 1`)
+      const countResult = countStmt.get(...taskOrder) as unknown
+      if (countResult === null || typeof countResult !== "object") throw new Error("getWorkflowRunsWithArchivedTasks: expected object result for count query")
+      const countRow = countResult as Record<string, unknown>
+      const cnt = typeof countRow.cnt === "number" ? countRow.cnt : Number(countRow.cnt)
+      if (Number.isNaN(cnt)) throw new Error("getWorkflowRunsWithArchivedTasks: invalid count result from database")
+
+      if (cnt > 0) {
+        runsWithArchived.push(rowToWorkflowRun(runRow))
+      }
+    }
+
+    return runsWithArchived
+  }
+
+  getArchivedTasksGroupedByRun(): Map<string, { run: WorkflowRun; tasks: Task[] }> {
+    const result = new Map<string, { run: WorkflowRun; tasks: Task[] }>()
+    const runs = this.getWorkflowRunsWithArchivedTasks()
+
+    for (const run of runs) {
+      const tasks = this.getArchivedTasksByRun(run.id)
+      if (tasks.length > 0) {
+        result.set(run.id, { run, tasks })
+      }
+    }
+
+    return result
   }
 
   /**
