@@ -196,7 +196,14 @@ export class PiRpcProcess {
     const payload = { ...command, id }
     const line = `${JSON.stringify(payload)}\n`
 
-    await this.proc.stdin.write(line)
+    // Write to stdin with a timeout to prevent hanging if process is in bad state
+    const writeTimeoutMs = Math.min(5_000, timeoutMs) // Max 5s for write, or less if total timeout is smaller
+    await Promise.race([
+      this.proc.stdin.write(line),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`Stdin write timeout for command ${command.type}`)), writeTimeoutMs)
+      })
+    ])
 
     if (command.type === "prompt" || command.type === "steer" || command.type === "follow_up") {
       this.isIdle = false
