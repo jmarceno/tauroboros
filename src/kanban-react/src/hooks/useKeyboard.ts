@@ -9,11 +9,14 @@ interface KeyboardOptions {
   onCreateGroup?: () => void
   onEscape?: () => boolean
   onCloseGroupPanel?: () => void
+  onSwitchTab?: (tabIndex: number) => void
   isModalOpen?: () => boolean
   isEditableFocused?: () => boolean
   isGroupPanelOpen?: () => boolean
   selectedCount?: () => number
 }
+
+export type { KeyboardOptions }
 
 export function useKeyboard(options: KeyboardOptions) {
   const isEditableControlFocused = useCallback((): boolean => {
@@ -71,12 +74,18 @@ export function useKeyboard(options: KeyboardOptions) {
         return
       }
 
+      // Handle Ctrl+1-5 for tab switching before skipping other modifier shortcuts
+      if ((e.ctrlKey || e.metaKey) && /^[1-5]$/.test(e.key)) {
+        e.preventDefault()
+        const tabIndex = parseInt(e.key, 10)
+        options.onSwitchTab?.(tabIndex)
+        return
+      }
+
       // Skip other shortcuts when modifier keys are held
       if (e.metaKey || e.ctrlKey || e.altKey) return
 
-
       const key = e.key.toUpperCase()
-
 
       switch (key) {
         case 'T':

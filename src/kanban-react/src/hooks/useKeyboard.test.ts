@@ -7,11 +7,9 @@ describe('useKeyboard', () => {
   let removeEventListenerSpy: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
-    // Spy on the document's event methods instead of stubbing
     addEventListenerSpy = vi.spyOn(document, 'addEventListener')
     removeEventListenerSpy = vi.spyOn(document, 'removeEventListener')
-    
-    // Reset activeElement to default (div is not editable)
+
     Object.defineProperty(document, 'activeElement', {
       value: {
         tagName: 'DIV',
@@ -27,7 +25,6 @@ describe('useKeyboard', () => {
     vi.restoreAllMocks()
   })
 
-  // Helper to invoke the keydown handler
   const invokeKeydownHandler = (event: KeyboardEvent) => {
     const handlers = addEventListenerSpy.mock.calls
       .filter(([name]) => name === 'keydown')
@@ -357,6 +354,264 @@ describe('useKeyboard', () => {
       unmount()
 
       expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function))
+    })
+  })
+
+  describe('Ctrl+1-5 tab switching shortcuts', () => {
+    it('calls onSwitchTab with 1 when Ctrl+1 is pressed', () => {
+      const onSwitchTab = vi.fn()
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+        })
+      )
+
+      const event = new KeyboardEvent('keydown', {
+        key: '1',
+        ctrlKey: true,
+        bubbles: true,
+      })
+      invokeKeydownHandler(event)
+
+      expect(onSwitchTab).toHaveBeenCalledTimes(1)
+      expect(onSwitchTab).toHaveBeenCalledWith(1)
+    })
+
+    it('calls onSwitchTab with 2 when Ctrl+2 is pressed', () => {
+      const onSwitchTab = vi.fn()
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+        })
+      )
+
+      const event = new KeyboardEvent('keydown', {
+        key: '2',
+        ctrlKey: true,
+        bubbles: true,
+      })
+      invokeKeydownHandler(event)
+
+      expect(onSwitchTab).toHaveBeenCalledTimes(1)
+      expect(onSwitchTab).toHaveBeenCalledWith(2)
+    })
+
+    it('calls onSwitchTab with 3 when Ctrl+3 is pressed', () => {
+      const onSwitchTab = vi.fn()
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+        })
+      )
+
+      const event = new KeyboardEvent('keydown', {
+        key: '3',
+        ctrlKey: true,
+        bubbles: true,
+      })
+      invokeKeydownHandler(event)
+
+      expect(onSwitchTab).toHaveBeenCalledTimes(1)
+      expect(onSwitchTab).toHaveBeenCalledWith(3)
+    })
+
+    it('calls onSwitchTab with 4 when Ctrl+4 is pressed', () => {
+      const onSwitchTab = vi.fn()
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+        })
+      )
+
+      const event = new KeyboardEvent('keydown', {
+        key: '4',
+        ctrlKey: true,
+        bubbles: true,
+      })
+      invokeKeydownHandler(event)
+
+      expect(onSwitchTab).toHaveBeenCalledTimes(1)
+      expect(onSwitchTab).toHaveBeenCalledWith(4)
+    })
+
+    it('calls onSwitchTab with 5 when Ctrl+5 is pressed', () => {
+      const onSwitchTab = vi.fn()
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+        })
+      )
+
+      const event = new KeyboardEvent('keydown', {
+        key: '5',
+        ctrlKey: true,
+        bubbles: true,
+      })
+      invokeKeydownHandler(event)
+
+      expect(onSwitchTab).toHaveBeenCalledTimes(1)
+      expect(onSwitchTab).toHaveBeenCalledWith(5)
+    })
+
+    it('calls onSwitchTab when Cmd+1 is pressed (Mac)', () => {
+      const onSwitchTab = vi.fn()
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+        })
+      )
+
+      const event = new KeyboardEvent('keydown', {
+        key: '1',
+        metaKey: true,
+        bubbles: true,
+      })
+      invokeKeydownHandler(event)
+
+      expect(onSwitchTab).toHaveBeenCalledTimes(1)
+      expect(onSwitchTab).toHaveBeenCalledWith(1)
+    })
+
+    it('does NOT call onSwitchTab for Ctrl+6 (out of range)', () => {
+      const onSwitchTab = vi.fn()
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+        })
+      )
+
+      const event = new KeyboardEvent('keydown', {
+        key: '6',
+        ctrlKey: true,
+        bubbles: true,
+      })
+      invokeKeydownHandler(event)
+
+      expect(onSwitchTab).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call onSwitchTab for Ctrl+0 (out of range)', () => {
+      const onSwitchTab = vi.fn()
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+        })
+      )
+
+      const event = new KeyboardEvent('keydown', {
+        key: '0',
+        ctrlKey: true,
+        bubbles: true,
+      })
+      invokeKeydownHandler(event)
+
+      expect(onSwitchTab).not.toHaveBeenCalled()
+    })
+
+    it('prevents default on tab switch shortcuts', () => {
+      const onSwitchTab = vi.fn()
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+        })
+      )
+
+      const event = new KeyboardEvent('keydown', {
+        key: '1',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      const preventDefaultSpy = vi.spyOn(event, 'preventDefault')
+      invokeKeydownHandler(event)
+
+      expect(preventDefaultSpy).toHaveBeenCalled()
+    })
+
+    it('does NOT call onSwitchTab when modal is open', () => {
+      const onSwitchTab = vi.fn()
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+          isModalOpen: () => true,
+        })
+      )
+
+      const event = new KeyboardEvent('keydown', {
+        key: '1',
+        ctrlKey: true,
+        bubbles: true,
+      })
+      invokeKeydownHandler(event)
+
+      expect(onSwitchTab).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call onSwitchTab when editable control is focused', () => {
+      const onSwitchTab = vi.fn()
+
+      // Set active element to input
+      Object.defineProperty(document, 'activeElement', {
+        value: {
+          tagName: 'INPUT',
+          isContentEditable: false,
+          shadowRoot: null,
+        },
+        writable: true,
+        configurable: true,
+      })
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+        })
+      )
+
+      const event = new KeyboardEvent('keydown', {
+        key: '1',
+        ctrlKey: true,
+        bubbles: true,
+      })
+      invokeKeydownHandler(event)
+
+      expect(onSwitchTab).not.toHaveBeenCalled()
+    })
+
+    it('handles multiple tab switches in sequence', () => {
+      const onSwitchTab = vi.fn()
+
+      renderHook(() =>
+        useKeyboard({
+          onSwitchTab,
+        })
+      )
+
+      // Press Ctrl+1 through Ctrl+5 in sequence
+      for (let i = 1; i <= 5; i++) {
+        const event = new KeyboardEvent('keydown', {
+          key: String(i),
+          ctrlKey: true,
+          bubbles: true,
+        })
+        invokeKeydownHandler(event)
+      }
+
+      expect(onSwitchTab).toHaveBeenCalledTimes(5)
+      expect(onSwitchTab).toHaveBeenNthCalledWith(1, 1)
+      expect(onSwitchTab).toHaveBeenNthCalledWith(2, 2)
+      expect(onSwitchTab).toHaveBeenNthCalledWith(3, 3)
+      expect(onSwitchTab).toHaveBeenNthCalledWith(4, 4)
+      expect(onSwitchTab).toHaveBeenNthCalledWith(5, 5)
     })
   })
 })
