@@ -44,8 +44,10 @@ export interface Task {
   executionPhase: string
   awaitingPlanApproval: boolean
   completedAt?: number
+  archivedAt?: number
   createdAt: number
   updatedAt: number
+  agentOutput?: string
   reviewActivity?: 'idle' | 'running'
   containerImage?: string
   groupId?: string

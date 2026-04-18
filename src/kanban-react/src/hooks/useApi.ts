@@ -8,7 +8,14 @@ import type {
 } from '@/types'
 import type { ApiError } from '../../../shared/error-codes.ts'
 
-const API_BASE = import.meta.env.VITE_API_URL || location.origin
+export interface ArchivedTasksResponse {
+  runs: {
+    run: WorkflowRun
+    tasks: Task[]
+  }[]
+}
+
+const API_BASE = (import.meta as unknown as { env: { VITE_API_URL?: string } }).env.VITE_API_URL || location.origin
 
 export class ApiErrorResponse extends Error {
   code?: string
@@ -25,10 +32,7 @@ export class ApiErrorResponse extends Error {
 }
 
 export function useApi() {
-  // Use ref for request function to stabilize all API method callbacks
-  // Each request gets its own AbortController to prevent race conditions
   const requestRef = useRef(async <T>(path: string, options?: RequestInit): Promise<T> => {
-    // Create a fresh AbortController for each request to avoid shared state issues
     const abortController = new AbortController()
     const timeout = setTimeout(() => abortController.abort(new Error('Request timeout')), 60000)
     
@@ -44,30 +48,35 @@ export function useApi() {
       
       if (!res.ok) {
         const text = await res.text()
-        let errorMessage = `Request failed (${res.status})`
-        let errorCode: string | undefined
-        let errorDetails: Record<string, unknown> | undefined
-
+        let parsed: ApiError | undefined
+        
         try {
-          const parsed = JSON.parse(text) as ApiError
-          if (parsed?.error) errorMessage = parsed.error
-          else errorMessage = text || errorMessage
-          errorCode = parsed?.code
-          errorDetails = parsed?.details
-        } catch {
-          errorMessage = text || errorMessage
+          parsed = JSON.parse(text) as ApiError
+        } catch (parseError) {
+          throw new ApiErrorResponse(
+            `Request failed (${res.status}): ${text || 'No error details provided'}`,
+            res.status,
+            undefined,
+            { parseError: parseError instanceof Error ? parseError.message : 'Unknown parse error' }
+          )
         }
 
-        throw new ApiErrorResponse(errorMessage, res.status, errorCode, errorDetails)
+        throw new ApiErrorResponse(
+          parsed.error || text || `Request failed (${res.status})`,
+          res.status,
+          parsed.code,
+          parsed.details
+        )
       }
-      return res.status === 204 ? undefined as T : res.json()
+      if (res.status === 204) {
+        return undefined as T
+      }
+      return res.json()
     } finally {
-      // Ensure timeout is cleared in all cases
       clearTimeout(timeout)
     }
   })
 
-  // Stable wrapper that calls the ref - all API methods depend on this
   const request = useCallback(async <T>(path: string, options?: RequestInit): Promise<T> => {
     return requestRef.current(path, options)
   }, [])
@@ -133,6 +142,9 @@ export function useApi() {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }), []),
+
+    // Archived tasks
+    getArchivedTasks: useCallback(() => request<ArchivedTasksResponse>('/api/archived/tasks'), []),
 
     // Workflow runs
     getRuns: useCallback(() => request<WorkflowRun[]>('/api/runs'), []),
