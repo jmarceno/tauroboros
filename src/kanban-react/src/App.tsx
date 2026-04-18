@@ -843,7 +843,6 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
   const onClearSelection = useCallback(() => multiSelectHook.clearSelection(), [multiSelectHook])
 
   return (
-    <TabProvider>
     <TasksContext.Provider value={tasksHook}>
       <RunsContext.Provider value={runsHook}>
         <OptionsContext.Provider value={optionsHook}>
