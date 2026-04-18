@@ -1,4 +1,5 @@
 export type TaskStatus = 'template' | 'backlog' | 'executing' | 'review' | 'code-style' | 'done' | 'failed' | 'stuck'
+export type TaskGroupStatus = 'active' | 'completed' | 'archived'
 export type ThinkingLevel = 'default' | 'low' | 'medium' | 'high'
 export type ExecutionStrategy = 'standard' | 'best_of_n'
 export type SelectionMode = 'pick_best' | 'synthesize' | 'pick_or_synthesize'
@@ -354,6 +355,24 @@ export type WSMessageType =
   | 'container_build_cancelled'
   | 'container_profile_created'
   | 'container_profile_applied'
+  // Task Group events
+  | 'group_created'
+  | 'group_updated'
+  | 'group_deleted'
+  | 'group_completed'
+  | 'group_archived'
+  | 'group_task_added'
+  | 'group_task_removed'
+  | 'group_task_reordered'
+  // Task-scoped group events
+  | 'task_group_created'
+  | 'task_group_updated'
+  | 'task_group_deleted'
+  | 'task_group_members_added'
+  | 'task_group_members_removed'
+  // Group execution events
+  | 'group_execution_started'
+  | 'group_execution_complete'
 
 export interface WSMessage {
   type: WSMessageType
@@ -473,6 +492,29 @@ export interface CreatePlanningSessionDTO {
 }
 
 // Toast Types
+export interface TaskGroup {
+  id: string
+  name: string
+  color: string
+  status: TaskGroupStatus
+  createdAt: number
+  updatedAt: number
+  completedAt: number | null
+}
+
+export interface TaskGroupMember {
+  id: number
+  groupId: string
+  taskId: string
+  idx: number
+  addedAt: number
+}
+
+export interface TaskGroupWithTasks extends TaskGroup {
+  tasks?: Task[]
+  members?: TaskGroupMember[]
+}
+
 export type ToastVariant = 'info' | 'success' | 'error'
 
 export interface Toast {
