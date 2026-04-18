@@ -6,6 +6,7 @@ import { GroupPanel } from "./GroupPanel"
 import type { useDragDrop } from "@/hooks/useDragDrop"
 
 interface KanbanBoardProps {
+  logPanelCollapsed?: boolean
   tasks: Task[]
   bonSummaries: Record<string, BestOfNSummary>
   getTaskRunColor: (taskId: string) => string | null
@@ -85,6 +86,7 @@ const columnColors: Record<string, string> = {
 }
 
 export const KanbanBoard = memo(function KanbanBoard({
+  logPanelCollapsed = false,
   tasks,
   bonSummaries,
   getTaskRunColor,
@@ -185,7 +187,7 @@ export const KanbanBoard = memo(function KanbanBoard({
 
   return (
     <div className="kanban-wrapper">
-      <div className="kanban-scroll">
+      <div className={`kanban-scroll${logPanelCollapsed ? ' pb-10' : ''}`}>
         <div className="kanban-container">
           {columns.map((column) => (
             <div

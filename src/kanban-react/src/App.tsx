@@ -83,9 +83,12 @@ function App() {
   const loadContainerStatus = useCallback(async () => {
     try {
       const response = await fetch("/api/container/status")
+      if (!response.ok) {
+        throw new Error(`HTTP error: ${response.status} ${response.statusText}`)
+      }
       setContainerStatus(await response.json())
-    } catch {
-      setContainerStatus({ enabled: false, available: false, hasRunningWorkflows: false, message: "Failed to load status" })
+    } catch (e) {
+      setContainerStatus({ enabled: false, available: false, hasRunningWorkflows: false, message: `Failed to load status: ${e instanceof Error ? e.message : String(e)}` })
     }
   }, [])
 
@@ -353,7 +356,6 @@ function App() {
         case "reset-to-backlog":
           {
             const result = await tasksHook.resetTask(taskId)
-            // If task was in a group, show restore modal
             if (result.wasInGroup && result.group) {
               setPendingRestoreTask(result.task)
               setPendingRestoreGroup(result.group)
@@ -510,10 +512,10 @@ function App() {
     syncIntervalRef.current = setInterval(() => {
       if (wsHook.isConnected) {
         tasksHook.loadTasks().catch((e) => {
-          throw new Error(`Failed to sync tasks: ${e instanceof Error ? e.message : String(e)}`)
+          console.error(`Failed to sync tasks: ${e instanceof Error ? e.message : String(e)}`)
         })
         runsHook.loadRuns().catch((e) => {
-          throw new Error(`Failed to sync runs: ${e instanceof Error ? e.message : String(e)}`)
+          console.error(`Failed to sync runs: ${e instanceof Error ? e.message : String(e)}`)
         })
       }
     }, 30000)
@@ -653,7 +655,7 @@ function App() {
     }
   }, [multiSelectHook, openModal])
 
-  const onDeployTemplate = useCallback((id: string, e: React.MouseEvent) => {
+  const onDeployTemplate = useCallback(async (id: string, e: React.MouseEvent) => {
     const ctrlHeld = e.ctrlKey || e.metaKey
     const shiftHeld = e.shiftKey
 
@@ -667,18 +669,16 @@ function App() {
 
     const { id: _, idx, status, createdAt, updatedAt, completedAt, sessionId, sessionUrl, ...templateData } = template
 
-    tasksHook.createTask({ ...templateData, status: 'backlog' })
-      .then(() => {
-        toastsHook.showToast('Template deployed', 'success')
-        if (shiftHeld) {
-          return tasksHook.deleteTask(id).then(() => {
-            toastsHook.showToast('Template deleted after deployment', 'success')
-          })
-        }
-      })
-      .catch(e => {
-        toastsHook.showToast(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
-      })
+    try {
+      await tasksHook.createTask({ ...templateData, status: 'backlog' })
+      toastsHook.showToast('Template deployed', 'success')
+      if (shiftHeld) {
+        await tasksHook.deleteTask(id)
+        toastsHook.showToast('Template deleted after deployment', 'success')
+      }
+    } catch (e) {
+      toastsHook.showToast(`Deploy failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    }
   }, [tasksHook, toastsHook, openModal])
 
   const onOpenTaskSessions = useCallback((id: string) => openModal('taskSessions', { taskId: id }), [openModal])
@@ -860,6 +860,7 @@ function App() {
                                 <TopBar />
 
                                 <KanbanBoard
+                                  logPanelCollapsed={logPanelCollapsed}
                                   tasks={tasksHook.tasks}
                                   bonSummaries={tasksHook.bonSummaries}
                                   getTaskRunColor={runsHook.getTaskRunColor}
