@@ -983,4 +983,42 @@
   .animate-fade-in-up {
     animation: fade-in-up 0.3s ease-out;
   }
+
+  /* ============================================
+     VIRTUAL CARD COMPONENTS - COMPACT FOR GROUPS
+     ============================================ */
+
+  .virtual-card {
+    @apply p-2.5 bg-dark-bg border border-dark-border rounded-md cursor-pointer transition-all;
+    border-left-width: 3px;
+  }
+
+  .virtual-card:hover {
+    @apply border-accent-primary;
+    transform: translateX(2px);
+  }
+
+  .virtual-card-header {
+    @apply flex items-center gap-2 mb-1.5;
+  }
+
+  .virtual-card-icon {
+    @apply w-3.5 h-3.5 flex-shrink-0;
+  }
+
+  .virtual-card-title {
+    @apply flex-1 text-sm font-medium leading-snug truncate;
+  }
+
+  .virtual-card-body {
+    @apply flex items-center gap-2 mb-2;
+  }
+
+  .virtual-card-label {
+    @apply px-1.5 py-0.5 bg-dark-surface2 border border-dark-border rounded text-[10px] text-dark-text-muted uppercase tracking-wide;
+  }
+
+  .virtual-card-footer {
+    @apply flex items-center justify-between mt-1.5 pt-1.5 border-t border-dark-border;
+  }
 }
