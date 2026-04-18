@@ -2,10 +2,30 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useApi } from '@/hooks'
 import type { Task, WorkflowRun } from '@/types'
 import { formatLocalDateTime } from '@/utils/date'
+import { SessionModal } from '@/components/modals/SessionModal'
 
-interface ArchivedTask extends Task {
+type ArchivedTask = Omit<Task, 'sessionId' | 'completedAt'> & {
   sessionId: string | null
   completedAt: number | null
+}
+
+type StatusColorKey = Task['status'] | WorkflowRun['status']
+
+const STATUS_COLORS: Record<StatusColorKey, string> = {
+  // Task statuses
+  done: 'text-green-400 bg-green-500/10',
+  failed: 'text-red-400 bg-red-500/10',
+  stuck: 'text-orange-400 bg-orange-500/10',
+  template: 'text-blue-400 bg-blue-500/10',
+  backlog: 'text-gray-400 bg-gray-500/10',
+  executing: 'text-yellow-400 bg-yellow-500/10',
+  review: 'text-purple-400 bg-purple-500/10',
+  'code-style': 'text-pink-400 bg-pink-500/10',
+  // Workflow run statuses
+  running: 'text-yellow-400 bg-yellow-500/10',
+  stopping: 'text-orange-400 bg-orange-500/10',
+  paused: 'text-blue-400 bg-blue-500/10',
+  completed: 'text-green-400 bg-green-500/10',
 }
 
 interface ArchivedRun {
@@ -33,26 +53,41 @@ export function ArchivedTasksTab() {
     setIsLoading(true)
     setError(null)
     try {
-      const response = await fetch('/api/archived/tasks')
-      if (!response.ok) throw new Error(`Failed to load archived tasks: HTTP ${response.status}`)
-      const data = await response.json()
+      const data = await api.getArchivedTasks()
       
-      const runs: ArchivedRun[] = (data.runs || []).map((runData: { run: WorkflowRun; tasks: ArchivedTask[] }) => ({
-        run: runData.run,
-        tasks: runData.tasks,
-        taskCount: runData.tasks.length,
-        expanded: false,
-      }))
+      if (!Array.isArray(data.runs)) {
+        throw new Error('Invalid response: runs must be an array')
+      }
+      
+      const runs: ArchivedRun[] = data.runs.map((runData) => {
+        if (!runData.run || !Array.isArray(runData.tasks)) {
+          throw new Error('Invalid run data: missing run or tasks array')
+        }
+        return {
+          run: runData.run,
+          tasks: runData.tasks.map((task): ArchivedTask => {
+            if (!task.id || !task.name) {
+              throw new Error(`Invalid task data: missing required fields for task in run ${runData.run.id}`)
+            }
+            return {
+              ...task,
+              sessionId: task.sessionId ?? null,
+              completedAt: task.completedAt ?? null,
+            }
+          }),
+          taskCount: runData.tasks.length,
+          expanded: false,
+        }
+      })
       
       setArchivedRuns(runs)
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to load archived tasks'
       setError(errorMessage)
-      throw new Error(`Archived tasks loading failed: ${errorMessage}`)
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [api])
 
   useEffect(() => {
     loadArchivedTasks()
@@ -107,17 +142,10 @@ export function ArchivedTasksTab() {
   }, [])
 
   const getStatusColor = (status: string): string => {
-    const colors: Record<Task['status'], string> = {
-      done: 'text-green-400 bg-green-500/10',
-      failed: 'text-red-400 bg-red-500/10',
-      stuck: 'text-orange-400 bg-orange-500/10',
-      template: 'text-blue-400 bg-blue-500/10',
-      backlog: 'text-gray-400 bg-gray-500/10',
-      executing: 'text-yellow-400 bg-yellow-500/10',
-      review: 'text-purple-400 bg-purple-500/10',
-      'code-style': 'text-pink-400 bg-pink-500/10',
+    if (status in STATUS_COLORS) {
+      return STATUS_COLORS[status as StatusColorKey]
     }
-    return colors[status as Task['status']] ?? 'text-gray-400 bg-gray-500/10'
+    throw new Error(`Invalid status: "${status}". Expected one of: ${Object.keys(STATUS_COLORS).join(', ')}`)
   }
 
   if (isLoading) {
@@ -252,7 +280,7 @@ export function ArchivedTasksTab() {
                       </span>
                     </div>
                     <div className="text-xs text-dark-text-muted mt-1">
-                      {formatLocalDateTime(run.run.startedAt)} • {run.taskCount} task{run.taskCount === 1 ? '' : 's'}
+                      {formatLocalDateTime(run.run.createdAt)} • {run.taskCount} task{run.taskCount === 1 ? '' : 's'}
                     </div>
                   </div>
                 </div>
@@ -284,6 +312,15 @@ export function ArchivedTasksTab() {
                                 <span className={`text-xs px-2 py-0.5 rounded ${getStatusColor(task.status)}`}>
                                   {task.status}
                                 </span>
+                                {task.reviewCount > 0 && (
+                                  <span className="text-xs px-2 py-0.5 rounded text-purple-400 bg-purple-500/10 flex items-center gap-1">
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                    </svg>
+                                    {task.reviewCount} {task.reviewCount === 1 ? 'review' : 'reviews'}
+                                  </span>
+                                )}
                                 {task.sessionId && (
                                   <button
                                     className="text-xs text-accent-info hover:text-accent-primary flex items-center gap-1"
@@ -423,41 +460,11 @@ export function ArchivedTasksTab() {
         </div>
       )}
 
-      {/* Session Modal - Displays session chat for archived tasks */}
       {sessionModal.isOpen && sessionModal.sessionId && (
-        <div
-          className="fixed inset-0 z-[1002] flex items-center justify-center bg-black/50 p-4"
-          onClick={closeSessionModal}
-        >
-          <div
-            className="bg-dark-surface2 rounded-lg shadow-xl w-[min(800px,calc(100vw-40px))] max-h-[80vh] flex flex-col border border-dark-surface3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-dark-surface3">
-              <h3 className="text-lg font-medium text-dark-text">Session Chat</h3>
-              <button
-                className="text-2xl leading-none text-dark-text-muted hover:text-dark-text"
-                onClick={closeSessionModal}
-              >
-                ×
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4">
-              <div className="text-center py-8">
-                <p className="text-dark-text-muted">Session chat view not yet implemented.</p>
-                <p className="text-xs text-dark-text-muted mt-2">Session ID: {sessionModal.sessionId}</p>
-                <p className="text-xs text-dark-text-muted mt-4">
-                  Session content should be fetched from the server and rendered here.
-                </p>
-              </div>
-            </div>
-            <div className="flex justify-end px-4 py-3 border-t border-dark-surface3">
-              <button className="btn" onClick={closeSessionModal}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
+        <SessionModal
+          sessionId={sessionModal.sessionId}
+          onClose={closeSessionModal}
+        />
       )}
     </div>
   )
