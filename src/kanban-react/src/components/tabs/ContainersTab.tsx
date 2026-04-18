@@ -11,6 +11,9 @@ interface ContainerProfile {
   dockerfileTemplate: string
 }
 
+const buildStatuses = ['pending', 'running', 'success', 'failed', 'cancelled'] as const
+type BuildStatus = (typeof buildStatuses)[number]
+
 interface ContainerBuild {
   id: number
   status: BuildStatus
@@ -22,7 +25,12 @@ interface ContainerBuild {
   logs: string | null
 }
 
-type BuildStatus = 'pending' | 'running' | 'success' | 'failed' | 'cancelled'
+interface ContainerStatus {
+  enabled: boolean
+  available: boolean
+  hasRunningWorkflows: boolean
+  message: string
+}
 
 export function ContainersTab() {
   const api = useApi()
@@ -39,16 +47,17 @@ export function ContainersTab() {
   const [newProfileName, setNewProfileName] = useState('')
   const [newProfileId, setNewProfileId] = useState('')
   const [selectedBuildForLogs, setSelectedBuildForLogs] = useState<ContainerBuild | null>(null)
-  const [containerStatus, setContainerStatus] = useState<{ enabled: boolean; available: boolean; hasRunningWorkflows: boolean; message: string } | null>(null)
+  const [containerStatus, setContainerStatus] = useState<ContainerStatus | null>(null)
   const [availableImages, setAvailableImages] = useState<ContainerImage[]>([])
   const [isLoadingImages, setIsLoadingImages] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [imageToDelete, setImageToDelete] = useState<ContainerImage | null>(null)
   const [tasksUsingImage, setTasksUsingImage] = useState<{ id: string; name: string; status: string }[]>([])
   const [isLoadingTasksUsing, setIsLoadingTasksUsing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const isContainerEnabled = containerStatus?.enabled ?? false
-  const hasRunningWorkflows = containerStatus?.hasRunningWorkflows ?? false
+  const isContainerEnabled = containerStatus?.enabled === true
+const hasRunningWorkflows = containerStatus?.hasRunningWorkflows === true
 
   const selectedProfile = profiles.find(p => p.id === selectedProfileId)
   const hasUnsavedChanges = customDockerfile !== originalDockerfile
@@ -60,20 +69,40 @@ export function ContainersTab() {
     const response = await fetch('/api/container/profiles')
     if (!response.ok) throw new Error(`Failed to load profiles: HTTP ${response.status}`)
     const data = await response.json()
-    setProfiles(Array.isArray(data.profiles) ? data.profiles : [])
+    if (!Array.isArray(data.profiles)) {
+      throw new Error('Invalid API response: profiles is not an array')
+    }
+    setProfiles(data.profiles)
   }, [])
 
   const loadBuilds = useCallback(async () => {
     const response = await fetch('/api/container/build-status?limit=10')
     if (!response.ok) throw new Error(`Failed to load builds: HTTP ${response.status}`)
     const data = await response.json()
-    setBuilds(Array.isArray(data.builds) ? data.builds : [])
+    if (!Array.isArray(data.builds)) {
+      throw new Error('Invalid API response: builds is not an array')
+    }
+    setBuilds(data.builds)
   }, [])
 
   const loadContainerStatus = useCallback(async () => {
     const response = await fetch('/api/container/status')
     if (!response.ok) throw new Error(`Failed to load container status: HTTP ${response.status}`)
     const data = await response.json()
+
+    if (typeof data.enabled !== 'boolean') {
+      throw new Error('Invalid API response: enabled must be a boolean')
+    }
+    if (typeof data.available !== 'boolean') {
+      throw new Error('Invalid API response: available must be a boolean')
+    }
+    if (typeof data.hasRunningWorkflows !== 'boolean') {
+      throw new Error('Invalid API response: hasRunningWorkflows must be a boolean')
+    }
+    if (typeof data.message !== 'string') {
+      throw new Error('Invalid API response: message must be a string')
+    }
+
     setContainerStatus({
       enabled: data.enabled,
       available: data.available,
@@ -88,7 +117,10 @@ export function ContainersTab() {
       const response = await fetch('/api/container/images')
       if (!response.ok) throw new Error(`Failed to load images: HTTP ${response.status}`)
       const data = await response.json()
-      setAvailableImages(Array.isArray(data.images) ? data.images : [])
+      if (!Array.isArray(data.images)) {
+        throw new Error('Invalid API response: images is not an array')
+      }
+      setAvailableImages(data.images)
     } finally {
       setIsLoadingImages(false)
     }
@@ -119,7 +151,8 @@ export function ContainersTab() {
         ])
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : 'Failed to load container data'
-        throw new Error(`Container tab initialization failed: ${errorMessage}`)
+        console.error('Container tab initialization failed:', errorMessage)
+        setError(`Failed to load container data: ${errorMessage}`)
       }
     }
     loadData()
@@ -133,16 +166,34 @@ export function ContainersTab() {
     }
 
     const loadDockerfile = async () => {
-      const response = await fetch(`/api/container/dockerfile/${selectedProfileId}`)
-      if (!response.ok) throw new Error(`Failed to load Dockerfile: HTTP ${response.status}`)
-      const data = await response.json()
-      if (data.dockerfile !== undefined) {
+      try {
+        const response = await fetch(`/api/container/dockerfile/${selectedProfileId}`)
+        if (!response.ok) throw new Error(`Failed to load Dockerfile: HTTP ${response.status}`)
+        const data = await response.json()
+        if (typeof data.dockerfile !== 'string') {
+          throw new Error('Invalid API response: dockerfile must be a string')
+        }
         setCustomDockerfile(data.dockerfile)
         setOriginalDockerfile(data.dockerfile)
+      } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : 'Failed to load Dockerfile'
+        console.error('Failed to load Dockerfile:', errorMessage)
+        setError(`Failed to load Dockerfile: ${errorMessage}`)
       }
     }
     loadDockerfile()
   }, [selectedProfileId])
+
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current)
+        pollTimeoutRef.current = null
+      }
+    }
+  }, [])
 
   const startBuild = async () => {
     if (hasRunningWorkflows) {
@@ -153,6 +204,11 @@ export function ContainersTab() {
     if (!customDockerfile.trim()) {
       alert('Dockerfile is empty')
       return
+    }
+
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current)
+      pollTimeoutRef.current = null
     }
 
     setIsBuilding(true)
@@ -181,26 +237,38 @@ export function ContainersTab() {
     }
   }
 
-  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
   const pollBuildStatus = useCallback((buildId: number) => {
     const checkStatus = async () => {
       try {
         const response = await fetch('/api/container/build-status?limit=1')
-        if (!response.ok) throw new Error(`Failed to check build status: HTTP ${response.status}`)
+        if (!response.ok) {
+          throw new Error(`Failed to check build status: HTTP ${response.status}`)
+        }
         const data = await response.json()
+        if (!Array.isArray(data.builds)) {
+          throw new Error('Invalid API response: builds is not an array')
+        }
 
-        const build = (data.builds as ContainerBuild[]).find((b: ContainerBuild) => b.id === buildId)
+        const build = data.builds.find((b: unknown) => {
+          if (typeof b !== 'object' || b === null) return false
+          const candidate = b as Record<string, unknown>
+          return typeof candidate.id === 'number' && candidate.id === buildId
+        })
 
-        if (build && build.status !== 'running' && build.status !== 'pending') {
+        if (build === undefined) {
+          throw new Error(`Build ${buildId} not found in status response`)
+        }
+
+        const typedBuild = build as ContainerBuild
+        if (typedBuild.status !== 'running' && typedBuild.status !== 'pending') {
           setIsBuilding(false)
           setCurrentBuildId(null)
           loadBuilds()
 
-          if (build.status === 'success') {
-            alert(`Build completed successfully: ${build.imageTag}`)
+          if (typedBuild.status === 'success') {
+            alert(`Build completed successfully: ${typedBuild.imageTag}`)
           } else {
-            alert(`Build failed: ${build.errorMessage}`)
+            alert(`Build failed: ${typedBuild.errorMessage}`)
           }
           return
         }
@@ -208,19 +276,14 @@ export function ContainersTab() {
         pollTimeoutRef.current = setTimeout(checkStatus, 2000)
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : 'Build status check failed'
-        pollTimeoutRef.current = setTimeout(checkStatus, 2000)
-        throw new Error(`Build polling error: ${errorMessage}`)
+        console.error('Build polling error:', errorMessage)
+        setIsBuilding(false)
+        setCurrentBuildId(null)
+        setError(`Build polling failed: ${errorMessage}. Build may still be running in the background.`)
       }
     }
 
     checkStatus()
-
-    return () => {
-      if (pollTimeoutRef.current) {
-        clearTimeout(pollTimeoutRef.current)
-        pollTimeoutRef.current = null
-      }
-    }
   }, [loadBuilds])
 
   const openSaveProfileModal = () => {
@@ -283,7 +346,7 @@ export function ContainersTab() {
     return formatLocalDateTime(timestamp)
   }
 
-  const formatStatus = (status: BuildStatus | string): { text: string; color: string } => {
+  const formatStatus = useCallback((status: string): { text: string; color: string } => {
     const statusMap: Record<BuildStatus, { text: string; color: string }> = {
       success: { text: 'Success', color: 'text-green-400' },
       failed: { text: 'Failed', color: 'text-red-400' },
@@ -291,8 +354,15 @@ export function ContainersTab() {
       pending: { text: 'Pending', color: 'text-blue-400' },
       cancelled: { text: 'Cancelled', color: 'text-gray-400' },
     }
-    return statusMap[status as BuildStatus] ?? { text: status, color: 'text-gray-400' }
-  }
+
+    const isValidStatus = (s: string): s is BuildStatus =>
+      buildStatuses.includes(s as BuildStatus)
+
+    if (isValidStatus(status)) {
+      return statusMap[status]
+    }
+    return { text: status, color: 'text-gray-400' }
+  }, [])
 
   const truncateError = (errorMessage: string | null, maxLength: number = 100): string => {
     if (!errorMessage) return ''
@@ -337,10 +407,34 @@ export function ContainersTab() {
 
   const canDeleteImage = imageToDelete && imageToDelete.inUseByTasks === 0 && availableImages.length > 1
 
+  const clearError = () => setError(null)
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="max-w-5xl mx-auto space-y-6">
-        {/* Header */}
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+            <div className="flex items-start gap-2">
+              <svg className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="flex-1">
+                <h3 className="text-sm font-medium text-red-400">Error</h3>
+                <p className="text-xs text-dark-text-muted mt-1">{error}</p>
+              </div>
+              <button
+                className="text-dark-text-muted hover:text-dark-text"
+                onClick={clearError}
+                aria-label="Close error message"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between pb-4 border-b border-dark-surface3">
           <h2 className="text-xl font-semibold text-dark-text flex items-center gap-2">
             <svg className="w-5 h-5 text-accent-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -350,7 +444,6 @@ export function ContainersTab() {
           </h2>
         </div>
 
-        {/* Tabs */}
         <div className="flex border-b border-dark-surface3">
           <button
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
@@ -389,7 +482,6 @@ export function ContainersTab() {
           </button>
         </div>
 
-        {/* Alerts */}
         {!isContainerEnabled ? (
           <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
             <div className="flex items-start gap-2">
@@ -420,7 +512,6 @@ export function ContainersTab() {
           </div>
         ) : null}
 
-        {/* Build Tab Content */}
         {activeTab === 'build' && (
           <div className="space-y-6">
             <div className="form-group">
@@ -508,7 +599,6 @@ export function ContainersTab() {
               {buildButtonText}
             </button>
 
-            {/* Build History */}
             <div>
               <label className="flex items-center gap-2 mb-3 text-sm font-medium text-dark-text">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -548,7 +638,6 @@ export function ContainersTab() {
           </div>
         )}
 
-        {/* Images Tab Content */}
         {activeTab === 'images' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -655,7 +744,6 @@ export function ContainersTab() {
         )}
       </div>
 
-      {/* Save Profile Modal */}
       {showSaveProfileModal && (
         <div
           className="fixed inset-0 z-[1001] flex items-center justify-center bg-black/50"
@@ -711,7 +799,6 @@ export function ContainersTab() {
         </div>
       )}
 
-      {/* Delete Image Modal */}
       {showDeleteModal && imageToDelete && (
         <div
           className="fixed inset-0 z-[1001] flex items-center justify-center bg-black/50"
@@ -816,7 +903,6 @@ export function ContainersTab() {
         </div>
       )}
 
-      {/* Build Logs Modal */}
       {selectedBuildForLogs && (
         <div
           className="fixed inset-0 z-[1001] flex items-center justify-center bg-black/50"
