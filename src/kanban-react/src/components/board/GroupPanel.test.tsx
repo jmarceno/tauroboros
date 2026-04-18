@@ -205,8 +205,6 @@ describe('GroupPanel', () => {
     isTaskMutationLocked: vi.fn(() => false),
     // Required callback props
     onClose: vi.fn(),
-    onRemoveTask: vi.fn(),
-    onAddTasks: vi.fn(),
     onStartGroup: vi.fn(),
     onOpenTask: vi.fn(),
     onDeleteGroup: vi.fn(),
@@ -623,126 +621,62 @@ describe('GroupPanel', () => {
     expect(mockCallbacks.onArchiveTask).toHaveBeenCalledWith('task-1', expect.anything())
   })
 
-  describe('drag-and-drop backdrop behavior', () => {
-    it('does not close panel when backdrop is clicked and isDragging is true', () => {
+  describe('floating column positioning', () => {
+    it('renders as floating column without backdrop', () => {
       const { container } = renderWithContexts(
         <GroupPanel
           group={mockGroup}
           tasks={mockTasks}
           isOpen={true}
-          isDragging={true}
           dragDrop={createMockDragDrop()}
           {...mockCallbacks}
         />
       )
 
-      // Find and click the backdrop
+      // Panel should exist
+      const panel = container.querySelector('.group-panel')
+      expect(panel).toBeInTheDocument()
+
+      // Backdrop should NOT exist (floating column design)
       const backdrop = container.querySelector('.group-panel-backdrop')
-      expect(backdrop).toBeInTheDocument()
-
-      fireEvent.click(backdrop!)
-
-      // onClose should NOT be called when dragging
-      expect(mockCallbacks.onClose).not.toHaveBeenCalled()
+      expect(backdrop).not.toBeInTheDocument()
     })
 
-    it('closes panel when backdrop is clicked and isDragging is false', () => {
+    it('applies correct CSS classes for floating column', () => {
       const { container } = renderWithContexts(
         <GroupPanel
           group={mockGroup}
           tasks={mockTasks}
           isOpen={true}
-          isDragging={false}
           dragDrop={createMockDragDrop()}
           {...mockCallbacks}
         />
       )
 
-      const backdrop = container.querySelector('.group-panel-backdrop')
-      expect(backdrop).toBeInTheDocument()
+      const panel = container.querySelector('.group-panel')
+      expect(panel).toHaveClass('group-panel-enter')
+    })
 
-      fireEvent.click(backdrop!)
+    it('closes panel when close button is clicked', () => {
+      const { container } = renderWithContexts(
+        <GroupPanel
+          group={mockGroup}
+          tasks={mockTasks}
+          isOpen={true}
+          dragDrop={createMockDragDrop()}
+          {...mockCallbacks}
+        />
+      )
+
+      const closeButton = screen.getByLabelText('Close group panel (Escape)')
+      fireEvent.click(closeButton)
 
       // Trigger animation end to complete the close sequence
       const panel = container.querySelector('.group-panel')
       fireEvent.animationEnd(panel!)
 
-      // onClose should be called when not dragging
+      // onClose should be called
       expect(mockCallbacks.onClose).toHaveBeenCalledTimes(1)
-    })
-
-    it('closes panel when backdrop is clicked and isDragging is undefined (default)', () => {
-      const { container } = renderWithContexts(
-        <GroupPanel
-          group={mockGroup}
-          tasks={mockTasks}
-          isOpen={true}
-          dragDrop={createMockDragDrop()}
-          {...mockCallbacks}
-        />
-      )
-
-      const backdrop = container.querySelector('.group-panel-backdrop')
-      expect(backdrop).toBeInTheDocument()
-
-      fireEvent.click(backdrop!)
-
-      // Trigger animation end to complete the close sequence
-      const panel = container.querySelector('.group-panel')
-      fireEvent.animationEnd(panel!)
-
-      // onClose should be called when isDragging defaults to false
-      expect(mockCallbacks.onClose).toHaveBeenCalledTimes(1)
-    })
-
-    it('applies group-panel-backdrop-dragging CSS class when isDragging is true', () => {
-      const { container } = renderWithContexts(
-        <GroupPanel
-          group={mockGroup}
-          tasks={mockTasks}
-          isOpen={true}
-          isDragging={true}
-          dragDrop={createMockDragDrop()}
-          {...mockCallbacks}
-        />
-      )
-
-      const backdrop = container.querySelector('.group-panel-backdrop')
-      expect(backdrop).toBeInTheDocument()
-      expect(backdrop).toHaveClass('group-panel-backdrop-dragging')
-    })
-
-    it('does not apply group-panel-backdrop-dragging CSS class when isDragging is false', () => {
-      const { container } = renderWithContexts(
-        <GroupPanel
-          group={mockGroup}
-          tasks={mockTasks}
-          isOpen={true}
-          isDragging={false}
-          dragDrop={createMockDragDrop()}
-          {...mockCallbacks}
-        />
-      )
-
-      const backdrop = container.querySelector('.group-panel-backdrop')
-      expect(backdrop).toBeInTheDocument()
-      expect(backdrop).not.toHaveClass('group-panel-backdrop-dragging')
-    })
-
-    it('does not apply group-panel-backdrop-dragging CSS class when isDragging is undefined', () => {
-      const { container } = renderWithContexts(
-        <GroupPanel
-          group={mockGroup}
-          tasks={mockTasks}
-          isOpen={true}
-          dragDrop={createMockDragDrop()}
-          {...mockCallbacks}
-        />
-      )
-
-      const backdrop = container.querySelector('.group-panel-backdrop')
-      expect(backdrop).toBeInTheDocument()
-      expect(backdrop).not.toHaveClass('group-panel-backdrop-dragging')
     })
   })
 })

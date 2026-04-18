@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState, useEffect } from 'react'
+import { memo, useCallback, useRef, useState } from 'react'
 import type { TaskGroup, Task, BestOfNSummary } from '@/types'
 import type { useDragDrop } from '@/hooks/useDragDrop'
 import { useFocusTrap } from '@/hooks/useFocusTrap'
@@ -12,8 +12,6 @@ export interface GroupPanelProps {
   isTaskMutationLocked: (taskId: string) => boolean
   isOpen: boolean
   onClose: () => void
-  onRemoveTask: (taskId: string) => void
-  onAddTasks: (taskIds: string[]) => void
   onStartGroup: () => void
   onOpenTask: (id: string, e?: React.MouseEvent) => void
   onDeployTemplate: (id: string, e: React.MouseEvent) => void
@@ -41,8 +39,6 @@ export const GroupPanel = memo(function GroupPanel({
   isTaskMutationLocked,
   isOpen,
   onClose,
-  onRemoveTask,
-  onAddTasks,
   onStartGroup,
   onOpenTask,
   onDeployTemplate,
@@ -59,29 +55,24 @@ export const GroupPanel = memo(function GroupPanel({
   onContinueReviews,
   onDeleteGroup,
   dragDrop,
-  isDragging = false,
 }: GroupPanelProps) {
+  // Validate group has required color property
+  if (!group.color) {
+    throw new Error(`Group ${group.id} is missing required 'color' property`)
+  }
   const containerRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const [isExiting, setIsExiting] = useState(false)
-  const triggerRef = useRef<HTMLElement | null>(null)
-
-  // Store the element that triggered the panel open
-  useEffect(() => {
-    if (isOpen) {
-      triggerRef.current = document.activeElement as HTMLElement
-    }
-  }, [isOpen])
 
   const handleClose = useCallback(() => {
     setIsExiting(true)
   }, [])
 
-  // Focus trap for accessibility
+  // Focus trap for accessibility - hook automatically stores/restores focus
+  // when isActive changes. Focus is trapped to focusable elements within container.
   useFocusTrap({
     isActive: isOpen,
     containerRef,
-    restoreFocusTo: triggerRef.current,
     onEscape: handleClose,
   })
 
@@ -101,7 +92,12 @@ export const GroupPanel = memo(function GroupPanel({
   }, [dragDrop, group.id])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+    const relatedTarget = e.relatedTarget
+    if (!relatedTarget) {
+      dragDrop.handleDragLeave()
+      return
+    }
+    if (!e.currentTarget.contains(relatedTarget as Node)) {
       dragDrop.handleDragLeave()
     }
   }, [dragDrop])
@@ -111,10 +107,6 @@ export const GroupPanel = memo(function GroupPanel({
     dragDrop.handleDropOnGroup(group.id, e)
   }, [dragDrop, group.id])
 
-  const handleRemoveTask = useCallback((taskId: string) => {
-    onRemoveTask(taskId)
-  }, [onRemoveTask])
-
   const handleStartClick = useCallback(() => {
     onStartGroup()
   }, [onStartGroup])
@@ -123,12 +115,6 @@ export const GroupPanel = memo(function GroupPanel({
     e.stopPropagation()
     onDeleteGroup()
   }, [onDeleteGroup])
-
-  const handleBackdropClick = useCallback(() => {
-    // Don't close if a drag is in progress (user might be dragging to this panel)
-    if (isDragging) return
-    handleClose()
-  }, [handleClose, isDragging])
 
   // Don't render anything when closed and animation finished
   if (!isOpen && !isExiting) {
@@ -140,21 +126,15 @@ export const GroupPanel = memo(function GroupPanel({
 
   return (
     <>
-      {/* Backdrop - disable pointer events during drag to allow dropping */}
-      <div
-        className={`group-panel-backdrop ${isDragging ? 'group-panel-backdrop-dragging' : ''}`}
-        onClick={handleBackdropClick}
-        aria-hidden="true"
-      />
-
-      {/* Panel */}
+      {/* Floating Group Panel - positioned beside Backlog column */}
       <div
         ref={containerRef}
         className={`group-panel ${isExiting ? 'group-panel-exit' : 'group-panel-enter'}`}
-        style={{
-          boxShadow: '-4px 0 20px rgba(0,0,0,0.5)',
-          '--group-color': `${group.color}66`,
-        } as React.CSSProperties}
+        style={
+          {
+            '--group-color': `${group.color}66`,
+          } as React.CSSProperties & { '--group-color': string }
+        }
         role="complementary"
         aria-label={`Group panel: ${group.name}`}
         aria-expanded={isOpen}
@@ -292,8 +272,8 @@ export const GroupPanel = memo(function GroupPanel({
                 onRepair={(action) => onRepairTask(task.id, action)}
                 onMarkDone={() => onMarkDone(task.id)}
                 onReset={() => onResetTask(task.id)}
-                onConvertToTemplate={(e) => onConvertToTemplate(task.id, e)}
-                onArchive={(e) => onArchiveTask(task.id, e)}
+              onConvertToTemplate={(e) => onConvertToTemplate(task.id, e)}
+              onArchive={(e) => onArchiveTask(task.id, e)}
                 onViewRuns={() => onViewRuns(task.id)}
                 onContinueReviews={() => onContinueReviews(task.id)}
               />
