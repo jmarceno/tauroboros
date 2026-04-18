@@ -725,7 +725,7 @@
   .tooltip {
     @apply absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1.5
            bg-dark-surface2 border border-dark-border rounded-md shadow-lg
-           text-xs text-dark-text whitespace-normal max-w-[200px] z-50
+           text-xs text-dark-text whitespace-normal max-w-[200px] z-[100]
            opacity-0 pointer-events-none transition-opacity duration-200;
   }
 
