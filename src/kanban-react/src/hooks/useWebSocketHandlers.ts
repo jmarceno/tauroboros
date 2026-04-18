@@ -9,6 +9,122 @@ import type { useSession } from './useSession'
 import type { useTaskGroups } from './useTaskGroups'
 import type { useWorkflowControl } from './useWorkflowControl'
 
+// Type guards for WebSocket payload validation
+function isTask(payload: unknown): payload is Task {
+  return typeof payload === 'object' && payload !== null && 'id' in payload && typeof (payload as Task).id === 'string'
+}
+
+function isWorkflowRun(payload: unknown): payload is WorkflowRun {
+  return typeof payload === 'object' && payload !== null && 'id' in payload && 'status' in payload
+}
+
+function isTaskGroup(payload: unknown): payload is TaskGroup {
+  return typeof payload === 'object' && payload !== null && 'id' in payload && 'name' in payload
+}
+
+function isSession(payload: unknown): payload is Session {
+  return typeof payload === 'object' && payload !== null && 'id' in payload && 'sessionKind' in payload
+}
+
+function isSessionMessage(payload: unknown): payload is SessionMessage {
+  return typeof payload === 'object' && payload !== null && 'sessionId' in payload && 'messageType' in payload
+}
+
+interface IdPayload {
+  id: string
+}
+
+function hasId(payload: unknown): payload is IdPayload {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.id === 'string'
+}
+
+interface RunIdPayload {
+  runId: string
+}
+
+function hasRunId(payload: unknown): payload is RunIdPayload {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.runId === 'string'
+}
+
+interface TaskIdPayload {
+  taskId: string
+}
+
+function hasTaskId(payload: unknown): payload is TaskIdPayload {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.taskId === 'string'
+}
+
+interface NamePayload {
+  name: string
+}
+
+function hasName(payload: unknown): payload is NamePayload {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.name === 'string'
+}
+
+interface RunStoppedPayload {
+  runId: string
+  destructive?: boolean
+}
+
+function isRunStoppedPayload(payload: unknown): payload is RunStoppedPayload {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.runId === 'string'
+}
+
+interface SessionStartedPayload {
+  id: string
+  taskId?: string
+}
+
+function isSessionStartedPayload(payload: unknown): payload is SessionStartedPayload {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.id === 'string'
+}
+
+interface ImageStatusPayload {
+  status: string
+  message: string
+  errorMessage?: string
+}
+
+function isImageStatusPayload(payload: unknown): payload is ImageStatusPayload {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.status === 'string' && typeof p.message === 'string'
+}
+
+interface BuildCompletedPayload {
+  status: string
+  buildId: number
+}
+
+function isBuildCompletedPayload(payload: unknown): payload is BuildCompletedPayload {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.status === 'string' && typeof p.buildId === 'number'
+}
+
+interface CountPayload {
+  count: number
+}
+
+function isCountPayload(payload: unknown): payload is CountPayload {
+  if (typeof payload !== 'object' || payload === null) return false
+  const p = payload as Record<string, unknown>
+  return typeof p.count === 'number'
+}
+
 interface UseWebSocketHandlersDeps {
   wsHook: ReturnType<typeof useWebSocket>
   tasksHook: ReturnType<typeof useTasks>
@@ -20,16 +136,6 @@ interface UseWebSocketHandlersDeps {
   workflowControl: ReturnType<typeof useWorkflowControl>
 }
 
-/**
- * Custom hook for WebSocket event handler registration.
- * Consolidates all WebSocket handlers with proper dependency management
- * using the stable callback refs pattern to avoid stale closures.
- * 
- * NOTE: This hook uses the pattern of extracting stable callbacks and refs
- * from hook objects, then only depending on those stable values in useEffect.
- * This follows the rerender-dependencies best practice of only using primitive
- * and stable ref dependencies in effect arrays.
- */
 export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
   const {
     wsHook,
@@ -42,13 +148,10 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
     workflowControl,
   } = deps
 
-  // Extract stable callbacks and refs from hook objects
-  // These don't change between renders, preventing effect re-runs
   const tasksRef = useRef(tasksHook.tasks)
   const runsRef = useRef(runsHook.runs)
   const sessionIdRef = useRef(sessionHook.sessionId)
 
-  // Store stable callbacks from hooks (these are memoized in their respective hooks)
   const setTasksRef = useRef(tasksHook.setTasks)
   const removeBonSummaryRef = useRef(tasksHook.removeBonSummary)
   const refreshBonSummariesRef = useRef(tasksHook.refreshBonSummaries)
@@ -70,14 +173,12 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
   const clearRunRef = useRef(workflowControl.clearRun)
   const runsArrayRef = useRef(runsHook.runs)
 
-  // Keep refs synchronized with latest values (this doesn't cause re-renders)
   tasksRef.current = tasksHook.tasks
   runsRef.current = runsHook.runs
   sessionIdRef.current = sessionHook.sessionId
   runsArrayRef.current = runsHook.runs
 
-  // Only depend on the stable wsHook reference and sessionId primitive
-  // All other dependencies are accessed through refs to prevent effect re-runs
+  // Only depend on the stable wsHook reference - all other dependencies are accessed through refs
   useEffect(() => {
     if (!wsHook) return
 
@@ -86,8 +187,12 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
     // Task event handlers - using refs to access latest state without causing re-runs
     unsubscribers.push(
       wsHook.on('task_created', async (payload) => {
-        const task = payload as Task
-        if (!task?.id) return
+        if (!isTask(payload)) {
+          console.error('[WebSocket] Invalid task_created payload:', payload)
+          return
+        }
+        const task = payload
+        if (!task.id) return
         const currentTasks = tasksRef.current
         const existingTask = currentTasks.find((t) => t.id === task.id)
         if (existingTask) return
@@ -98,7 +203,11 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
 
     unsubscribers.push(
       wsHook.on('task_updated', async (payload) => {
-        const task = payload as Task
+        if (!isTask(payload)) {
+          console.error('[WebSocket] Invalid task_updated payload:', payload)
+          return
+        }
+        const task = payload
         const currentTasks = tasksRef.current
         const idx = currentTasks.findIndex((t) => t.id === task.id)
         const prev = idx >= 0 ? currentTasks[idx] : null
@@ -134,7 +243,11 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
 
     unsubscribers.push(
       wsHook.on('task_deleted', (payload) => {
-        const { id } = payload as { id: string }
+        if (!hasId(payload)) {
+          console.error('[WebSocket] Invalid task_deleted payload:', payload)
+          return
+        }
+        const { id } = payload
         const currentTasks = tasksRef.current
         const task = currentTasks.find((t) => t.id === id)
         removeBonSummaryRef.current(id)
@@ -146,7 +259,11 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
 
     unsubscribers.push(
       wsHook.on('task_archived', (payload) => {
-        const { id } = payload as { id: string }
+        if (!hasId(payload)) {
+          console.error('[WebSocket] Invalid task_archived payload:', payload)
+          return
+        }
+        const { id } = payload
         const currentTasks = tasksRef.current
         const task = currentTasks.find((t) => t.id === id)
         removeBonSummaryRef.current(id)
@@ -165,7 +282,6 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
       })
     )
 
-    // Options handlers
     unsubscribers.push(
       wsHook.on('options_updated', () => {
         addLogRef.current('Options updated', 'info')
@@ -176,167 +292,218 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
     // Run handlers
     unsubscribers.push(
       wsHook.on('run_created', (payload) => {
-        const run = payload as WorkflowRun
-        updateRunFromWebSocketRef.current(run)
-        handleRunUpdateRef.current(run)
+        if (!isWorkflowRun(payload)) {
+          console.error('[WebSocket] Invalid run_created payload:', payload)
+          return
+        }
+        updateRunFromWebSocketRef.current(payload)
+        handleRunUpdateRef.current(payload)
       })
     )
 
     unsubscribers.push(
       wsHook.on('run_updated', (payload) => {
-        const run = payload as WorkflowRun
-        updateRunFromWebSocketRef.current(run)
-        handleRunUpdateRef.current(run)
+        if (!isWorkflowRun(payload)) {
+          console.error('[WebSocket] Invalid run_updated payload:', payload)
+          return
+        }
+        updateRunFromWebSocketRef.current(payload)
+        handleRunUpdateRef.current(payload)
       })
     )
 
     unsubscribers.push(
       wsHook.on('run_archived', (payload) => {
-        const { id } = payload as { id: string }
-        addLogRef.current(`Workflow run archived: ${id}`, 'info')
-        removeRunRef.current(id)
+        if (!hasId(payload)) {
+          console.error('[WebSocket] Invalid run_archived payload:', payload)
+          return
+        }
+        addLogRef.current(`Workflow run archived: ${payload.id}`, 'info')
+        removeRunRef.current(payload.id)
         clearRunRef.current()
       })
     )
 
-    // Execution control handlers
     unsubscribers.push(
       wsHook.on('execution_paused', (payload) => {
-        const data = payload as { runId: string }
+        if (!hasRunId(payload)) {
+          console.error('[WebSocket] Invalid execution_paused payload:', payload)
+          return
+        }
         showToastRef.current('Workflow paused', 'info')
-        addLogRef.current(`Workflow paused: ${data.runId}`, 'info')
+        addLogRef.current(`Workflow paused: ${payload.runId}`, 'info')
         updateStateFromRunsRef.current(runsRef.current)
       })
     )
 
     unsubscribers.push(
       wsHook.on('execution_resumed', (payload) => {
-        const data = payload as { runId: string }
+        if (!hasRunId(payload)) {
+          console.error('[WebSocket] Invalid execution_resumed payload:', payload)
+          return
+        }
         showToastRef.current('Workflow resumed', 'success')
-        addLogRef.current(`Workflow resumed: ${data.runId}`, 'success')
+        addLogRef.current(`Workflow resumed: ${payload.runId}`, 'success')
         updateStateFromRunsRef.current(runsRef.current)
       })
     )
 
     unsubscribers.push(
       wsHook.on('run_paused', (payload) => {
-        const data = payload as { runId: string }
+        if (!hasRunId(payload)) {
+          console.error('[WebSocket] Invalid run_paused payload:', payload)
+          return
+        }
         showToastRef.current('Workflow run paused', 'info')
-        addLogRef.current(`Workflow run paused: ${data.runId}`, 'info')
+        addLogRef.current(`Workflow run paused: ${payload.runId}`, 'info')
         updateStateFromRunsRef.current(runsRef.current)
       })
     )
 
     unsubscribers.push(
       wsHook.on('run_resumed', (payload) => {
-        const data = payload as { runId: string }
+        if (!hasRunId(payload)) {
+          console.error('[WebSocket] Invalid run_resumed payload:', payload)
+          return
+        }
         showToastRef.current('Workflow run resumed', 'success')
-        addLogRef.current(`Workflow run resumed: ${data.runId}`, 'success')
+        addLogRef.current(`Workflow run resumed: ${payload.runId}`, 'success')
         updateStateFromRunsRef.current(runsRef.current)
       })
     )
 
     unsubscribers.push(
       wsHook.on('run_stopped', (payload) => {
-        const data = payload as { runId: string; destructive?: boolean }
-        const message = data.destructive ? 'Workflow force stopped' : 'Workflow stopped'
-        showToastRef.current(message, data.destructive ? 'error' : 'info')
-        addLogRef.current(`${message}: ${data.runId}`, data.destructive ? 'error' : 'info')
+        if (!isRunStoppedPayload(payload)) {
+          console.error('[WebSocket] Invalid run_stopped payload:', payload)
+          return
+        }
+        const message = payload.destructive ? 'Workflow force stopped' : 'Workflow stopped'
+        showToastRef.current(message, payload.destructive ? 'error' : 'info')
+        addLogRef.current(`${message}: ${payload.runId}`, payload.destructive ? 'error' : 'info')
         loadRunsRef.current()
       })
     )
 
-    // Session handlers
     unsubscribers.push(
       wsHook.on('session_started', (payload) => {
-        const data = payload as { id: string; taskId?: string }
+        if (!isSessionStartedPayload(payload)) {
+          console.error('[WebSocket] Invalid session_started payload:', payload)
+          return
+        }
         const currentTasks = tasksRef.current
-        if (data.taskId && data.id) {
-          const idx = currentTasks.findIndex((t) => t.id === data.taskId)
+        if (payload.taskId && payload.id) {
+          const idx = currentTasks.findIndex((t) => t.id === payload.taskId)
           if (idx >= 0) {
             const updatedTasks = [...currentTasks]
             updatedTasks[idx] = {
               ...updatedTasks[idx],
-              sessionId: data.id,
-              sessionUrl: `/#session/${encodeURIComponent(data.id)}`,
+              sessionId: payload.id,
+              sessionUrl: `/#session/${encodeURIComponent(payload.id)}`,
             }
             setTasksRef.current(updatedTasks)
           }
         }
-        if (sessionIdRef.current === data.id) {
-          updateSessionRef.current(data as Session)
+        if (sessionIdRef.current === payload.id) {
+          const sessionData: Session = {
+            id: payload.id,
+            sessionKind: 'task',
+            status: 'active',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            taskId: payload.taskId,
+          }
+          updateSessionRef.current(sessionData)
         }
       })
     )
 
     unsubscribers.push(
       wsHook.on('session_message_created', (payload) => {
-        const msg = payload as SessionMessage
-        if (msg.sessionId === sessionIdRef.current) {
-          addMessageRef.current(msg)
+        if (!isSessionMessage(payload)) {
+          console.error('[WebSocket] Invalid session_message_created payload:', payload)
+          return
+        }
+        if (payload.sessionId === sessionIdRef.current) {
+          addMessageRef.current(payload)
         }
       })
     )
 
     unsubscribers.push(
       wsHook.on('session_status_changed', (payload) => {
-        const data = payload as Session
-        if (sessionIdRef.current === data.id) {
-          updateSessionRef.current(data)
+        if (!isSession(payload)) {
+          console.error('[WebSocket] Invalid session_status_changed payload:', payload)
+          return
+        }
+        if (sessionIdRef.current === payload.id) {
+          updateSessionRef.current(payload)
         }
       })
     )
 
     unsubscribers.push(
       wsHook.on('session_completed', (payload) => {
-        const data = payload as Session
-        if (sessionIdRef.current === data.id) {
-          updateSessionRef.current(data)
+        if (!isSession(payload)) {
+          console.error('[WebSocket] Invalid session_completed payload:', payload)
+          return
+        }
+        if (sessionIdRef.current === payload.id) {
+          updateSessionRef.current(payload)
         }
       })
     )
 
-    // Best of N handlers
     unsubscribers.push(
       wsHook.on('task_run_updated', (payload) => {
-        const data = payload as { taskId: string }
-        if (data.taskId) {
-          refreshBonSummariesRef.current(undefined, [data.taskId])
+        if (!hasTaskId(payload)) {
+          console.error('[WebSocket] Invalid task_run_updated payload:', payload)
+          return
         }
+        refreshBonSummariesRef.current(undefined, [payload.taskId])
       })
     )
 
     unsubscribers.push(
       wsHook.on('task_candidate_updated', (payload) => {
-        const data = payload as { taskId: string }
-        if (data.taskId) {
-          refreshBonSummariesRef.current(undefined, [data.taskId])
+        if (!hasTaskId(payload)) {
+          console.error('[WebSocket] Invalid task_candidate_updated payload:', payload)
+          return
         }
+        refreshBonSummariesRef.current(undefined, [payload.taskId])
       })
     )
 
-    // Container handlers
     unsubscribers.push(
       wsHook.on('image_status', (payload) => {
-        const data = payload as { status: string; message: string; errorMessage?: string }
-        if (data.status === 'preparing') {
-          addLogRef.current(`⏳ ${data.message}`, 'info')
-        } else if (data.status === 'ready') {
-          addLogRef.current(`✅ ${data.message}`, 'success')
-        } else if (data.status === 'error') {
+        if (!isImageStatusPayload(payload)) {
+          console.error('[WebSocket] Invalid image_status payload:', payload)
+          return
+        }
+        if (payload.status === 'preparing') {
+          addLogRef.current(`⏳ ${payload.message}`, 'info')
+        } else if (payload.status === 'ready') {
+          addLogRef.current(`✅ ${payload.message}`, 'success')
+        } else if (payload.status === 'error') {
           addLogRef.current(
-            `❌ ${data.message}${data.errorMessage ? ': ' + data.errorMessage : ''}`,
+            `❌ ${payload.message}${payload.errorMessage ? ': ' + payload.errorMessage : ''}`,
             'error'
           )
-          showToastRef.current(`Container image error: ${data.errorMessage || data.message}`, 'error')
+          showToastRef.current(`Container image error: ${payload.errorMessage || payload.message}`, 'error')
         }
       })
     )
 
     unsubscribers.push(
       wsHook.on('error', (payload) => {
-        const data = payload as { message: string }
-        showToastRef.current(data.message, 'error')
+        if (typeof payload === 'object' && payload !== null && 'message' in payload) {
+          const p = payload as Record<string, unknown>
+          if (typeof p.message === 'string') {
+            showToastRef.current(p.message, 'error')
+            return
+          }
+        }
+        showToastRef.current(String(payload), 'error')
       })
     )
 
@@ -348,7 +515,11 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
 
     unsubscribers.push(
       wsHook.on('container_package_added', (payload) => {
-        addLogRef.current(`Package '${(payload as { name: string }).name}' added to container config`, 'info')
+        if (!hasName(payload)) {
+          console.error('[WebSocket] Invalid container_package_added payload:', payload)
+          return
+        }
+        addLogRef.current(`Package '${payload.name}' added to container config`, 'info')
       })
     )
 
@@ -360,9 +531,17 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
 
     unsubscribers.push(
       wsHook.on('container_build_started', (payload) => {
-        const data = payload as { buildId: number; imageTag: string }
+        if (typeof payload !== 'object' || payload === null) {
+          console.error('[WebSocket] Invalid container_build_started payload:', payload)
+          return
+        }
+        const p = payload as Record<string, unknown>
+        if (typeof p.buildId !== 'number' || typeof p.imageTag !== 'string') {
+          console.error('[WebSocket] Invalid container_build_started payload:', payload)
+          return
+        }
         showToastRef.current('Container build started', 'info')
-        addLogRef.current(`Container build #${data.buildId} started (${data.imageTag})`, 'info')
+        addLogRef.current(`Container build #${p.buildId} started (${p.imageTag})`, 'info')
       })
     )
 
@@ -374,27 +553,42 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
 
     unsubscribers.push(
       wsHook.on('container_build_completed', (payload) => {
-        const data = payload as { status: string; buildId: number }
-        if (data.status === 'success') {
+        if (!isBuildCompletedPayload(payload)) {
+          console.error('[WebSocket] Invalid container_build_completed payload:', payload)
+          return
+        }
+        if (payload.status === 'success') {
           showToastRef.current('Container build completed successfully!', 'success')
-          addLogRef.current(`Container build #${data.buildId} completed successfully`, 'success')
-        } else if (data.status === 'failed') {
+          addLogRef.current(`Container build #${payload.buildId} completed successfully`, 'success')
+        } else if (payload.status === 'failed') {
           showToastRef.current('Container build failed', 'error')
-          addLogRef.current(`Container build #${data.buildId} failed`, 'error')
+          addLogRef.current(`Container build #${payload.buildId} failed`, 'error')
         }
       })
     )
 
     unsubscribers.push(
       wsHook.on('container_build_cancelled', (payload) => {
-        const data = payload as { buildId: number }
-        addLogRef.current(`Container build #${data.buildId} cancelled`, 'info')
+        if (typeof payload !== 'object' || payload === null) {
+          console.error('[WebSocket] Invalid container_build_cancelled payload:', payload)
+          return
+        }
+        const p = payload as Record<string, unknown>
+        if (typeof p.buildId !== 'number') {
+          console.error('[WebSocket] Invalid container_build_cancelled payload:', payload)
+          return
+        }
+        addLogRef.current(`Container build #${p.buildId} cancelled`, 'info')
       })
     )
 
     unsubscribers.push(
       wsHook.on('container_profile_created', (payload) => {
-        showToastRef.current(`New profile "${(payload as { name: string }).name}" created`, 'success')
+        if (!hasName(payload)) {
+          console.error('[WebSocket] Invalid container_profile_created payload:', payload)
+          return
+        }
+        showToastRef.current(`New profile "${payload.name}" created`, 'success')
       })
     )
 
@@ -419,98 +613,60 @@ export function useWebSocketHandlers(deps: UseWebSocketHandlersDeps) {
       })
     )
 
-    // Task Group handlers
-    unsubscribers.push(
-      wsHook.on('group_created', (payload) => {
-        const group = payload as { id: string; name: string }
-        updateGroupFromWebSocketRef.current(group as TaskGroup)
-        addLogRef.current(`Group created: ${group.name}`, 'success')
-      })
-    )
 
-    unsubscribers.push(
-      wsHook.on('group_updated', (payload) => {
-        const group = payload as TaskGroup
-        updateGroupFromWebSocketRef.current(group)
-      })
-    )
-
-    unsubscribers.push(
-      wsHook.on('group_deleted', (payload) => {
-        const { id } = payload as { id: string }
-        removeGroupFromWebSocketRef.current(id)
-        addLogRef.current('Group deleted', 'info')
-      })
-    )
-
-    unsubscribers.push(
-      wsHook.on('group_task_added', () => {
-        addLogRef.current('Task added to group', 'info')
-        loadTasksRef.current()
-      })
-    )
-
-    unsubscribers.push(
-      wsHook.on('group_task_removed', () => {
-        addLogRef.current('Task removed from group', 'info')
-        loadTasksRef.current()
-      })
-    )
-
-    unsubscribers.push(
-      wsHook.on('group_execution_started', () => {
-        showToastRef.current('Group execution started', 'success')
-      })
-    )
-
-    unsubscribers.push(
-      wsHook.on('group_execution_complete', () => {
-        showToastRef.current('Group execution completed', 'success')
-      })
-    )
-
-    // Task-scoped group handlers
     unsubscribers.push(
       wsHook.on('task_group_created', (payload) => {
-        const group = payload as TaskGroup
-        updateGroupFromWebSocketRef.current(group)
-        addLogRef.current(`Group created from task context: ${group.name}`, 'success')
+        if (!isTaskGroup(payload)) {
+          console.error('[WebSocket] Invalid task_group_created payload:', payload)
+          return
+        }
+        updateGroupFromWebSocketRef.current(payload)
+        addLogRef.current(`Group created from task context: ${payload.name}`, 'success')
       })
     )
 
     unsubscribers.push(
       wsHook.on('task_group_updated', (payload) => {
-        const group = payload as TaskGroup
-        updateGroupFromWebSocketRef.current(group)
+        if (!isTaskGroup(payload)) {
+          console.error('[WebSocket] Invalid task_group_updated payload:', payload)
+          return
+        }
+        updateGroupFromWebSocketRef.current(payload)
       })
     )
 
     unsubscribers.push(
       wsHook.on('task_group_deleted', (payload) => {
-        const { id } = payload as { id: string }
-        removeGroupFromWebSocketRef.current(id)
+        if (!hasId(payload)) {
+          console.error('[WebSocket] Invalid task_group_deleted payload:', payload)
+          return
+        }
+        removeGroupFromWebSocketRef.current(payload.id)
         addLogRef.current('Group deleted from task context', 'info')
       })
     )
 
     unsubscribers.push(
       wsHook.on('task_group_members_added', (payload) => {
-        const { count } = payload as { count: number }
-        addLogRef.current(`${count} task(s) added to group`, 'info')
+        if (!isCountPayload(payload)) {
+          console.error('[WebSocket] Invalid task_group_members_added payload:', payload)
+          return
+        }
+        addLogRef.current(`${payload.count} task(s) added to group`, 'info')
         loadTasksRef.current()
       })
     )
 
     unsubscribers.push(
       wsHook.on('task_group_members_removed', (payload) => {
-        const { count } = payload as { count: number }
-        addLogRef.current(`${count} task(s) removed from group`, 'info')
+        if (!isCountPayload(payload)) {
+          console.error('[WebSocket] Invalid task_group_members_removed payload:', payload)
+          return
+        }
+        addLogRef.current(`${payload.count} task(s) removed from group`, 'info')
         loadTasksRef.current()
       })
     )
-
-    // Reconnect handler
-    // Note: onReconnect doesn't return an unsubscribe function, it's a one-time registration
     wsHook.onReconnect(() => {
       console.log('[App] Reconnected - syncing state from server')
       Promise.all([

@@ -28,14 +28,27 @@ function createMockGroup(overrides: Partial<TaskGroup> = {}): TaskGroup {
   }
 }
 
+interface MockToastsHook {
+  showToast: ReturnType<typeof vi.fn>
+}
+
+interface MockApiHook {
+  getTaskGroups: ReturnType<typeof vi.fn>
+  getTaskGroup: ReturnType<typeof vi.fn>
+  createTaskGroup: ReturnType<typeof vi.fn>
+  updateTaskGroup: ReturnType<typeof vi.fn>
+  deleteTaskGroup: ReturnType<typeof vi.fn>
+  addTasksToGroup: ReturnType<typeof vi.fn>
+  removeTasksFromGroup: ReturnType<typeof vi.fn>
+  startGroup: ReturnType<typeof vi.fn>
+}
+
 describe('useTaskGroups', () => {
-  // Test that passed-in showToast takes precedence
   it('uses passed showToast when provided', async () => {
     const passedShowToast = vi.fn()
     const localShowToast = vi.fn()
     
-    // Override the mock to return different functions
-    vi.mocked(useToasts).mockReturnValue({ showToast: localShowToast } as unknown as ReturnType<typeof useToasts>)
+    vi.mocked(useToasts).mockReturnValue({ showToast: localShowToast } as MockToastsHook)
     
     mockApi.startGroup.mockRejectedValue(new Error('Test error'))
     mockApi.getTaskGroups.mockResolvedValue([createMockGroup({ id: 'group-1' })])
@@ -49,17 +62,15 @@ describe('useTaskGroups', () => {
     await act(async () => {
       try {
         await result.current.startGroup('group-1')
-      } catch (e) {
-        // Expected
+      } catch {
+        // Expected to throw
       }
     })
 
-    // Should use passed showToast, not local one
     expect(passedShowToast).toHaveBeenCalled()
     expect(localShowToast).not.toHaveBeenCalled()
   })
 
-  // Test that local showToast is used when not passed
   it('falls back to local showToast when not provided', async () => {
     mockApi.startGroup.mockRejectedValue(new Error('Test error'))
     mockApi.getTaskGroups.mockResolvedValue([createMockGroup({ id: 'group-1' })])
@@ -73,14 +84,14 @@ describe('useTaskGroups', () => {
     await act(async () => {
       try {
         await result.current.startGroup('group-1')
-      } catch (e) {
-        // Expected
+      } catch {
+        // Expected to throw
       }
     })
 
-    // Should use local showToast
     expect(mockShowToast).toHaveBeenCalled()
   })
+
   const mockApi = {
     getTaskGroups: vi.fn(),
     getTaskGroup: vi.fn(),
@@ -96,8 +107,8 @@ describe('useTaskGroups', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.mocked(useApi).mockReturnValue(mockApi as unknown as ReturnType<typeof useApi>)
-    vi.mocked(useToasts).mockReturnValue({ showToast: mockShowToast } as unknown as ReturnType<typeof useToasts>)
+    vi.mocked(useApi).mockReturnValue(mockApi as MockApiHook)
+    vi.mocked(useToasts).mockReturnValue({ showToast: mockShowToast } as MockToastsHook)
   })
 
   afterEach(() => {
@@ -177,7 +188,7 @@ describe('useTaskGroups', () => {
       await act(async () => {
         try {
           await result.current.loadGroups()
-        } catch (e) {
+        } catch {
           // Expected to throw
         }
       })
@@ -198,7 +209,7 @@ describe('useTaskGroups', () => {
       await act(async () => {
         try {
           await result.current.loadGroups()
-        } catch (e) {
+        } catch {
           // Expected to throw
         }
       })
@@ -257,7 +268,7 @@ describe('useTaskGroups', () => {
       await act(async () => {
         try {
           await result.current.createGroup(['task-1'])
-        } catch (e) {
+        } catch {
           // Expected to throw
         }
       })
@@ -437,7 +448,7 @@ describe('useTaskGroups', () => {
       await act(async () => {
         try {
           await result.current.addTasksToGroup('group-1', ['task-2'])
-        } catch (e) {
+        } catch {
           // Expected to throw
         }
       })
@@ -490,7 +501,7 @@ describe('useTaskGroups', () => {
       await act(async () => {
         try {
           await result.current.removeTasksFromGroup('group-1', ['task-1'])
-        } catch (e) {
+        } catch {
           // Expected to throw
         }
       })
@@ -569,7 +580,7 @@ describe('useTaskGroups', () => {
       await act(async () => {
         try {
           await result.current.startGroup('group-1')
-        } catch (e) {
+        } catch {
           // Expected
         }
       })
@@ -648,7 +659,7 @@ describe('useTaskGroups', () => {
       await act(async () => {
         try {
           await result.current.deleteGroup('group-1')
-        } catch (e) {
+        } catch {
           // Expected
         }
       })
@@ -718,7 +729,7 @@ describe('useTaskGroups', () => {
       await act(async () => {
         try {
           await result.current.updateGroup('group-1', { name: 'New Name' })
-        } catch (e) {
+        } catch {
           // Expected
         }
       })
@@ -801,7 +812,7 @@ describe('useTaskGroups', () => {
       await act(async () => {
         try {
           await result.current.loadGroupDetails('group-1')
-        } catch (e) {
+        } catch {
           // Expected
         }
       })
@@ -846,6 +857,124 @@ describe('useTaskGroups', () => {
 
         expect(result.current.groups).toHaveLength(1)
         expect(result.current.groups[0].name).toBe('Updated Name')
+      })
+
+      it('should not duplicate group when WebSocket arrives BEFORE API response', async () => {
+        // Race condition: WebSocket message arrives before API response completes
+        // This is the main bug we're fixing - groups appear duplicated on creation
+
+        const realGroup = createMockGroup({ id: 'real-group-id', name: 'New Group' })
+        let resolveCreate: (value: TaskGroup) => void
+        const createPromise = new Promise<TaskGroup>((resolve) => {
+          resolveCreate = resolve
+        })
+        mockApi.createTaskGroup.mockReturnValue(createPromise)
+
+        const { result } = renderHook(() => useTaskGroups())
+
+        // Start creating a group
+        let createPromiseResult: Promise<TaskGroup>
+        act(() => {
+          createPromiseResult = result.current.createGroup(['task-1'], 'New Group')
+        })
+
+        // Temp group should be added immediately (optimistic update)
+        expect(result.current.groups).toHaveLength(1)
+        expect(result.current.groups[0].id.startsWith('temp-')).toBe(true)
+
+        // Simulate WebSocket message arriving BEFORE API response completes
+        // This is the problematic race condition
+        act(() => {
+          result.current.updateGroupFromWebSocket(realGroup)
+        })
+
+        // WebSocket should replace temp with real group (no duplicate)
+        expect(result.current.groups).toHaveLength(1)
+        expect(result.current.groups[0].id).toBe('real-group-id')
+
+        // Now resolve the API call
+        await act(async () => {
+          resolveCreate!(realGroup)
+          await createPromiseResult!
+        })
+
+        // Should still have exactly one group with the real ID
+        // API response handler must dedupe correctly
+        expect(result.current.groups).toHaveLength(1)
+        expect(result.current.groups[0].id).toBe('real-group-id')
+        expect(result.current.groups[0].name).toBe('New Group')
+      })
+
+      it('should not duplicate when WebSocket arrives AFTER API response', async () => {
+        // Race condition: API response completes before WebSocket arrives
+        // Both add the same real group - must dedupe by ID
+
+        const realGroup = createMockGroup({ id: 'real-group-id', name: 'New Group' })
+        mockApi.createTaskGroup.mockResolvedValue(realGroup)
+
+        const { result } = renderHook(() => useTaskGroups())
+
+        // Create group - API call completes immediately in mock
+        await act(async () => {
+          await result.current.createGroup(['task-1'], 'New Group')
+        })
+
+        // Should have exactly one group from API response
+        expect(result.current.groups).toHaveLength(1)
+        expect(result.current.groups[0].id).toBe('real-group-id')
+
+        // Now simulate WebSocket arriving after API response
+        act(() => {
+          result.current.updateGroupFromWebSocket(realGroup)
+        })
+
+        // Should still have exactly one group - WebSocket handler dedupes by ID
+        expect(result.current.groups).toHaveLength(1)
+        expect(result.current.groups[0].id).toBe('real-group-id')
+      })
+
+      it('should handle clock skew when temp and real timestamps differ', async () => {
+        // This test verifies the time-based fallback matching works with clock skew
+        // When pendingTempIdRef is null, WebSocket handler falls back to name+time matching
+        const { result } = renderHook(() => useTaskGroups())
+
+        // Manually add a temp group (simulating optimistic update state)
+        const tempId = 'temp-1234567890'
+        const tempCreatedAt = Date.now()
+        const tempGroup: TaskGroup = {
+          id: tempId,
+          name: 'Clock Skew Group',
+          color: '#6366f1',
+          status: 'active',
+          createdAt: tempCreatedAt,
+          updatedAt: tempCreatedAt,
+          completedAt: null,
+        }
+
+        // Add temp group directly via setGroups simulation
+        act(() => {
+          result.current.updateGroupFromWebSocket(tempGroup)
+        })
+
+        expect(result.current.groups).toHaveLength(1)
+        expect(result.current.groups[0].id).toBe(tempId)
+
+        // Simulate real group with 3000ms time difference (within 5000ms window)
+        // This tests the time-based fallback matching
+        const realGroup = createMockGroup({
+          id: 'real-clock-skew-id',
+          name: 'Clock Skew Group',
+          createdAt: tempCreatedAt + 3000, // 3000ms skew
+        })
+
+        // WebSocket arrives with real group - should replace temp via time-based matching
+        act(() => {
+          result.current.updateGroupFromWebSocket(realGroup)
+        })
+
+        // Should have exactly one group (temp replaced by real)
+        expect(result.current.groups).toHaveLength(1)
+        expect(result.current.groups[0].id).toBe('real-clock-skew-id')
       })
     })
 
@@ -908,7 +1037,7 @@ describe('useTaskGroups', () => {
       await act(async () => {
         try {
           await result.current.loadGroups()
-        } catch (e) {
+        } catch {
           // Expected
         }
       })
@@ -930,7 +1059,7 @@ describe('useTaskGroups', () => {
       await act(async () => {
         try {
           await result.current.loadGroups()
-        } catch (e) {
+        } catch {
           // Expected
         }
       })

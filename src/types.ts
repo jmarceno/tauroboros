@@ -329,21 +329,12 @@ export type WSMessageType =
   | "container_build_cancelled"
   | "container_profile_applied"
   // Task Group events
-  | "group_created"
-  | "group_updated"
-  | "group_deleted"
-  | "group_completed"
-  | "group_archived"
-  | "group_task_added"
-  | "group_task_removed"
-  | "group_task_reordered"
-  // NEW: Task-scoped group events (task_group_* prefix)
   | "task_group_created"
   | "task_group_updated"
   | "task_group_deleted"
   | "task_group_members_added"
   | "task_group_members_removed"
-  // NEW: Group execution lifecycle events (broadcast when group execution is implemented)
+  // Group execution lifecycle events (broadcast when group execution is implemented)
   | "group_execution_started"
   | "group_execution_complete"
 

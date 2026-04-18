@@ -33,11 +33,11 @@ const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
 const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "autoCommit", "deleteWorktree", "skipPermissionAsking"] as const
 
-type RunControlFn = (runId: string) => Promise<any>
-type StartFn = () => Promise<any>
-type StartSingleFn = (taskId: string) => Promise<any>
+type RunControlFn = (runId: string) => Promise<unknown>
+type StartFn = () => Promise<unknown>
+type StartSingleFn = (taskId: string) => Promise<unknown>
 type StartGroupFn = (groupId: string) => Promise<WorkflowRun>
-type StopFn = () => Promise<any>
+type StopFn = () => Promise<unknown>
 type StopRunFn = (runId: string, options?: { destructive?: boolean }) => Promise<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>
 
 function isBoolean(value: unknown): value is boolean {
@@ -143,11 +143,19 @@ function validateBestOfNConfig(config: unknown): { valid: boolean; error?: strin
     return { valid: false, error: "selectionMode must be pick_best, synthesize, or pick_or_synthesize" }
   }
 
-  const totalWorkers = cfg.workers.reduce((sum: number, slot: any) => {
-    if (slot.count === undefined || slot.count === null) {
+  const totalWorkers = cfg.workers.reduce((sum: number, slot: unknown) => {
+    if (typeof slot !== 'object' || slot === null) {
+      throw new Error(`Worker slot must be an object: ${JSON.stringify(slot)}`)
+    }
+    const slotObj = slot as Record<string, unknown>
+    const count = slotObj.count
+    if (count === undefined || count === null) {
       throw new Error(`Worker slot is missing 'count' field: ${JSON.stringify(slot)}`)
     }
-    return sum + Number(slot.count)
+    if (typeof count !== 'number') {
+      throw new Error(`Worker slot 'count' must be a number: ${JSON.stringify(slot)}`)
+    }
+    return sum + count
   }, 0)
   if (typeof cfg.minSuccessfulWorkers !== "number" || cfg.minSuccessfulWorkers < 1 || cfg.minSuccessfulWorkers > totalWorkers) {
     return { valid: false, error: "minSuccessfulWorkers must be between 1 and total worker count" }
@@ -156,9 +164,12 @@ function validateBestOfNConfig(config: unknown): { valid: boolean; error?: strin
   return { valid: true }
 }
 
-function getInvalidTaskBooleanField(body: any): string | null {
+function getInvalidTaskBooleanField(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return null
+  const bodyObj = body as Record<string, unknown>
   for (const field of TASK_BOOLEAN_FIELDS) {
-    if (body?.[field] !== undefined && !isBoolean(body[field])) return field
+    const value = bodyObj[field]
+    if (value !== undefined && !isBoolean(value)) return field
   }
   return null
 }
@@ -321,7 +332,19 @@ export class PiKanbanServer {
         isWorkflowDone: this._currentRunId !== null,
       }
       
-      if (!shouldSendNotification(options.telegramNotificationLevel, oldStatus as any, newStatus as any, context)) {
+      // Validate status values before passing to shouldSendNotification
+      const validStatuses = ["template", "backlog", "executing", "review", "code-style", "done", "failed", "stuck"] as const
+      if (!validStatuses.includes(oldStatus as typeof validStatuses[number]) || 
+          !validStatuses.includes(newStatus as typeof validStatuses[number])) {
+        return
+      }
+      
+      if (!shouldSendNotification(
+        options.telegramNotificationLevel, 
+        oldStatus as typeof validStatuses[number], 
+        newStatus as typeof validStatuses[number], 
+        context
+      )) {
         return
       }
 
@@ -1521,16 +1544,13 @@ export class PiKanbanServer {
         return json({ error: `Cannot modify task \"${task.name}\" while it is executing in run ${activeRun.id}.` }, 409)
       }
 
-      const parseResult = await req.json().then(
-        (body): { success: true; body: unknown } => ({ success: true, body }),
-        (error): { success: false; error: Error } => ({ success: false, error })
-      )
-      
-      if (!parseResult.success) {
-        return json({ error: `Invalid JSON body: ${parseResult.error.message}` }, 400)
+      let body: unknown
+      try {
+        body = await req.json()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return json({ error: `Invalid JSON body: ${message}` }, 400)
       }
-      
-      const body = parseResult.body
       
       if (body === null || typeof body !== 'object') {
         return json({ error: "Request body must be an object" }, 400)
@@ -2635,7 +2655,6 @@ Please confirm when you've created the tasks and group, and provide a summary of
           memberTaskIds,
         })
 
-        broadcast({ type: "group_created", payload: group })
         broadcast({ type: "task_group_created", payload: group })
         return json(group, 201)
       } catch (error) {
@@ -2685,7 +2704,6 @@ Please confirm when you've created the tasks and group, and provide a summary of
 
         if (!updated) return json({ error: "Failed to update task group" }, 500)
 
-        broadcast({ type: "group_updated", payload: updated })
         broadcast({ type: "task_group_updated", payload: updated })
         return json(updated)
       } catch (error) {
@@ -2701,7 +2719,6 @@ Please confirm when you've created the tasks and group, and provide a summary of
       const success = this.db.deleteTaskGroup(params.id)
       if (!success) return json({ error: "Failed to delete task group" }, 500)
 
-      broadcast({ type: "group_deleted", payload: { id: params.id } })
       broadcast({ type: "task_group_deleted", payload: { id: params.id } })
       return new Response(null, { status: 204 })
     })
@@ -2723,7 +2740,6 @@ Please confirm when you've created the tasks and group, and provide a summary of
         const addedCount = this.db.addTasksToGroup(params.id, body.taskIds)
         const updated = this.db.getTaskGroup(params.id)
 
-        broadcast({ type: "group_task_added", payload: { groupId: params.id, taskIds: body.taskIds, addedCount } })
         broadcast({ type: "task_group_members_added", payload: { groupId: params.id, taskIds: body.taskIds, addedCount } })
         return json(updated)
       } catch (error) {
@@ -2749,7 +2765,6 @@ Please confirm when you've created the tasks and group, and provide a summary of
         const removedCount = this.db.removeTasksFromGroup(params.id, body.taskIds)
         const updated = this.db.getTaskGroup(params.id)
 
-        broadcast({ type: "group_task_removed", payload: { groupId: params.id, taskIds: body.taskIds, removedCount } })
         broadcast({ type: "task_group_members_removed", payload: { groupId: params.id, taskIds: body.taskIds, removedCount } })
         return json(updated)
       } catch (error) {
