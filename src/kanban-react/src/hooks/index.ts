@@ -1,14 +1,8 @@
 /**
  * Hooks - Centralized exports for all custom hooks
- * 
- * All data-fetching hooks now use TanStack Query for:
- * - Automatic caching
- * - Request deduplication  
- * - Background updates
- * - Stale-while-revalidate
  */
 
-// Re-export all hooks (now using TanStack Query)
+// Re-export all hooks
 export { useDragDrop, type DragDropCallback, type DragSourceContext, type DragOverTarget } from './useDragDrop.ts'
 export { useKeyboard } from './useKeyboard.ts'
 export { useFocusTrap } from './useFocusTrap.ts'
@@ -33,3 +27,6 @@ export { useWorkflowStatus } from './useWorkflowStatus.ts'
 // useApi is deprecated - use the api/ modules directly or the TanStack Query hooks
 // Kept for backward compatibility during migration
 export { useApi } from './useApi.ts'
+
+// Stats
+export { useStats, type UseStatsReturn } from './useStats.ts'
