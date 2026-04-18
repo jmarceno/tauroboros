@@ -16,7 +16,7 @@ export type NormalizedModelCatalog = {
   warning?: string
 }
 
-let cache: { expiresAt: number; value: NormalizedModelCatalog } | null = null
+let cache: { expiresAt: number; value: NormalizedModelCatalog } | null = null;
 
 function parsePiListModelsOutput(stdout: string): NormalizedModelCatalog {
   const lines = stdout.split("\n").filter((line) => line.trim())

@@ -24,13 +24,13 @@ import { WebSocketHub } from "./websocket.ts"
 import { readEmbeddedFile, embeddedFileExists, getContentType, getIndexHtml } from "./embedded-files.ts"
 import { VERSION, COMMIT_HASH, DISPLAY_VERSION, IS_COMPILED } from "./version.ts"
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Static file serving paths - React kanban
-const KANBAN_DIST = join(__dirname, "..", "kanban-react", "dist")
-const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
+const KANBAN_DIST = join(__dirname, "..", "kanban-react", "dist");
+const KANBAN_INDEX = join(KANBAN_DIST, "index.html");
 
-const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "autoCommit", "deleteWorktree", "skipPermissionAsking"] as const
+const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "autoCommit", "deleteWorktree", "skipPermissionAsking"] as const;
 
 type RunControlFn = (runId: string) => Promise<any>
 type StartFn = () => Promise<any>

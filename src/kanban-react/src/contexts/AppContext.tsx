@@ -146,6 +146,8 @@ interface WorkflowControlContextType {
   clearRun: () => void
 }
 
+import type { MultiSelectMode } from '@/hooks/useMultiSelect'
+
 // Multi-select context type
 interface MultiSelectContextType {
   selectedTaskIds: Set<string>
@@ -156,6 +158,10 @@ interface MultiSelectContextType {
   clearSelection: () => void
   isSelected: (taskId: string) => boolean
   getSelectedIds: () => string[]
+  mode: MultiSelectMode
+  startGroupCreation: () => boolean
+  confirmGroupCreation: () => string[]
+  cancelGroupCreation: () => void
 }
 
 // Planning chat context type

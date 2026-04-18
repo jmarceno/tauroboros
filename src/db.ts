@@ -79,7 +79,7 @@ const RUN_COLORS = [
   "#ffc048", // Orange
   "#5f27cd", // Purple
   "#00d2d3", // Turquoise
-]
+];
 
 function pickRunColor(usedColors: string[]): string {
   const available = RUN_COLORS.filter(c => !usedColors.includes(c))
@@ -112,7 +112,7 @@ const DEFAULT_OPTIONS: Options = {
   telegramNotificationsEnabled: true,
   maxReviews: 2,
   columnSorts: undefined,
-}
+};
 
 type PromptSeed = {
   key: PromptTemplateKey
@@ -396,7 +396,7 @@ const DEFAULT_PROMPT_TEMPLATES: PromptSeed[] = [
     templateText: `${DEFAULT_COMMIT_PROMPT}\n\n{{keep_worktree_note}}`,
     variablesJson: ["base_ref", "keep_worktree_note"],
   },
-]
+];
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -516,7 +516,7 @@ const SESSION_MESSAGE_SELECT = `
     ws.task_run_id AS task_run_id
   FROM session_messages sm
   LEFT JOIN workflow_sessions ws ON ws.id = sm.session_id
-`
+`;
 
 function rowToTask(row: Record<string, unknown>): Task {
   return {
@@ -821,7 +821,7 @@ When the user is ready to create tasks, help them structure:
 
 ## Tool Access
 
-You have access to file exploration tools to understand the codebase structure when needed. Use them to provide context-aware planning suggestions.`
+You have access to file exploration tools to understand the codebase structure when needed. Use them to provide context-aware planning suggestions.`;
 
 // Container Configuration Assistant system prompt
 const CONTAINER_CONFIG_SYSTEM_PROMPT = `You are a Container Configuration Assistant helping users customize their Pi Agent container image.
@@ -893,7 +893,7 @@ When suggesting packages, categorize them appropriately:
 
 ## Response Style
 
-Be conversational but focused. Don't overwhelm with technical details unless asked. Use clear, concise explanations.`
+Be conversational but focused. Don't overwhelm with technical details unless asked. Use clear, concise explanations.`;
 
 const MIGRATIONS: Migration[] = [
   {
@@ -1451,7 +1451,7 @@ const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_workflow_runs_group_id ON workflow_runs(group_id);`,
     ],
   },
-]
+];
 
 export class PiKanbanDB {
   private readonly db: Database
