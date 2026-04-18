@@ -280,7 +280,7 @@ export function useWorkflowControl(
     setError(null)
   }, [setState])
 
-  return {
+  const contextValue = useMemo(() => ({
     currentRunId,
     controlState,
     isLoading,
@@ -306,5 +306,13 @@ export function useWorkflowControl(
     updateStateFromRuns,
     setRun,
     clearRun,
-  }
+  }), [
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    currentRunId, controlState, lastResult, isConfirmingStop, stopType,
+    isRunning, isPaused, isStopping, canPause, canResume, canStop,
+    pause, resume, stop, forceStop, requestStop, confirmStop, cancelStop,
+    checkPausedState, handleRunUpdate, updateStateFromRuns, setRun, clearRun
+  ])
+
+  return contextValue
 }

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react"
+import { useState, useCallback, useMemo } from "react"
 import type { DropAction } from "@/utils/dropValidation"
 
 export type { DropAction } from "@/utils/dropValidation"
@@ -112,7 +112,7 @@ export function useDragDrop(onDrop: DragDropCallback) {
     setDragSourceGroupId(null)
   }, [dragTaskId, onDrop])
 
-  return {
+  const contextValue = useMemo(() => ({
     // State
     dragTaskId,
     dragSourceContext,
@@ -127,5 +127,11 @@ export function useDragDrop(onDrop: DragDropCallback) {
     handleDragLeave,
     handleDrop,
     handleDropOnGroup,
-  }
+  }), [
+    dragTaskId, dragSourceContext, dragSourceGroupId, dragOverTarget, dragOverStatus,
+    handleDragStart, handleDragEnd, handleDragOver, handleDragOverGroup, handleDragLeave,
+    handleDrop, handleDropOnGroup
+  ])
+
+  return contextValue
 }

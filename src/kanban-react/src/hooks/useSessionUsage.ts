@@ -325,7 +325,7 @@ export function useSessionUsage(wsHook?: ReturnType<typeof useWebSocket>): UseSe
     return '$0'
   }, [])
 
-  return {
+  const contextValue = useMemo(() => ({
     usageCache,
     isLoading,
     error,
@@ -340,5 +340,12 @@ export function useSessionUsage(wsHook?: ReturnType<typeof useWebSocket>): UseSe
     getTaskUsage,
     formatTokenCount,
     formatCost,
-  }
+  }), [
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    usageCache, activeSessionIds, loadSessionUsage, getCachedUsage,
+    clearCache, startWatching, stopWatching, startWatchingTask, stopWatchingTask,
+    getTaskUsage, formatTokenCount, formatCost
+  ])
+
+  return contextValue
 }

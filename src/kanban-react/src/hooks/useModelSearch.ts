@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react"
+import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import Fuse from "fuse.js"
 import type { ModelEntry, ModelCatalog } from "@/types"
 import { useApi } from "./useApi"
@@ -129,7 +129,7 @@ export function useModelSearch() {
     }
   }, [loadModels])
 
-  return {
+  const contextValue = useMemo(() => ({
     catalog,
     searchIndex,
     isLoading,
@@ -138,5 +138,10 @@ export function useModelSearch() {
     getSuggestions,
     normalizeValue,
     getModelOptions,
-  }
+  }), [
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    catalog, searchIndex, loadModels, getSuggestions, normalizeValue, getModelOptions
+  ])
+
+  return contextValue
 }

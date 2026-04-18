@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react"
+import { useState, useCallback, useRef, useMemo } from "react"
 import type { Session, SessionMessage, TaskRunContext } from "@/types"
 import { useApi } from "./useApi"
 
@@ -98,7 +98,7 @@ export function useSession() {
     })
   }, [])
 
-  return {
+  const contextValue = useMemo(() => ({
     sessionId,
     session,
     messages,
@@ -109,5 +109,10 @@ export function useSession() {
     closeSession,
     addMessage,
     updateSession,
-  }
+  }), [
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    sessionId, session, messages, taskRunContext, loadSession, closeSession, addMessage, updateSession
+  ])
+
+  return contextValue
 }

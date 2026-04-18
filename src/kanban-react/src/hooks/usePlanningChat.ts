@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react"
+import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import type { PlanningSession, PlanningPrompt, SessionMessage, ThinkingLevel } from "@/types"
 import { useApi } from "./useApi"
 import type { useWebSocket } from "./useWebSocket"
@@ -598,7 +598,7 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
     setActiveSessionId(session.id)
   }, [])
 
-  return {
+  const contextValue = useMemo(() => ({
     isOpen,
     width,
     isResizing,
@@ -631,5 +631,15 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
     reconnectSession,
     setSessionModel,
     addExistingSession,
-  }
+  }), [
+    isOpen, width, isResizing, sessions, activeSessionId, planningPrompt, isLoadingPrompt,
+    activeSession, visibleSessions, minimizedSessions, hasSessions,
+    openPanel, closePanel, togglePanel, setWidth, createNewSession, switchToSession,
+    minimizeSession, closeSession, renameSession, addMessageToSession, loadPlanningPrompt,
+    savePlanningPrompt, handlePlanningSessionCreated, handlePlanningSessionUpdated,
+    handlePlanningSessionClosed, handlePlanningSessionMessage, sendMessage, createTasksFromChat,
+    reconnectSession, setSessionModel, addExistingSession
+  ])
+
+  return contextValue
 }

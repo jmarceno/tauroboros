@@ -2,6 +2,6 @@
 // DO NOT EDIT MANUALLY - This file is auto-generated during build
 
 export const VERSION = "0.1.0"
-export const COMMIT_HASH = "f741ed7"
-export const DISPLAY_VERSION = "v0.1.0 (f741ed7) (dev)"
+export const COMMIT_HASH = "c91de3d"
+export const DISPLAY_VERSION = "v0.1.0 (c91de3d) (dev)"
 export const IS_COMPILED = false

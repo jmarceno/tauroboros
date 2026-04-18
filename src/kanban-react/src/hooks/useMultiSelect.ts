@@ -64,7 +64,7 @@ export function useMultiSelect() {
     setMode(null)
   }, [])
 
-  return {
+  const contextValue = useMemo(() => ({
     // Existing exports (unchanged)
     selectedTaskIds,
     isSelecting,
@@ -80,5 +80,11 @@ export function useMultiSelect() {
     startGroupCreation,
     confirmGroupCreation,
     cancelGroupCreation,
-  }
+  }), [
+    selectedTaskIds, isSelecting, selectedCount, toggleSelection, selectSingle,
+    clearSelection, isSelected, getSelectedIds, mode, startGroupCreation,
+    confirmGroupCreation, cancelGroupCreation
+  ])
+
+  return contextValue
 }

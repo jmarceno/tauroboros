@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react"
+import { useState, useCallback, useRef, useMemo } from "react"
 import type { Toast, ToastVariant, LogEntry } from "@/types"
 import { formatLocalTime } from "@/utils/date"
 
@@ -44,12 +44,14 @@ export function useToasts() {
     setLogs([])
   }, [])
 
-  return {
+  const contextValue = useMemo(() => ({
     toasts,
     logs,
     showToast,
     removeToast,
     addLog,
     clearLogs,
-  }
+  }), [toasts, logs, showToast, removeToast, addLog, clearLogs])
+
+  return contextValue
 }

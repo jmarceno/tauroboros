@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 
 export function useWorkflowStatus() {
   const [hasRunningWorkflows, setHasRunningWorkflows] = useState(false)
@@ -21,8 +21,10 @@ export function useWorkflowStatus() {
     return () => clearInterval(interval)
   }, [checkStatus])
 
-  return {
+  const contextValue = useMemo(() => ({
     hasRunningWorkflows,
     checkStatus,
-  }
+  }), [hasRunningWorkflows, checkStatus])
+
+  return contextValue
 }

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react"
+import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import type { WSMessage, WSMessageType } from "@/types"
 
 type MessageHandler = (payload: unknown) => void
@@ -139,7 +139,7 @@ export function useWebSocket() {
     }
   }, [connect, disconnect])
 
-  return {
+  const contextValue = useMemo(() => ({
     ws,
     isConnected,
     reconnectAttempts,
@@ -147,5 +147,7 @@ export function useWebSocket() {
     disconnect,
     on,
     onReconnect,
-  }
+  }), [ws, isConnected, reconnectAttempts, connect, disconnect, on, onReconnect])
+
+  return contextValue
 }

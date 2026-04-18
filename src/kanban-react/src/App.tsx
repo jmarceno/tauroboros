@@ -484,7 +484,12 @@ function App() {
     workflowControl,
   })
 
+  // Use ref to ensure init only runs once, preventing infinite re-renders
+  const hasInitializedRef = useRef(false)
   useEffect(() => {
+    if (hasInitializedRef.current) return
+    hasInitializedRef.current = true
+    
     let cancelled = false
     const init = async () => {
       await optionsHook.loadOptions()
@@ -523,7 +528,9 @@ function App() {
     }
     init()
     return () => { cancelled = true }
-  }, [openModal, optionsHook, modelSearchHook, runsHook, tasksHook, taskGroupsHook, loadContainerStatus, workflowControl, toastsHook])
+    // Empty deps - only run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   useEffect(() => {

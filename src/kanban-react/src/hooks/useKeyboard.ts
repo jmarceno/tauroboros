@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react"
+import { useEffect, useCallback, useMemo } from "react"
 
 interface KeyboardOptions {
   onCreateTemplate?: () => void
@@ -108,7 +108,9 @@ export function useKeyboard(options: KeyboardOptions) {
     }
   }, [options, isEditableControlFocused])
 
-  return {
+  const contextValue = useMemo(() => ({
     isEditableControlFocused,
-  }
+  }), [isEditableControlFocused])
+
+  return contextValue
 }

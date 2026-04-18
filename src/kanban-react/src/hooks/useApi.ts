@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect } from 'react'
+import { useCallback, useRef } from 'react'
 import type {
   Task, CreateTaskDTO, UpdateTaskDTO, CreateTaskAndWaitDTO, CreateAndWaitResult, WorkflowRun, Options, BranchList,
   ModelCatalog, ExecutionGraph, Session, SessionMessage, TaskRun,
@@ -25,48 +25,46 @@ export class ApiErrorResponse extends Error {
 }
 
 export function useApi() {
-  // AbortController ref for request cancellation
-  const abortControllerRef = useRef<AbortController | null>(null)
-
-  // Create new AbortController on mount and cleanup on unmount
-  useEffect(() => {
-    abortControllerRef.current = new AbortController()
-    return () => {
-      // Cancel all pending requests on unmount to prevent memory leaks
-      // and setState on unmounted components
-      abortControllerRef.current?.abort()
-      abortControllerRef.current = null
-    }
-  }, [])
-
   // Use ref for request function to stabilize all API method callbacks
+  // Each request gets its own AbortController to prevent race conditions
   const requestRef = useRef(async <T>(path: string, options?: RequestInit): Promise<T> => {
-    // Use the current AbortController's signal, or create a new one if needed
-    const signal = abortControllerRef.current?.signal
-    const res = await fetch(`${API_BASE}${path}`, {
-      headers: { 'Content-Type': 'application/json' },
-      ...(signal ? { signal } : {}),
-      ...options,
-    })
-    if (!res.ok) {
-      const text = await res.text()
-      let errorMessage = `Request failed (${res.status})`
-      let errorCode: string | undefined
-      let errorDetails: Record<string, unknown> | undefined
+    // Create a fresh AbortController for each request to avoid shared state issues
+    const abortController = new AbortController()
+    const timeout = setTimeout(() => abortController.abort(new Error('Request timeout')), 60000)
+    
+    try {
+      const res = await fetch(`${API_BASE}${path}`, {
+        headers: { 'Content-Type': 'application/json' },
+        signal: abortController.signal,
+        ...options,
+      })
+      
+      // Clear timeout on successful response or if fetch completes before timeout
+      clearTimeout(timeout)
+      
+      if (!res.ok) {
+        const text = await res.text()
+        let errorMessage = `Request failed (${res.status})`
+        let errorCode: string | undefined
+        let errorDetails: Record<string, unknown> | undefined
 
-      try {
-        const parsed = JSON.parse(text) as ApiError
-        if (parsed?.error) errorMessage = parsed.error
-        else errorMessage = text || errorMessage
-        errorCode = parsed?.code
-        errorDetails = parsed?.details
-      } catch {
-        errorMessage = text || errorMessage
+        try {
+          const parsed = JSON.parse(text) as ApiError
+          if (parsed?.error) errorMessage = parsed.error
+          else errorMessage = text || errorMessage
+          errorCode = parsed?.code
+          errorDetails = parsed?.details
+        } catch {
+          errorMessage = text || errorMessage
+        }
+
+        throw new ApiErrorResponse(errorMessage, res.status, errorCode, errorDetails)
       }
-
-      throw new ApiErrorResponse(errorMessage, res.status, errorCode, errorDetails)
+      return res.status === 204 ? undefined as T : res.json()
+    } finally {
+      // Ensure timeout is cleared in all cases
+      clearTimeout(timeout)
     }
-    return res.status === 204 ? undefined as T : res.json()
   })
 
   // Stable wrapper that calls the ref - all API methods depend on this

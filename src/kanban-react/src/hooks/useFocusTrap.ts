@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useMemo } from 'react'
 
 interface FocusTrapOptions {
   isActive: boolean
@@ -92,7 +92,9 @@ export function useFocusTrap({
     }
   }, [isActive, containerRef, restoreFocusTo, handleEscape])
 
-  return {
+  const contextValue = useMemo(() => ({
     previousFocusRef,
-  }
+  }), [previousFocusRef])
+
+  return contextValue
 }

@@ -290,7 +290,8 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
     startSingleTask,
     removeBonSummary,
   }), [
-    tasks, setTasksDirectly, groupedTasks, bonSummaries, isLoading, error,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    tasks, setTasksDirectly, groupedTasks, bonSummaries,
     getTaskById, getTaskName, loadTasks, refreshBonSummaries, createTask, updateTask,
     deleteTask, reorderTask, archiveAllDone, resetTask, resetTaskToGroup, moveTaskToGroup,
     approvePlan, requestPlanRevision, repairTask, startSingleTask, removeBonSummary

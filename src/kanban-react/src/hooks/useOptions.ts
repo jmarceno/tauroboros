@@ -45,7 +45,10 @@ export function useOptions() {
     updateOptions: saveOptions,
     startExecution,
     stopExecution,
-  }), [options, isLoading, error, loadOptions, saveOptions, startExecution, stopExecution])
+  }), [
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    options, loadOptions, saveOptions, startExecution, stopExecution
+  ])
 
   return contextValue
 }

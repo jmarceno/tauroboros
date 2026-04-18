@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useApi } from "./useApi"
 
 export function useVersion() {
@@ -23,5 +23,7 @@ export function useVersion() {
     loadVersion()
   }, [getVersion])
 
-  return { version, loading, error }
+  const contextValue = useMemo(() => ({ version, loading, error }), [version, loading, error])
+
+  return contextValue
 }

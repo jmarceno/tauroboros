@@ -211,7 +211,8 @@ export function useRuns() {
     updateRunFromWebSocket,
     removeRun,
   }), [
-    runs, activeRuns, staleRuns, hasStaleRuns, consumedRunSlots, isLoading, error,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    runs, activeRuns, staleRuns, hasStaleRuns, consumedRunSlots,
     setTasksReference, isStaleRun, getTaskRunLock, isTaskMutationLocked, getTaskRunColor,
     isTaskInRun, getRunProgressLabel, loadRuns, pauseRun, resumeRun, stopRun, archiveRun,
     updateRunFromWebSocket, removeRun
