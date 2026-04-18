@@ -206,8 +206,8 @@ export interface PausedRunState {
 import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from "fs"
 import { join } from "path"
 
-const PAUSE_STATE_DIR = ".tauroboros/pause-state"
-const PAUSE_STATE_FILE = "paused-run.json"
+const PAUSE_STATE_DIR = ".tauroboros/pause-state";
+const PAUSE_STATE_FILE = "paused-run.json";
 
 function getPauseStatePath(): string {
   return join(process.cwd(), PAUSE_STATE_DIR, PAUSE_STATE_FILE)

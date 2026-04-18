@@ -24,7 +24,7 @@ const STATUS_EMOJI: Record<string, string> = {
   done: "✅",
   failed: "❌",
   stuck: "🚫",
-}
+};
 
 function buildMessage(taskName: string, oldStatus: string, newStatus: string): string {
   const emoji = STATUS_EMOJI[newStatus] ?? "💬"
