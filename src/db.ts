@@ -60,6 +60,12 @@ import type {
   UpdateTaskGroupDTO,
   TaskGroup,
   TaskGroupMember,
+  StatsTimeRange,
+  UsageStats,
+  TaskStats,
+  ModelUsageStats,
+  HourlyUsage,
+  DailyUsage,
 } from "./db/types.ts"
 import { renderTemplate } from "./prompts/renderer.ts"
 import { parseModelSelection } from "./runtime/model-utils.ts"
@@ -402,22 +408,23 @@ function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
 }
 
-function parseJSON<T>(value: unknown, fallback: T): T {
-  if (typeof value !== "string" || value.length === 0) return fallback
+function parseJSON<T>(value: unknown): T | null {
+  if (typeof value !== "string" || value.length === 0) return null
   try {
     return JSON.parse(value) as T
-  } catch {
-    return fallback
+  } catch (error) {
+    throw new Error(`Failed to parse JSON: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
 function asThinkingLevel(value: unknown): ThinkingLevel {
-  return value === "low" || value === "medium" || value === "high" || value === "default"
-    ? value
-    : "default"
+  if (value === "low" || value === "medium" || value === "high" || value === "default") {
+    return value
+  }
+  throw new Error(`Invalid thinking level: ${JSON.stringify(value)}. Expected "low", "medium", "high", or "default".`)
 }
 
-function normalizeBoolean(value: unknown, fallback = false): boolean {
+function normalizeBoolean(value: unknown): boolean {
   if (typeof value === "boolean") return value
   if (typeof value === "number") return value !== 0
   if (typeof value === "string") {
@@ -425,81 +432,167 @@ function normalizeBoolean(value: unknown, fallback = false): boolean {
     if (normalized === "true" || normalized === "1") return true
     if (normalized === "false" || normalized === "0") return false
   }
-  return fallback
+  throw new Error(`Invalid boolean value: ${JSON.stringify(value)}. Expected boolean, 0/1, or "true"/"false".`)
+}
+
+const TASK_STATUSES: TaskStatus[] = ["template", "backlog", "executing", "review", "code-style", "done", "failed", "stuck"]
+
+function isTaskStatus(value: unknown): value is TaskStatus {
+  return typeof value === "string" && TASK_STATUSES.includes(value as TaskStatus)
 }
 
 function asTaskStatus(value: unknown): TaskStatus {
-  return value === "template" || value === "backlog" || value === "executing" || value === "review" || value === "code-style" || value === "done" || value === "failed" || value === "stuck"
-    ? value
-    : "backlog"
+  if (isTaskStatus(value)) return value
+  throw new Error(`Invalid task status: ${JSON.stringify(value)}. Expected one of: ${TASK_STATUSES.join(", ")}.`)
+}
+
+const EXECUTION_PHASES: ExecutionPhase[] = [
+  "not_started",
+  "plan_complete_waiting_approval",
+  "plan_revision_pending",
+  "implementation_pending",
+  "implementation_done",
+]
+
+function isExecutionPhase(value: unknown): value is ExecutionPhase {
+  return typeof value === "string" && EXECUTION_PHASES.includes(value as ExecutionPhase)
 }
 
 function asExecutionPhase(value: unknown): ExecutionPhase {
-  return value === "not_started" || value === "plan_complete_waiting_approval" || value === "plan_revision_pending" || value === "implementation_pending" || value === "implementation_done"
-    ? value
-    : "not_started"
+  if (isExecutionPhase(value)) return value
+  throw new Error(`Invalid execution phase: ${JSON.stringify(value)}. Expected one of: ${EXECUTION_PHASES.join(", ")}.`)
+}
+
+const EXECUTION_STRATEGIES: ExecutionStrategy[] = ["best_of_n", "standard"]
+
+function isExecutionStrategy(value: unknown): value is ExecutionStrategy {
+  return typeof value === "string" && EXECUTION_STRATEGIES.includes(value as ExecutionStrategy)
 }
 
 function asExecutionStrategy(value: unknown): ExecutionStrategy {
-  return value === "best_of_n" || value === "standard" ? value : "standard"
+  if (isExecutionStrategy(value)) return value
+  throw new Error(`Invalid execution strategy: ${JSON.stringify(value)}. Expected "best_of_n" or "standard".`)
+}
+
+const BEST_OF_N_SUBSTAGES: Task["bestOfNSubstage"][] = [
+  "workers_running",
+  "reviewers_running",
+  "final_apply_running",
+  "blocked_for_manual_review",
+  "completed",
+  "idle",
+]
+
+function isBestOfNSubstage(value: unknown): value is Task["bestOfNSubstage"] {
+  return typeof value === "string" && BEST_OF_N_SUBSTAGES.includes(value as Task["bestOfNSubstage"])
 }
 
 function asBestOfNSubstage(value: unknown): Task["bestOfNSubstage"] {
-  return value === "workers_running"
-    || value === "reviewers_running"
-    || value === "final_apply_running"
-    || value === "blocked_for_manual_review"
-    || value === "completed"
-    || value === "idle"
-    ? value
-    : "idle"
+  if (isBestOfNSubstage(value)) return value
+  throw new Error(`Invalid best-of-n substage: ${JSON.stringify(value)}. Expected one of: ${BEST_OF_N_SUBSTAGES.join(", ")}.`)
+}
+
+const WORKFLOW_RUN_KINDS: WorkflowRunKind[] = ["all_tasks", "single_task", "workflow_review"]
+
+function isWorkflowRunKind(value: unknown): value is WorkflowRunKind {
+  return typeof value === "string" && WORKFLOW_RUN_KINDS.includes(value as WorkflowRunKind)
 }
 
 function asWorkflowRunKind(value: unknown): WorkflowRunKind {
-  return value === "all_tasks" || value === "single_task" || value === "workflow_review"
-    ? value
-    : "all_tasks"
+  if (isWorkflowRunKind(value)) return value
+  throw new Error(`Invalid workflow run kind: ${JSON.stringify(value)}. Expected one of: ${WORKFLOW_RUN_KINDS.join(", ")}.`)
+}
+
+const WORKFLOW_RUN_STATUSES: WorkflowRunStatus[] = ["running", "paused", "stopping", "completed", "failed"]
+
+function isWorkflowRunStatus(value: unknown): value is WorkflowRunStatus {
+  return typeof value === "string" && WORKFLOW_RUN_STATUSES.includes(value as WorkflowRunStatus)
 }
 
 function asWorkflowRunStatus(value: unknown): WorkflowRunStatus {
-  return value === "running" || value === "paused" || value === "stopping" || value === "completed" || value === "failed"
-    ? value
-    : "running"
+  if (isWorkflowRunStatus(value)) return value
+  throw new Error(`Invalid workflow run status: ${JSON.stringify(value)}. Expected one of: ${WORKFLOW_RUN_STATUSES.join(", ")}.`)
+}
+
+const PI_SESSION_STATUSES: PiSessionStatus[] = ["starting", "active", "paused", "completed", "failed", "aborted"]
+
+function isPiSessionStatus(value: unknown): value is PiSessionStatus {
+  return typeof value === "string" && PI_SESSION_STATUSES.includes(value as PiSessionStatus)
 }
 
 function asPiSessionStatus(value: unknown): PiSessionStatus {
-  return value === "starting" || value === "active" || value === "paused" || value === "completed" || value === "failed" || value === "aborted"
-    ? value
-    : "active"
+  if (isPiSessionStatus(value)) return value
+  throw new Error(`Invalid Pi session status: ${JSON.stringify(value)}. Expected one of: ${PI_SESSION_STATUSES.join(", ")}.`)
+}
+
+const TASK_GROUP_STATUSES: TaskGroup["status"][] = ["active", "completed", "archived"]
+
+export function isTaskGroupStatus(value: unknown): value is TaskGroup["status"] {
+  return typeof value === "string" && TASK_GROUP_STATUSES.includes(value as TaskGroup["status"])
 }
 
 function asTaskGroupStatus(value: unknown): TaskGroup["status"] {
-  return value === "active" || value === "completed" || value === "archived"
-    ? value
-    : "active"
+  if (isTaskGroupStatus(value)) return value
+  throw new Error(`Invalid task group status: ${JSON.stringify(value)}. Expected one of: ${TASK_GROUP_STATUSES.join(", ")}.`)
+}
+
+export function isValidHexColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9A-Fa-f]{6}$/.test(value)
+}
+
+export function validateTaskGroupName(name: unknown): { valid: boolean; error?: string } {
+  if (typeof name !== "string") return { valid: false, error: "name must be a string" }
+  if (name.trim().length === 0) return { valid: false, error: "name cannot be empty" }
+  if (name.length > 100) return { valid: false, error: "name must be 100 characters or less" }
+  return { valid: true }
+}
+
+export function validateTaskIds(taskIds: unknown, db: PiKanbanDB): { valid: boolean; error?: string; invalidIds?: string[] } {
+  if (!Array.isArray(taskIds)) return { valid: false, error: "taskIds must be an array" }
+  if (taskIds.length === 0) return { valid: true }
+
+  const invalidIds: string[] = []
+  for (const id of taskIds) {
+    if (typeof id !== "string") {
+      invalidIds.push(String(id))
+      continue
+    }
+    if (!db.getTask(id)) invalidIds.push(id)
+  }
+
+  if (invalidIds.length > 0) {
+    return { valid: false, error: `Invalid or non-existent task IDs: ${invalidIds.join(', ')}`, invalidIds }
+  }
+  return { valid: true }
+}
+
+const MESSAGE_TYPES: MessageType[] = [
+  "text",
+  "tool_call",
+  "tool_result",
+  "error",
+  "step_start",
+  "step_finish",
+  "session_start",
+  "session_end",
+  "session_status",
+  "thinking",
+  "user_prompt",
+  "assistant_response",
+  "tool_request",
+  "permission_asked",
+  "permission_replied",
+  "session_error",
+  "message_part",
+]
+
+function isMessageType(value: unknown): value is MessageType {
+  return typeof value === "string" && MESSAGE_TYPES.includes(value as MessageType)
 }
 
 function asMessageType(value: unknown): MessageType {
-  const valid: MessageType[] = [
-    "text",
-    "tool_call",
-    "tool_result",
-    "error",
-    "step_start",
-    "step_finish",
-    "session_start",
-    "session_end",
-    "session_status",
-    "thinking",
-    "user_prompt",
-    "assistant_response",
-    "tool_request",
-    "permission_asked",
-    "permission_replied",
-    "session_error",
-    "message_part",
-  ]
-  return valid.includes(value as MessageType) ? (value as MessageType) : "text"
+  if (isMessageType(value)) return value
+  throw new Error(`Invalid message type: ${JSON.stringify(value)}. Expected one of: ${MESSAGE_TYPES.join(", ")}.`)
 }
 
 function pickString(...values: unknown[]): string | null {
@@ -507,6 +600,44 @@ function pickString(...values: unknown[]): string | null {
     if (typeof value === "string" && value.length > 0) return value
   }
   return null
+}
+
+const SECONDS_IN_DAY = 86400
+
+// Query result row interfaces for type-safe database access
+interface TokenCostRow {
+  total_tokens: number | null
+  total_cost: number | null
+}
+
+interface CountRow {
+  cnt: number | null
+}
+
+interface AvgReviewsRow {
+  avg_reviews: number | null
+}
+
+interface ModelUsageRow {
+  session_kind: string
+  model: string
+  cnt: number | null
+}
+
+interface AvgDurationRow {
+  avg_duration: number | null
+}
+
+interface HourlyUsageRow {
+  hour_bucket: number
+  tokens: number | null
+  cost: number | null
+}
+
+interface DailyUsageRow {
+  date_str: string
+  tokens: number | null
+  cost: number | null
 }
 
 const SESSION_MESSAGE_SELECT = `
@@ -518,7 +649,14 @@ const SESSION_MESSAGE_SELECT = `
   LEFT JOIN workflow_sessions ws ON ws.id = sm.session_id
 `
 
+function parseJSON<T>(value: unknown): T | null {
+  if (typeof value !== "string" || value.length === 0) return null
+  return JSON.parse(value) as T
+}
+
 function rowToTask(row: Record<string, unknown>): Task {
+  const bestOfNConfigRaw = parseJSON<Record<string, unknown>>(row.best_of_n_config)
+
   return {
     id: String(row.id),
     name: String(row.name),
@@ -533,7 +671,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     autoCommit: Number(row.auto_commit ?? 1) === 1,
     deleteWorktree: Number(row.delete_worktree ?? 1) === 1,
     status: asTaskStatus(row.status),
-    requirements: parseJSON<string[]>(row.requirements, []),
+    requirements: parseJSON<string[]>(row.requirements) ?? [],
     agentOutput: String(row.agent_output ?? ""),
     reviewCount: Number(row.review_count ?? 0),
     jsonParseRetryCount: Number(row.json_parse_retry_count ?? 0),
@@ -551,7 +689,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     awaitingPlanApproval: Number(row.awaiting_plan_approval ?? 0) === 1,
     planRevisionCount: Number(row.plan_revision_count ?? 0),
     executionStrategy: asExecutionStrategy(row.execution_strategy),
-    bestOfNConfig: parseJSON<Record<string, unknown> | null>(row.best_of_n_config, null) as Task["bestOfNConfig"],
+    bestOfNConfig: bestOfNConfigRaw ?? null,
     bestOfNSubstage: asBestOfNSubstage(row.best_of_n_substage),
     skipPermissionAsking: Number(row.skip_permission_asking ?? 1) === 1,
     maxReviewRunsOverride: row.max_review_runs_override === null || row.max_review_runs_override === undefined
@@ -567,43 +705,55 @@ function rowToTask(row: Record<string, unknown>): Task {
   }
 }
 
-function rowToTaskRun(row: Record<string, unknown>): TaskRun {
-  const validPhase: TaskRun["phase"][] = ["worker", "reviewer", "final_applier"]
-  const validStatus: TaskRun["status"][] = ["pending", "running", "done", "failed", "skipped"]
+const TASK_RUN_PHASES: TaskRun["phase"][] = ["worker", "reviewer", "final_applier"]
+const TASK_RUN_STATUSES: TaskRun["status"][] = ["pending", "running", "done", "failed", "skipped"]
 
+function isTaskRunPhase(value: unknown): value is TaskRun["phase"] {
+  return typeof value === "string" && TASK_RUN_PHASES.includes(value as TaskRun["phase"])
+}
+
+function isTaskRunStatus(value: unknown): value is TaskRun["status"] {
+  return typeof value === "string" && TASK_RUN_STATUSES.includes(value as TaskRun["status"])
+}
+
+function rowToTaskRun(row: Record<string, unknown>): TaskRun {
   return {
     id: String(row.id),
     taskId: String(row.task_id),
-    phase: validPhase.includes(row.phase as TaskRun["phase"]) ? (row.phase as TaskRun["phase"]) : "worker",
+    phase: isTaskRunPhase(row.phase) ? row.phase : "worker",
     slotIndex: Number(row.slot_index ?? 0),
     attemptIndex: Number(row.attempt_index ?? 0),
     model: String(row.model ?? "default"),
     taskSuffix: row.task_suffix ? String(row.task_suffix) : null,
-    status: validStatus.includes(row.status as TaskRun["status"]) ? (row.status as TaskRun["status"]) : "pending",
+    status: isTaskRunStatus(row.status) ? row.status : "pending",
     sessionId: row.session_id ? String(row.session_id) : null,
     sessionUrl: row.session_url ? String(row.session_url) : null,
     worktreeDir: row.worktree_dir ? String(row.worktree_dir) : null,
     summary: row.summary ? String(row.summary) : null,
     errorMessage: row.error_message ? String(row.error_message) : null,
     candidateId: row.candidate_id ? String(row.candidate_id) : null,
-    metadataJson: parseJSON<Record<string, any>>(row.metadata_json, {}),
+    metadataJson: parseJSON<Record<string, unknown>>(row.metadata_json) ?? {},
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at),
   }
 }
 
-function rowToTaskCandidate(row: Record<string, unknown>): TaskCandidate {
-  const validStatus: TaskCandidate["status"][] = ["available", "selected", "rejected"]
+const TASK_CANDIDATE_STATUSES: TaskCandidate["status"][] = ["available", "selected", "rejected"]
 
+function isTaskCandidateStatus(value: unknown): value is TaskCandidate["status"] {
+  return typeof value === "string" && TASK_CANDIDATE_STATUSES.includes(value as TaskCandidate["status"])
+}
+
+function rowToTaskCandidate(row: Record<string, unknown>): TaskCandidate {
   return {
     id: String(row.id),
     taskId: String(row.task_id),
     workerRunId: String(row.worker_run_id),
-    status: validStatus.includes(row.status as TaskCandidate["status"]) ? (row.status as TaskCandidate["status"]) : "available",
-    changedFilesJson: parseJSON<string[]>(row.changed_files_json, []),
-    diffStatsJson: parseJSON<Record<string, number>>(row.diff_stats_json, {}),
-    verificationJson: parseJSON<Record<string, any>>(row.verification_json, {}),
+    status: isTaskCandidateStatus(row.status) ? row.status : "available",
+    changedFilesJson: parseJSON<string[]>(row.changed_files_json) ?? [],
+    diffStatsJson: parseJSON<Record<string, number>>(row.diff_stats_json) ?? {},
+    verificationJson: parseJSON<Record<string, unknown>>(row.verification_json) ?? {},
     summary: row.summary ? String(row.summary) : null,
     errorMessage: row.error_message ? String(row.error_message) : null,
     createdAt: Number(row.created_at ?? 0),
@@ -618,7 +768,7 @@ function rowToWorkflowRun(row: Record<string, unknown>): WorkflowRun {
     status: asWorkflowRunStatus(row.status),
     displayName: String(row.display_name ?? ""),
     targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
-    taskOrder: parseJSON<string[]>(row.task_order_json, []),
+    taskOrder: parseJSON<string[]>(row.task_order_json) ?? [],
     currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
     currentTaskIndex: Number(row.current_task_index ?? 0),
     pauseRequested: Number(row.pause_requested ?? 0) === 1,
@@ -635,12 +785,45 @@ function rowToWorkflowRun(row: Record<string, unknown>): WorkflowRun {
   }
 }
 
+const PI_SESSION_KINDS: PiWorkflowSession["sessionKind"][] = [
+  "task",
+  "task_run_worker",
+  "task_run_reviewer",
+  "task_run_final_applier",
+  "review_scratch",
+  "repair",
+  "plan",
+  "plan_revision",
+  "planning",
+  "container_config",
+]
+
+function isPiSessionKind(value: unknown): value is PiWorkflowSession["sessionKind"] {
+  return typeof value === "string" && PI_SESSION_KINDS.includes(value as PiWorkflowSession["sessionKind"])
+}
+
+function asPiSessionKind(value: unknown): PiWorkflowSession["sessionKind"] {
+  if (isPiSessionKind(value)) return value
+  throw new Error(`Invalid Pi session kind: ${JSON.stringify(value)}. Expected one of: ${PI_SESSION_KINDS.join(", ")}.`)
+}
+
+const SESSION_MESSAGE_ROLES: SessionMessage["role"][] = ["system", "user", "assistant", "tool"]
+
+function isSessionMessageRole(value: unknown): value is SessionMessage["role"] {
+  return typeof value === "string" && SESSION_MESSAGE_ROLES.includes(value as SessionMessage["role"])
+}
+
+function asSessionMessageRole(value: unknown): SessionMessage["role"] {
+  if (isSessionMessageRole(value)) return value
+  throw new Error(`Invalid session message role: ${JSON.stringify(value)}. Expected one of: ${SESSION_MESSAGE_ROLES.join(", ")}.`)
+}
+
 function rowToWorkflowSession(row: Record<string, unknown>): PiWorkflowSession {
   return {
     id: String(row.id),
     taskId: row.task_id ? String(row.task_id) : null,
     taskRunId: row.task_run_id ? String(row.task_run_id) : null,
-    sessionKind: String(row.session_kind) as PiWorkflowSession["sessionKind"],
+    sessionKind: asPiSessionKind(row.session_kind),
     status: asPiSessionStatus(row.status),
     cwd: String(row.cwd),
     worktreeDir: row.worktree_dir ? String(row.worktree_dir) : null,
@@ -668,10 +851,10 @@ function rowToSessionMessage(row: Record<string, unknown>): SessionMessage {
     taskId: row.task_id ? String(row.task_id) : null,
     taskRunId: row.task_run_id ? String(row.task_run_id) : null,
     timestamp: Number(row.timestamp),
-    role: String(row.role) as SessionMessage["role"],
+    role: asSessionMessageRole(row.role),
     eventName: row.event_name ? String(row.event_name) : null,
     messageType: asMessageType(row.message_type),
-    contentJson: parseJSON<Record<string, unknown>>(row.content_json, {}),
+    contentJson: parseJSON<Record<string, unknown>>(row.content_json) ?? {},
     modelProvider: row.model_provider ? String(row.model_provider) : null,
     modelId: row.model_id ? String(row.model_id) : null,
     agentName: row.agent_name ? String(row.agent_name) : null,
@@ -680,18 +863,18 @@ function rowToSessionMessage(row: Record<string, unknown>): SessionMessage {
     cacheReadTokens: row.cache_read_tokens === null || row.cache_read_tokens === undefined ? null : Number(row.cache_read_tokens),
     cacheWriteTokens: row.cache_write_tokens === null || row.cache_write_tokens === undefined ? null : Number(row.cache_write_tokens),
     totalTokens: row.total_tokens === null || row.total_tokens === undefined ? null : Number(row.total_tokens),
-    costJson: parseJSON<Record<string, unknown> | null>(row.cost_json, null),
+    costJson: parseJSON<Record<string, unknown>>(row.cost_json),
     costTotal: row.cost_total === null || row.cost_total === undefined ? null : Number(row.cost_total),
     toolCallId: row.tool_call_id ? String(row.tool_call_id) : null,
     toolName: row.tool_name ? String(row.tool_name) : null,
-    toolArgsJson: parseJSON<Record<string, unknown> | null>(row.tool_args_json, null),
-    toolResultJson: parseJSON<Record<string, unknown> | null>(row.tool_result_json, null),
+    toolArgsJson: parseJSON<Record<string, unknown>>(row.tool_args_json),
+    toolResultJson: parseJSON<Record<string, unknown>>(row.tool_result_json),
     toolStatus: row.tool_status ? String(row.tool_status) : null,
     editDiff: row.edit_diff ? String(row.edit_diff) : null,
     editFilePath: row.edit_file_path ? String(row.edit_file_path) : null,
     sessionStatus: row.session_status ? String(row.session_status) : null,
     workflowPhase: row.workflow_phase ? String(row.workflow_phase) : null,
-    rawEventJson: parseJSON<Record<string, unknown> | null>(row.raw_event_json, null),
+    rawEventJson: parseJSON<Record<string, unknown>>(row.raw_event_json),
   }
 }
 
@@ -702,7 +885,7 @@ function rowToPromptTemplate(row: Record<string, unknown>): PromptTemplate {
     name: String(row.name),
     description: String(row.description ?? ""),
     templateText: String(row.template_text),
-    variablesJson: parseJSON<string[]>(row.variables_json, []),
+    variablesJson: parseJSON<string[]>(row.variables_json) ?? [],
     isActive: Number(row.is_active ?? 1) === 1,
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
@@ -715,7 +898,7 @@ function rowToPromptTemplateVersion(row: Record<string, unknown>): PromptTemplat
     promptTemplateId: Number(row.prompt_template_id),
     version: Number(row.version),
     templateText: String(row.template_text),
-    variablesJson: parseJSON<string[]>(row.variables_json, []),
+    variablesJson: parseJSON<string[]>(row.variables_json) ?? [],
     createdAt: Number(row.created_at ?? 0),
   }
 }
@@ -1464,6 +1647,14 @@ const MIGRATIONS: Migration[] = [
       `DELETE FROM options WHERE key = 'telegram_notifications_enabled';`,
     ],
   },
+  {
+    version: 27,
+    description: "Add indexes for archived tasks queries",
+    statements: [
+      `CREATE INDEX IF NOT EXISTS idx_tasks_is_archived ON tasks(is_archived);`,
+      `CREATE INDEX IF NOT EXISTS idx_tasks_archived_at ON tasks(archived_at);`,
+    ],
+  },
 ]
 
 export class PiKanbanDB {
@@ -1766,12 +1957,7 @@ export class PiKanbanDB {
     return updatedTask
   }
 
-  /**
-   * Validates and cleans task requirements by removing any dependency IDs
-   * that don't exist in the database. Returns information about what was cleaned.
-   * This is called automatically during task creation and updates.
-   */
-  validateAndCleanRequirements(requirements: string[], taskName?: string): { cleaned: string[]; removed: string[] } {
+    validateAndCleanRequirements(requirements: string[], taskName?: string): { cleaned: string[]; removed: string[] } {
     if (!requirements || requirements.length === 0) {
       return { cleaned: [], removed: [] }
     }
@@ -2186,11 +2372,76 @@ export class PiKanbanDB {
     return rows.map(rowToWorkflowRun)
   }
 
-  /**
-   * Check if any workflow is currently running or stopping
-   * Returns true if there's at least one active workflow run
-   */
-  hasRunningWorkflows(): boolean {
+  // ---- Archived Tasks ----
+
+  getArchivedTasks(): Task[] {
+    const stmt = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 1 ORDER BY archived_at DESC")
+    const rows = stmt.all() as unknown[]
+    if (!Array.isArray(rows)) throw new Error("getArchivedTasks: expected array result from database")
+    return rows.map((r) => rowToTask(r as Record<string, unknown>))
+  }
+
+  getArchivedTask(id: string): Task | null {
+    const row = this.db.prepare("SELECT * FROM tasks WHERE id = ? AND is_archived = 1").get(id) as Record<string, unknown> | null
+    return row ? rowToTask(row) : null
+  }
+
+  getArchivedTasksByRun(runId: string): Task[] {
+    const run = this.getWorkflowRun(runId)
+    if (!run || run.taskOrder.length === 0) return []
+
+    const placeholders = run.taskOrder.map(() => "?").join(",")
+    const stmt = this.db.prepare(
+      `SELECT * FROM tasks WHERE id IN (${placeholders}) AND is_archived = 1 ORDER BY archived_at DESC`
+    )
+    const rows = stmt.all(...run.taskOrder) as unknown[]
+    if (!Array.isArray(rows)) throw new Error("getArchivedTasksByRun: expected array result from database")
+    return rows.map((r) => rowToTask(r as Record<string, unknown>))
+  }
+
+  getWorkflowRunsWithArchivedTasks(): WorkflowRun[] {
+    const runsStmt = this.db.prepare("SELECT * FROM workflow_runs ORDER BY finished_at DESC, created_at DESC")
+    const runsResult = runsStmt.all() as unknown[]
+    if (!Array.isArray(runsResult)) throw new Error("getWorkflowRunsWithArchivedTasks: expected array result from database")
+
+    const runsWithArchived: WorkflowRun[] = []
+
+    for (const row of runsResult) {
+      const runRow = row as Record<string, unknown>
+      const taskOrder = parseJSON<string[]>(runRow.task_order_json, [])
+      if (taskOrder.length === 0) continue
+
+      const placeholders = taskOrder.map(() => "?").join(",")
+      const countStmt = this.db.prepare(`SELECT COUNT(*) as cnt FROM tasks WHERE id IN (${placeholders}) AND is_archived = 1`)
+      const countResult = countStmt.get(...taskOrder) as unknown
+      if (countResult === null || typeof countResult !== "object") throw new Error("getWorkflowRunsWithArchivedTasks: expected object result for count query")
+      const countRow = countResult as Record<string, unknown>
+      const cnt = typeof countRow.cnt === "number" ? countRow.cnt : Number(countRow.cnt)
+      if (Number.isNaN(cnt)) throw new Error("getWorkflowRunsWithArchivedTasks: invalid count result from database")
+
+      if (cnt > 0) {
+        runsWithArchived.push(rowToWorkflowRun(runRow))
+      }
+    }
+
+    return runsWithArchived
+  }
+
+  getArchivedTasksGroupedByRun(): Map<string, { run: WorkflowRun; tasks: Task[] }> {
+    const result = new Map<string, { run: WorkflowRun; tasks: Task[] }>()
+    const runs = this.getWorkflowRunsWithArchivedTasks()
+
+    for (const run of runs) {
+      const tasks = this.getArchivedTasksByRun(run.id)
+      if (tasks.length > 0) {
+        result.set(run.id, { run, tasks })
+      }
+    }
+
+    return result
+  }
+
+    hasRunningWorkflows(): boolean {
     const row = this.db.prepare(
       "SELECT COUNT(*) as count FROM workflow_runs WHERE is_archived = 0 AND status IN ('running', 'stopping')"
     ).get() as { count: number }
@@ -2463,8 +2714,8 @@ export class PiKanbanDB {
         }
         seq += 1
 
-        const rawEventJson = parseJSON<Record<string, unknown> | null>(row.raw_event_json, null)
-        const legacyContent = parseJSON<Record<string, unknown>>(row.content_json, {})
+        const rawEventJson = parseJSON<Record<string, unknown>>(row.raw_event_json)
+        const legacyContent = parseJSON<Record<string, unknown>>(row.content_json) ?? {}
         const projected = rawEventJson
           ? projectPiEventToSessionMessage({ event: rawEventJson, sessionId })
           : null
@@ -2842,11 +3093,7 @@ export class PiKanbanDB {
     let columnSorts: ColumnSortPreferences | undefined
     const columnSortsJson = values.get("column_sorts")
     if (columnSortsJson) {
-      try {
-        columnSorts = JSON.parse(columnSortsJson) as ColumnSortPreferences
-      } catch {
-        columnSorts = undefined
-      }
+      columnSorts = JSON.parse(columnSortsJson) as ColumnSortPreferences
     }
 
     const getValue = (key: string, treatDefaultAsEmpty = false): string => {
@@ -3043,9 +3290,10 @@ export class PiKanbanDB {
   }
 
   private asTelegramNotificationLevel(value: unknown): TelegramNotificationLevel {
-    return value === "all" || value === "failures" || value === "done_and_failures" || value === "workflow_done_and_failures"
-      ? value
-      : "all"
+    if (value === "all" || value === "failures" || value === "done_and_failures" || value === "workflow_done_and_failures") {
+      return value
+    }
+    throw new Error(`Invalid telegram notification level: ${JSON.stringify(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"`)
   }
 
   private getNextTaskIndex(): number {
@@ -3058,29 +3306,35 @@ export class PiKanbanDB {
       "INSERT INTO options (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING",
     )
 
-    upsert.run("commit_prompt", DEFAULT_OPTIONS.commitPrompt)
-    upsert.run("extra_prompt", DEFAULT_OPTIONS.extraPrompt)
-    upsert.run("branch", DEFAULT_OPTIONS.branch)
-    upsert.run("plan_model", DEFAULT_OPTIONS.planModel)
-    upsert.run("execution_model", DEFAULT_OPTIONS.executionModel)
-    upsert.run("review_model", DEFAULT_OPTIONS.reviewModel)
-    upsert.run("repair_model", DEFAULT_OPTIONS.repairModel)
-    upsert.run("command", DEFAULT_OPTIONS.command)
-    upsert.run("parallel_tasks", String(DEFAULT_OPTIONS.parallelTasks))
-    upsert.run("auto_delete_normal_sessions", String(DEFAULT_OPTIONS.autoDeleteNormalSessions))
-    upsert.run("auto_delete_review_sessions", String(DEFAULT_OPTIONS.autoDeleteReviewSessions))
-    upsert.run("show_execution_graph", String(DEFAULT_OPTIONS.showExecutionGraph))
-    upsert.run("port", String(DEFAULT_OPTIONS.port))
-    upsert.run("thinking_level", DEFAULT_OPTIONS.thinkingLevel)
-    upsert.run("plan_thinking_level", DEFAULT_OPTIONS.planThinkingLevel)
-    upsert.run("execution_thinking_level", DEFAULT_OPTIONS.executionThinkingLevel)
-    upsert.run("review_thinking_level", DEFAULT_OPTIONS.reviewThinkingLevel)
-    upsert.run("repair_thinking_level", DEFAULT_OPTIONS.repairThinkingLevel)
-    upsert.run("code_style_prompt", DEFAULT_OPTIONS.codeStylePrompt)
-    upsert.run("telegram_bot_token", DEFAULT_OPTIONS.telegramBotToken)
-    upsert.run("telegram_chat_id", DEFAULT_OPTIONS.telegramChatId)
-    upsert.run("telegram_notification_level", DEFAULT_OPTIONS.telegramNotificationLevel)
-    upsert.run("max_reviews", String(DEFAULT_OPTIONS.maxReviews))
+    const entries = [
+      ["commit_prompt", DEFAULT_OPTIONS.commitPrompt],
+      ["extra_prompt", DEFAULT_OPTIONS.extraPrompt],
+      ["branch", DEFAULT_OPTIONS.branch],
+      ["plan_model", DEFAULT_OPTIONS.planModel],
+      ["execution_model", DEFAULT_OPTIONS.executionModel],
+      ["review_model", DEFAULT_OPTIONS.reviewModel],
+      ["repair_model", DEFAULT_OPTIONS.repairModel],
+      ["command", DEFAULT_OPTIONS.command],
+      ["parallel_tasks", String(DEFAULT_OPTIONS.parallelTasks)],
+      ["auto_delete_normal_sessions", String(DEFAULT_OPTIONS.autoDeleteNormalSessions)],
+      ["auto_delete_review_sessions", String(DEFAULT_OPTIONS.autoDeleteReviewSessions)],
+      ["show_execution_graph", String(DEFAULT_OPTIONS.showExecutionGraph)],
+      ["port", String(DEFAULT_OPTIONS.port)],
+      ["thinking_level", DEFAULT_OPTIONS.thinkingLevel],
+      ["plan_thinking_level", DEFAULT_OPTIONS.planThinkingLevel],
+      ["execution_thinking_level", DEFAULT_OPTIONS.executionThinkingLevel],
+      ["review_thinking_level", DEFAULT_OPTIONS.reviewThinkingLevel],
+      ["repair_thinking_level", DEFAULT_OPTIONS.repairThinkingLevel],
+      ["code_style_prompt", DEFAULT_OPTIONS.codeStylePrompt],
+      ["telegram_bot_token", DEFAULT_OPTIONS.telegramBotToken],
+      ["telegram_chat_id", DEFAULT_OPTIONS.telegramChatId],
+      ["telegram_notification_level", DEFAULT_OPTIONS.telegramNotificationLevel],
+      ["max_reviews", String(DEFAULT_OPTIONS.maxReviews)],
+    ] as const
+
+    for (const [key, value] of entries) {
+      upsert.run(key, value)
+    }
   }
 
   private seedPromptTemplates(): void {
@@ -3738,13 +3992,13 @@ export class PiKanbanDB {
 
     return {
       runId: String(row.run_id),
-      kind: String(row.kind) as "all_tasks" | "single_task" | "workflow_review",
-      taskOrder: parseJSON<string[]>(row.task_order_json, []),
+      kind: asWorkflowRunKind(row.kind),
+      taskOrder: parseJSON<string[]>(row.task_order_json) ?? [],
       currentTaskIndex: Number(row.current_task_index ?? 0),
       currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
       targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
       pausedAt: Number(row.paused_at),
-      executionPhase: String(row.execution_phase) as "not_started" | "planning" | "executing" | "reviewing" | "committing",
+      executionPhase: asExecutionPhase(row.execution_phase),
     }
   }
 
@@ -3754,32 +4008,32 @@ export class PiKanbanDB {
 
   hasPausedRunState(runId: string): boolean {
     const row = this.db
-      .prepare("SELECT 1 FROM paused_run_states WHERE run_id = ?")
-      .get(runId) as { 1: number } | null
+      .prepare<{ 1: number }>("SELECT 1 FROM paused_run_states WHERE run_id = ?")
+      .get(runId)
     return row !== null
   }
 
   listPausedRunStates(): Array<{
     runId: string
-    kind: "all_tasks" | "single_task" | "workflow_review"
+    kind: WorkflowRunKind
     taskOrder: string[]
     currentTaskIndex: number
     currentTaskId: string | null
     targetTaskId: string | null
     pausedAt: number
-    executionPhase: "not_started" | "planning" | "executing" | "reviewing" | "committing"
+    executionPhase: ExecutionPhase
   }> {
-    const rows = this.db.prepare("SELECT * FROM paused_run_states ORDER BY paused_at DESC").all() as Record<string, unknown>[]
+    const rows = this.db.prepare<unknown[], Record<string, unknown>>("SELECT * FROM paused_run_states ORDER BY paused_at DESC").all()
 
     return rows.map((row) => ({
       runId: String(row.run_id),
-      kind: String(row.kind) as "all_tasks" | "single_task" | "workflow_review",
-      taskOrder: parseJSON<string[]>(row.task_order_json, []),
+      kind: asWorkflowRunKind(row.kind),
+      taskOrder: parseJSON<string[]>(row.task_order_json) ?? [],
       currentTaskIndex: Number(row.current_task_index ?? 0),
       currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
       targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
       pausedAt: Number(row.paused_at),
-      executionPhase: String(row.execution_phase) as "not_started" | "planning" | "executing" | "reviewing" | "committing",
+      executionPhase: asExecutionPhase(row.execution_phase),
     }))
   }
 
@@ -4236,11 +4490,228 @@ export class PiKanbanDB {
     return Number(row.max_idx ?? -1) + 1
   }
 
+  private getTimeRangeBoundary(range: StatsTimeRange): { start: number; previousStart: number } {
+    const now = nowUnix()
+    switch (range) {
+      case "24h":
+        return { start: now - SECONDS_IN_DAY, previousStart: now - 2 * SECONDS_IN_DAY }
+      case "7d":
+        return { start: now - 7 * SECONDS_IN_DAY, previousStart: now - 14 * SECONDS_IN_DAY }
+      case "30d":
+        return { start: now - 30 * SECONDS_IN_DAY, previousStart: now - 60 * SECONDS_IN_DAY }
+      case "lifetime":
+        return { start: 0, previousStart: 0 }
+      default:
+        throw new Error(`Invalid time range: ${JSON.stringify(range)}. Expected "24h", "7d", "30d", or "lifetime".`)
+    }
+  }
+
+  private getSessionKindResponsibility(kind: string): "plan" | "execution" | "review" | "other" {
+    if (kind === "plan" || kind === "plan_revision" || kind === "planning") return "plan"
+    if (kind === "task" || kind === "task_run_worker" || kind === "task_run_final_applier" || kind === "repair") return "execution"
+    if (kind === "task_run_reviewer" || kind === "review_scratch") return "review"
+    return "other"
+  }
+
+  getUsageStats(range: StatsTimeRange): UsageStats {
+    const { start, previousStart } = this.getTimeRangeBoundary(range)
+
+    const currentRow = this.db
+      .prepare<unknown[], TokenCostRow>(
+        `
+        SELECT 
+          COALESCE(SUM(total_tokens), 0) AS total_tokens,
+          COALESCE(SUM(cost_total), 0) AS total_cost
+        FROM session_messages
+        WHERE timestamp >= ?
+        `
+      )
+      .get(start)!
+
+    let previousTokens = 0
+    let previousCost = 0
+
+    if (range !== "lifetime" && previousStart > 0) {
+      const previousRow = this.db
+        .prepare<unknown[], TokenCostRow>(
+          `
+          SELECT 
+            COALESCE(SUM(total_tokens), 0) AS total_tokens,
+            COALESCE(SUM(cost_total), 0) AS total_cost
+          FROM session_messages
+          WHERE timestamp >= ? AND timestamp < ?
+          `
+        )
+        .get(previousStart, start)!
+
+      previousTokens = Number(previousRow.total_tokens ?? 0)
+      previousCost = Number(previousRow.total_cost ?? 0)
+    }
+
+    const totalTokens = Number(currentRow.total_tokens ?? 0)
+    const totalCost = Number(currentRow.total_cost ?? 0)
+
+    const tokenChange = previousTokens > 0 ? ((totalTokens - previousTokens) / previousTokens) * 100 : 0
+    const costChange = previousCost > 0 ? ((totalCost - previousCost) / previousCost) * 100 : 0
+
+    return {
+      totalTokens,
+      totalCost,
+      tokenChange: Math.round(tokenChange * 100) / 100,
+      costChange: Math.round(costChange * 100) / 100,
+    }
+  }
+
+  getTaskStats(): TaskStats {
+    const completedRow = this.db
+      .prepare<unknown[], CountRow>("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'done'")
+      .get()!
+
+    const failedRow = this.db
+      .prepare<unknown[], CountRow>("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'failed'")
+      .get()!
+
+    const avgReviewsRow = this.db
+      .prepare<unknown[], AvgReviewsRow>(
+        `
+        SELECT COALESCE(AVG(review_count), 0) AS avg_reviews
+        FROM tasks
+        WHERE status = 'done'
+        `
+      )
+      .get()!
+
+    return {
+      completed: Number(completedRow.cnt ?? 0),
+      failed: Number(failedRow.cnt ?? 0),
+      averageReviews: Math.round(Number(avgReviewsRow.avg_reviews ?? 0) * 100) / 100,
+    }
+  }
+
+  getModelUsageByResponsibility(): ModelUsageStats {
+    const rows = this.db
+      .prepare<unknown[], ModelUsageRow>(
+        `
+        SELECT 
+          session_kind,
+          model,
+          COUNT(*) AS cnt
+        FROM workflow_sessions
+        WHERE model IS NOT NULL AND model != '' AND model != 'default'
+        GROUP BY session_kind, model
+        `
+      )
+      .all()
+
+    const plan: Array<{ model: string; count: number }> = []
+    const execution: Array<{ model: string; count: number }> = []
+    const review: Array<{ model: string; count: number }> = []
+
+    for (const row of rows) {
+      const responsibility = this.getSessionKindResponsibility(row.session_kind)
+      const entry = { model: row.model, count: Number(row.cnt ?? 0) }
+
+      switch (responsibility) {
+        case "plan":
+          plan.push(entry)
+          break
+        case "execution":
+          execution.push(entry)
+          break
+        case "review":
+          review.push(entry)
+          break
+        case "other":
+          break
+      }
+    }
+
+    const sortByCount = (a: { count: number }, b: { count: number }) => b.count - a.count
+    plan.sort(sortByCount)
+    execution.sort(sortByCount)
+    review.sort(sortByCount)
+
+    return { plan, execution, review }
+  }
+
+  getAverageTaskDuration(): number {
+    const row = this.db
+      .prepare<unknown[], AvgDurationRow>(
+        `
+        SELECT 
+          COALESCE(AVG(completed_at - created_at), 0) AS avg_duration
+        FROM tasks
+        WHERE completed_at IS NOT NULL AND created_at IS NOT NULL
+        `
+      )
+      .get()!
+
+    return Math.round(Number(row.avg_duration ?? 0))
+  }
+
+  getHourlyUsageTimeSeries(): HourlyUsage[] {
+    const now = nowUnix()
+    const twentyFourHoursAgo = now - SECONDS_IN_DAY
+
+    const rows = this.db
+      .prepare<unknown[], HourlyUsageRow>(
+        `
+        SELECT 
+          (timestamp / 3600) * 3600 AS hour_bucket,
+          COALESCE(SUM(total_tokens), 0) AS tokens,
+          COALESCE(SUM(cost_total), 0) AS cost
+        FROM session_messages
+        WHERE timestamp >= ?
+        GROUP BY hour_bucket
+        ORDER BY hour_bucket ASC
+        `
+      )
+      .all(twentyFourHoursAgo)
+
+    return rows.map((row) => ({
+      hour: new Date(row.hour_bucket * 1000).toISOString(),
+      tokens: Number(row.tokens ?? 0),
+      cost: Number(row.cost ?? 0),
+    }))
+  }
+
+  getDailyUsageTimeSeries(days: number): DailyUsage[] {
+    const now = nowUnix()
+    const startTime = now - days * SECONDS_IN_DAY
+
+    const rows = this.db
+      .prepare<unknown[], DailyUsageRow>(
+        `
+        SELECT 
+          date(timestamp, 'unixepoch') AS date_str,
+          COALESCE(SUM(total_tokens), 0) AS tokens,
+          COALESCE(SUM(cost_total), 0) AS cost
+        FROM session_messages
+        WHERE timestamp >= ?
+        GROUP BY date_str
+        ORDER BY date_str ASC
+        `
+      )
+      .all(startTime)
+
+    return rows.map((row) => ({
+      date: row.date_str,
+      tokens: Number(row.tokens ?? 0),
+      cost: Number(row.cost ?? 0),
+    }))
+  }
+
+}
+
+const CONTAINER_BUILD_STATUSES: ContainerBuild["status"][] = ["pending", "running", "success", "failed", "cancelled"]
+
+function isContainerBuildStatus(value: unknown): value is ContainerBuild["status"] {
+  return typeof value === "string" && CONTAINER_BUILD_STATUSES.includes(value as ContainerBuild["status"])
 }
 
 // Row converters for indicators
 function rowToWorkflowRunIndicators(row: Record<string, unknown>): WorkflowRunIndicators {
-  const jsonOutFails = parseJSON<{ "json-output-fails": JsonOutFailEntry[] }>(row.json_out_fails, { "json-output-fails": [] })
+  const jsonOutFails = parseJSON<{ "json-output-fails": JsonOutFailEntry[] }>(row.json_out_fails) ?? { "json-output-fails": [] }
   return {
     id: String(row.id),
     jsonOutFails,
@@ -4261,9 +4732,11 @@ function rowToContainerPackage(row: Record<string, unknown>): ContainerPackage {
 }
 
 function rowToContainerBuild(row: Record<string, unknown>): ContainerBuild {
+  const status = isContainerBuildStatus(row.status) ? row.status : "pending"
+
   return {
     id: Number(row.id),
-    status: String(row.status) as ContainerBuild["status"],
+    status,
     startedAt: row.started_at ? Number(row.started_at) : null,
     completedAt: row.completed_at ? Number(row.completed_at) : null,
     packagesHash: row.packages_hash ? String(row.packages_hash) : null,

@@ -44,8 +44,10 @@ export interface Task {
   executionPhase: string
   awaitingPlanApproval: boolean
   completedAt?: number
+  archivedAt?: number
   createdAt: number
   updatedAt: number
+  agentOutput?: string
   reviewActivity?: 'idle' | 'running'
   containerImage?: string
   groupId?: string
@@ -482,6 +484,43 @@ export interface CreatePlanningSessionDTO {
   cwd?: string
   model?: string
   thinkingLevel?: ThinkingLevel
+}
+
+// Stats Types
+export interface UsageStats {
+  totalTokens: number
+  totalCost: number
+  tokenChange: number
+  costChange: number
+}
+
+export interface TaskStats {
+  completed: number
+  failed: number
+  averageReviews: number
+}
+
+export interface ModelUsage {
+  model: string
+  count: number
+}
+
+export interface ModelUsageStats {
+  plan: ModelUsage[]
+  execution: ModelUsage[]
+  review: ModelUsage[]
+}
+
+export interface DailyUsage {
+  date: string
+  tokens: number
+  cost: number
+}
+
+export interface HourlyUsage {
+  hour: string
+  tokens: number
+  cost: number
 }
 
 // Toast Types

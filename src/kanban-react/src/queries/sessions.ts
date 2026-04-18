@@ -44,6 +44,7 @@ export function useSessionMessagesQuery(
     queryFn: () => sessionsApi.getMessages(id!, limit),
     enabled: !!id,
     staleTime: 2000, // Messages change frequently, use short stale time
+    placeholderData: (previousData) => previousData, // Keep previous data while fetching to prevent flickering
     ...options,
   })
 }
@@ -60,6 +61,7 @@ export function useSessionUsageQuery(
     queryFn: () => sessionsApi.getUsage(id!),
     enabled: !!id,
     staleTime: 10000,
+    placeholderData: (previousData) => previousData, // Keep previous data while fetching to prevent flickering
     ...options,
   })
 }

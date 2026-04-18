@@ -1,18 +1,8 @@
 export function TopBar() {
   return (
     <header className="top-bar">
-      {/* Left: Breadcrumb */}
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2 text-sm text-dark-text-secondary">
-          <div className="flex items-center gap-2">
-            <span>Project</span>
-          </div>
-          <span className="text-dark-text-muted">/</span>
-          <div className="flex items-center gap-2">
-            <span className="text-dark-text font-medium">Pi Easy Workflow</span>
-          </div>
-        </div>
-      </div>
+      {/* Left: Spacer (TabBar now handles navigation) */}
+      <div className="flex-1" />
 
       {/* Right: Actions */}
       <div className="flex items-center gap-3">
@@ -29,6 +19,10 @@ export function TopBar() {
           <span className="flex items-center gap-1">
             <kbd className="font-mono text-dark-text font-bold border border-dark-border rounded px-1 bg-dark-surface2">P</kbd>
             Chat
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="font-mono text-dark-text font-bold border border-dark-border rounded px-1 bg-dark-surface2">Ctrl+1-5</kbd>
+            Tabs
           </span>
           <span className="flex items-center gap-1">
             <kbd className="font-mono text-dark-text font-bold border border-dark-border rounded px-1 bg-dark-surface2">Esc</kbd>

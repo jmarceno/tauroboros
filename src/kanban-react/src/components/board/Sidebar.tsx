@@ -1,11 +1,10 @@
-import { useState, memo } from "react"
+import { memo } from "react"
 import { useVersion } from "@/hooks"
 import type { ControlState } from "@/types"
 
 interface SidebarProps {
   consumedSlots: number
   parallelTasks: number
-  isConnected: boolean
   controlState: ControlState
   canPause: boolean
   canResume: boolean
@@ -17,8 +16,6 @@ interface SidebarProps {
   onPauseExecution: (runId: string) => void
   onResumeExecution: (runId: string) => void
   onStopExecution: (type: 'graceful' | 'destructive') => void
-  onOpenOptions: () => void
-  onOpenContainerConfig: () => void
   onOpenTemplateModal: () => void
   onOpenTaskModal: () => void
   onArchiveAllDone: () => void
@@ -27,13 +24,11 @@ interface SidebarProps {
   doneCount?: number
   activeCount?: number
   reviewCount?: number
-  isContainerEnabled?: boolean
 }
 
 export const Sidebar = memo(function Sidebar({
   consumedSlots,
   parallelTasks,
-  isConnected,
   controlState,
   canPause,
   canResume,
@@ -45,8 +40,6 @@ export const Sidebar = memo(function Sidebar({
   onPauseExecution,
   onResumeExecution,
   onStopExecution,
-  onOpenOptions,
-  onOpenContainerConfig,
   onOpenTemplateModal,
   onOpenTaskModal,
   onArchiveAllDone,
@@ -55,7 +48,6 @@ export const Sidebar = memo(function Sidebar({
   doneCount = 0,
   activeCount = 0,
   reviewCount = 0,
-  isContainerEnabled = false,
 }: SidebarProps) {
   const { version } = useVersion()
   const isRunning = consumedSlots > 0
@@ -176,30 +168,6 @@ export const Sidebar = memo(function Sidebar({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
             <span className="sidebar-label">Planning Chat</span>
-          </button>
-        </div>
-
-        <div className="sidebar-section">
-          <div className="sidebar-section-title">Configuration</div>
-          <button className="sidebar-btn" onClick={onOpenOptions}>
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M12 1v6m0 6v6m4.22-10.22l4.24-4.24M6.34 17.66l-4.24 4.24M23 12h-6m-6 0H1m20.24 4.24l-4.24-4.24M6.34 6.34L2.1 2.1"/>
-            </svg>
-            <span className="sidebar-label">Options</span>
-          </button>
-
-          <button
-            className={`sidebar-btn ${!isContainerEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-            disabled={!isContainerEnabled}
-            title={isContainerEnabled ? 'Container configuration' : 'Container mode is disabled. Enable it in .tauroboros/settings.json'}
-            onClick={onOpenContainerConfig}
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="4" y="4" width="16" height="16" rx="2"/>
-              <path d="M4 12h16M12 4v16"/>
-            </svg>
-            <span className="sidebar-label">Containers</span>
           </button>
         </div>
 

@@ -13,6 +13,7 @@ export type {
   ReferenceQueryKeys,
   ContainerQueryKeys,
   PlanningQueryKeys,
+  StatsQueryKeys,
 } from './keys.ts'
 
 // Tasks
@@ -134,3 +135,13 @@ export {
   type SendPlanningMessageVariables,
   type CreateTasksFromPlanningVariables,
 } from './planning.ts'
+
+// Stats
+export {
+  useUsageStatsQuery,
+  useTaskStatsQuery,
+  useModelUsageQuery,
+  useAverageDurationQuery,
+  useHourlyUsageQuery,
+  useDailyUsageQuery,
+} from './stats.ts'
