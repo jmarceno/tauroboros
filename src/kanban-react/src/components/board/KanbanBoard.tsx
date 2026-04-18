@@ -123,11 +123,8 @@ export const KanbanBoard = memo(function KanbanBoard({
   onCloseGroupPanel,
   onRemoveTaskFromGroup,
   onAddTasksToGroup,
-  // onCreateGroupFromSelection is provided for API completeness but handled externally by GroupActionBar
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  onCreateGroupFromSelection: _onCreateGroupFromSelection,
+  onCreateGroupFromSelection,
 }: KanbanBoardProps) {
-  // Build a Set of all task IDs that are in any group for O(1) lookup
   const groupedTaskIds = useMemo(() => {
     const ids = new Set<string>()
     for (const taskIds of Object.values(groupMembers)) {
@@ -138,21 +135,7 @@ export const KanbanBoard = memo(function KanbanBoard({
     return ids
   }, [groupMembers])
 
-  // Group tasks by status, filtering out grouped tasks from backlog
   const groupedTasks = useMemo(() => {
-    if (!tasks || !Array.isArray(tasks)) {
-      return {
-        template: [],
-        backlog: [],
-        executing: [],
-        review: [],
-        'code-style': [],
-        done: [],
-        failed: [],
-        stuck: [],
-      }
-    }
-
     const groups = {
       template: [] as Task[],
       backlog: [] as Task[],
@@ -165,9 +148,6 @@ export const KanbanBoard = memo(function KanbanBoard({
     }
 
     for (const task of tasks) {
-      if (!task) continue
-
-      // Filter out tasks that are in a group from the backlog column
       if (task.status === 'backlog' && groupedTaskIds.has(task.id)) {
         continue
       }
@@ -184,20 +164,17 @@ export const KanbanBoard = memo(function KanbanBoard({
     return groups
   }, [tasks, groupedTaskIds])
 
-  // Get the active group for the panel
   const activeGroup = useMemo(() => {
     if (!activeGroupId) return null
     return groups.find(g => g.id === activeGroupId) || null
   }, [groups, activeGroupId])
 
-  // Get tasks for the active group
   const activeGroupTasks = useMemo(() => {
-    if (!activeGroupId || !groupMembers[activeGroupId] || !tasks || !Array.isArray(tasks)) return []
+    if (!activeGroupId || !groupMembers[activeGroupId]) return []
     const memberIds = new Set(groupMembers[activeGroupId])
     return tasks.filter(t => memberIds.has(t.id))
   }, [activeGroupId, groupMembers, tasks])
 
-  // Filter to only show active groups as virtual cards in backlog
   const activeGroups = useMemo(() =>
     groups.filter(g => g.status === 'active'),
     [groups]
@@ -226,6 +203,17 @@ export const KanbanBoard = memo(function KanbanBoard({
               highlightedRunId={highlightedRunId}
               isTaskInRun={isTaskInRun}
               groups={groups}
+              footerContent={
+                column.status === 'backlog' && activeGroups.length === 0 ? (
+                  <div className="virtual-cards-empty-footer" aria-live="polite">
+                    <p className="text-xs text-dark-text-muted italic">
+                      No groups yet. Select 2+ tasks and press{' '}
+                      <kbd className="px-1 py-0.5 bg-dark-surface2 border border-dark-border rounded text-[10px] font-mono">Ctrl+G</kbd>{' '}
+                      to create one.
+                    </p>
+                  </div>
+                ) : undefined
+              }
               onOpenTask={onOpenTask}
               onChangeSort={(sort) => onChangeColumnSort(column.status, sort)}
               onOpenTemplateModal={onOpenTemplateModal}
@@ -244,39 +232,26 @@ export const KanbanBoard = memo(function KanbanBoard({
               onViewRuns={onViewRuns}
               onContinueReviews={onContinueReviews}
             >
-              {/* Render virtual cards in backlog column */}
-              {column.status === 'backlog' && (
+              {column.status === 'backlog' && activeGroups.length > 0 && (
                 <div className="virtual-cards-section">
-                  {activeGroups.length > 0 ? (
-                    <>
-                      <div className="virtual-cards-header">
-                        <span className="text-xs font-medium text-dark-text-muted uppercase tracking-wider">
-                          Virtual Workflows
-                        </span>
-                      </div>
-                      <div className="virtual-cards-list">
-                        {activeGroups.map(group => (
-                          <VirtualCard
-                            key={group.id}
-                            group={group}
-                            taskCount={groupMembers[group.id]?.length ?? 0}
-                            onClick={() => onVirtualCardClick?.(group.id)}
-                            onDelete={() => onDeleteGroup?.(group.id)}
-                            onStart={() => onStartGroup?.(group.id)}
-                          />
-                        ))}
-                      </div>
-                      <div className="virtual-cards-divider" />
-                    </>
-                  ) : (
-                    <div className="virtual-cards-empty" aria-live="polite">
-                      <p className="text-xs text-dark-text-muted italic">
-                        No groups yet. Select 2+ tasks and press{' '}
-                        <kbd className="px-1 py-0.5 bg-dark-surface2 border border-dark-border rounded text-[10px] font-mono">Ctrl+G</kbd>{' '}
-                        to create one.
-                      </p>
-                    </div>
-                  )}
+                  <div className="virtual-cards-header">
+                    <span className="text-xs font-medium text-dark-text-muted uppercase tracking-wider">
+                      Virtual Workflows
+                    </span>
+                  </div>
+                  <div className="virtual-cards-list">
+                    {activeGroups.map(group => (
+                      <VirtualCard
+                        key={group.id}
+                        group={group}
+                        taskCount={groupMembers[group.id]?.length ?? 0}
+                        onClick={() => onVirtualCardClick?.(group.id)}
+                        onDelete={() => onDeleteGroup?.(group.id)}
+                        onStart={() => onStartGroup?.(group.id)}
+                      />
+                    ))}
+                  </div>
+                  <div className="virtual-cards-divider" />
                 </div>
               )}
             </KanbanColumn>

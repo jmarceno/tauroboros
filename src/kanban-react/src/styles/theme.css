@@ -1043,6 +1043,10 @@
     @apply p-4 text-center border border-dashed border-dark-border rounded-md;
   }
 
+  .virtual-cards-empty-footer {
+    @apply p-3 text-center border border-dashed border-dark-border rounded-md;
+  }
+
   /* ============================================
      GROUP-PANEL COMPONENTS
      ============================================ */
