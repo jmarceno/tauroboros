@@ -149,7 +149,7 @@ describe('KanbanBoard', () => {
     expect(screen.getByTestId('virtual-card-group-1')).toBeInTheDocument()
     expect(screen.getByTestId('virtual-card-group-1-name')).toHaveTextContent('Test Group')
     expect(screen.getByTestId('virtual-card-group-1-count')).toHaveTextContent('2')
-    
+
     // Completed group should not appear as virtual card
     expect(screen.queryByTestId('virtual-card-group-2')).not.toBeInTheDocument()
   })
