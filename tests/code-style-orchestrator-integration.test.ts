@@ -15,7 +15,7 @@ import { join } from "path"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
 import { DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
-import type { Task, WSMessage } from "../src/types.ts"
+import { DEFAULT_CODE_STYLE_PROMPT, type Task, type WSMessage } from "../src/types.ts"
 
 const tempDirs: string[] = []
 
@@ -343,10 +343,9 @@ describe("Code Style Orchestrator Integration", () => {
       db.updateOptions({ codeStylePrompt: "" })
 
       const options = db.getOptions()
-      expect(options.codeStylePrompt).toBe("")
-
-      // The code style runner will use DEFAULT_CODE_STYLE_PROMPT when empty
-      // This is handled by resolveCodeStylePrompt function
+      // Empty string in database returns the DEFAULT_CODE_STYLE_PROMPT
+      // No silent fallbacks - the default is always visible
+      expect(options.codeStylePrompt).toBe(DEFAULT_CODE_STYLE_PROMPT)
     })
 
     it("should allow per-task code style review flag while using global prompt", () => {

@@ -1924,7 +1924,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         cwd: worktreeInfo.directory,
         worktreeDir: worktreeInfo.directory,
         branch: worktreeInfo.branch,
-        codeStylePrompt: task.codeStylePrompt,
+        codeStylePrompt: options.codeStylePrompt,
         model: options.reviewModel,
         thinkingLevel: options.reviewThinkingLevel,
         onOutput: (chunk) => {

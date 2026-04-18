@@ -2871,7 +2871,7 @@ export class PiKanbanDB {
       executionThinkingLevel: asThinkingLevel(values.get("execution_thinking_level")),
       reviewThinkingLevel: asThinkingLevel(values.get("review_thinking_level")),
       repairThinkingLevel: asThinkingLevel(values.get("repair_thinking_level")),
-      codeStylePrompt: getValue("code_style_prompt"),
+      codeStylePrompt: getValue("code_style_prompt") || DEFAULT_CODE_STYLE_PROMPT,
       telegramBotToken: getValue("telegram_bot_token"),
       telegramChatId: getValue("telegram_chat_id"),
       telegramNotificationsEnabled: getBoolean("telegram_notifications_enabled"),

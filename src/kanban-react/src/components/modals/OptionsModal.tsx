@@ -5,6 +5,7 @@ import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
 import { HelpButton } from '../common/HelpButton'
 import type { Options, ThinkingLevel } from '@/types'
+import { DEFAULT_CODE_STYLE_PROMPT } from '@/types'
 
 interface OptionsModalProps {
   onClose: () => void
@@ -44,7 +45,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
           command: currentOpts.command || '',
           commitPrompt: currentOpts.commitPrompt || '',
           extraPrompt: currentOpts.extraPrompt || '',
-          codeStylePrompt: currentOpts.codeStylePrompt || '',
+          codeStylePrompt: currentOpts.codeStylePrompt || DEFAULT_CODE_STYLE_PROMPT,
           parallelTasks: currentOpts.parallelTasks ?? 1,
           maxReviews: currentOpts.maxReviews ?? 3,
           maxJsonParseRetries: currentOpts.maxJsonParseRetries ?? 5,
@@ -87,7 +88,12 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
 
     setIsSaving(true)
     try {
-      await optionsHook.saveOptions(formData as Partial<Options>)
+      // Normalize empty code style prompt to default - avoid silent fallbacks
+      const optionsToSave: Partial<Options> = {
+        ...formData,
+        codeStylePrompt: formData.codeStylePrompt?.trim() ? formData.codeStylePrompt : DEFAULT_CODE_STYLE_PROMPT,
+      }
+      await optionsHook.saveOptions(optionsToSave)
       toasts.showToast('Options saved successfully', 'success')
       onClose()
     } catch (e) {
@@ -332,7 +338,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
             <div className="form-group">
               <div className="label-row">
                 <label>Code Style Prompt</label>
-                <HelpButton tooltip="Instructions for code style enforcement. The agent will review code and apply fixes to comply with these rules. Uses the Review Model." />
+                <HelpButton tooltip="Instructions for code style enforcement. The agent will review code and apply fixes to comply with these rules. Uses the Review Model. If left empty, the default prompt will be used." />
               </div>
               <textarea
                 className="form-textarea font-mono text-xs"

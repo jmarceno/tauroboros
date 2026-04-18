@@ -540,3 +540,22 @@ export interface TaskRunContext {
   slotIndex: number
   attemptIndex: number
 }
+
+// Default prompts - duplicated from backend types.ts for frontend use
+export const DEFAULT_CODE_STYLE_PROMPT = `You are a code style enforcement agent. Review the code in the workspace and apply fixes to ensure compliance.
+
+STANDARD RULES:
+- Follow existing project conventions
+- Use consistent indentation (match existing files)
+- Remove trailing whitespace
+- Ensure consistent quote style
+- Add missing semicolons where required by the language
+- Fix obvious linting issues
+
+APPROACH:
+1. First, read the relevant source files
+2. Identify any style violations
+3. Use the edit tool to fix all issues
+4. Confirm when complete
+
+IMPORTANT: You must actively use the edit tool to make changes. Do not just report issues - fix them.`
