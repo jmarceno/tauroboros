@@ -229,13 +229,18 @@ function App() {
 
   const handleMoveToBacklog = useCallback(async () => {
     if (!pendingRestoreTask) return
-    // Remove task from its group when moving to general backlog
-    await tasksHook.moveTaskToGroup(pendingRestoreTask.id, null)
-    toastsHook.showToast("Task moved to general backlog", "info")
-    await tasksHook.loadTasks()
-    setShowRestoreModal(false)
-    setPendingRestoreTask(null)
-    setPendingRestoreGroup(null)
+    try {
+      // Remove task from its group when moving to general backlog
+      await tasksHook.moveTaskToGroup(pendingRestoreTask.id, null)
+      toastsHook.showToast("Task moved to general backlog", "info")
+      await tasksHook.loadTasks()
+    } catch (e) {
+      toastsHook.showToast("Move to backlog failed: " + (e instanceof Error ? e.message : String(e)), "error")
+    } finally {
+      setShowRestoreModal(false)
+      setPendingRestoreTask(null)
+      setPendingRestoreGroup(null)
+    }
   }, [pendingRestoreTask, tasksHook, toastsHook])
 
   // Drag and drop handler with group support
@@ -1022,12 +1027,16 @@ function App() {
                                   onRepairTask={(id: string, action: string) => tasksHook.repairTask(id, action)}
                                   onMarkDone={(id: string) => tasksHook.updateTask(id, { status: 'done', completedAt: Math.floor(Date.now() / 1000) })}
                                   onResetTask={async (id: string) => {
-                                    const result = await tasksHook.resetTask(id)
-                                    // If task was in a group, show restore modal
-                                    if (result.wasInGroup && result.group) {
-                                      setPendingRestoreTask(result.task)
-                                      setPendingRestoreGroup(result.group)
-                                      setShowRestoreModal(true)
+                                    try {
+                                      const result = await tasksHook.resetTask(id)
+                                      // If task was in a group, show restore modal
+                                      if (result.wasInGroup && result.group) {
+                                        setPendingRestoreTask(result.task)
+                                        setPendingRestoreGroup(result.group)
+                                        setShowRestoreModal(true)
+                                      }
+                                    } catch (e) {
+                                      toastsHook.showToast("Reset task failed: " + (e instanceof Error ? e.message : String(e)), "error")
                                     }
                                   }}
                                   onConvertToTemplate={(id: string, event?: React.MouseEvent) => {

@@ -91,7 +91,6 @@ export function useApi() {
         method: 'POST',
         body: JSON.stringify({ action, ...options }),
       }), [request]),
-    resetTask: useCallback((id: string) => request<Task>(`/api/tasks/${id}/reset`, { method: 'POST' }), [request]),
     resetTaskWithGroupInfo: useCallback((id: string) => request<{ task: Task; group?: TaskGroup; wasInGroup: boolean }>(`/api/tasks/${id}/reset`, { method: 'POST' }), [request]),
     resetTaskToGroup: useCallback((id: string) => request<{ task: Task; group: TaskGroup; restoredToGroup: boolean }>(`/api/tasks/${id}/reset-to-group`, { method: 'POST' }), [request]),
     moveTaskToGroup: useCallback((id: string, groupId: string | null) => request<Task>(`/api/tasks/${id}/move-to-group`, {
