@@ -294,7 +294,7 @@ export interface CreateTaskRunInput {
   summary?: string | null
   errorMessage?: string | null
   candidateId?: string | null
-  metadataJson?: Record<string, any>
+  metadataJson?: Record<string, unknown>
   createdAt?: number
   completedAt?: number | null
 }
@@ -307,7 +307,7 @@ export interface UpdateTaskRunInput {
   summary?: string | null
   errorMessage?: string | null
   candidateId?: string | null
-  metadataJson?: Record<string, any>
+  metadataJson?: Record<string, unknown>
   completedAt?: number | null
 }
 
@@ -504,4 +504,45 @@ export interface AddTasksToGroupDTO {
 export interface RemoveTasksFromGroupDTO {
   groupId: string
   taskIds: string[]
+}
+
+// Stats Types
+
+/** Time range for usage stats queries */
+export type StatsTimeRange = "24h" | "7d" | "30d" | "lifetime"
+
+/** Usage statistics with period-over-period comparison */
+export interface UsageStats {
+  totalTokens: number
+  totalCost: number
+  tokenChange: number  // percentage vs previous period
+  costChange: number
+}
+
+/** Task completion statistics */
+export interface TaskStats {
+  completed: number
+  failed: number
+  averageReviews: number
+}
+
+/** Model usage breakdown by responsibility */
+export interface ModelUsageStats {
+  plan: Array<{ model: string; count: number }>
+  execution: Array<{ model: string; count: number }>
+  review: Array<{ model: string; count: number }>
+}
+
+/** Hourly usage data point (24h view) */
+export interface HourlyUsage {
+  hour: string      // ISO timestamp for the hour
+  tokens: number
+  cost: number
+}
+
+/** Daily usage data point (7d/30d views) */
+export interface DailyUsage {
+  date: string
+  tokens: number
+  cost: number
 }
