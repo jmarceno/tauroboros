@@ -4,7 +4,7 @@ import type {
   ModelCatalog, ExecutionGraph, Session, SessionMessage, TaskRun,
   Candidate, BestOfNSummary, ReviewStatus, SessionUsageRollup,
   PlanningPrompt, PlanningPromptVersion, PlanningSession, CreatePlanningSessionDTO,
-  ContainerImage,
+  ContainerImage, TaskGroup, TaskGroupWithTasks, TaskGroupStatus,
 } from "@/types"
 import type { ApiError } from "../../../shared/error-codes"
 
@@ -204,5 +204,33 @@ export function useApi() {
         method: 'POST',
         body: JSON.stringify({ tasks }),
       }), [request]),
+
+    // Task Groups
+    getTaskGroups: useCallback(() => request<TaskGroup[]>('/api/task-groups'), [request]),
+    getTaskGroup: useCallback((id: string) => request<TaskGroupWithTasks>(`/api/task-groups/${id}`), [request]),
+    createTaskGroup: useCallback((data: { name?: string; color?: string; taskIds?: string[] }) =>
+      request<TaskGroup>('/api/task-groups', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }), [request]),
+    updateTaskGroup: useCallback((id: string, data: { name?: string; color?: string; status?: TaskGroupStatus }) =>
+      request<TaskGroup>(`/api/task-groups/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }), [request]),
+    deleteTaskGroup: useCallback((id: string) =>
+      request(`/api/task-groups/${id}`, { method: 'DELETE' }), [request]),
+    addTasksToGroup: useCallback((groupId: string, taskIds: string[]) =>
+      request<TaskGroup>(`/api/task-groups/${groupId}/tasks`, {
+        method: 'POST',
+        body: JSON.stringify({ taskIds }),
+      }), [request]),
+    removeTasksFromGroup: useCallback((groupId: string, taskIds: string[]) =>
+      request<TaskGroup>(`/api/task-groups/${groupId}/tasks`, {
+        method: 'DELETE',
+        body: JSON.stringify({ taskIds }),
+      }), [request]),
+    startGroup: useCallback((groupId: string) =>
+      request<WorkflowRun>(`/api/task-groups/${groupId}/start`, { method: 'POST' }), [request]),
   }
 }

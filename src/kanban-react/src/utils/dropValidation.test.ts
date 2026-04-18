@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect } from 'vitest'
 import { validateTaskDrop, canDragFromColumn } from './dropValidation'
 import type { Task } from '@/types'
 
