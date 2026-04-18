@@ -357,16 +357,7 @@ export type WSMessageType =
   | 'container_build_cancelled'
   | 'container_profile_created'
   | 'container_profile_applied'
-  // Task Group events
-  | 'group_created'
-  | 'group_updated'
-  | 'group_deleted'
-  | 'group_completed'
-  | 'group_archived'
-  | 'group_task_added'
-  | 'group_task_removed'
-  | 'group_task_reordered'
-  // Task-scoped group events
+  // Task Group events (unified task_group_* naming)
   | 'task_group_created'
   | 'task_group_updated'
   | 'task_group_deleted'

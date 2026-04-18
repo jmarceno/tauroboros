@@ -574,6 +574,62 @@ describe("PiKanbanServer API", () => {
     }
   })
 
+  it("only broadcasts single task_group_created event (no duplicate group_created)", async () => {
+    const root = createTempDir("tauroboros-group-no-dup-")
+    const dbPath = join(root, "tasks.db")
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+    db.updateOptions({ branch: "master" })
+    const port = await server.start(0)
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+
+    try {
+      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+
+      const messages: string[] = []
+      const handler = (event: any) => {
+        messages.push(event.data)
+      }
+      ws.addEventListener("message", handler)
+
+      // Create a group
+      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "No Duplicate Test",
+          color: "#888888",
+          status: "active",
+        }),
+      })
+
+      expect(response.status).toBe(201)
+
+      // Wait a bit for any potential duplicate messages
+      await Bun.sleep(200)
+
+      // Parse all messages
+      const parsedMessages = messages.map(m => JSON.parse(m))
+      
+      // Should only have ONE task_group_created event
+      const taskGroupCreatedEvents = parsedMessages.filter(m => m.type === "task_group_created")
+      const groupCreatedEvents = parsedMessages.filter(m => m.type === "group_created")
+      
+      // Verify only one task_group_created
+      expect(taskGroupCreatedEvents.length).toBe(1)
+      
+      // Verify NO group_created event is broadcast (the duplicate)
+      expect(groupCreatedEvents.length).toBe(0)
+      
+      // Verify the event has correct payload
+      expect(taskGroupCreatedEvents[0].payload.name).toBe("No Duplicate Test")
+    } finally {
+      ws.close()
+      server.stop()
+      db.close()
+    }
+  })
+
   it("broadcasts websocket task_group_updated event", async () => {
     const root = createTempDir("tauroboros-group-update-ws-")
     const dbPath = join(root, "tasks.db")
@@ -984,9 +1040,7 @@ describe("PiKanbanServer API", () => {
       // we verify that the WebSocket message type is valid and the infrastructure exists
       // by checking that a broadcast doesn't throw a type error
 
-      // Broadcast the event manually through the server's broadcast method
-      // This requires access to the server instance which we have
-      ;(server as any).broadcast({
+      server.broadcast({
         type: "group_execution_complete",
         payload: {
           groupId,
