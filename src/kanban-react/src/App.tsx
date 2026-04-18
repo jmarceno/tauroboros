@@ -7,8 +7,8 @@ import {
   ModalContext, ContainerStatusContext, SessionUsageContext, TaskLastUpdateContext,
   TaskGroupsContext,
 } from '@/contexts/AppContext'
+import { TabProvider, useTabContext, type MainTabId } from '@/contexts/TabContext'
 
-// Direct imports from hook files (avoid barrel file)
 import { useTasks } from '@/hooks/useTasks'
 import { useRuns } from '@/hooks/useRuns'
 import { useOptions } from '@/hooks/useOptions'
@@ -29,12 +29,10 @@ import { validateTaskDrop, validateGroupDrop } from '@/utils/dropValidation'
 import type { DropAction } from '@/utils/dropValidation'
 import type { Task, TaskGroup, TaskStatus } from '@/types'
 
-// Modal data type definitions to replace unsafe 'as' casts
 type ModalType = 'task' | 'options' | 'executionGraph' | 'approve' | 'revision' | 'startSingle' | 'session' | 'taskSessions' | 'bestOfNDetail' | 'batchEdit' | 'planningPrompt'
 
 const VALID_MODALS = new Set<ModalType>(['task', 'options', 'executionGraph', 'approve', 'revision', 'startSingle', 'session', 'taskSessions', 'bestOfNDetail', 'batchEdit', 'planningPrompt'])
 
-// Type guards for modal data validation
 function hasMode(data: Record<string, unknown>): data is { mode: string; taskId?: string; createStatus?: string; seedTaskId?: string } {
   return typeof data.mode === 'string'
 }
@@ -50,17 +48,15 @@ function hasSessionId(data: Record<string, unknown>): data is { sessionId: strin
 function hasTaskIds(data: Record<string, unknown>): data is { taskIds: string[] } {
   return Array.isArray(data.taskIds) && data.taskIds.every(id => typeof id === 'string')
 }
-
-// Components (direct imports from source files)
 import { Sidebar } from '@/components/board/Sidebar'
 import { TopBar } from '@/components/board/TopBar'
 import { KanbanBoard } from '@/components/board/KanbanBoard'
+import { TabBar } from '@/components/tabs/TabBar'
 import { GroupActionBar } from '@/components/board/GroupActionBar'
 import { TabbedLogPanel } from '@/components/common/TabbedLogPanel'
 import { ToastContainer } from '@/components/common/ToastContainer'
 import { ChatContainer } from '@/components/chat/ChatContainer'
 
-// Modals (direct imports from source files)
 import { TaskModal } from '@/components/modals/TaskModal'
 import { OptionsModal } from '@/components/modals/OptionsModal'
 import { ExecutionGraphModal } from '@/components/modals/ExecutionGraphModal'
@@ -91,7 +87,17 @@ const MemoizedTaskModal = memo(function MemoizedTaskModal(props: TaskModalProps)
   )
 })
 
-function App() {
+function AppContent() {
+  const { activeTab, setActiveTab } = useTabContext()
+  return <AppInner activeTab={activeTab} setActiveTab={setActiveTab} />
+}
+
+interface AppInnerProps {
+  activeTab: MainTabId
+  setActiveTab: (tab: MainTabId) => void
+}
+
+function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
   const [containerStatus, setContainerStatus] = useState<{ enabled: boolean; available: boolean; hasRunningWorkflows: boolean; message: string } | null>(null)
   const isContainerEnabled = containerStatus?.enabled ?? false
 
@@ -142,7 +148,6 @@ function App() {
   const [showGroupCreateModal, setShowGroupCreateModal] = useState(false)
   const [groupCreateModalData, setGroupCreateModalData] = useState<{ taskIds: string[]; defaultName?: string }>({ taskIds: [] })
 
-  // Restore to group modal state
   const [showRestoreModal, setShowRestoreModal] = useState(false)
   const [pendingRestoreTask, setPendingRestoreTask] = useState<Task | null>(null)
   const [pendingRestoreGroup, setPendingRestoreGroup] = useState<TaskGroup | null>(null)
@@ -415,6 +420,18 @@ function App() {
     toastsHook.showToast(`Group "${name}" created successfully`, 'success')
   }, [groupCreateModalData, taskGroupsHook, multiSelectHook, toastsHook])
 
+  const onSwitchTab = useCallback((tabIndex: number) => {
+    if (tabIndex < 1 || tabIndex > 5) {
+      throw new Error(`Invalid tab index: ${tabIndex}. Expected 1-5.`)
+    }
+    const tabs: MainTabId[] = ['kanban', 'options', 'containers', 'archived', 'stats']
+    const targetTab = tabs[tabIndex - 1]
+    if (!targetTab) {
+      throw new Error(`Tab at index ${tabIndex} is not defined.`)
+    }
+    setActiveTab(targetTab)
+  }, [setActiveTab])
+
   useKeyboard({
     onCreateTemplate: () => openModal('task', { mode: 'create', createStatus: 'template' }),
     onCreateBacklog: () => openModal('task', { mode: 'create', createStatus: 'backlog' }),
@@ -427,6 +444,7 @@ function App() {
     onCloseGroupPanel: () => taskGroupsHook.openGroup(null),
     isGroupPanelOpen: () => taskGroupsHook.activeGroupId !== null,
     selectedCount: () => multiSelectHook.selectedCount,
+    onSwitchTab,
     onStartWorkflow: async () => {
       const grouped = tasksHook.groupedTasks
       const executableTasks = (grouped?.backlog?.length ?? 0) +
@@ -519,7 +537,8 @@ function App() {
     }
     init()
     return () => { cancelled = true }
-    // Empty deps - only run once on mount
+    // Initialization runs once on mount. Dependencies are intentionally excluded
+    // to prevent re-running when hook references change - initialization is idempotent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -811,16 +830,16 @@ function App() {
   const onClearSelection = useCallback(() => multiSelectHook.clearSelection(), [multiSelectHook])
 
   return (
-    <TasksContext.Provider value={tasksHook as unknown as React.ContextType<typeof TasksContext>}>
+    <TasksContext.Provider value={tasksHook}>
       <RunsContext.Provider value={runsHook}>
-        <OptionsContext.Provider value={optionsHook as unknown as React.ContextType<typeof OptionsContext>}>
+        <OptionsContext.Provider value={optionsHook}>
           <ToastContext.Provider value={toastsHook}>
             <ModelSearchContext.Provider value={modelSearchHook}>
               <SessionContext.Provider value={sessionHook}>
-                <WebSocketContext.Provider value={wsHook as unknown as React.ContextType<typeof WebSocketContext>}>
+                <WebSocketContext.Provider value={wsHook}>
                   <WorkflowControlContext.Provider value={workflowControl}>
                     <MultiSelectContext.Provider value={multiSelectHook}>
-                      <PlanningChatContext.Provider value={planningChatHook as unknown as React.ContextType<typeof PlanningChatContext>}>
+                      <PlanningChatContext.Provider value={planningChatHook}>
                         <ModalContext.Provider value={modalContextValue}>
                           <ContainerStatusContext.Provider value={containerStatusContextValue}>
                             <SessionUsageContext.Provider value={sessionUsageHook}>
@@ -857,8 +876,10 @@ function App() {
 
                               <main className="main-content">
                                 <TopBar />
+                                <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
 
-                                <KanbanBoard
+                                {activeTab === 'kanban' && (
+                                  <KanbanBoard
                                   logPanelCollapsed={logPanelCollapsed}
                                   tasks={tasksHook.tasks}
                                   bonSummaries={tasksHook.bonSummaries}
@@ -898,6 +919,47 @@ function App() {
                                   onAddTasksToGroup={onAddTasksToGroup}
                                   onRenameGroup={onRenameGroup}
                                 />
+                                )}
+
+                                {activeTab === 'options' && (
+                                  <div className="flex-1 flex items-center justify-center p-8">
+                                    <div className="text-center">
+                                      <div className="text-6xl mb-4">⚙️</div>
+                                      <h2 className="text-xl font-semibold text-dark-text mb-2">Options Tab</h2>
+                                      <p className="text-dark-text-muted">Options configuration will be integrated here.</p>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {activeTab === 'containers' && (
+                                  <div className="flex-1 flex items-center justify-center p-8">
+                                    <div className="text-center">
+                                      <div className="text-6xl mb-4">🐳</div>
+                                      <h2 className="text-xl font-semibold text-dark-text mb-2">Containers Tab</h2>
+                                      <p className="text-dark-text-muted">Container management will be integrated here.</p>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {activeTab === 'archived' && (
+                                  <div className="flex-1 flex items-center justify-center p-8">
+                                    <div className="text-center">
+                                      <div className="text-6xl mb-4">📦</div>
+                                      <h2 className="text-xl font-semibold text-dark-text mb-2">Archived Tasks</h2>
+                                      <p className="text-dark-text-muted">Archived tasks view will be integrated here.</p>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {activeTab === 'stats' && (
+                                  <div className="flex-1 flex items-center justify-center p-8">
+                                    <div className="text-center">
+                                      <div className="text-6xl mb-4">📊</div>
+                                      <h2 className="text-xl font-semibold text-dark-text mb-2">Statistics</h2>
+                                      <p className="text-dark-text-muted">System statistics will be integrated here.</p>
+                                    </div>
+                                  </div>
+                                )}
 
                                 <TabbedLogPanel
                                   collapsed={logPanelCollapsed}
@@ -1091,6 +1153,14 @@ function App() {
         </OptionsContext.Provider>
       </RunsContext.Provider>
     </TasksContext.Provider>
+  )
+}
+
+function App() {
+  return (
+    <TabProvider>
+      <AppContent />
+    </TabProvider>
   )
 }
 
