@@ -237,6 +237,9 @@ interface SessionUsageContextType {
   clearCache: () => void
   startWatching: (sessionId: string) => void
   stopWatching: (sessionId: string) => void
+  startWatchingTask: (taskId: string) => Promise<void>
+  stopWatchingTask: (taskId: string) => void
+  getTaskUsage: (taskId: string) => { totalTokens: number; totalCost: number }
   formatTokenCount: (count: number) => string
   formatCost: (cost: number) => string
 }

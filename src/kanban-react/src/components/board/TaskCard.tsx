@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useCallback, memo, useState, useRef } from "react"
+import { useEffect, useMemo, useCallback, memo, useRef } from "react"
 import type { Task, BestOfNSummary } from "@/types"
 import type { useDragDrop } from "@/hooks/useDragDrop"
-import { useOptionsContext, useTasksContext } from "@/contexts/AppContext"
-import { useApi } from "@/hooks/useApi"
+import { useOptionsContext, useTasksContext, useSessionUsageContext, useTaskLastUpdateContext } from "@/contexts/AppContext"
 
 interface TaskCardProps {
   task: Task
@@ -29,105 +28,6 @@ interface TaskCardProps {
   onArchive: (e: React.MouseEvent) => void
   onViewRuns: () => void
   onContinueReviews: () => void
-}
-
-// Hook for lazy loading session data only when card is visible
-function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
-  const api = useApi()
-  const [isVisible, setIsVisible] = useState(false)
-  const [usageData, setUsageData] = useState<{ totalTokens: number; totalCost: number } | null>(null)
-  const [lastUpdate, setLastUpdate] = useState<number | null>(null)
-  const observerRef = useRef<IntersectionObserver | null>(null)
-  const cardRef = useRef<HTMLDivElement | null>(null)
-  const hasLoadedRef = useRef(false)
-  // Use refs to track current values and prevent stale closures
-  const taskIdRef = useRef(taskId)
-  const hasSessionRef = useRef(hasSession)
-
-  // Keep refs synchronized with latest prop values
-  taskIdRef.current = taskId
-  hasSessionRef.current = hasSession
-
-  // Set up intersection observer
-  useEffect(() => {
-    if (!cardRef.current || !hasSessionRef.current) return
-
-    const currentCardRef = cardRef.current
-    observerRef.current = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          setIsVisible(true)
-        }
-      },
-      { threshold: 0.1, rootMargin: '100px' }
-    )
-
-    observerRef.current.observe(currentCardRef)
-
-    return () => {
-      observerRef.current?.disconnect()
-    }
-  }, []) // Empty deps - uses hasSessionRef to avoid stale closure
-
-  // Load data when card becomes visible
-  useEffect(() => {
-    if (!isVisible || !taskIdRef.current || hasLoadedRef.current) return
-
-    hasLoadedRef.current = true
-    const currentTaskId = taskIdRef.current
-
-    // Load session usage data
-    const loadUsage = async () => {
-      try {
-        const sessions = await api.getTaskSessions(currentTaskId)
-        let totalTokens = 0
-        let totalCost = 0
-
-        // Load usage for each session with concurrency control
-        const usagePromises = sessions.map(async (session) => {
-          try {
-            const usage = await api.getSessionUsage(session.id)
-            return usage
-          } catch {
-            return null
-          }
-        })
-
-        const usages = await Promise.all(usagePromises)
-        usages.forEach((usage) => {
-          if (usage) {
-            totalTokens += usage.totalTokens
-            totalCost += usage.totalCost
-          }
-        })
-
-        setUsageData({ totalTokens, totalCost })
-      } catch {
-        // Silently fail
-      }
-    }
-
-    // Load last update timestamp
-    const loadLastUpdate = async () => {
-      try {
-        const response = await fetch(`/api/tasks/${currentTaskId}/last-update`)
-        if (response.ok) {
-          const data = await response.json() as { lastUpdateAt: number | null }
-          if (data.lastUpdateAt !== null) {
-            setLastUpdate(data.lastUpdateAt)
-          }
-        }
-      } catch {
-        // Silently fail
-      }
-    }
-
-    // Execute both requests
-    loadUsage()
-    loadLastUpdate()
-  }, [isVisible, api]) // Only depend on isVisible and stable api
-
-  return { cardRef, usageData, lastUpdate }
 }
 
 // Format helpers
@@ -205,22 +105,55 @@ export const TaskCard = memo(function TaskCard({
 }: TaskCardProps) {
   const { options } = useOptionsContext()
   const { tasks } = useTasksContext()
+  const { startWatchingTask, stopWatchingTask, getTaskUsage } = useSessionUsageContext()
+  const { getLastUpdate, loadLastUpdate } = useTaskLastUpdateContext()
+
+  const cardRef = useRef<HTMLDivElement>(null)
 
   const hasLocalSession =
     !!task.sessionId &&
     task.status !== 'backlog' &&
     task.status !== 'template'
 
-  // Lazy load session data only when card is visible
-  const { cardRef, usageData, lastUpdate } = useLazySessionData(task.id, hasLocalSession)
+  // Intersection observer for lazy loading - only for initial data fetch
+  useEffect(() => {
+    if (!cardRef.current || !hasLocalSession) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          // Start watching task for usage updates
+          startWatchingTask(task.id)
+          // Load last update from backend
+          loadLastUpdate(task.id)
+          // Don't disconnect observer - we want to keep watching
+        }
+      },
+      { threshold: 0.1, rootMargin: '100px' }
+    )
+
+    observer.observe(cardRef.current)
+
+    return () => {
+      observer.disconnect()
+      stopWatchingTask(task.id)
+    }
+  }, [task.id, hasLocalSession, startWatchingTask, stopWatchingTask, loadLastUpdate])
+
+  // Get real-time last update from context (WebSocket-powered)
+  const lastUpdate = getLastUpdate(task.id)
 
   // Format last update
   const lastUpdateFormatted = lastUpdate ? formatRelativeTime(lastUpdate) : null
   const lastUpdateAgeClass = lastUpdate ? getUpdateAgeClass(lastUpdate) : null
 
-  // Format usage data - show for all non-backlog/non-template tasks with session
-  // even if token count is 0 (e.g., freshly started executing tasks)
-  const hasUsageData = usageData !== null
+  // Get aggregated usage data from context
+  const usageData = useMemo(() => {
+    if (!hasLocalSession) return null
+    return getTaskUsage(task.id)
+  }, [task.id, hasLocalSession, getTaskUsage])
+
+  const hasUsageData = usageData !== null && (usageData.totalTokens > 0 || usageData.totalCost > 0)
   const formattedTokens = usageData ? formatTokenCount(usageData.totalTokens) : ''
   const formattedCost = usageData ? formatCost(usageData.totalCost) : ''
 
@@ -296,7 +229,7 @@ export const TaskCard = memo(function TaskCard({
     }
   })()
 
-  const handleDragStart = useCallback((e: React.DragEvent) => {
+  const handleDragStart = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     if (!canDrag) return
 
     // Determine drag source context
@@ -305,7 +238,7 @@ export const TaskCard = memo(function TaskCard({
       : { source: 'column' as const, status: task.status }
 
     dragDrop.handleDragStart(task.id, context)
-    ;(e.target as HTMLElement).classList.add('dragging')
+    e.currentTarget.classList.add('dragging')
 
     // Set data transfer with context for external handling
     e.dataTransfer.effectAllowed = 'move'
@@ -316,9 +249,9 @@ export const TaskCard = memo(function TaskCard({
     }))
   }, [canDrag, dragDrop, task.id, task.groupId, task.status])
 
-  const handleDragEnd = useCallback((e: React.DragEvent) => {
+  const handleDragEnd = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     dragDrop.handleDragEnd()
-    ;(e.target as HTMLElement).classList.remove('dragging')
+    e.currentTarget.classList.remove('dragging')
   }, [dragDrop])
 
   const getStatusIcon = useCallback(() => {
