@@ -1,13 +1,13 @@
-export type TaskStatus = 'template' | 'backlog' | 'executing' | 'review' | 'code-style' | 'done' | 'failed' | 'stuck'
-export type TaskGroupStatus = 'active' | 'running' | 'completed' | 'archived'
-export type ThinkingLevel = 'default' | 'low' | 'medium' | 'high'
-export type ExecutionStrategy = 'standard' | 'best_of_n'
-export type SelectionMode = 'pick_best' | 'synthesize' | 'pick_or_synthesize'
-export type RunStatus = 'running' | 'stopping' | 'paused' | 'failed' | 'completed'
-export type SessionStatus = 'pending' | 'active' | 'completed' | 'failed'
-export type MessageRole = 'assistant' | 'user' | 'system' | 'tool'
-export type TaskPhase = 'not_started' | 'planning' | 'plan_complete_waiting_approval' | 'implementation_pending' | 'implementation_done' | 'reviewing'
-export type BestOfNSubstage = 'idle' | 'workers_running' | 'reviewers_running' | 'final_apply_running' | 'blocked_for_manual_review' | 'completed'
+export type TaskStatus = "template" | "backlog" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
+export type TaskGroupStatus = "active" | "running" | "completed" | "archived"
+export type ThinkingLevel = "default" | "low" | "medium" | "high"
+export type ExecutionStrategy = "standard" | "best_of_n"
+export type SelectionMode = "pick_best" | "synthesize" | "pick_or_synthesize"
+export type RunStatus = "running" | "stopping" | "paused" | "failed" | "completed"
+export type SessionStatus = "pending" | "active" | "completed" | "failed"
+export type MessageRole = "assistant" | "user" | "system" | "tool"
+export type TaskPhase = "not_started" | "planning" | "plan_complete_waiting_approval" | "implementation_pending" | "implementation_done" | "reviewing"
+export type BestOfNSubstage = "idle" | "workers_running" | "reviewers_running" | "final_apply_running" | "blocked_for_manual_review" | "completed"
 
 export interface Task {
   id: string

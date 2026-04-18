@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useCallback, memo, useState, useRef } from 'react'
-import type { Task, BestOfNSummary } from '@/types'
-import type { useDragDrop } from '@/hooks/useDragDrop'
-import { useOptionsContext, useTasksContext } from '@/contexts/AppContext'
-import { useApi } from '@/hooks/useApi'
+import { useEffect, useMemo, useCallback, memo, useState, useRef } from "react"
+import type { Task, BestOfNSummary } from "@/types"
+import type { useDragDrop } from "@/hooks/useDragDrop"
+import { useOptionsContext, useTasksContext } from "@/contexts/AppContext"
+import { useApi } from "@/hooks/useApi"
 
 interface TaskCardProps {
   task: Task
@@ -323,10 +323,23 @@ export const TaskCard = memo(function TaskCard({
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
     if (!canDrag) return
-    dragDrop.handleDragStart(task.id)
+
+    // Determine drag source context
+    const context = task.groupId
+      ? { source: 'group' as const, groupId: task.groupId }
+      : { source: 'column' as const, status: task.status }
+
+    dragDrop.handleDragStart(task.id, context)
     ;(e.target as HTMLElement).classList.add('dragging')
+
+    // Set data transfer with context for external handling
     e.dataTransfer.effectAllowed = 'move'
-  }, [canDrag, dragDrop, task.id])
+    e.dataTransfer.setData('text/plain', task.id)
+    e.dataTransfer.setData('application/json', JSON.stringify({
+      taskId: task.id,
+      source: context,
+    }))
+  }, [canDrag, dragDrop, task.id, task.groupId, task.status])
 
   const handleDragEnd = useCallback((e: React.DragEvent) => {
     dragDrop.handleDragEnd()

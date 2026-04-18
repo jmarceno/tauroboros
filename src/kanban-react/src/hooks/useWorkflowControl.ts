@@ -1,8 +1,8 @@
-import { useState, useCallback, useMemo } from 'react'
-import { useApi } from './useApi'
-import type { WorkflowRun, ControlState } from '@/types'
+import { useState, useCallback, useMemo } from "react"
+import { useApi } from "./useApi"
+import type { WorkflowRun, ControlState } from "@/types"
 
-export type StopType = 'graceful' | 'destructive' | null
+export type StopType = "graceful" | "destructive" | null
 
 export function useWorkflowControl(
   onStateChange?: (state: ControlState) => void,

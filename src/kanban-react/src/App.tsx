@@ -14,7 +14,8 @@ import {
   useDragDrop, useKeyboard, useSessionUsage, useTaskLastUpdate,
   useTaskGroups,
 } from "@/hooks"
-import { validateTaskDrop } from "@/utils/dropValidation"
+import { validateTaskDrop, validateGroupDrop } from "@/utils/dropValidation"
+import type { DropAction } from "@/utils/dropValidation"
 import type { Task, TaskStatus, WorkflowRun, TaskGroup } from "@/types"
 
 // Components
@@ -198,14 +199,73 @@ function App() {
     setConfirmModalTaskId(null)
   }, [confirmModalAction, confirmModalTaskId, executeConfirmedAction])
 
-  // Drag and drop
-  const dragDrop = useDragDrop(async (taskId, targetStatus) => {
+  // Drag and drop handler with group support
+  const dragDrop = useDragDrop(async (taskId: string, target: string, action: DropAction) => {
     const task = tasksHook.getTaskById(taskId)
     if (!task) return
 
+    // Handle group-related actions
+    if (action === 'add-to-group') {
+      // Validate that task can be added to group
+      const validation = validateGroupDrop(
+        task,
+        task.groupId ? 'group' : 'backlog',
+        target,
+        task.groupId ?? null
+      )
+
+      if (!validation.allowed) {
+        if (validation.reason && validation.reason !== 'no-change') {
+          toastsHook.showToast(validation.reason, 'error')
+        }
+        return
+      }
+
+      try {
+        await taskGroupsHook.addTasksToGroup(target, [taskId])
+        await tasksHook.loadTasks()
+        toastsHook.showToast('Task added to group', 'success')
+      } catch (e) {
+        toastsHook.showToast('Failed to add task to group: ' + (e instanceof Error ? e.message : String(e)), 'error')
+      }
+      return
+    }
+
+    if (action === 'remove-from-group') {
+      // Validate removal from group
+      const validation = validateGroupDrop(
+        task,
+        'group',
+        null,
+        task.groupId ?? null
+      )
+
+      if (!validation.allowed) {
+        if (validation.reason && validation.reason !== 'no-change') {
+          toastsHook.showToast(validation.reason, 'error')
+        }
+        return
+      }
+
+      if (!task.groupId) {
+        toastsHook.showToast('Task is not in a group', 'error')
+        return
+      }
+
+      try {
+        await taskGroupsHook.removeTasksFromGroup(task.groupId, [taskId])
+        await tasksHook.loadTasks()
+        toastsHook.showToast('Task removed from group', 'success')
+      } catch (e) {
+        toastsHook.showToast('Failed to remove task from group: ' + (e instanceof Error ? e.message : String(e)), 'error')
+      }
+      return
+    }
+
+    // Handle column drops (original behavior)
     const validation = validateTaskDrop(
       task,
-      targetStatus as TaskStatus,
+      target as TaskStatus,
       runsHook.isTaskMutationLocked(taskId)
     )
 

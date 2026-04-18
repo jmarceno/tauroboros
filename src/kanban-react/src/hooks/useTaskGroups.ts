@@ -1,7 +1,7 @@
-import { useState, useCallback, useMemo } from 'react'
-import type { TaskGroup } from '@/types'
-import { useApi } from './useApi'
-import { useToasts } from './useToasts'
+import { useState, useCallback, useMemo } from "react"
+import type { TaskGroup } from "@/types"
+import { useApi } from "./useApi"
+import { useToasts } from "./useToasts"
 
 export type GroupState = {
   groups: TaskGroup[]

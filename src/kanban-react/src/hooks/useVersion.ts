@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { useApi } from './useApi'
+import { useState, useEffect } from "react"
+import { useApi } from "./useApi"
 
 export function useVersion() {
   const [version, setVersion] = useState<string | null>(null)

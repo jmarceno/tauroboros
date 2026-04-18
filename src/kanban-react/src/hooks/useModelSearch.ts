@@ -1,7 +1,7 @@
-import { useState, useCallback, useEffect } from 'react'
-import Fuse from 'fuse.js'
-import type { ModelEntry, ModelCatalog } from '@/types'
-import { useApi } from './useApi'
+import { useState, useCallback, useEffect } from "react"
+import Fuse from "fuse.js"
+import type { ModelEntry, ModelCatalog } from "@/types"
+import { useApi } from "./useApi"
 
 export function useModelSearch() {
   const api = useApi()
