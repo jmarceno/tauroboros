@@ -2562,6 +2562,7 @@ Please confirm when you've created the tasks, and provide a summary of what was 
       try {
         const run = await this.onStartGroup(params.id)
         broadcast({ type: "run_created", payload: run })
+        broadcast({ type: "group_execution_started", payload: { groupId: params.id, taskIds: group.taskIds, startedAt: Date.now() } })
         broadcast({ type: "execution_started", payload: {} })
         return json(run)
       } catch (err) {
