@@ -895,6 +895,73 @@ describe("PiKanbanServer API", () => {
     }
   })
 
+  it("removes task from group when converted to template via PATCH", async () => {
+    const root = createTempDir("tauroboros-task-template-group-remove-")
+    const dbPath = join(root, "tasks.db")
+    const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+    db.updateOptions({ branch: "master" })
+    const port = await server.start(0)
+
+    // Create a task
+    const createTaskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Task to Template", prompt: "Test task", status: "backlog" }),
+    })
+    const task = await createTaskRes.json()
+    const taskId = task.id
+
+    // Create a group and add the task to it
+    const groupRes = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Test Group", color: "#888888", status: "active", taskIds: [taskId] }),
+    })
+    const group = await groupRes.json()
+    const groupId = group.id
+
+    // Verify task is in group
+    const groupBefore = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`).then(r => r.json())
+    expect(groupBefore.tasks).toContainEqual(expect.objectContaining({ id: taskId }))
+
+    // Set up websocket listener for group removal events
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
+    const events: any[] = []
+
+    await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+    ws.addEventListener("message", (event: any) => {
+      const parsed = JSON.parse(String(event.data))
+      if (parsed?.type === "task_group_members_removed" || parsed?.type === "group_task_removed") {
+        events.push(parsed)
+      }
+    })
+
+    // Convert task to template via PATCH
+    const patchRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "template" }),
+    })
+    expect(patchRes.status).toBe(200)
+
+    const updatedTask = await patchRes.json()
+    expect(updatedTask.status).toBe("template")
+    expect(updatedTask.groupId).toBeUndefined()
+
+    // Verify task is no longer in group
+    const groupAfter = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`).then(r => r.json())
+    expect(groupAfter.tasks).not.toContainEqual(expect.objectContaining({ id: taskId }))
+
+    // Verify websocket events were broadcast
+    await new Promise<void>((resolve) => setTimeout(resolve, 100))
+    expect(events.some(e => e.type === "task_group_members_removed" && e.payload.groupId === groupId)).toBe(true)
+    expect(events.some(e => e.type === "group_task_removed" && e.payload.groupId === groupId && e.payload.taskId === taskId)).toBe(true)
+
+    ws.close()
+    server.stop()
+    db.close()
+  })
+
   it("broadcasts websocket group_execution_started event", async () => {
     const root = createTempDir("tauroboros-group-exec-ws-")
     const dbPath = join(root, "tasks.db")

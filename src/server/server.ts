@@ -859,8 +859,23 @@ export class PiKanbanServer {
         body.bestOfNSubstage = "idle"
       }
 
+      // When converting a task to template, remove it from its group
+      let removedFromGroupId: string | null = null
+      if (body?.status === "template" && existing.groupId) {
+        removedFromGroupId = existing.groupId
+        this.db.removeTaskFromGroup(existing.groupId, params.id)
+        body.groupId = null
+      }
+
       const task = this.db.updateTask(params.id, body)
       if (!task) return json({ error: "Task not found" }, 404)
+
+      // Broadcast group removal events after task update
+      if (removedFromGroupId) {
+        broadcast({ type: "task_group_members_removed", payload: { groupId: removedFromGroupId, taskIds: [task.id] } })
+        broadcast({ type: "group_task_removed", payload: { groupId: removedFromGroupId, taskId: task.id } })
+      }
+
       const normalized = normalizeTaskForClient(task, sessionUrlFor)
       broadcast({ type: "task_updated", payload: normalized })
       return json(normalized)
