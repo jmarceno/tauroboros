@@ -1,6 +1,7 @@
-import { memo, useCallback } from 'react'
+import { memo, useCallback, useRef, useState, useEffect } from 'react'
 import type { TaskGroup, Task, TaskStatus } from '@/types'
 import type { useDragDrop } from '@/hooks/useDragDrop'
+import { useFocusTrap } from '@/hooks/useFocusTrap'
 
 export interface GroupPanelProps {
   group: TaskGroup
@@ -92,17 +93,46 @@ export const GroupPanel = memo(function GroupPanel({
   onDeleteGroup,
   dragDrop,
 }: GroupPanelProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const [isExiting, setIsExiting] = useState(false)
+  const triggerRef = useRef<HTMLElement | null>(null)
+
+  // Store the element that triggered the panel open
+  useEffect(() => {
+    if (isOpen) {
+      triggerRef.current = document.activeElement as HTMLElement
+    }
+  }, [isOpen])
+
+  const handleClose = useCallback(() => {
+    setIsExiting(true)
+  }, [])
+
+  // Focus trap for accessibility
+  useFocusTrap({
+    isActive: isOpen,
+    containerRef,
+    restoreFocusTo: triggerRef.current,
+    onEscape: handleClose,
+  })
+
   // Use dragOverTarget from hook for precise state tracking
   const isDragOver = dragDrop.dragOverTarget?.type === 'group' && dragDrop.dragOverTarget?.id === group.id
 
+  const handleAnimationEnd = useCallback(() => {
+    if (isExiting) {
+      setIsExiting(false)
+      onClose()
+    }
+  }, [isExiting, onClose])
+
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    // Use the specialized group handler
     dragDrop.handleDragOverGroup(group.id, e)
   }, [dragDrop, group.id])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
-    // Only clear state if we're actually leaving the drop zone (not entering a child)
     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
       dragDrop.handleDragLeave()
     }
@@ -110,7 +140,6 @@ export const GroupPanel = memo(function GroupPanel({
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    // Use the specialized drop handler
     dragDrop.handleDropOnGroup(group.id, e)
   }, [dragDrop, group.id])
 
@@ -123,6 +152,13 @@ export const GroupPanel = memo(function GroupPanel({
     onOpenTask(taskId)
   }, [onOpenTask])
 
+  const handleTaskKeyDown = useCallback((e: React.KeyboardEvent, taskId: string) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onOpenTask(taskId)
+    }
+  }, [onOpenTask])
+
   const handleStartClick = useCallback(() => {
     onStartGroup()
   }, [onStartGroup])
@@ -132,8 +168,12 @@ export const GroupPanel = memo(function GroupPanel({
     onDeleteGroup()
   }, [onDeleteGroup])
 
-  // Don't render anything when closed
-  if (!isOpen) {
+  const handleBackdropClick = useCallback(() => {
+    handleClose()
+  }, [handleClose])
+
+  // Don't render anything when closed and animation finished
+  if (!isOpen && !isExiting) {
     return null
   }
 
@@ -141,176 +181,215 @@ export const GroupPanel = memo(function GroupPanel({
   const taskWord = taskCount === 1 ? 'task' : 'tasks'
 
   return (
-    <div
-      className="fixed top-0 right-0 h-screen w-[350px] bg-dark-surface border-l border-dark-border flex flex-col z-40 animate-slide-in"
-      style={{ boxShadow: '-4px 0 20px rgba(0,0,0,0.5)' }}
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between p-3 bg-dark-surface2 border-b border-dark-border flex-shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          {/* Color indicator */}
-          <div
-            className="w-3 h-3 rounded-full border border-dark-border flex-shrink-0"
-            style={{ backgroundColor: group.color }}
-          />
-          {/* Group name and count */}
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-dark-text truncate" title={group.name}>
-              {group.name}
-            </h3>
-            <span className="text-xs text-dark-text-secondary">
-              {taskCount} {taskWord}
-            </span>
+    <>
+      {/* Backdrop */}
+      <div
+        className="group-panel-backdrop"
+        onClick={handleBackdropClick}
+        aria-hidden="true"
+      />
+
+      {/* Panel */}
+      <div
+        ref={containerRef}
+        className={`group-panel ${isExiting ? 'group-panel-exit' : 'group-panel-enter'}`}
+        style={{
+          boxShadow: '-4px 0 20px rgba(0,0,0,0.5)',
+          '--group-color': `${group.color}66`,
+        } as React.CSSProperties}
+        role="complementary"
+        aria-label={`Group panel: ${group.name}`}
+        aria-expanded={isOpen}
+        onAnimationEnd={handleAnimationEnd}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-3 bg-dark-surface2 border-b border-dark-border flex-shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Color indicator */}
+            <div
+              className="w-3 h-3 rounded-full border border-dark-border flex-shrink-0"
+              style={{ backgroundColor: group.color }}
+              aria-hidden="true"
+            />
+            {/* Group name and count */}
+            <div className="min-w-0">
+              <h3
+                className="text-sm font-semibold text-dark-text truncate"
+                title={group.name}
+              >
+                {group.name}
+              </h3>
+              <span className="text-xs text-dark-text-secondary">
+                {taskCount} {taskWord}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {/* Delete group button */}
+            <button
+              className="w-7 h-7 flex items-center justify-center rounded hover:bg-dark-surface3 text-dark-text-secondary hover:text-accent-danger transition-colors"
+              title="Delete group"
+              onClick={handleDeleteClick}
+              aria-label="Delete group"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+            {/* Close button */}
+            <button
+              ref={closeButtonRef}
+              className="w-7 h-7 flex items-center justify-center rounded hover:bg-dark-surface3 text-dark-text-secondary hover:text-dark-text transition-colors"
+              onClick={handleClose}
+              aria-label="Close group panel (Escape)"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {/* Delete group button */}
-          <button
-            className="w-7 h-7 flex items-center justify-center rounded hover:bg-dark-surface3 text-dark-text-secondary hover:text-accent-danger transition-colors"
-            title="Delete group"
-            onClick={handleDeleteClick}
-            aria-label="Delete group"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-          </button>
-          {/* Close button */}
-          <button
-            className="w-7 h-7 flex items-center justify-center rounded hover:bg-dark-surface3 text-dark-text-secondary hover:text-dark-text transition-colors"
-            onClick={onClose}
-            aria-label="Close group panel"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      </div>
 
-      {/* Drag-drop zone */}
-      <div
-        className={`flex-shrink-0 p-3 border-b border-dark-border transition-colors duration-200 ${
-          isDragOver
-            ? 'bg-accent-primary/10 border-accent-primary'
-            : 'bg-transparent border-dark-border'
-        }`}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        role="region"
-        aria-label={`Drop zone for ${group.name}`}
-      >
+        {/* Drag-drop zone */}
         <div
-          className={`border-2 border-dashed rounded-lg p-3 text-center transition-colors duration-200 ${
-            isDragOver
-              ? 'border-accent-primary'
-              : 'border-dark-border'
-          }`}
+          className={`group-drop-zone ${isDragOver ? 'drag-over' : ''}`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          role="region"
+          aria-label={`Drop zone for ${group.name}`}
         >
-          <svg
-            className={`w-5 h-5 mx-auto mb-1 transition-colors duration-200 ${
-              isDragOver ? 'text-accent-primary' : 'text-dark-text-muted'
-            }`}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <path d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-          </svg>
-          <span
-            className={`text-xs transition-colors duration-200 ${
-              isDragOver ? 'text-accent-primary' : 'text-dark-text-muted'
+          <div
+            className={`border-2 border-dashed rounded-lg p-3 text-center transition-colors duration-200 ${
+              isDragOver
+                ? 'border-accent-primary'
+                : 'border-dark-border'
             }`}
           >
-            {isDragOver ? 'Drop to add' : 'Drag tasks here'}
-          </span>
-        </div>
-      </div>
-
-      {/* Task list */}
-      <div
-        className="flex-1 overflow-y-auto p-3 space-y-2"
-        role="list"
-        aria-label={`Tasks in ${group.name}`}
-      >
-        {tasks.length === 0 ? (
-          /* Empty state */
-          <div className="flex flex-col items-center justify-center h-full py-12">
             <svg
-              className="w-12 h-12 mb-3 opacity-30 text-dark-text-muted"
+              className={`w-5 h-5 mx-auto mb-1 transition-colors duration-200 ${
+                isDragOver ? 'text-accent-primary' : 'text-dark-text-muted'
+              }`}
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
-              strokeWidth="1.5"
+              strokeWidth="2"
             >
-              <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              <path d="M19 14l-7 7m0 0l-7-7m7 7V3" />
             </svg>
-            <p className="text-sm text-dark-text-muted">No tasks in this group</p>
-            <p className="text-xs text-dark-text-muted/60 mt-1">Drag tasks here to add them</p>
-          </div>
-        ) : (
-          /* Task cards */
-          tasks.map((task) => (
-            <div
-              key={task.id}
-              className="group p-2.5 bg-dark-bg border border-dark-border rounded-md cursor-pointer transition-all hover:border-accent-primary hover:translate-x-0.5"
-              onClick={() => handleOpenTask(task.id)}
+            <span
+              className={`text-xs transition-colors duration-200 ${
+                isDragOver ? 'text-accent-primary' : 'text-dark-text-muted'
+              }`}
             >
-              <div className="flex items-start gap-2">
-                {/* Status indicator */}
-                <div className="flex-shrink-0 mt-0.5">
-                  {getStatusIcon(task.status)}
-                </div>
+              {isDragOver ? 'Drop to add' : 'Drag tasks here to add'}
+            </span>
+          </div>
+        </div>
 
-                {/* Task info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="px-1.5 py-0 text-[10px] bg-dark-surface2 border border-dark-border rounded text-dark-text-muted font-mono">
-                      #{task.idx + 1}
-                    </span>
-                    <span className="text-sm text-dark-text truncate" title={task.name}>
-                      {task.name}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`w-1.5 h-1.5 rounded-full ${statusColorMap[task.status] || 'bg-dark-text-muted'}`} />
-                    <span className="text-xs text-dark-text-secondary capitalize">{task.status}</span>
-                  </div>
-                </div>
-
-                {/* Remove button */}
-                <button
-                  className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-danger transition-all"
-                  title="Remove from group"
-                  onClick={(e) => handleRemoveTask(e, task.id)}
-                  aria-label={`Remove task ${task.name} from group`}
-                >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* Footer */}
-      <div className="flex-shrink-0 p-3 bg-dark-surface2 border-t border-dark-border">
-        <button
-          className="btn btn-primary w-full flex items-center justify-center gap-2"
-          disabled={tasks.length === 0}
-          onClick={handleStartClick}
+        {/* Task list */}
+        <div
+          className="flex-1 overflow-y-auto p-3 space-y-2"
+          role="list"
+          aria-label={`Tasks in ${group.name}`}
         >
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-            <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          Start Group Workflow
-        </button>
+          {tasks.length === 0 ? (
+            /* Empty state */
+            <div className="group-empty-state">
+              <svg
+                className="group-empty-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
+              >
+                <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                <path d="M12 12v4m0-4l-2 2m2-2l2 2" />
+              </svg>
+              <p className="text-sm text-dark-text-muted">No tasks in this group</p>
+              <p className="group-hint-text">
+                Drag tasks from the board or use Ctrl+G with 2+ selected tasks to add them
+              </p>
+            </div>
+          ) : (
+            /* Task cards */
+            tasks.map((task) => (
+              <div
+                key={task.id}
+                className="group-task-item p-2.5 bg-dark-bg border border-dark-border rounded-md cursor-pointer transition-all hover:border-accent-primary hover:translate-x-0.5"
+                onClick={() => handleOpenTask(task.id)}
+                onKeyDown={(e) => handleTaskKeyDown(e, task.id)}
+                tabIndex={0}
+                role="listitem"
+                aria-label={`${task.name}, status ${task.status}. Press Enter to open.`}
+              >
+                <div className="flex items-start gap-2">
+                  {/* Status indicator */}
+                  <div className="flex-shrink-0 mt-0.5" aria-hidden="true">
+                    {getStatusIcon(task.status)}
+                  </div>
+
+                  {/* Task info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span
+                        className="px-1.5 py-0 text-[10px] bg-dark-surface2 border border-dark-border rounded text-dark-text-muted font-mono"
+                        aria-label={`Task number ${task.idx + 1}`}
+                      >
+                        #{task.idx + 1}
+                      </span>
+                      <span
+                        className="text-sm text-dark-text truncate"
+                        title={task.name}
+                      >
+                        {task.name}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${statusColorMap[task.status] || 'bg-dark-text-muted'}`}
+                        aria-hidden="true"
+                      />
+                      <span className="text-xs text-dark-text-secondary capitalize">
+                        {task.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Remove button */}
+                  <button
+                    className="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-danger transition-all"
+                    title="Remove from group"
+                    onClick={(e) => handleRemoveTask(e, task.id)}
+                    aria-label={`Remove task ${task.name} from group`}
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex-shrink-0 p-3 bg-dark-surface2 border-t border-dark-border">
+          <button
+            className="btn btn-primary w-full flex items-center justify-center gap-2"
+            disabled={tasks.length === 0}
+            onClick={handleStartClick}
+            aria-label={tasks.length === 0 ? 'Start group workflow (no tasks available)' : 'Start group workflow'}
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+              <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Start Group Workflow
+          </button>
+        </div>
       </div>
-    </div>
+    </>
   )
 })

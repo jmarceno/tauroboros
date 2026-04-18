@@ -350,7 +350,7 @@ describe('VirtualCard', () => {
       />
     )
 
-    expect(screen.getByText('1 tasks')).toBeInTheDocument()
+    expect(screen.getByText('1 task')).toBeInTheDocument()
   })
 
   it('handles zero task count correctly', () => {

@@ -83,7 +83,7 @@ describe('GroupActionBar', () => {
         {...mockCallbacks}
       />
     )
-    const createButton = screen.getByLabelText('Create group from selected tasks')
+    const createButton = screen.getByLabelText('Create group from 2 selected tasks')
     fireEvent.click(createButton)
     expect(mockCallbacks.onCreateGroup).toHaveBeenCalledTimes(1)
   })
@@ -95,7 +95,7 @@ describe('GroupActionBar', () => {
         {...mockCallbacks}
       />
     )
-    const batchButton = screen.getByLabelText('Batch edit selected tasks')
+    const batchButton = screen.getByLabelText('Batch edit 2 selected tasks')
     fireEvent.click(batchButton)
     expect(mockCallbacks.onBatchEdit).toHaveBeenCalledTimes(1)
   })
@@ -120,7 +120,7 @@ describe('GroupActionBar', () => {
       />
     )
     const toolbar = screen.getByRole('toolbar')
-    expect(toolbar).toHaveAttribute('aria-label', 'Multi-select actions')
+    expect(toolbar).toHaveAttribute('aria-label', '2 tasks selected. Create group or batch edit.')
   })
 
   it('disables Create Group button when selectedCount is less than 2', () => {

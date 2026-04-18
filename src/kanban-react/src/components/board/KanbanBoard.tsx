@@ -245,26 +245,38 @@ export const KanbanBoard = memo(function KanbanBoard({
               onContinueReviews={onContinueReviews}
             >
               {/* Render virtual cards in backlog column */}
-              {column.status === 'backlog' && activeGroups.length > 0 && (
+              {column.status === 'backlog' && (
                 <div className="virtual-cards-section">
-                  <div className="virtual-cards-header">
-                    <span className="text-xs font-medium text-dark-text-muted uppercase tracking-wider">
-                      Virtual Workflows
-                    </span>
-                  </div>
-                  <div className="virtual-cards-list">
-                    {activeGroups.map(group => (
-                      <VirtualCard
-                        key={group.id}
-                        group={group}
-                        taskCount={groupMembers[group.id]?.length ?? 0}
-                        onClick={() => onVirtualCardClick?.(group.id)}
-                        onDelete={() => onDeleteGroup?.(group.id)}
-                        onStart={() => onStartGroup?.(group.id)}
-                      />
-                    ))}
-                  </div>
-                  <div className="virtual-cards-divider" />
+                  {activeGroups.length > 0 ? (
+                    <>
+                      <div className="virtual-cards-header">
+                        <span className="text-xs font-medium text-dark-text-muted uppercase tracking-wider">
+                          Virtual Workflows
+                        </span>
+                      </div>
+                      <div className="virtual-cards-list">
+                        {activeGroups.map(group => (
+                          <VirtualCard
+                            key={group.id}
+                            group={group}
+                            taskCount={groupMembers[group.id]?.length ?? 0}
+                            onClick={() => onVirtualCardClick?.(group.id)}
+                            onDelete={() => onDeleteGroup?.(group.id)}
+                            onStart={() => onStartGroup?.(group.id)}
+                          />
+                        ))}
+                      </div>
+                      <div className="virtual-cards-divider" />
+                    </>
+                  ) : (
+                    <div className="virtual-cards-empty" aria-live="polite">
+                      <p className="text-xs text-dark-text-muted italic">
+                        No groups yet. Select 2+ tasks and press{' '}
+                        <kbd className="px-1 py-0.5 bg-dark-surface2 border border-dark-border rounded text-[10px] font-mono">Ctrl+G</kbd>{' '}
+                        to create one.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </KanbanColumn>

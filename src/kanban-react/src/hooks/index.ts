@@ -1,6 +1,7 @@
 export { useApi } from './useApi.ts'
 export { useDragDrop, type DragDropCallback, type DragSourceContext, type DragOverTarget } from './useDragDrop.ts'
 export { useKeyboard } from './useKeyboard.ts'
+export { useFocusTrap } from './useFocusTrap.ts'
 export { useModelSearch } from './useModelSearch.ts'
 export { useMultiSelect, type MultiSelectMode } from './useMultiSelect.ts'
 export { useOptions } from './useOptions.ts'
