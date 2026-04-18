@@ -213,8 +213,7 @@ export function ChatContainer() {
   if (!planningChat.isOpen) {
     return (
       <button
-        className="chat-toggle"
-        style={{ right: '0' }}
+        className="chat-toggle right-0"
         onClick={() => planningChat.openPanel()}
       >
         <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -233,8 +232,8 @@ export function ChatContainer() {
   return (
     <>
       <div
-        className={`chat-panel open ${isResizing ? 'resizing' : ''}`}
-        style={{ width: `${panelWidth}px`, right: '0' }}
+        className={`chat-panel open right-0 ${isResizing ? 'resizing' : ''}`}
+        style={{ width: `${panelWidth}px` }}
       >
         <div className="chat-resize-handle" onMouseDown={startResize} title="Drag to resize" />
 
@@ -412,6 +411,7 @@ export function ChatContainer() {
         <div
           className="minimized-dock"
           style={{ right: `${panelWidth + 20}px` }}
+          data-panel-width={panelWidth}
         >
           {planningChat.minimizedSessions.map(session => (
             <button

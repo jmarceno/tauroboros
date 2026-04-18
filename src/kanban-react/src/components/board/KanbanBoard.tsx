@@ -190,7 +190,7 @@ export const KanbanBoard = memo(function KanbanBoard({
           {columns.map((column) => (
             <div
               key={column.status}
-              className={`kanban-column-wrapper ${column.status === 'backlog' ? 'relative' : ''}`}
+              className={`kanban-column-wrapper ${column.status === 'backlog' ? 'is-relative' : ''}`}
             >
               <KanbanColumn
                 status={column.status}

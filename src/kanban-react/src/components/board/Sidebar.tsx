@@ -88,7 +88,7 @@ export const Sidebar = memo(function Sidebar({
               <div className="stat-label">Done</div>
             </div>
             <div className="stat-card">
-              <div className="stat-value" style={{ color: '#60a5fa' }}>{activeCount}</div>
+              <div className="stat-value text-blue-400">{activeCount}</div>
               <div className="stat-label">Active</div>
             </div>
             <div className="stat-card">

@@ -210,11 +210,8 @@ export const GroupPanel = memo(function GroupPanel({
       <div
         ref={containerRef}
         className={`group-panel ${isExiting ? 'group-panel-exit' : 'group-panel-enter'}`}
-        style={
-          {
-            '--group-color': `${group.color}66`,
-          } as React.CSSProperties & { '--group-color': string }
-        }
+        data-group-color={group.color}
+        style={{ '--group-color': `${group.color}66` } as React.CSSProperties}
         role="complementary"
         aria-label={`Group panel: ${group.name}`}
         aria-expanded={isOpen}
@@ -225,8 +222,8 @@ export const GroupPanel = memo(function GroupPanel({
           <div className="flex items-center gap-3 min-w-0">
             {/* Color indicator */}
             <div
-              className="w-3 h-3 rounded-full border border-dark-border flex-shrink-0"
-              style={{ backgroundColor: group.color }}
+              className="group-color-indicator"
+              data-indicator-color={group.color}
               aria-hidden="true"
             />
             {/* Group name and count */}

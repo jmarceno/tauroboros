@@ -122,14 +122,14 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal w-[min(560px,calc(100vw-40px))]" style={{ maxHeight: 'calc(100vh - 40px)' }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal w-[min(560px,calc(100vw-40px))] max-h-[calc(100vh-40px)]" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>Options</h2>
           <button className="icon-btn" onClick={onClose}>×</button>
         </div>
 
         <form onSubmit={handleSubmit}>
-          <div className="modal-body space-y-3" style={{ maxHeight: 'calc(100vh - 180px)', overflowY: 'auto' }}>
+          <div className="modal-body space-y-3 max-h-[calc(100vh-180px)] overflow-y-auto">
             {/* Default Branch */}
             <div className="form-group">
               <div className="label-row">
@@ -326,8 +326,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
                 <HelpButton tooltip="Instructions used when the workflow asks the agent to prepare a git commit. Use {{base_ref}} anywhere you want the current base branch inserted automatically." />
               </div>
               <textarea
-                className="form-textarea font-mono text-xs"
-                style={{ minHeight: '180px' }}
+                className="form-textarea font-mono text-xs min-h-textarea-xl"
                 placeholder="Instructions for committing changes..."
                 value={formData.commitPrompt || ''}
                 onChange={(e) => updateField('commitPrompt', e.target.value)}
@@ -341,8 +340,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
                 <HelpButton tooltip="Instructions for code style enforcement. The agent will review code and apply fixes to comply with these rules. Uses the Review Model. If left empty, the default prompt will be used." />
               </div>
               <textarea
-                className="form-textarea font-mono text-xs"
-                style={{ minHeight: '120px' }}
+                className="form-textarea font-mono text-xs min-h-textarea-lg"
                 placeholder="Code style rules..."
                 value={formData.codeStylePrompt || ''}
                 onChange={(e) => updateField('codeStylePrompt', e.target.value)}
@@ -356,8 +354,7 @@ export function OptionsModal({ onClose }: OptionsModalProps) {
                 <HelpButton tooltip="Additional instructions that will be appended to every task prompt sent to the agent." />
               </div>
               <textarea
-                className="form-textarea font-mono text-xs"
-                style={{ minHeight: '100px' }}
+                className="form-textarea font-mono text-xs min-h-textarea-md"
                 placeholder="Additional context or instructions for all tasks..."
                 value={formData.extraPrompt || ''}
                 onChange={(e) => updateField('extraPrompt', e.target.value)}
