@@ -40,11 +40,19 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
   const observerRef = useRef<IntersectionObserver | null>(null)
   const cardRef = useRef<HTMLDivElement | null>(null)
   const hasLoadedRef = useRef(false)
+  // Use refs to track current values and prevent stale closures
+  const taskIdRef = useRef(taskId)
+  const hasSessionRef = useRef(hasSession)
+
+  // Keep refs synchronized with latest prop values
+  taskIdRef.current = taskId
+  hasSessionRef.current = hasSession
 
   // Set up intersection observer
   useEffect(() => {
-    if (!cardRef.current || !hasSession) return
+    if (!cardRef.current || !hasSessionRef.current) return
 
+    const currentCardRef = cardRef.current
     observerRef.current = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
@@ -54,23 +62,24 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
       { threshold: 0.1, rootMargin: '100px' }
     )
 
-    observerRef.current.observe(cardRef.current)
+    observerRef.current.observe(currentCardRef)
 
     return () => {
       observerRef.current?.disconnect()
     }
-  }, [hasSession])
+  }, []) // Empty deps - uses hasSessionRef to avoid stale closure
 
   // Load data when card becomes visible
   useEffect(() => {
-    if (!isVisible || !taskId || hasLoadedRef.current) return
+    if (!isVisible || !taskIdRef.current || hasLoadedRef.current) return
 
     hasLoadedRef.current = true
+    const currentTaskId = taskIdRef.current
 
     // Load session usage data
     const loadUsage = async () => {
       try {
-        const sessions = await api.getTaskSessions(taskId)
+        const sessions = await api.getTaskSessions(currentTaskId)
         let totalTokens = 0
         let totalCost = 0
 
@@ -101,7 +110,7 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
     // Load last update timestamp
     const loadLastUpdate = async () => {
       try {
-        const response = await fetch(`/api/tasks/${taskId}/last-update`)
+        const response = await fetch(`/api/tasks/${currentTaskId}/last-update`)
         if (response.ok) {
           const data = await response.json() as { lastUpdateAt: number | null }
           if (data.lastUpdateAt !== null) {
@@ -116,7 +125,7 @@ function useLazySessionData(taskId: string | undefined, hasSession: boolean) {
     // Execute both requests
     loadUsage()
     loadLastUpdate()
-  }, [isVisible, taskId, api])
+  }, [isVisible, api]) // Only depend on isVisible and stable api
 
   return { cardRef, usageData, lastUpdate }
 }
@@ -197,91 +206,54 @@ export const TaskCard = memo(function TaskCard({
   const { options } = useOptionsContext()
   const { tasks } = useTasksContext()
 
-  const hasLocalSession = useMemo(() =>
+  const hasLocalSession =
     !!task.sessionId &&
     task.status !== 'backlog' &&
     task.status !== 'template'
-  , [task.sessionId, task.status])
 
   // Lazy load session data only when card is visible
   const { cardRef, usageData, lastUpdate } = useLazySessionData(task.id, hasLocalSession)
 
   // Format last update
-  const lastUpdateFormatted = useMemo(() =>
-    lastUpdate ? formatRelativeTime(lastUpdate) : null,
-  [lastUpdate])
-
-  const lastUpdateAgeClass = useMemo(() =>
-    lastUpdate ? getUpdateAgeClass(lastUpdate) : null,
-  [lastUpdate])
+  const lastUpdateFormatted = lastUpdate ? formatRelativeTime(lastUpdate) : null
+  const lastUpdateAgeClass = lastUpdate ? getUpdateAgeClass(lastUpdate) : null
 
   // Format usage data - show for all non-backlog/non-template tasks with session
   // even if token count is 0 (e.g., freshly started executing tasks)
   const hasUsageData = usageData !== null
-  const formattedTokens = useMemo(() =>
-    usageData ? formatTokenCount(usageData.totalTokens) : '',
-  [usageData])
+  const formattedTokens = usageData ? formatTokenCount(usageData.totalTokens) : ''
+  const formattedCost = usageData ? formatCost(usageData.totalCost) : ''
 
-  const formattedCost = useMemo(() =>
-    usageData ? formatCost(usageData.totalCost) : '',
-  [usageData])
-
-  const isAnomalousReviewTask = useMemo(() =>
+  const isAnomalousReviewTask =
     task.status === 'review' &&
     !task.awaitingPlanApproval &&
     task.executionStrategy !== 'best_of_n'
-  , [task.status, task.awaitingPlanApproval, task.executionStrategy])
 
-  const isOrphanExecutingTask = useMemo(() =>
-    !isLocked && task.status === 'executing'
-  , [isLocked, task.status])
+  const isOrphanExecutingTask = !isLocked && task.status === 'executing'
+  const hasPlanOutput = task.executionPhase === 'plan_complete_waiting_approval'
 
-  const hasPlanOutput = useMemo(() =>
-    task.executionPhase === 'plan_complete_waiting_approval'
-  , [task.executionPhase])
-
-  const canSendToExecution = useMemo(() =>
+  const canSendToExecution =
     task.planmode === true &&
     hasPlanOutput &&
     task.executionPhase !== 'implementation_done' &&
     (task.status === 'review' || task.status === 'executing' || task.status === 'failed' || task.status === 'stuck')
-  , [task.planmode, hasPlanOutput, task.executionPhase, task.status])
 
-  const canRepairToDone = useMemo(() =>
+  const canRepairToDone =
     task.status !== 'done' &&
     task.executionStrategy !== 'best_of_n' &&
     task.awaitingPlanApproval !== true &&
     (task.errorMessage !== null || task.reviewCount > 0)
-  , [task.status, task.executionStrategy, task.awaitingPlanApproval, task.errorMessage, task.reviewCount])
 
-  const showInlineActionBar = useMemo(() =>
+  const showInlineActionBar =
     !isLocked &&
     (task.status === 'review' || task.status === 'executing' || task.status === 'failed' || task.status === 'stuck')
-  , [isLocked, task.status])
 
-  const effectiveMaxReviews = useMemo(() =>
-    task.maxReviewRunsOverride ?? options?.maxReviews ?? 2
-  , [task.maxReviewRunsOverride, options?.maxReviews])
-
-  const effectiveMaxJsonParseRetries = useMemo(() =>
-    options?.maxJsonParseRetries ?? 5
-  , [options?.maxJsonParseRetries])
-
-  const isNearReviewLimit = useMemo(() =>
-    task.reviewCount >= effectiveMaxReviews - 1
-  , [task.reviewCount, effectiveMaxReviews])
-
-  const isAtReviewLimit = useMemo(() =>
-    task.reviewCount >= effectiveMaxReviews
-  , [task.reviewCount, effectiveMaxReviews])
-
-  const hasJsonParseRetries = useMemo(() =>
-    task.jsonParseRetryCount > 0 && task.status === 'review'
-  , [task.jsonParseRetryCount, task.status])
-
-  const isNearJsonParseLimit = useMemo(() =>
-    task.jsonParseRetryCount >= effectiveMaxJsonParseRetries - 1
-  , [task.jsonParseRetryCount, effectiveMaxJsonParseRetries])
+  const effectiveMaxReviews = task.maxReviewRunsOverride ?? options?.maxReviews ?? 2
+  const effectiveMaxJsonParseRetries = options?.maxJsonParseRetries ?? 5
+  const isNearReviewLimit = task.reviewCount >= effectiveMaxReviews - 1
+  const isAtReviewLimit = task.reviewCount >= effectiveMaxReviews
+  const hasJsonParseRetries = task.jsonParseRetryCount > 0 && task.status === 'review'
+  const isNearJsonParseLimit = task.jsonParseRetryCount >= effectiveMaxJsonParseRetries - 1
 
   const depIds = useMemo(() => {
     return (task.requirements || [])
@@ -290,11 +262,10 @@ export const TaskCard = memo(function TaskCard({
       .map(dep => `#${dep.idx + 1}`)
   }, [task.requirements, tasks])
 
-  const hasNonDefaultThinkingLevel = useMemo(() => {
-    return task.thinkingLevel !== 'default' ||
-      task.planThinkingLevel !== 'default' ||
-      task.executionThinkingLevel !== 'default'
-  }, [task.thinkingLevel, task.planThinkingLevel, task.executionThinkingLevel])
+  const hasNonDefaultThinkingLevel =
+    task.thinkingLevel !== 'default' ||
+    task.planThinkingLevel !== 'default' ||
+    task.executionThinkingLevel !== 'default'
 
   const thinkingLevelSummary = useMemo(() => {
     const levels: string[] = []
@@ -313,7 +284,7 @@ export const TaskCard = memo(function TaskCard({
   }, [task.thinkingLevel, task.planThinkingLevel, task.executionThinkingLevel])
 
   // Status color for the task indicator
-  const statusColor = useMemo(() => {
+  const statusColor = (() => {
     switch (task.status) {
       case 'stuck':
       case 'failed':
@@ -323,7 +294,7 @@ export const TaskCard = memo(function TaskCard({
       default:
         return 'low'
     }
-  }, [task.status])
+  })()
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
     if (!canDrag) return

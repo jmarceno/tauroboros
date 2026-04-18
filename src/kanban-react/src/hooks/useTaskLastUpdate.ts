@@ -123,8 +123,8 @@ export function useTaskLastUpdate(wsHook: ReturnType<typeof useWebSocket>): Task
     return formatRelativeTime(timestamp)
   }, [])
 
-  // Get CSS class based on age
-  const getUpdateAgeClass = useCallback((timestamp: number): string => {
+  // Get CSS class based on age - uses module-level function
+  const getUpdateAgeClassCallback = useCallback((timestamp: number): string => {
     return getUpdateAgeClass(timestamp)
   }, [])
 
@@ -146,8 +146,9 @@ export function useTaskLastUpdate(wsHook: ReturnType<typeof useWebSocket>): Task
         lastUpdateAt: number | null
       } | null
 
-      if (data?.lastUpdateAt !== null) {
-        setLastUpdateMap(prev => ({ ...prev, [taskId]: data.lastUpdateAt }))
+      const timestamp = data?.lastUpdateAt
+      if (timestamp !== null && timestamp !== undefined) {
+        setLastUpdateMap(prev => ({ ...prev, [taskId]: timestamp }))
       }
       lastFetchTimeRef.current[taskId] = Date.now()
     } catch (error) {
@@ -192,6 +193,6 @@ export function useTaskLastUpdate(wsHook: ReturnType<typeof useWebSocket>): Task
     getLastUpdate,
     formatLastUpdate,
     loadLastUpdate,
-    getUpdateAgeClass,
-  }), [lastUpdateMap, getLastUpdate, formatLastUpdate, loadLastUpdate, getUpdateAgeClass])
+    getUpdateAgeClass: getUpdateAgeClassCallback,
+  }), [lastUpdateMap, getLastUpdate, formatLastUpdate, loadLastUpdate, getUpdateAgeClassCallback])
 }

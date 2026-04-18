@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useMemo, useRef, useEffect } from "react"
 import type { WorkflowRun, Task } from "@/types"
 import { useApi } from "./useApi"
 
@@ -8,6 +8,14 @@ export function useRuns() {
   const [tasksRef, setTasksRef] = useState<Task[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Mounted ref to prevent setState on unmounted component
+  const isMountedRef = useRef(true)
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
 
   const isStaleRun = useCallback((run: WorkflowRun): boolean => {
     if (run.status !== 'running' && run.status !== 'stopping' && run.status !== 'paused') {
@@ -115,35 +123,50 @@ export function useRuns() {
     setError(null)
     try {
       const data = await api.getRuns()
-      setRuns(data)
+      // Only update state if component is still mounted
+      if (isMountedRef.current) {
+        setRuns(data)
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (isMountedRef.current) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
     } finally {
-      setIsLoading(false)
+      if (isMountedRef.current) {
+        setIsLoading(false)
+      }
     }
   }, [api])
 
   const pauseRun = useCallback(async (id: string) => {
     const run = await api.pauseRun(id)
-    setRuns(prev => prev.map(r => r.id === id ? run : r))
+    if (isMountedRef.current) {
+      setRuns(prev => prev.map(r => r.id === id ? run : r))
+    }
     return run
   }, [api])
 
   const resumeRun = useCallback(async (id: string) => {
     const run = await api.resumeRun(id)
-    setRuns(prev => prev.map(r => r.id === id ? run : r))
+    if (isMountedRef.current) {
+      setRuns(prev => prev.map(r => r.id === id ? run : r))
+    }
     return run
   }, [api])
 
   const stopRun = useCallback(async (id: string) => {
     const run = await api.stopRun(id)
-    setRuns(prev => prev.map(r => r.id === id ? run : r))
+    if (isMountedRef.current) {
+      setRuns(prev => prev.map(r => r.id === id ? run : r))
+    }
     return run
   }, [api])
 
   const archiveRun = useCallback(async (id: string) => {
     await api.archiveRun(id)
-    setRuns(prev => prev.filter(r => r.id !== id))
+    if (isMountedRef.current) {
+      setRuns(prev => prev.filter(r => r.id !== id))
+    }
   }, [api])
 
   const updateRunFromWebSocket = useCallback((run: WorkflowRun) => {

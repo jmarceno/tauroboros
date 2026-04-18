@@ -154,7 +154,7 @@ describe('GroupPanel', () => {
   })
 
   it('calls onClose when close button is clicked', () => {
-    render(
+    const { container } = render(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -163,8 +163,11 @@ describe('GroupPanel', () => {
         {...mockCallbacks}
       />
     )
-    const closeButton = screen.getByLabelText('Close group panel')
+    const closeButton = screen.getByLabelText('Close group panel (Escape)')
     fireEvent.click(closeButton)
+    // Trigger animation end to complete the exit animation
+    const panel = container.querySelector('.group-panel')
+    fireEvent.animationEnd(panel!)
     expect(mockCallbacks.onClose).toHaveBeenCalledTimes(1)
   })
 
@@ -194,7 +197,7 @@ describe('GroupPanel', () => {
       />
     )
     expect(screen.getByText('No tasks in this group')).toBeInTheDocument()
-    expect(screen.getByText('Drag tasks here to add them')).toBeInTheDocument()
+    expect(screen.getByText('Drag tasks here to add')).toBeInTheDocument()
   })
 
   it('renders task cards when tasks exist', () => {
@@ -249,7 +252,7 @@ describe('GroupPanel', () => {
         {...mockCallbacks}
       />
     )
-    const taskCard = screen.getByText('First Task').closest('.group')
+    const taskCard = screen.getByText('First Task').closest('.group-task-item')
     fireEvent.click(taskCard!)
     expect(mockCallbacks.onOpenTask).toHaveBeenCalledWith('task-1')
   })
@@ -293,7 +296,7 @@ describe('GroupPanel', () => {
     // Set up the drag state to simulate a task being dragged
     mockDragDrop.dragTaskId = 'dropped-task-id'
     
-    render(
+    const { container } = render(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -303,8 +306,8 @@ describe('GroupPanel', () => {
       />
     )
 
-    // Find the drop zone container
-    const dropZone = screen.getByText('Drag tasks here').closest('div')?.parentElement
+    // Find the drop zone container by aria-label
+    const dropZone = container.querySelector('[aria-label*="Drop zone"]')
     expect(dropZone).toBeDefined()
 
     // Simulate drop - the component's onDrop handler calls handleDropOnGroup
@@ -324,7 +327,7 @@ describe('GroupPanel', () => {
     // Ensure no drag task is set - but the handler is still called
     mockDragDrop.dragTaskId = null
     
-    render(
+    const { container } = render(
       <GroupPanel
         group={mockGroup}
         tasks={mockTasks}
@@ -334,7 +337,8 @@ describe('GroupPanel', () => {
       />
     )
 
-    const dropZone = screen.getByText('Drag tasks here').closest('div')?.parentElement
+    const dropZone = container.querySelector('[aria-label*="Drop zone"]')
+    expect(dropZone).toBeDefined()
 
     fireEvent.drop(dropZone!, {
       dataTransfer: {

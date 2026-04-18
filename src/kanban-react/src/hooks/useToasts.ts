@@ -1,10 +1,10 @@
-import { useState, useCallback } from "react"
+import { useState, useCallback, useRef } from "react"
 import type { Toast, ToastVariant, LogEntry } from "@/types"
 
 export function useToasts() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [logs, setLogs] = useState<LogEntry[]>([])
-  const nextIdRef = { current: 1 }
+  const nextIdRef = useRef(1)
 
   const MAX_LOG_ENTRIES = 500
 
@@ -28,7 +28,7 @@ export function useToasts() {
 
     if (duration > 0) {
       setTimeout(() => {
-        removeToast(id)
+        setToasts(curr => curr.filter(t => t.id !== id))
       }, duration)
     }
 

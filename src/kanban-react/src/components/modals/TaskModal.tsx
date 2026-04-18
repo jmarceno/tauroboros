@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { ModalWrapper } from '../common/ModalWrapper'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
@@ -115,15 +115,18 @@ export function TaskModal({ mode, taskId, createStatus = 'backlog', seedTaskId, 
 
   // Show backlog tasks for adding new dependencies
   // Also show done tasks that are already dependencies so they can be removed
-  const availableRequirements = tasks.tasks.filter(t => {
-    if (isViewOnly) return t.id !== taskId
-    if (t.id === taskId) return false
-    // Always show backlog tasks as potential new dependencies
-    if (t.status === 'backlog') return true
-    // Show done tasks only if they are already in requirements (so they can be removed)
-    if (t.status === 'done' && requirements.includes(t.id)) return true
-    return false
-  })
+  // Memoized to avoid recomputation on every render for large task lists
+  const availableRequirements = useMemo(() => {
+    return tasks.tasks.filter(t => {
+      if (isViewOnly) return t.id !== taskId
+      if (t.id === taskId) return false
+      // Always show backlog tasks as potential new dependencies
+      if (t.status === 'backlog') return true
+      // Show done tasks only if they are already in requirements (so they can be removed)
+      if (t.status === 'done' && requirements.includes(t.id)) return true
+      return false
+    })
+  }, [tasks.tasks, taskId, isViewOnly, requirements])
 
   const addBonWorker = () => {
     setBonWorkers([...bonWorkers, { model: '', count: 1, suffix: '' }])

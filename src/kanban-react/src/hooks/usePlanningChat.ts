@@ -567,6 +567,17 @@ export function usePlanningChat(wsHook: ReturnType<typeof useWebSocket>) {
     }
   }, [wsHook, handlePlanningSessionCreated, handlePlanningSessionUpdated, handlePlanningSessionClosed, handlePlanningSessionMessage])
 
+  // Global cleanup on unmount - clear all refs to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      // Clear all pending message queues
+      pendingMessagesRef.current.clear()
+      // Clear all reconnection tracking sets
+      reconnectingRef.current.clear()
+      sendingRef.current.clear()
+    }
+  }, [])
+
   /**
    * Add an existing session from history to active sessions
    */

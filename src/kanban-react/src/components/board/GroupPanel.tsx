@@ -252,7 +252,7 @@ export const GroupPanel = memo(function GroupPanel({
 
         {/* Drag-drop zone */}
         <div
-          className={`group-drop-zone ${isDragOver ? 'drag-over' : ''}`}
+          className={`group-drop-zone ${isDragOver ? 'drag-over bg-accent-primary/10' : ''}`}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}

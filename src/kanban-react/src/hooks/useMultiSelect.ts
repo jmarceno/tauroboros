@@ -31,11 +31,11 @@ export function useMultiSelect() {
   }, [mode])
 
   const selectSingle = useCallback((taskId: string) => {
-    setSelectedTaskIds(new Set([taskId]))
+    setSelectedTaskIds(() => new Set([taskId]))
   }, [])
 
   const clearSelection = useCallback(() => {
-    setSelectedTaskIds(new Set())
+    setSelectedTaskIds(() => new Set())
     setMode(null)
   }, [])
 
@@ -54,11 +54,11 @@ export function useMultiSelect() {
   }, [selectedTaskIds.size])
 
   const confirmGroupCreation = useCallback((): string[] => {
-    const ids = Array.from(selectedTaskIds)
+    const ids = getSelectedIds()
     setMode(null)
-    setSelectedTaskIds(new Set())
+    setSelectedTaskIds(() => new Set())
     return ids
-  }, [selectedTaskIds])
+  }, [getSelectedIds])
 
   const cancelGroupCreation = useCallback((): void => {
     setMode(null)

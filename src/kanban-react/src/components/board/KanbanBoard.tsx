@@ -209,7 +209,7 @@ export const KanbanBoard = memo(function KanbanBoard({
         <div className="kanban-container">
           {columns.map(column => (
             <KanbanColumn
-              key={`${column.status}-${groupedTasks[column.status].length}`}
+              key={column.status}
               status={column.status}
               title={column.title}
               helpText={columnHelpText[column.status]}
