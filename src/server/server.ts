@@ -60,6 +60,12 @@ function isSelectionMode(value: unknown): value is "pick_best" | "synthesize" | 
 function isStatsTimeRange(value: unknown): value is StatsTimeRange {
   return value === "24h" || value === "7d" || value === "30d" || value === "lifetime"
 }
+
+// Task Group validation helpers
+function isTaskGroupStatus(value: unknown): value is "active" | "completed" | "archived" {
+  return value === "active" || value === "completed" || value === "archived"
+}
+
 interface BestOfNSlotInput {
   model?: unknown
   count?: unknown
