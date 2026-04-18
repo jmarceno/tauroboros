@@ -10,9 +10,14 @@ interface GroupCreateModalProps {
 }
 
 export function GroupCreateModal({ taskCount, defaultName, isLoading, onClose, onConfirm }: GroupCreateModalProps) {
-  const [name, setName] = useState(defaultName || '')
+  const [name, setName] = useState(() => (defaultName ?? '').trim())
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const trimmed = (defaultName ?? '').trim()
+    setName(prev => prev !== trimmed ? trimmed : prev)
+  }, [defaultName])
 
   useEffect(() => {
     inputRef.current?.focus()
