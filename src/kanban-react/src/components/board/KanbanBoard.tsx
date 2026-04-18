@@ -1,9 +1,9 @@
-import { useMemo, memo } from 'react'
-import type { Task, TaskStatus, BestOfNSummary, TaskGroup, ColumnSortPreferences } from '@/types'
-import { KanbanColumn } from './KanbanColumn'
-import { VirtualCard } from './VirtualCard'
-import { GroupPanel } from './GroupPanel'
-import type { useDragDrop } from '@/hooks/useDragDrop'
+import { useMemo, memo } from "react"
+import type { Task, TaskStatus, BestOfNSummary, TaskGroup, ColumnSortPreferences } from "@/types"
+import { KanbanColumn } from "./KanbanColumn"
+import { VirtualCard } from "./VirtualCard"
+import { GroupPanel } from "./GroupPanel"
+import type { useDragDrop } from "@/hooks/useDragDrop"
 
 interface KanbanBoardProps {
   tasks: Task[]

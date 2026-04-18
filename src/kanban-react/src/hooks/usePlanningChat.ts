@@ -1,11 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import type { PlanningSession, PlanningPrompt, SessionMessage, ThinkingLevel } from '@/types'
-import { useApi } from './useApi'
-import type { useWebSocket } from './useWebSocket'
-import { ErrorCode, isErrorCode, detectErrorCodeFromMessage } from '../../../shared/error-codes'
+import { useState, useCallback, useEffect, useRef } from "react"
+import type { PlanningSession, PlanningPrompt, SessionMessage, ThinkingLevel } from "@/types"
+import { useApi } from "./useApi"
+import type { useWebSocket } from "./useWebSocket"
+import { ErrorCode, isErrorCode, detectErrorCodeFromMessage } from "../../../shared/error-codes"
 
 export interface ContextAttachment {
-  type: 'file' | 'screenshot' | 'task'
+  type: "file" | "screenshot" | "task"
   name: string
   content?: string
   filePath?: string

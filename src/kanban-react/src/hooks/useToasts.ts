@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react'
-import type { Toast, ToastVariant, LogEntry } from '@/types'
+import { useState, useCallback } from "react"
+import type { Toast, ToastVariant, LogEntry } from "@/types"
 
 export function useToasts() {
   const [toasts, setToasts] = useState<Toast[]>([])

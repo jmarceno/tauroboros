@@ -1,6 +1,6 @@
-import { useState, memo } from 'react'
-import { useVersion } from '@/hooks'
-import type { ControlState } from '@/types'
+import { useState, memo } from "react"
+import { useVersion } from "@/hooks"
+import type { ControlState } from "@/types"
 
 interface SidebarProps {
   consumedSlots: number

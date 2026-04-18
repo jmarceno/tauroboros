@@ -147,7 +147,7 @@ interface WorkflowControlContextType {
   clearRun: () => void
 }
 
-import type { MultiSelectMode } from '@/hooks/useMultiSelect'
+import type { MultiSelectMode } from "@/hooks/useMultiSelect"
 
 // Multi-select context type
 interface MultiSelectContextType {

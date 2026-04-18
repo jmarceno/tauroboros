@@ -1,6 +1,6 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo } from "react"
 
-export type MultiSelectMode = 'batch-edit' | 'create-group' | null
+export type MultiSelectMode = "batch-edit" | "create-group" | null
 
 export function useMultiSelect() {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set())

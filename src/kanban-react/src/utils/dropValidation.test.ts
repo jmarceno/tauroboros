@@ -1,15 +1,15 @@
-import { describe, it, expect } from 'vitest'
-import { validateTaskDrop, canDragFromColumn } from './dropValidation'
-import type { Task } from '@/types'
+import { describe, it, expect } from "vitest"
+import { validateTaskDrop, canDragFromColumn, validateGroupDrop, canDragFromGroup } from "./dropValidation"
+import type { Task } from "@/types"
 
-function createMockTask(status: Task['status']): Task {
+function createMockTask(status: Task["status"], groupId?: string | null): Task {
   return {
-    id: 'task-1',
+    id: "task-1",
     idx: 1,
-    name: 'Test Task',
-    prompt: 'Test prompt',
+    name: "Test Task",
+    prompt: "Test prompt",
     status,
-    branch: 'main',
+    branch: "main",
     planmode: false,
     autoApprovePlan: false,
     review: false,
@@ -17,7 +17,7 @@ function createMockTask(status: Task['status']): Task {
     deleteWorktree: false,
     skipPermissionAsking: false,
     requirements: [],
-    thinkingLevel: 'default',
+    thinkingLevel: "default",
     planThinkingLevel: 'default',
     executionThinkingLevel: 'default',
     executionStrategy: 'standard',
@@ -28,6 +28,7 @@ function createMockTask(status: Task['status']): Task {
     awaitingPlanApproval: false,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    groupId: groupId ?? undefined,
   }
 }
 
@@ -217,5 +218,77 @@ describe('canDragFromColumn', () => {
     expect(canDragFromColumn('done', false, 'manual')).toBe(false)
     expect(canDragFromColumn('failed', false, 'manual')).toBe(false)
     expect(canDragFromColumn('stuck', false, 'manual')).toBe(false)
+  })
+})
+
+describe('validateGroupDrop', () => {
+  describe('backlog to group', () => {
+    it('allows backlog → group when task has no group', () => {
+      const task = createMockTask('backlog', null)
+      const result = validateGroupDrop(task, 'backlog', 'group-1', null)
+      expect(result.allowed).toBe(true)
+      expect(result.action).toBe('add-to-group')
+    })
+
+    it('prevents backlog → group when task is already in a different group', () => {
+      const task = createMockTask('backlog', 'group-2')
+      const result = validateGroupDrop(task, 'backlog', 'group-1', 'group-2')
+      expect(result.allowed).toBe(false)
+      expect(result.reason).toBe('Task is already in a group')
+    })
+
+    it('returns no-change when dropping on same group', () => {
+      const task = createMockTask('backlog', 'group-1')
+      const result = validateGroupDrop(task, 'backlog', 'group-1', 'group-1')
+      expect(result.allowed).toBe(false)
+      expect(result.reason).toBe('no-change')
+    })
+  })
+
+  describe('group to backlog', () => {
+    it('allows group → backlog (remove from group)', () => {
+      const task = createMockTask('backlog', 'group-1')
+      const result = validateGroupDrop(task, 'group', null, 'group-1')
+      expect(result.allowed).toBe(true)
+      expect(result.action).toBe('remove-from-group')
+    })
+  })
+
+  describe('between groups', () => {
+    it('prevents group A → group B', () => {
+      const task = createMockTask('backlog', 'group-1')
+      const result = validateGroupDrop(task, 'group', 'group-2', 'group-1')
+      expect(result.allowed).toBe(false)
+      expect(result.reason).toBe('Cannot move between groups')
+    })
+
+    it('returns no-change when dropping on same group from group', () => {
+      const task = createMockTask('backlog', 'group-1')
+      const result = validateGroupDrop(task, 'group', 'group-1', 'group-1')
+      expect(result.allowed).toBe(false)
+      expect(result.reason).toBe('no-change')
+    })
+  })
+
+  describe('invalid operations', () => {
+    it('rejects invalid source context', () => {
+      const task = createMockTask('backlog', null)
+      // Testing an edge case with mismatched context
+      const result = validateGroupDrop(task, 'group', 'group-1', null)
+      // When source is 'group' but task has no groupId, should fail
+      expect(result.allowed).toBe(false)
+    })
+  })
+})
+
+describe('canDragFromGroup', () => {
+  it('allows dragging when task has a groupId', () => {
+    expect(canDragFromGroup('group-1')).toBe(true)
+    expect(canDragFromGroup('some-group-id')).toBe(true)
+  })
+
+  it('prevents dragging when task has no groupId', () => {
+    expect(canDragFromGroup(null)).toBe(false)
+    expect(canDragFromGroup(undefined)).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-import { memo, useState, useCallback } from 'react'
+import { memo, useCallback } from 'react'
 import type { TaskGroup, Task, TaskStatus } from '@/types'
 import type { useDragDrop } from '@/hooks/useDragDrop'
 
@@ -92,33 +92,27 @@ export const GroupPanel = memo(function GroupPanel({
   onDeleteGroup,
   dragDrop,
 }: GroupPanelProps) {
-  const [isDragOver, setIsDragOver] = useState(false)
+  // Use dragOverTarget from hook for precise state tracking
+  const isDragOver = dragDrop.dragOverTarget?.type === 'group' && dragDrop.dragOverTarget?.id === group.id
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-    setIsDragOver(true)
-  }, [])
+    // Use the specialized group handler
+    dragDrop.handleDragOverGroup(group.id, e)
+  }, [dragDrop, group.id])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
-    // Only set to false if we're actually leaving the drop zone (not entering a child)
+    // Only clear state if we're actually leaving the drop zone (not entering a child)
     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-      setIsDragOver(false)
+      dragDrop.handleDragLeave()
     }
-  }, [])
+  }, [dragDrop])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    setIsDragOver(false)
-
-    const taskId = e.dataTransfer.getData('text/plain')
-    if (taskId && taskId.trim().length > 0) {
-      onAddTasks([taskId])
-    }
-
-    // Reset dragDrop state
-    dragDrop.handleDragEnd()
-  }, [onAddTasks, dragDrop])
+    // Use the specialized drop handler
+    dragDrop.handleDropOnGroup(group.id, e)
+  }, [dragDrop, group.id])
 
   const handleRemoveTask = useCallback((e: React.MouseEvent, taskId: string) => {
     e.stopPropagation()
@@ -204,6 +198,8 @@ export const GroupPanel = memo(function GroupPanel({
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        role="region"
+        aria-label={`Drop zone for ${group.name}`}
       >
         <div
           className={`border-2 border-dashed rounded-lg p-3 text-center transition-colors duration-200 ${
@@ -234,7 +230,11 @@ export const GroupPanel = memo(function GroupPanel({
       </div>
 
       {/* Task list */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+      <div
+        className="flex-1 overflow-y-auto p-3 space-y-2"
+        role="list"
+        aria-label={`Tasks in ${group.name}`}
+      >
         {tasks.length === 0 ? (
           /* Empty state */
           <div className="flex flex-col items-center justify-center h-full py-12">

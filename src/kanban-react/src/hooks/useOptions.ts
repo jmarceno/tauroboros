@@ -1,6 +1,6 @@
-import { useState, useCallback, useMemo } from 'react'
-import type { Options } from '@/types'
-import { useApi } from './useApi'
+import { useState, useCallback, useMemo } from "react"
+import type { Options } from "@/types"
+import { useApi } from "./useApi"
 
 export function useOptions() {
   const api = useApi()

@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import type { WSMessage, WSMessageType } from '@/types'
+import { useState, useCallback, useEffect, useRef } from "react"
+import type { WSMessage, WSMessageType } from "@/types"
 
 type MessageHandler = (payload: unknown) => void
 
