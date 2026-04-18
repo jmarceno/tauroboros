@@ -264,12 +264,27 @@ export const KanbanBoard = memo(function KanbanBoard({
         <GroupPanel
           group={activeGroup}
           tasks={activeGroupTasks}
+          bonSummaries={bonSummaries}
+          getTaskRunColor={getTaskRunColor}
+          isTaskMutationLocked={isTaskMutationLocked}
           isOpen={!!activeGroupId}
           onClose={() => onCloseGroupPanel?.()}
           onRemoveTask={(taskId) => onRemoveTaskFromGroup?.(taskId)}
           onAddTasks={(taskIds) => onAddTasksToGroup?.(taskIds)}
           onStartGroup={() => onStartGroup?.(activeGroup.id)}
-          onOpenTask={(id) => onOpenTask(id)}
+          onOpenTask={onOpenTask}
+          onDeployTemplate={onDeployTemplate}
+          onOpenTaskSessions={onOpenTaskSessions}
+          onApprovePlan={onApprovePlan}
+          onRequestRevision={onRequestRevision}
+          onStartSingle={onStartSingle}
+          onRepairTask={onRepairTask}
+          onMarkDone={onMarkDone}
+          onResetTask={onResetTask}
+          onConvertToTemplate={onConvertToTemplate}
+          onArchiveTask={onArchiveTask}
+          onViewRuns={onViewRuns}
+          onContinueReviews={onContinueReviews}
           onDeleteGroup={() => onDeleteGroup?.(activeGroup.id)}
           dragDrop={dragDrop}
         />
