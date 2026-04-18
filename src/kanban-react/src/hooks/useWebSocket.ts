@@ -7,10 +7,11 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import type { WSMessage, WSMessageType } from "@/types"
+import type { WebSocketContextType } from "@/contexts/AppContext"
 
 type MessageHandler = (payload: unknown) => void
 
-export function useWebSocket() {
+export function useWebSocket(): WebSocketContextType {
   const [ws, setWs] = useState<WebSocket | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [reconnectAttempts, setReconnectAttempts] = useState(0)
