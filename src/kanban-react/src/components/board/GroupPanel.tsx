@@ -27,6 +27,7 @@ export interface GroupPanelProps {
   onViewRuns: (id: string) => void
   onContinueReviews: (id: string) => void
   onDeleteGroup: () => void
+  onRenameGroup?: (groupId: string, newName: string) => Promise<void>
   dragDrop: ReturnType<typeof useDragDrop>
   isDragging?: boolean
 }
@@ -54,29 +55,31 @@ export const GroupPanel = memo(function GroupPanel({
   onViewRuns,
   onContinueReviews,
   onDeleteGroup,
+  onRenameGroup,
   dragDrop,
 }: GroupPanelProps) {
-  // Validate group has required color property
   if (!group.color) {
     throw new Error(`Group ${group.id} is missing required 'color' property`)
   }
   const containerRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const editInputRef = useRef<HTMLInputElement>(null)
   const [isExiting, setIsExiting] = useState(false)
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [editNameValue, setEditNameValue] = useState('')
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
 
   const handleClose = useCallback(() => {
     setIsExiting(true)
   }, [])
 
-  // Focus trap for accessibility - hook automatically stores/restores focus
-  // when isActive changes. Focus is trapped to focusable elements within container.
   useFocusTrap({
     isActive: isOpen,
     containerRef,
     onEscape: handleClose,
   })
 
-  // Use dragOverTarget from hook for precise state tracking
   const isDragOver = dragDrop.dragOverTarget?.type === 'group' && dragDrop.dragOverTarget?.id === group.id
 
   const handleAnimationEnd = useCallback(() => {
@@ -116,7 +119,84 @@ export const GroupPanel = memo(function GroupPanel({
     onDeleteGroup()
   }, [onDeleteGroup])
 
-  // Don't render anything when closed and animation finished
+  // Group name edit handlers
+  const handleEditNameClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    setIsEditingName(true)
+    setEditNameValue(group.name)
+    setRenameError(null)
+  }, [group.name])
+
+  const handleCancelEdit = useCallback(() => {
+    setIsEditingName(false)
+    setEditNameValue('')
+    setRenameError(null)
+  }, [])
+
+  const handleSaveName = useCallback(async () => {
+    const trimmedName = editNameValue.trim()
+    
+    // Validation: non-empty
+    if (!trimmedName) {
+      setRenameError('Name cannot be empty')
+      editInputRef.current?.focus()
+      return
+    }
+    
+    // Validation: max 100 characters
+    if (trimmedName.length > 100) {
+      setRenameError('Name must be 100 characters or less')
+      editInputRef.current?.focus()
+      return
+    }
+    
+    // No change needed
+    if (trimmedName === group.name) {
+      setIsEditingName(false)
+      setEditNameValue('')
+      return
+    }
+    
+    if (!onRenameGroup) {
+      setIsEditingName(false)
+      setEditNameValue('')
+      return
+    }
+    
+    setIsRenaming(true)
+    setRenameError(null)
+    
+    try {
+      await onRenameGroup(group.id, trimmedName)
+      setIsEditingName(false)
+      setEditNameValue('')
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      setRenameError(message || 'Failed to rename group')
+    } finally {
+      setIsRenaming(false)
+    }
+  }, [editNameValue, group.id, group.name, onRenameGroup])
+
+  const handleEditKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleSaveName()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      handleCancelEdit()
+    }
+  }, [handleSaveName, handleCancelEdit])
+
+  const handleEditBlur = useCallback(() => {
+      // Allow click events on buttons to fire before handling blur
+    setTimeout(() => {
+      if (isEditingName && !isRenaming) {
+        handleCancelEdit()
+      }
+    }, 150)
+  }, [isEditingName, isRenaming, handleCancelEdit])
+
   if (!isOpen && !isExiting) {
     return null
   }
@@ -150,19 +230,60 @@ export const GroupPanel = memo(function GroupPanel({
               aria-hidden="true"
             />
             {/* Group name and count */}
-            <div className="min-w-0">
-              <h3
-                className="text-sm font-semibold text-dark-text truncate"
-                title={group.name}
-              >
-                {group.name}
-              </h3>
+            <div className="min-w-0 flex-1">
+              {isEditingName ? (
+                <div className="flex flex-col gap-1">
+                  <input
+                    ref={editInputRef}
+                    type="text"
+                    className={`w-full px-2 py-1 text-sm font-semibold bg-dark-surface3 border rounded text-dark-text truncate focus:outline-none focus:ring-1 ${renameError ? 'border-accent-danger' : 'border-dark-border focus:border-accent-primary focus:ring-accent-primary'}`}
+                    value={editNameValue}
+                    onChange={(e) => {
+                      setEditNameValue(e.target.value)
+                      if (renameError) setRenameError(null)
+                    }}
+                    onKeyDown={handleEditKeyDown}
+                    onBlur={handleEditBlur}
+                    disabled={isRenaming}
+                    maxLength={100}
+                    aria-label="Edit group name"
+                    autoFocus
+                  />
+                  {renameError && (
+                    <span className="text-xs text-accent-danger" role="alert">
+                      {renameError}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <h3
+                  className="text-sm font-semibold text-dark-text truncate"
+                  title={group.name}
+                >
+                  {group.name}
+                </h3>
+              )}
               <span className="text-xs text-dark-text-secondary">
                 {taskCount} {taskWord}
               </span>
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
+            {/* Rename group button */}
+            {!isEditingName && onRenameGroup && (
+              <button
+                className="w-7 h-7 flex items-center justify-center rounded hover:bg-dark-surface3 text-dark-text-secondary hover:text-accent-primary transition-colors"
+                title="Rename group"
+                onClick={handleEditNameClick}
+                aria-label="Rename group"
+                disabled={isRenaming}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                </svg>
+              </button>
+            )}
             {/* Delete group button */}
             <button
               className="w-7 h-7 flex items-center justify-center rounded hover:bg-dark-surface3 text-dark-text-secondary hover:text-accent-danger transition-colors"

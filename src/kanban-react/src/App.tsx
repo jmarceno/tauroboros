@@ -89,7 +89,6 @@ function App() {
     }
   }, [])
 
-  // Initialize hooks (wsHook must come before planningChatHook)
   const optionsHook = useOptions()
   const tasksHook = useTasks(optionsHook.options?.columnSorts)
   const runsHook = useRuns()
@@ -113,7 +112,6 @@ function App() {
     }
   )
 
-  // Modal state - using ModalType for type safety while maintaining string compatibility
   const [activeModal, setActiveModal] = useState<ModalType | null>(null)
   const [modalData, setModalData] = useState<Record<string, unknown>>({})
   const [showContainerConfigModal, setShowContainerConfigModal] = useState(false)
@@ -132,14 +130,12 @@ function App() {
   const [pendingRestoreTask, setPendingRestoreTask] = useState<Task | null>(null)
   const [pendingRestoreGroup, setPendingRestoreGroup] = useState<TaskGroup | null>(null)
 
-  // Computed
   const isAnyModalOpen = activeModal !== null || showContainerConfigModal || showStopConfirmModal || showConfirmModal || showGroupCreateModal || showRestoreModal
   const consumedSlotsValue = runsHook.consumedRunSlots
   const parallelTasksValue = optionsHook.options?.parallelTasks ?? 1
   const isConnectedValue = wsHook.isConnected
   const currentActiveRun = runsHook.activeRuns[0] || null
 
-  // Build group members map from tasks with groupId
   const groupMembers = useMemo(() => {
     const members: Record<string, string[]> = {}
     for (const task of tasksHook.tasks) {
@@ -153,8 +149,12 @@ function App() {
     return members
   }, [tasksHook.tasks])
 
-  // Modal helpers with type-safe data
+  const validModals = new Set<ModalType>(['task', 'options', 'executionGraph', 'approve', 'revision', 'startSingle', 'session', 'taskSessions', 'bestOfNDetail', 'batchEdit', 'planningPrompt'])
+
   const openModal = useCallback((name: string, data?: Record<string, unknown>) => {
+    if (!validModals.has(name as ModalType)) {
+      throw new Error(`Invalid modal name: ${name}. Expected one of: ${Array.from(validModals).join(', ')}`)
+    }
     setActiveModal(name as ModalType)
     setModalData(data ?? {})
   }, [])
@@ -263,7 +263,6 @@ function App() {
     setPendingRestoreGroup(null)
   }, [pendingRestoreTask, tasksHook, toastsHook])
 
-  // Drag and drop handler with group support
   const dragDrop = useDragDrop(async (taskId: string, target: string, action: DropAction) => {
     const task = tasksHook.getTaskById(taskId)
     if (!task) return
@@ -374,7 +373,6 @@ function App() {
     }
   })
 
-  // Group modal helpers
   const openGroupCreateModal = useCallback((taskIds: string[]) => {
     if (taskIds.length < 2) {
       toastsHook.showToast('Select at least 2 tasks to create a group', 'error')
@@ -403,7 +401,6 @@ function App() {
     toastsHook.showToast(`Group "${name}" created successfully`, 'success')
   }, [groupCreateModalData, taskGroupsHook, multiSelectHook, toastsHook])
 
-  // Keyboard shortcuts
   useKeyboard({
     onCreateTemplate: () => openModal('task', { mode: 'create', createStatus: 'template' }),
     onCreateBacklog: () => openModal('task', { mode: 'create', createStatus: 'backlog' }),
@@ -462,7 +459,6 @@ function App() {
     isModalOpen: () => isAnyModalOpen,
   })
 
-  // WebSocket event handlers - consolidated in custom hook for better state management
   useWebSocketHandlers({
     wsHook,
     tasksHook,
@@ -474,13 +470,10 @@ function App() {
     workflowControl,
   })
 
-  // Initialize
   useEffect(() => {
     const init = async () => {
-      // Load options first as other operations may depend on it
       await optionsHook.loadOptions()
 
-      // Parallelize independent data loading operations
       await Promise.all([
         modelSearchHook.loadModels(),
         runsHook.loadRuns(),
@@ -501,7 +494,7 @@ function App() {
         workflowControl.setRun(activeRun)
       }
 
-      const hashMatch = location.hash.match(/^#session\/(.+)$/)
+      const hashMatch = window.location.hash.match(/^#session\/(.+)$/)
       if (hashMatch) {
         const sessionId = decodeURIComponent(hashMatch[1])
         openModal('session', { sessionId })
@@ -512,13 +505,16 @@ function App() {
     init()
   }, [])
 
-  // Periodic state sync
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   useEffect(() => {
     syncIntervalRef.current = setInterval(() => {
       if (wsHook.isConnected) {
-        tasksHook.loadTasks().catch(() => {})
-        runsHook.loadRuns().catch(() => {})
+        tasksHook.loadTasks().catch((e) => {
+          throw new Error(`Failed to sync tasks: ${e instanceof Error ? e.message : String(e)}`)
+        })
+        runsHook.loadRuns().catch((e) => {
+          throw new Error(`Failed to sync runs: ${e instanceof Error ? e.message : String(e)}`)
+        })
       }
     }, 30000)
 
@@ -529,10 +525,9 @@ function App() {
     }
   }, [wsHook.isConnected])
 
-  // Handle hash changes
   useEffect(() => {
     const handleHashChange = () => {
-      const hashMatch = location.hash.match(/^#session\/(.+)$/)
+      const hashMatch = window.location.hash.match(/^#session\/(.+)$/)
       if (hashMatch) {
         const sessionId = decodeURIComponent(hashMatch[1])
         if (activeModal !== 'session') {
@@ -546,8 +541,6 @@ function App() {
     return () => window.removeEventListener('hashchange', handleHashChange)
   }, [activeModal, openModal, closeModal])
 
-  // Memoize context values to prevent unnecessary re-renders
-  // Note: Using hook objects directly as dependencies - these are stable references from custom hooks
   const tasksContextValue = useMemo(() => tasksHook, [tasksHook])
   const runsContextValue = useMemo(() => runsHook, [runsHook])
   const optionsContextValue = useMemo(() => optionsHook, [optionsHook])
@@ -780,6 +773,10 @@ function App() {
     }
   }, [taskGroupsHook])
 
+  const onRenameGroup = useCallback(async (groupId: string, newName: string) => {
+    await taskGroupsHook.updateGroup(groupId, { name: newName })
+  }, [taskGroupsHook])
+
   // Memoize TabbedLogPanel callbacks
   const onArchiveRun = useCallback(async (id: string) => {
     try {
@@ -899,6 +896,7 @@ function App() {
                                   onCloseGroupPanel={onCloseGroupPanel}
                                   onRemoveTaskFromGroup={onRemoveTaskFromGroup}
                                   onAddTasksToGroup={onAddTasksToGroup}
+                                  onRenameGroup={onRenameGroup}
                                 />
 
                                 <TabbedLogPanel
