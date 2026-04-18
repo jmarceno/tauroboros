@@ -37,18 +37,23 @@ export function useSessionUsage(wsHook?: WebSocketHook) {
   }, [])
 
   // Compute aggregated usage cache from active sessions
+  // Use getQueryData instead of getQueryState to preserve data during refetch (placeholderData: keepPrevious)
   const usageCache = useMemo(() => {
     const cache: Record<string, SessionUsageRollup> = {}
     let isLoading = false
     let hasError = false
 
     activeSessionIds.forEach(sessionId => {
-      const query = queryClient.getQueryState<SessionUsageRollup>(queryKeys.sessions.usage(sessionId))
-      if (query?.status === 'success' && query.data) {
-        cache[sessionId] = query.data
+      // Check if query is loading
+      const queryState = queryClient.getQueryState<SessionUsageRollup>(queryKeys.sessions.usage(sessionId))
+      if (queryState?.status === 'pending') isLoading = true
+      if (queryState?.status === 'error') hasError = true
+
+      // Get data using getQueryData to include placeholder data during refetch
+      const data = queryClient.getQueryData<SessionUsageRollup>(queryKeys.sessions.usage(sessionId))
+      if (data) {
+        cache[sessionId] = data
       }
-      if (query?.status === 'pending') isLoading = true
-      if (query?.status === 'error') hasError = true
     })
 
     return { cache, isLoading, hasError }
