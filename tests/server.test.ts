@@ -892,14 +892,13 @@ describe("PiKanbanServer API", () => {
         ws.addEventListener("message", handler)
       })
 
-      // Note: Group execution returns 501 Not Implemented, but still broadcasts the event
+      // Group execution is now implemented and returns 200 on success
       const response = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/start`, {
         method: "POST",
       })
 
-      // The endpoint returns 501 because group execution isn't fully implemented,
-      // but it should still broadcast group_execution_started before returning
-      expect(response.status).toBe(501)
+      // The endpoint returns 200 when group execution starts successfully
+      expect(response.status).toBe(200)
 
       const event = await executionStartedPromise
       expect(event.type).toBe("group_execution_started")
