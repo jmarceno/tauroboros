@@ -1411,5 +1411,42 @@ describe("PiKanbanServer API", () => {
         db.close()
       }
     })
+
+    it("POST /api/tasks/:id/move-to-group returns 400 for invalid groupId type", async () => {
+      const root = createTempDir("tauroboros-move-to-group-invalid-")
+      const dbPath = join(root, "tasks.db")
+      const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
+      db.updateOptions({ branch: "master" })
+      const port = await server.start(0)
+
+      try {
+        // Create a task
+        const taskRes = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Task for Invalid GroupId Test",
+            prompt: "Test task",
+            status: "backlog",
+          }),
+        })
+        const task = await taskRes.json()
+        const taskId = task.id
+
+        // Try to move with invalid groupId type (number instead of string)
+        const moveRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}/move-to-group`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ groupId: 123 }),
+        })
+        const moveData = await moveRes.json()
+
+        expect(moveRes.status).toBe(400)
+        expect(moveData.error).toContain("groupId must be a string, null, or undefined")
+      } finally {
+        server.stop()
+        db.close()
+      }
+    })
   })
 })

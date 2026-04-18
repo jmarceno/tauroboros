@@ -170,14 +170,22 @@ export function useTasks(columnSorts?: ColumnSortPreferences) {
   /**
    * Resets a task to backlog status. Returns group info if task was in a group
    * so UI can prompt for restore decision.
+   * 
+   * Throws if the API response is missing required wasInGroup field.
    */
   const resetTask = useCallback(async (id: string): Promise<ResetTaskResult> => {
     const result = await api.resetTaskWithGroupInfo(id)
+    
+    // Validate API response - wasInGroup must be a boolean
+    if (typeof result.wasInGroup !== 'boolean') {
+      throw new Error(`Invalid API response: wasInGroup must be a boolean, got ${typeof result.wasInGroup}`)
+    }
+    
     setTasks(prev => prev.map(t => t.id === id ? result.task : t))
     return {
       task: result.task,
       group: result.group,
-      wasInGroup: result.wasInGroup ?? false,
+      wasInGroup: result.wasInGroup,
     }
   }, [api])
 

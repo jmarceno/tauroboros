@@ -1463,14 +1463,30 @@ export class PiKanbanServer {
         return json({ error: `Cannot modify task \"${task.name}\" while it is executing in run ${activeRun.id}.` }, 409)
       }
 
-      let body: Record<string, unknown>
-      try {
-        body = await req.json()
-      } catch (err) {
-        return json({ error: "Invalid JSON body" }, 400)
+      const parseResult = await req.json().then(
+        (body): { success: true; body: unknown } => ({ success: true, body }),
+        (error): { success: false; error: Error } => ({ success: false, error })
+      )
+      
+      if (!parseResult.success) {
+        return json({ error: `Invalid JSON body: ${parseResult.error.message}` }, 400)
       }
-
-      const groupId = body?.groupId as string | null | undefined
+      
+      const body = parseResult.body
+      
+      if (body === null || typeof body !== 'object') {
+        return json({ error: "Request body must be an object" }, 400)
+      }
+      
+      const bodyObj = body as Record<string, unknown>
+      const groupIdRaw = bodyObj.groupId
+      
+      // Validate groupId type: must be string, null, or undefined
+      if (groupIdRaw !== undefined && groupIdRaw !== null && typeof groupIdRaw !== 'string') {
+        return json({ error: "groupId must be a string, null, or undefined" }, 400)
+      }
+      
+      const groupId: string | null | undefined = groupIdRaw
 
       // If groupId is null, remove from current group
       if (groupId === null) {
