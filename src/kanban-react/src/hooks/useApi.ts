@@ -6,7 +6,7 @@ import type {
   PlanningPrompt, PlanningPromptVersion, PlanningSession, CreatePlanningSessionDTO,
   ContainerImage, TaskGroup, TaskGroupWithTasks, TaskGroupStatus,
 } from "@/types"
-import type { ApiError } from "../../../shared/error-codes"
+import type { ApiError } from "../../../shared/error-codes.ts"
 
 const API_BASE = import.meta.env.VITE_API_URL || location.origin
 
