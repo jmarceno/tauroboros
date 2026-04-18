@@ -22,6 +22,7 @@ interface KanbanColumnProps {
   isTaskInRun?: (taskId: string, runId: string | null) => boolean
   groups?: TaskGroup[]
   children?: React.ReactNode
+  footerContent?: React.ReactNode
   onOpenTask: (id: string, e?: React.MouseEvent) => void
   onChangeSort: (sort: string) => void
   onOpenTemplateModal: () => void
@@ -59,6 +60,7 @@ export const KanbanColumn = memo(function KanbanColumn({
   isTaskInRun,
   groups = [],
   children,
+  footerContent,
   onOpenTask,
   onChangeSort,
   onOpenTemplateModal,
@@ -77,7 +79,6 @@ export const KanbanColumn = memo(function KanbanColumn({
   onViewRuns,
   onContinueReviews,
 }: KanbanColumnProps) {
-  // Build group lookup map for O(1) access
   const groupMap = new Map(groups.map(g => [g.id, g]))
   const isDragOver = dragDrop.dragOverStatus === status
 
@@ -111,7 +112,7 @@ export const KanbanColumn = memo(function KanbanColumn({
             <option value="updated-desc">Updated ↓</option>
           </select>
           <span className="kanban-column-count">
-            {tasks?.length ?? 0}
+            {tasks.length}
           </span>
         </div>
       </div>
@@ -151,6 +152,12 @@ export const KanbanColumn = memo(function KanbanColumn({
           )
         })}
 
+        {footerContent && (
+          <div className="mt-auto">
+            {footerContent}
+          </div>
+        )}
+
         {/* Add buttons at the end */}
         {status === 'template' && (
           <button
@@ -169,7 +176,7 @@ export const KanbanColumn = memo(function KanbanColumn({
             + Add Task
           </button>
         )}
-        {status === 'done' && (tasks?.length ?? 0) > 0 && (
+        {status === 'done' && tasks.length > 0 && (
           <button className="add-task-btn mt-auto" onClick={onArchiveAllDone}>
             Archive All
           </button>
