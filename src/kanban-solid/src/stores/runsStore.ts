@@ -3,7 +3,7 @@
  * Replaces: RunsContext
  */
 
-import { createSignal, createMemo } from 'solid-js'
+import { createMemo } from 'solid-js'
 import { createQuery, useQueryClient, createMutation } from '@tanstack/solid-query'
 import type { WorkflowRun, Task } from '@/types'
 import * as api from '@/api'
@@ -17,7 +17,7 @@ const queryKeys = {
 
 export function createRunsStore() {
   const queryClient = useQueryClient()
-  const [tasksRef, setTasksRef] = createSignal<Task[]>([])
+  const setTasksRef = (_tasks: Task[]) => {}
 
   // Query
   const runsQuery = createQuery(() => ({

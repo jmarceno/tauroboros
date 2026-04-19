@@ -32,7 +32,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const KANBAN_DIST = join(__dirname, "..", "kanban-solid", "dist")
 const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
-const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "autoCommit", "deleteWorktree", "skipPermissionAsking"] as const
+const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "codeStyleReview", "autoCommit", "deleteWorktree", "skipPermissionAsking"] as const
 
 type RunControlFn = (runId: string) => Promise<unknown>
 type StartFn = () => Promise<unknown>
@@ -605,6 +605,7 @@ export class PiKanbanServer {
         planmode: body.planmode,
         autoApprovePlan: body.autoApprovePlan,
         review: body.review,
+        codeStyleReview: body.codeStyleReview,
         autoCommit: body.autoCommit,
         deleteWorktree: body.deleteWorktree,
         requirements: validRequirements,
@@ -679,6 +680,7 @@ export class PiKanbanServer {
         planmode: body.planmode,
         autoApprovePlan: body.autoApprovePlan,
         review: body.review,
+        codeStyleReview: body.codeStyleReview,
         autoCommit: body.autoCommit,
         deleteWorktree: body.deleteWorktree,
         requirements: Array.isArray(body.requirements) ? body.requirements : [],

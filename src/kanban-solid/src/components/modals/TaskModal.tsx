@@ -3,7 +3,7 @@
  * Ported from React to SolidJS
  */
 
-import { createSignal, createMemo, onMount, Show, For, Suspense, lazy } from 'solid-js'
+import { createSignal, createMemo, createEffect, onMount, Show, For, Suspense, lazy } from 'solid-js'
 import type { TaskStatus, CreateTaskDTO, ThinkingLevel, ExecutionStrategy, BestOfNSlot } from '@/types'
 import { ModalWrapper } from '../common/ModalWrapper'
 import { ModelPicker } from '../common/ModelPicker'
@@ -33,38 +33,29 @@ export function TaskModal(props: TaskModalProps) {
   const optionsStore = createOptionsStore()
   const modelSearch = createModelSearchStore()
 
-  // Create a stable snapshot of the task data (stable reference like React's useState initializer)
-  const [taskSnapshot] = createSignal((() => {
-    const existingTask = props.taskId ? tasksStore.getTaskById(props.taskId) : null
-    const seedTask = props.seedTaskId ? tasksStore.getTaskById(props.seedTaskId) : null
-    return {
-      existingTask: existingTask ? { ...existingTask } : null,
-      seedTask: seedTask ? { ...seedTask } : null,
-    }
-  })())
-
-  // Use snapshot as the stable source of truth for initial values
-  const existingTask = () => taskSnapshot().existingTask
-  const seedTask = () => taskSnapshot().seedTask
+  const existingTask = createMemo(() => props.taskId ? tasksStore.getTaskById(props.taskId) ?? null : null)
+  const seedTask = createMemo(() => props.seedTaskId ? tasksStore.getTaskById(props.seedTaskId) ?? null : null)
+  const sourceTask = createMemo(() => existingTask() ?? seedTask())
+  const [initializedFormKey, setInitializedFormKey] = createSignal<string | null>(null)
 
   // Form state
-  const [name, setName] = createSignal(existingTask()?.name || seedTask()?.name || '')
-  const [prompt, setPrompt] = createSignal(existingTask()?.prompt || seedTask()?.prompt || '')
+  const [name, setName] = createSignal('')
+  const [prompt, setPrompt] = createSignal('')
   const [branch, setBranch] = createSignal('')
-  const [planModel, setPlanModel] = createSignal(existingTask()?.planModel || optionsStore.options()?.planModel || '')
-  const [executionModel, setExecutionModel] = createSignal(existingTask()?.executionModel || optionsStore.options()?.executionModel || '')
-  const [planThinkingLevel, setPlanThinkingLevel] = createSignal<ThinkingLevel>(existingTask()?.planThinkingLevel || optionsStore.options()?.planThinkingLevel || 'default')
-  const [executionThinkingLevel, setExecutionThinkingLevel] = createSignal<ThinkingLevel>(existingTask()?.executionThinkingLevel || optionsStore.options()?.executionThinkingLevel || 'default')
-  const [planmode, setPlanmode] = createSignal(existingTask()?.planmode ?? false)
-  const [autoApprovePlan, setAutoApprovePlan] = createSignal(existingTask()?.autoApprovePlan ?? false)
-  const [review, setReview] = createSignal(existingTask()?.review ?? true)
-  const [codeStyleReview, setCodeStyleReview] = createSignal(existingTask()?.codeStyleReview ?? false)
-  const [autoCommit, setAutoCommit] = createSignal(existingTask()?.autoCommit ?? true)
-  const [deleteWorktree, setDeleteWorktree] = createSignal(existingTask()?.deleteWorktree ?? true)
-  const [skipPermissionAsking, setSkipPermissionAsking] = createSignal(existingTask()?.skipPermissionAsking ?? true)
-  const [requirements, setRequirements] = createSignal<string[]>(existingTask()?.requirements || seedTask()?.requirements || [])
-  const [executionStrategy, setExecutionStrategy] = createSignal<ExecutionStrategy>(existingTask()?.executionStrategy || 'standard')
-  const [containerImage, setContainerImage] = createSignal(existingTask()?.containerImage || '')
+  const [planModel, setPlanModel] = createSignal('')
+  const [executionModel, setExecutionModel] = createSignal('')
+  const [planThinkingLevel, setPlanThinkingLevel] = createSignal<ThinkingLevel>('default')
+  const [executionThinkingLevel, setExecutionThinkingLevel] = createSignal<ThinkingLevel>('default')
+  const [planmode, setPlanmode] = createSignal(false)
+  const [autoApprovePlan, setAutoApprovePlan] = createSignal(false)
+  const [review, setReview] = createSignal(true)
+  const [codeStyleReview, setCodeStyleReview] = createSignal(false)
+  const [autoCommit, setAutoCommit] = createSignal(true)
+  const [deleteWorktree, setDeleteWorktree] = createSignal(true)
+  const [skipPermissionAsking, setSkipPermissionAsking] = createSignal(true)
+  const [requirements, setRequirements] = createSignal<string[]>([])
+  const [executionStrategy, setExecutionStrategy] = createSignal<ExecutionStrategy>('standard')
+  const [containerImage, setContainerImage] = createSignal('')
   const [availableBranches, setAvailableBranches] = createSignal<string[]>([])
   const [availableImages, setAvailableImages] = createSignal<Array<{ tag: string }>>([])
   const [isLoading, setIsLoading] = createSignal(true)
@@ -84,6 +75,11 @@ export function TaskModal(props: TaskModalProps) {
   const isCreate = () => props.mode === 'create'
   const isEdit = () => props.mode === 'edit'
   const showBonConfig = () => executionStrategy() === 'best_of_n'
+  const isAwaitingSourceTask = createMemo(() => {
+    if (isEdit() && props.taskId) return !existingTask()
+    if (isDeploy() && props.seedTaskId) return !seedTask()
+    return false
+  })
   const branchOptions = createMemo(() => {
     const options = new Set(availableBranches())
     const selectedBranch = branch().trim()
@@ -91,6 +87,75 @@ export function TaskModal(props: TaskModalProps) {
       options.add(selectedBranch)
     }
     return Array.from(options)
+  })
+
+  const resetBestOfNForm = () => {
+    setBonWorkers([])
+    setBonReviewers([])
+    setBonFinalApplierModel('')
+    setBonFinalApplierSuffix('')
+    setBonSelectionMode('pick_best')
+    setBonMinSuccessful(1)
+    setBonVerificationCmd('')
+  }
+
+  const initializeFormFromTask = () => {
+    const currentTask = sourceTask()
+    const currentOptions = optionsStore.options()
+
+    setName(currentTask?.name ?? '')
+    setPrompt(currentTask?.prompt ?? '')
+    setBranch(currentTask?.branch ?? currentOptions?.branch?.trim() ?? '')
+    setPlanModel(currentTask?.planModel ?? currentOptions?.planModel ?? '')
+    setExecutionModel(currentTask?.executionModel ?? currentOptions?.executionModel ?? '')
+    setPlanThinkingLevel(currentTask?.planThinkingLevel ?? currentOptions?.planThinkingLevel ?? 'default')
+    setExecutionThinkingLevel(currentTask?.executionThinkingLevel ?? currentOptions?.executionThinkingLevel ?? 'default')
+    setPlanmode(currentTask?.planmode ?? false)
+    setAutoApprovePlan(currentTask?.autoApprovePlan ?? false)
+    setReview(currentTask?.review ?? true)
+    setCodeStyleReview(currentTask?.codeStyleReview ?? false)
+    setAutoCommit(currentTask?.autoCommit ?? true)
+    setDeleteWorktree(currentTask?.deleteWorktree ?? true)
+    setSkipPermissionAsking(currentTask?.skipPermissionAsking ?? true)
+    setRequirements(currentTask?.requirements ? [...currentTask.requirements] : [])
+    setExecutionStrategy(currentTask?.executionStrategy ?? 'standard')
+    setContainerImage(currentTask?.containerImage ?? '')
+
+    if (currentTask?.executionStrategy === 'best_of_n' && currentTask.bestOfNConfig) {
+      const config = currentTask.bestOfNConfig
+      setBonWorkers(config.workers.map(w => ({ ...w })))
+      setBonReviewers(config.reviewers.map(r => ({ ...r })))
+      setBonFinalApplierModel(config.finalApplier.model)
+      setBonFinalApplierSuffix(config.finalApplier.taskSuffix || '')
+      setBonSelectionMode(config.selectionMode)
+      setBonMinSuccessful(config.minSuccessfulWorkers)
+      setBonVerificationCmd(config.verificationCommand || '')
+      return
+    }
+
+    resetBestOfNForm()
+  }
+
+  createEffect(() => {
+    const formKey = `${props.mode}:${props.taskId ?? ''}:${props.seedTaskId ?? ''}`
+    if (initializedFormKey() === formKey) return
+    if (isAwaitingSourceTask()) return
+
+    initializeFormFromTask()
+    setInitializedFormKey(formKey)
+  })
+
+  createEffect(() => {
+    if (!isAwaitingSourceTask()) return
+    if (tasksStore.isLoading()) return
+
+    const errorMessage = tasksStore.error()
+    if (errorMessage) {
+      throw new Error(errorMessage)
+    }
+
+    uiStore.showToast('Task data could not be loaded', 'error')
+    props.onClose()
   })
 
   // Load data on mount
@@ -106,35 +171,18 @@ export function TaskModal(props: TaskModalProps) {
       setAvailableBranches(branchData.branches || [])
       setAvailableImages(imageData.images || [])
 
-      // Set branch
-      if (existingTask()?.branch) {
-        setBranch(existingTask()!.branch)
-      } else if (seedTask()?.branch) {
-        setBranch(seedTask()!.branch)
-      } else if (latestOptions.branch?.trim()) {
-        setBranch(latestOptions.branch.trim())
-      } else if (branchData.current) {
-        setBranch(branchData.current)
-      } else if (branchData.branches?.[0]) {
-        setBranch(branchData.branches[0])
-      }
+      setBranch(currentBranch => {
+        if (currentBranch.trim()) return currentBranch
+        if (latestOptions.branch?.trim()) return latestOptions.branch.trim()
+        if (branchData.current) return branchData.current
+        if (branchData.branches?.[0]) return branchData.branches[0]
+        return currentBranch
+      })
 
-      // Set container image
-      if (existingTask()?.containerImage) {
-        setContainerImage(existingTask()?.containerImage ?? '')
-      }
-
-      // Load Best-of-N config if present
-      if (existingTask()?.executionStrategy === 'best_of_n' && existingTask()?.bestOfNConfig) {
-        const config = existingTask()!.bestOfNConfig!
-        setBonWorkers(config.workers.map(w => ({ ...w })))
-        setBonReviewers(config.reviewers.map(r => ({ ...r })))
-        setBonFinalApplierModel(config.finalApplier.model)
-        setBonFinalApplierSuffix(config.finalApplier.taskSuffix || '')
-        setBonSelectionMode(config.selectionMode)
-        setBonMinSuccessful(config.minSuccessfulWorkers)
-        setBonVerificationCmd(config.verificationCommand || '')
-      }
+      setPlanModel(currentPlanModel => currentPlanModel || latestOptions.planModel || '')
+      setExecutionModel(currentExecutionModel => currentExecutionModel || latestOptions.executionModel || '')
+      setPlanThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions.planThinkingLevel || 'default' : currentLevel)
+      setExecutionThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions.executionThinkingLevel || 'default' : currentLevel)
     } catch (e) {
       console.error('Failed to load data:', e)
       uiStore.showToast('Failed to load form data', 'error')
@@ -143,14 +191,11 @@ export function TaskModal(props: TaskModalProps) {
     }
   })
 
-  // Get tasks snapshot for requirements (stable reference)
-  const [tasksSnapshot] = createSignal(tasksStore.tasks())
-
   const availableRequirements = createMemo(() => {
-    const stableTaskId = existingTask()?.id ?? props.taskId
-    return tasksSnapshot().filter(t => {
-      if (isViewOnly()) return t.id !== stableTaskId
-      if (t.id === stableTaskId) return false
+    const currentTaskId = sourceTask()?.id ?? props.taskId
+    return tasksStore.tasks().filter(t => {
+      if (isViewOnly()) return t.id !== currentTaskId
+      if (t.id === currentTaskId) return false
       if (t.status === 'backlog') return true
       if (t.status === 'done' && requirements().includes(t.id)) return true
       return false
@@ -297,7 +342,7 @@ export function TaskModal(props: TaskModalProps) {
         </div>
       </Show>
 
-      <Show when={!isLoading()}>
+      <Show when={!isLoading() && !isAwaitingSourceTask()}>
         <form onSubmit={handleSubmit} class="space-y-4">
           {/* Name */}
           <div class="form-group">
@@ -703,6 +748,12 @@ export function TaskModal(props: TaskModalProps) {
             </Show>
           </div>
         </form>
+      </Show>
+
+      <Show when={!isLoading() && isAwaitingSourceTask()}>
+        <div class="p-8 text-center">
+          <div class="text-dark-text-muted">Loading task...</div>
+        </div>
       </Show>
     </ModalWrapper>
   )

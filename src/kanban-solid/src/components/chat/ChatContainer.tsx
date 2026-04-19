@@ -10,7 +10,7 @@ import { ModelPicker } from '@/components/common/ModelPicker'
 import { ThinkingLevelSelect } from '@/components/common/ThinkingLevelSelect'
 import { planningApi } from '@/api'
 import { uiStore } from '@/stores'
-import type { ChatSession, ContextAttachment } from '@/stores/planningChatStore'
+import type { ChatSession, ContextAttachment, createPlanningChatStore } from '@/stores/planningChatStore'
 import type { PlanningSession } from '@/types'
 import { formatLocalTime, formatCompactDateTime } from '@/utils/date'
 
@@ -18,29 +18,7 @@ const MIN_PANEL_WIDTH = 350
 const DEFAULT_PANEL_WIDTH = 500
 
 interface ChatContainerProps {
-  planningChat: {
-    isOpen: () => boolean
-    width: () => number
-    setPanelWidth: (width: number) => void
-    sessions: () => ChatSession[]
-    activeSessionId: () => string | null
-    activeSession: () => ChatSession | null
-    visibleSessions: () => ChatSession[]
-    minimizedSessions: () => ChatSession[]
-    openPanel: () => void
-    closePanel: () => void
-    togglePanel: () => void
-    switchToSession: (sessionId: string) => void
-    minimizeSession: (sessionId: string) => void
-    closeSession: (sessionId: string) => void
-    renameSession: (sessionId: string, name: string) => void
-    addExistingSession: (session: ChatSession) => void
-    sendMessage: (sessionId: string, content: string, attachments?: ContextAttachment[]) => Promise<void>
-    reconnectSession: (sessionId: string, model?: string, thinkingLevel?: string) => Promise<void>
-    setSessionModel: (sessionId: string, model: string, thinkingLevel?: string) => Promise<void>
-    createTasksFromChat: (sessionId: string) => Promise<void>
-    createNewSession: (model?: string, thinkingLevel?: string) => Promise<void>
-  }
+  planningChat: ReturnType<typeof createPlanningChatStore>
   options: () => { planModel?: string; planThinkingLevel?: string } | null
   loadOptions: () => Promise<void>
 }

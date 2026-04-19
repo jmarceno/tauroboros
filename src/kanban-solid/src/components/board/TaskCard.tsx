@@ -9,6 +9,7 @@ import type { createDragDropStore } from '@/stores'
 import type { createSessionUsageStore } from '@/stores/sessionUsageStore'
 import type { createTaskLastUpdateStore } from '@/stores/taskLastUpdateStore'
 import { formatLocalDateTime, formatRelativeTime } from '@/utils/date'
+import { getTaskCardActionVisibility } from './taskCardActions'
 
 interface TaskCardProps {
   task: Task
@@ -150,10 +151,15 @@ export function TaskCard(props: TaskCardProps) {
     (props.task.errorMessage !== null || props.task.reviewCount > 0)
   )
 
-  const showInlineActionBar = createMemo(() =>
-    !props.isLocked &&
-    (props.task.status === 'review' || props.task.status === 'executing' || props.task.status === 'failed' || props.task.status === 'stuck')
+  const actionVisibility = createMemo(() =>
+    getTaskCardActionVisibility({
+      task: props.task,
+      isLocked: props.isLocked,
+      isAnomalousReviewTask: isAnomalousReviewTask(),
+    })
   )
+
+  const showInlineActionBar = createMemo(() => actionVisibility().showInlineActionBar)
 
   const effectiveMaxReviews = createMemo(() => 
     props.task.maxReviewRunsOverride ?? props.options?.maxReviews ?? 2
@@ -214,14 +220,9 @@ export function TaskCard(props: TaskCardProps) {
   const handleDragStart = (e: DragEvent) => {
     if (!props.canDrag) return
 
-    // Determine drag source context based on where the task is being dragged from:
-    // - If rendered inside a GroupPanel (group prop provided): source is 'group'
-    // - Otherwise (rendered in a column): source is 'column'
-    const context = props.group
-      ? { source: 'group' as const, groupId: props.group.id }
-      : { source: 'column' as const, status: props.task.status }
+    const context = props.group ? 'group' : 'column'
 
-    props.dragDrop.handleDragStart(props.task.id, context)
+    props.dragDrop.handleDragStart(props.task.id, props.task.status, context)
     ;(e.currentTarget as HTMLDivElement).classList.add('dragging')
 
     // Set data transfer with context for external handling
@@ -229,7 +230,10 @@ export function TaskCard(props: TaskCardProps) {
     e.dataTransfer!.setData('text/plain', props.task.id)
     e.dataTransfer!.setData('application/json', JSON.stringify({
       taskId: props.task.id,
-      source: context,
+      source: {
+        source: context,
+        ...(props.group ? { groupId: props.group.id } : { status: props.task.status }),
+      },
     }))
   }
 
@@ -435,7 +439,7 @@ export function TaskCard(props: TaskCardProps) {
           </Show>
 
           {/* Reset button */}
-          <Show when={!showInlineActionBar() && !props.isLocked && (props.task.status === 'stuck' || props.task.status === 'failed' || props.task.status === 'done' || props.task.status === 'review')}>
+          <Show when={actionVisibility().showResetButton}>
             <button
               class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-warning transition-colors"
               title="Reset to Backlog"
@@ -461,7 +465,7 @@ export function TaskCard(props: TaskCardProps) {
           </Show>
 
           {/* Mark Done button (for stuck or anomalous review tasks) */}
-          <Show when={props.task.status === 'stuck' || (!props.isLocked && isAnomalousReviewTask())}>
+          <Show when={actionVisibility().showMarkDoneIcon}>
             <button
               class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-success transition-colors"
               title="Mark as Done"
@@ -519,7 +523,7 @@ export function TaskCard(props: TaskCardProps) {
             </>
           </Show>
 
-          <Show when={props.task.status === 'review' && isAnomalousReviewTask()}>
+          <Show when={actionVisibility().showInlineMarkDoneButton}>
             <button class="btn btn-primary btn-xs" onClick={(e) => { e.stopPropagation(); props.onMarkDone(); }}>
               Mark Done
             </button>

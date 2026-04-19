@@ -53,7 +53,7 @@ interface KanbanBoardProps {
   onCloseGroupPanel?: () => void
   onRemoveTaskFromGroup?: (taskId: string) => void
   onAddTasksToGroup?: (taskIds: string[]) => void
-  onRenameGroup?: (groupId: string, newName: string) => Promise<void>
+  onRenameGroup?: (groupId: string, newName: string) => Promise<unknown>
 }
 
 const columns: { status: TaskStatus; title: string }[] = [

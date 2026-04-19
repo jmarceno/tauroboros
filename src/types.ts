@@ -632,6 +632,7 @@ export interface CreateTaskDTO {
 
 export interface UpdateTaskDTO extends Partial<CreateTaskDTO> {
   planningPrompt?: string
+  completedAt?: number | null
 }
 
 // UI State types

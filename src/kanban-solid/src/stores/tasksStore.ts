@@ -3,7 +3,7 @@
  * Replaces: TasksContext
  */
 
-import { createSignal, createMemo, batch } from 'solid-js'
+import { createMemo } from 'solid-js'
 import { createQuery, useQueryClient, createMutation } from '@tanstack/solid-query'
 import type { Task, TaskStatus, BestOfNSummary, ColumnSortPreferences, ColumnSortOption, UpdateTaskDTO } from '@/types'
 import * as api from '@/api'
@@ -30,6 +30,25 @@ const queryKeys = {
 
 export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   const queryClient = useQueryClient()
+
+  const upsertTaskInListCache = (task: Task) => {
+    queryClient.setQueryData<Task[]>(queryKeys.tasks.lists(), (current) => {
+      if (!current) return [task]
+      const existingIndex = current.findIndex(existingTask => existingTask.id === task.id)
+      if (existingIndex === -1) return [...current, task]
+
+      const next = current.slice()
+      next[existingIndex] = task
+      return next
+    })
+  }
+
+  const removeTaskFromListCache = (taskId: string) => {
+    queryClient.setQueryData<Task[]>(queryKeys.tasks.lists(), (current) => {
+      if (!current) return []
+      return current.filter(task => task.id !== taskId)
+    })
+  }
 
   // Queries
   const tasksQuery = createQuery(() => ({
@@ -80,7 +99,12 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
 
     // Apply column-specific sorting
     for (const status of Object.keys(groups) as Array<keyof typeof groups>) {
-      const sortKey = columnSorts?.[status as TaskStatus] ?? 'manual'
+      let sortKey: ColumnSortOption
+      if (status === 'failed' || status === 'stuck') {
+        sortKey = columnSorts?.review ?? 'manual'
+      } else {
+        sortKey = columnSorts?.[status] ?? 'manual'
+      }
       const sortFn = sortFns[sortKey]
       if (sortFn) {
         groups[status].sort(sortFn)
@@ -101,21 +125,24 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   // Mutations
   const createTaskMutation = createMutation(() => ({
     mutationFn: (data: Parameters<typeof api.tasksApi.create>[0]) => api.tasksApi.create(data),
-    onSuccess: () => {
+    onSuccess: (task) => {
+      upsertTaskInListCache(task)
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
   }))
 
   const updateTaskMutation = createMutation(() => ({
     mutationFn: ({ id, data }: { id: string; data: UpdateTaskDTO }) => api.tasksApi.update(id, data),
-    onSuccess: () => {
+    onSuccess: (task) => {
+      upsertTaskInListCache(task)
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
   }))
 
   const deleteTaskMutation = createMutation(() => ({
     mutationFn: (id: string) => api.tasksApi.delete(id),
-    onSuccess: () => {
+    onSuccess: (_, id) => {
+      removeTaskFromListCache(id)
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
   }))
@@ -185,11 +212,12 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   }))
 
   const restoreTaskMutation = createMutation(() => ({
-    mutationFn: ({ id, groupId }: { id: string; groupId?: string }) => {
+    mutationFn: async ({ id, groupId }: { id: string; groupId?: string }) => {
       if (groupId) {
-        return api.tasksApi.moveToGroup(id, groupId)
+        return await api.tasksApi.moveToGroup(id, groupId)
       }
-      return api.tasksApi.resetToGroup(id)
+      const result = await api.tasksApi.resetToGroup(id)
+      return result.task
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })

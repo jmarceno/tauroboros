@@ -116,7 +116,7 @@ function App() {
     // Handle group-related actions
     if (action === 'add-to-group') {
       // Validate that task can be added to group
-      const sourceContext = dragDrop.dragSourceContext?.source === 'group' ? 'group' : 'column'
+      const sourceContext = dragDrop.dragSourceContext() === 'group' ? 'group' : 'column'
       const validation = validateGroupDrop(
         task,
         sourceContext,
@@ -199,6 +199,7 @@ function App() {
           {
             const result = await tasksStore.resetTask(taskId)
             if (result.wasInGroup && result.group) {
+              uiStore.setModalData({ task: result.task, groupId: result.group.id })
               uiStore.setShowRestoreModal(true)
             }
           }
@@ -730,7 +731,9 @@ function App() {
                 taskGroupsStore.addTasksToGroup(groupId, taskIds)
               }
             }}
-            onRenameGroup={(groupId, newName) => taskGroupsStore.updateGroup(groupId, { name: newName })}
+            onRenameGroup={async (groupId, newName) => {
+              await taskGroupsStore.updateGroup(groupId, { name: newName })
+            }}
           />
         </Show>
 
@@ -833,18 +836,10 @@ function App() {
       </Show>
 
       {/* Additional Modals */}
-      <Show when={uiStore.activeModal() === 'approve'}>
+      <Show when={uiStore.activeModal() === 'approve' && !!getTaskForModal()?.id}>
         <ApproveModal
-          task={getTaskForModal()}
+          taskId={getTaskForModal()!.id}
           onClose={uiStore.closeModal}
-          onConfirm={async (taskId) => {
-            await tasksStore.repairTask(taskId, 'approve')
-            uiStore.closeModal()
-          }}
-          onReject={async (taskId) => {
-            await tasksStore.repairTask(taskId, 'reject')
-            uiStore.closeModal()
-          }}
         />
       </Show>
 
@@ -884,7 +879,6 @@ function App() {
 
       <Show when={uiStore.activeModal() === 'executionGraph'}>
         <ExecutionGraphModal
-          runId={uiStore.modalData().runId as string | undefined}
           onClose={uiStore.closeModal}
         />
       </Show>
@@ -903,25 +897,14 @@ function App() {
 
       <Show when={uiStore.showRestoreModal()}>
         <RestoreToGroupModal
-          isOpen={uiStore.showRestoreModal()}
           task={getTaskForModal()}
-          group={taskGroupsStore.groups().find(g => g.id === getTaskForModal()?.groupId)}
+          groups={taskGroupsStore.activeGroups()}
           onClose={() => uiStore.setShowRestoreModal(false)}
-          onRestoreToGroup={async () => {
-            const task = getTaskForModal()
-            if (!task) return
-            await tasksStore.resetTaskToGroup(task.id)
+          onRestore={async (taskId, groupId) => {
+            await tasksStore.moveTaskToGroup(taskId, groupId)
             uiStore.setShowRestoreModal(false)
             await tasksStore.loadTasks()
             uiStore.showToast('Task restored to group', 'success')
-          }}
-          onMoveToBacklog={async () => {
-            const task = getTaskForModal()
-            if (!task) return
-            await tasksStore.moveTaskToGroup(task.id, null)
-            uiStore.setShowRestoreModal(false)
-            await tasksStore.loadTasks()
-            uiStore.showToast('Task moved to general backlog', 'info')
           }}
         />
       </Show>
@@ -931,15 +914,15 @@ function App() {
           task={getTaskForModal()}
           onClose={uiStore.closeModal}
           onSubmit={async (taskId, revisionNotes) => {
-            await tasksStore.repairTask(taskId, 'request_revision', revisionNotes)
+            await tasksStore.requestPlanRevision(taskId, revisionNotes)
             uiStore.closeModal()
           }}
         />
       </Show>
 
-      <Show when={uiStore.activeModal() === 'session'}>
+      <Show when={uiStore.activeModal() === 'session' && typeof uiStore.modalData().sessionId === 'string'}>
         <SessionModal
-          sessionId={uiStore.modalData().sessionId as string | undefined}
+          sessionId={uiStore.modalData().sessionId as string}
           onClose={() => {
             uiStore.closeModal()
             if (location.hash.startsWith('#session/')) {

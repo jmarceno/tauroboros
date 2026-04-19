@@ -6,7 +6,7 @@
 
 import { createSignal, createMemo } from 'solid-js'
 import { createQuery, useQueryClient } from '@tanstack/solid-query'
-import type { Session, SessionMessage, PlanningPrompt, PlanningSession } from '@/types'
+import type { Session, SessionMessage, PlanningPrompt, PlanningSession, WSMessageType } from '@/types'
 import * as api from '@/api'
 
 const DEFAULT_WIDTH = 400
@@ -38,7 +38,7 @@ export interface ChatSession {
   error: string | null
 }
 
-export function createPlanningChatStore(wsStore: { on: (type: string, handler: (payload: unknown) => void) => () => void }) {
+export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, handler: (payload: unknown) => void) => () => void }) {
   const queryClient = useQueryClient()
 
   const [isOpen, setIsOpen] = createSignal(false)

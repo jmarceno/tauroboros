@@ -124,6 +124,7 @@ function createModalStore() {
   return {
     activeModal,
     modalData,
+    setModalData,
     showContainerConfigModal,
     setShowContainerConfigModal,
     showStopConfirmModal,
