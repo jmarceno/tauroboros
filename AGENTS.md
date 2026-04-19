@@ -1,4 +1,4 @@
-This is a TypeScript project using **Bun** for the backend runtime and REACT for frontend.
+This is a TypeScript project using **Bun** for the backend runtime and Solid JS for frontend.
 
 The "TaurOboros" project is an AI-powered workflow orchestration system that:
 - Uses Pi AI agents via RPC protocol for task execution
@@ -6,7 +6,7 @@ The "TaurOboros" project is an AI-powered workflow orchestration system that:
 - Implements advanced AI execution modes (Plan Mode, Review Loops, Best-of-N)
 - Provides isolation through Git Worktree and optional container isolation
 - Offers real-time updates, session logging, and execution graph visualization
-- Combines Bun backend with REACT + Tailwind CSS kanban frontend
+- Combines Bun backend with Solid JS + Tailwind CSS kanban frontend
 
 ## Quick Start
 
@@ -70,14 +70,14 @@ SERVER_PORT=3789 bun run dev
 
 ## Kanban UI Architecture
 
-The kanban UI has been migrated from vanilla JS/Alpine.js/Shoelace to React + Tailwind CSS + Vite.
+The kanban UI has been migrated from vanilla JS/Alpine.js/Shoelace to Solid JS + Tailwind CSS + Vite.
 
 
 ### Tech Stack
-- **Framework**: React with Composition API
+- **Framework**: Solid JS with Composition API
 - **Styling**: Tailwind CSS (custom dark theme with slate/indigo colors)
 - **Build Tool**: Vite
-- **Package Manager**: npm (for kanban-React subdirectory)
+- **Package Manager**: npm (for kanban-Solid JS subdirectory)
 - **Search**: Fuse.js for fuzzy model search
 - **UI Components**: Custom components (no heavy UI library)
 
