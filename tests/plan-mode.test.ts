@@ -24,6 +24,7 @@ function createTestSettings(mockPiBin: string): InfrastructureSettings {
 }
 
 const tempDirs: string[] = []
+const TEST_MODEL = "openai/gpt-4"
 
 function createTempDir(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix))
@@ -104,7 +105,7 @@ describe("Plan mode flows", () => {
     const settings = createTestSettings(mockPi)
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
-    db.updateOptions({ branch: "master" })
+    db.updateOptions({ branch: "master", planModel: TEST_MODEL, executionModel: TEST_MODEL })
     const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
     const server = new PiKanbanServer(db, {
       port: 0,

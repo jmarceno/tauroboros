@@ -486,6 +486,50 @@ describe("Orchestrator 'Already executing' bug fix", () => {
 
       expect((orchestrator as any).running).toBe(false)
     })
+
+    it("should persist completed batch progress before marking the run completed", async () => {
+      mockDB.updateOptions({ parallelTasks: 2 })
+
+      const task1 = mockDB.createTask({ id: "task-1", name: "Task 1", status: "backlog" })
+      const task2 = mockDB.createTask({ id: "task-2", name: "Task 2", status: "backlog" })
+      const run = mockDB.createWorkflowRun({
+        id: "run-progress",
+        status: "running",
+        kind: "all_ready",
+        taskOrder: [task1.id, task2.id],
+        currentTaskId: task1.id,
+        currentTaskIndex: 0,
+      })
+
+      const updateCalls: Array<{ id: string; input: Record<string, unknown> }> = []
+      const originalUpdateWorkflowRun = mockDB.updateWorkflowRun.bind(mockDB)
+      ;(mockDB as any).updateWorkflowRun = (id: string, input: Record<string, unknown>) => {
+        updateCalls.push({ id, input })
+        return originalUpdateWorkflowRun(id, input)
+      }
+
+      ;(orchestrator as any).running = true
+      ;(orchestrator as any).currentRunId = run.id
+      ;(orchestrator as any).executeTask = async (task: Task) => {
+        mockDB.updateTask(task.id, { status: "done" })
+      }
+
+      await (orchestrator as any).runInBackground(run.id, [task1.id, task2.id])
+
+      const storedRun = mockDB.getWorkflowRun(run.id)
+      expect(storedRun?.status).toBe("completed")
+      expect(storedRun?.currentTaskIndex).toBe(2)
+      expect((orchestrator as any).running).toBe(false)
+
+      const progressedUpdate = updateCalls.find((call) =>
+        call.id === run.id &&
+        call.input.currentTaskIndex === 2 &&
+        call.input.currentTaskId === null &&
+        call.input.status === undefined,
+      )
+
+      expect(progressedUpdate).toBeDefined()
+    })
   })
 
   describe("Race condition handling", () => {

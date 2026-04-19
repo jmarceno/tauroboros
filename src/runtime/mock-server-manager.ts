@@ -2,6 +2,10 @@ import { spawn, ChildProcess } from "child_process"
 import * as http from "http"
 import * as path from "path"
 
+type StartOptions = {
+  detached?: boolean
+}
+
 export class MockServerManager {
   private process: ChildProcess | null = null
   private port: number
@@ -10,7 +14,7 @@ export class MockServerManager {
     this.port = port
   }
 
-  async start(mockLlmServerPath?: string): Promise<void> {
+  async start(mockLlmServerPath?: string, options: StartOptions = {}): Promise<void> {
     if (this.process) {
       console.log("[MockServerManager] Server already running")
       return
@@ -34,23 +38,35 @@ export class MockServerManager {
     console.log(`[MockServerManager] Command: ${startCommand} ${startArgs.join(" ")}`)
 
     return new Promise((resolve, reject) => {
+      const detached = options.detached === true
+
       this.process = spawn(startCommand, startArgs, {
         cwd: serverPath,
-        stdio: ["pipe", "pipe", "pipe"],
+        stdio: detached ? "ignore" : ["pipe", "pipe", "pipe"],
         env: { ...process.env, PORT: this.port.toString() },
+        detached,
       })
+
+      if (detached) {
+        this.process.unref()
+      }
 
       let resolved = false
 
+      const cleanup = () => {
+        clearInterval(checkReady)
+        clearTimeout(startupTimeout)
+      }
+
       const checkReady = setInterval(() => {
         if (resolved) {
-          clearInterval(checkReady)
+          cleanup()
           return
         }
         const req = http.get(`http://localhost:${this.port}/health`, (res) => {
           if (res.statusCode === 200) {
             resolved = true
-            clearInterval(checkReady)
+            cleanup()
             console.log("[MockServerManager] Mock LLM server ready")
             resolve()
           }
@@ -61,23 +77,33 @@ export class MockServerManager {
       this.process.on("error", (err) => {
         if (!resolved) {
           resolved = true
-          clearInterval(checkReady)
+          cleanup()
           reject(err)
         }
       })
 
-      this.process.stderr?.on("data", (data: Buffer) => {
-        console.log(`[MockServerManager] stderr: ${data.toString().trim()}`)
-      })
-
-      this.process.stdout?.on("data", (data: Buffer) => {
-        console.log(`[MockServerManager] stdout: ${data.toString().trim()}`)
-      })
-
-      setTimeout(() => {
+      this.process.on("exit", (code, signal) => {
         if (!resolved) {
           resolved = true
-          clearInterval(checkReady)
+          cleanup()
+          reject(new Error(`Mock server exited before ready (code=${code ?? "null"}, signal=${signal ?? "null"})`))
+        }
+      })
+
+      if (!detached) {
+        this.process.stderr?.on("data", (data: Buffer) => {
+          console.log(`[MockServerManager] stderr: ${data.toString().trim()}`)
+        })
+
+        this.process.stdout?.on("data", (data: Buffer) => {
+          console.log(`[MockServerManager] stdout: ${data.toString().trim()}`)
+        })
+      }
+
+      const startupTimeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true
+          cleanup()
           reject(new Error("Mock server startup timeout"))
         }
       }, 30000)
@@ -109,5 +135,9 @@ export class MockServerManager {
 
   isRunning(): boolean {
     return this.process !== null
+  }
+
+  getProcessId(): number | undefined {
+    return this.process?.pid
   }
 }

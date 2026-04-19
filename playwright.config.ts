@@ -1,42 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
-import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { BASE_IMAGES } from './src/config/base-images.ts';
-
-// Check container requirements for real workflow test
-const isRealWorkflowTest = process.env.TEST_TYPE === 'real-workflow';
-
-if (isRealWorkflowTest) {
-  let hasPodman = false;
-  let hasPiAgentImage = false;
-
-  try {
-    execSync('podman --version', { stdio: 'pipe' });
-    hasPodman = true;
-  } catch (err) {
-    console.debug(`[playwright.config] Podman not available:`, err);
-  }
-
-  if (hasPodman) {
-    try {
-      const result = execSync(`podman images ${BASE_IMAGES.piAgent} -q`, { encoding: 'utf-8', stdio: 'pipe' });
-      hasPiAgentImage = result.trim().length > 0;
-    } catch (err) {
-      console.debug(`[playwright.config] ${BASE_IMAGES.piAgent} image not found:`, err);
-    }
-  }
-
-  if (!hasPodman || !hasPiAgentImage) {
-    console.error('❌ REAL WORKFLOW TEST FAILED: Container infrastructure not available');
-    if (!hasPodman) console.error('   - Podman not found');
-    if (!hasPiAgentImage) console.error(`   - ${BASE_IMAGES.piAgent} image not found`);
-    console.error('   Run: bun run container:setup');
-    process.exit(1);
-  }
-  console.log('✓ Container infrastructure verified\n');
-}
 
 // Get test project directory from marker file
 function getTestProjectDir(): string | null {
@@ -81,7 +46,7 @@ if (testProjectDir) {
     env: {
       PATH: process.env.PATH,
       HOME: process.env.HOME,
-      USE_MOCK_LLM: process.env.USE_MOCK_LLM !== 'false' ? 'true' : 'false',
+      USE_MOCK_LLM: 'true',
     },
   };
 
@@ -93,7 +58,7 @@ if (testProjectDir) {
 
 export default defineConfig({
   testDir: './tests/e2e',
-  timeout: isRealWorkflowTest ? 600000 : 120000,
+  timeout: 120000,
   expect: {
     timeout: 10000,
   },

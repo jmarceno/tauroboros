@@ -5,20 +5,17 @@
  * This ensures pi can auto-discover them from .pi/extensions/ and .pi/skills/
  */
 
-import { existsSync, mkdirSync, writeFileSync, readdirSync, statSync, rmSync } from "fs"
+import * as generatedAssetsModule from "./server/generated-assets.ts"
+import { existsSync, mkdirSync, writeFileSync, readdirSync, statSync, rmSync, readFileSync } from "fs"
 import { join, dirname } from "path"
 
-// Import embedded assets - will be available in compiled binary
-let generatedAssets: typeof import("../server/generated-assets.ts") | null = null
-try {
-  const mod = await import("../server/generated-assets.ts")
-  // Check if the module has the actual implementation or just a placeholder
-  if (mod && typeof mod.getAllExtensionAssets === 'function') {
-    generatedAssets = mod
-  }
-} catch {
-  // generated-assets.ts doesn't exist or is a placeholder
-}
+// Static import ensures Bun compile captures generated assets at compile time.
+const generatedAssets =
+  typeof generatedAssetsModule.getAllSkillAssets === "function" &&
+  typeof generatedAssetsModule.getAllConfigAssets === "function" &&
+  typeof generatedAssetsModule.getAllDockerAssets === "function"
+    ? generatedAssetsModule
+    : null
 
 /**
  * Check if running from compiled binary (has embedded assets)
@@ -68,36 +65,6 @@ function clearDirectory(dir: string): void {
       rmSync(fullPath, { force: true })
     }
   }
-}
-
-/**
- * Extract all embedded extensions to .pi/extensions/
- * Only extracts if not already present (preserves user modifications)
- */
-export function extractEmbeddedExtensions(projectRoot: string): { count: number; paths: string[] } {
-  if (!generatedAssets) {
-    return { count: 0, paths: [] }
-  }
-
-  const extensionsDir = join(projectRoot, ".pi", "extensions")
-  ensureDir(extensionsDir)
-
-  // NOTE: We do NOT clear the directory - user files are preserved
-  // Only extract embedded extensions that don't already exist
-
-  const extensionAssets = generatedAssets.getAllExtensionAssets()
-  const extractedPaths: string[] = []
-
-  for (const { path, asset } of extensionAssets) {
-    const targetPath = join(extensionsDir, path)
-    // Only extract if file doesn't exist (preserves user modifications)
-    if (!existsSync(targetPath)) {
-      writeAssetToFile(targetPath, asset)
-      extractedPaths.push(targetPath)
-    }
-  }
-
-  return { count: extractedPaths.length, paths: extractedPaths }
 }
 
 /**
@@ -189,20 +156,9 @@ export function extractEmbeddedDocker(projectRoot: string): { count: number; pat
  * Used when running from source code instead of compiled binary
  * Only copies files that don't already exist (preserves user modifications)
  */
-export function copyResourcesFromSource(projectRoot: string): { extensions: number; skills: number } {
-  // In development mode, extensions and skills are at the project root level
+export function copyResourcesFromSource(projectRoot: string): { skills: number } {
+  // In development mode, skills are at the project root level
   const sourceRoot = projectRoot
-
-  // Copy extensions - only if they don't exist
-  const sourceExtensionsDir = join(sourceRoot, "extensions")
-  const targetExtensionsDir = join(projectRoot, ".pi", "extensions")
-  let extensionCount = 0
-
-  if (existsSync(sourceExtensionsDir)) {
-    ensureDir(targetExtensionsDir)
-    // NOTE: We do NOT clear the directory - user files are preserved
-    extensionCount = copyDirectoryRecursiveSkipExisting(sourceExtensionsDir, targetExtensionsDir)
-  }
 
   // Copy skills - only if they don't exist
   const sourceSkillsDir = join(sourceRoot, "skills")
@@ -215,7 +171,7 @@ export function copyResourcesFromSource(projectRoot: string): { extensions: numb
     skillCount = copyDirectoryRecursiveSkipExisting(sourceSkillsDir, targetSkillsDir)
   }
 
-  return { extensions: extensionCount, skills: skillCount }
+  return { skills: skillCount }
 }
 
 /**
@@ -289,8 +245,6 @@ function countFiles(dir: string): number {
 
   return count
 }
-
-import { readFileSync } from "fs"
 
 /**
  * Copy config files from source directory (development mode)
@@ -376,21 +330,18 @@ export function copyDockerFromSource(projectRoot: string): { count: number } {
  */
 export function extractEmbeddedResources(projectRoot: string): {
   mode: "binary" | "source" | "none"
-  extensions: number
   skills: number
   config: number
   docker: number
 } {
   if (isRunningFromBinary()) {
     // Running from compiled binary - extract embedded resources
-    const extResult = extractEmbeddedExtensions(projectRoot)
     const skillResult = extractEmbeddedSkills(projectRoot)
     const configResult = extractEmbeddedConfig(projectRoot)
     const dockerResult = extractEmbeddedDocker(projectRoot)
 
     return {
       mode: "binary",
-      extensions: extResult.count,
       skills: skillResult.count,
       config: configResult.count,
       docker: dockerResult.count,
@@ -402,10 +353,9 @@ export function extractEmbeddedResources(projectRoot: string): {
     const dockerResult = copyDockerFromSource(projectRoot)
 
     // Only return "source" mode if we actually found and copied files
-    if (result.extensions > 0 || result.skills > 0 || configResult.count > 0 || dockerResult.count > 0) {
+    if (result.skills > 0 || configResult.count > 0 || dockerResult.count > 0) {
       return {
         mode: "source",
-        extensions: result.extensions,
         skills: result.skills,
         config: configResult.count,
         docker: dockerResult.count,
@@ -414,7 +364,6 @@ export function extractEmbeddedResources(projectRoot: string): {
 
     return {
       mode: "none",
-      extensions: 0,
       skills: 0,
       config: 0,
       docker: 0,

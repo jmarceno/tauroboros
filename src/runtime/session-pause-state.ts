@@ -192,7 +192,7 @@ export function clearAllPausedSessionStates(db: PiKanbanDB): void {
  */
 export interface PausedRunState {
   runId: string
-  kind: "all_tasks" | "single_task" | "workflow_review"
+  kind: "all_tasks" | "single_task" | "workflow_review" | "group_tasks"
   taskOrder: string[]
   currentTaskIndex: number
   currentTaskId: string | null

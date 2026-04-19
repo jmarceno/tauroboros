@@ -1,149 +1,71 @@
-/**
- * E2E Tests: Basic UI Functionality
- *
- * Tests fundamental UI interactions using Playwright ONLY
- * - Server startup and UI loading
- * - Task creation via UI
- * - Basic navigation
- *
- * NO API calls - all interactions through the web UI
- */
+import { test, expect } from '@playwright/test'
 
-import { test, expect } from "@playwright/test";
+import { createTaskViaUI, ctrlArchiveTask, getColumn, gotoKanban } from './ui-helpers'
 
 test.describe('Basic UI Functionality', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
-    await page.waitForLoadState('networkidle');
-    // Give Vue app time to mount
-    await page.waitForTimeout(2000);
-  });
+    await gotoKanban(page)
+  })
 
-  test('server starts and UI loads', async ({ page }) => {
-    // Check that the kanban board loaded by looking for the kanban columns
-    await expect(page.locator('[data-status="template"]')).toBeVisible();
+  test('loads the application shell and kanban board', async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'Start Workflow' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'New Task' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Planning Chat' })).toBeVisible()
 
-    // Verify the sidebar has the workflow control section
-    await expect(page.locator('.sidebar:has-text("Workflow Control")')).toBeVisible();
-
-    console.log('✓ UI loaded successfully');
-  });
-
-  test('API endpoint responds correctly', async ({ page }) => {
-    // Test API accessibility via fetch from browser context
-    const response = await page.evaluate(async () => {
-      const res = await fetch('/api/tasks');
-      return { status: res.status, ok: res.ok };
-    });
-
-    expect(response.status).toBe(200);
-    expect(response.ok).toBe(true);
-
-    console.log('✓ API is accessible');
-  });
-
-  test('WebSocket connection is available', async ({ page }) => {
-    // Check for WebSocket by looking at network or checking if WebSocket object exists
-    const hasWebSocket = await page.evaluate(() => {
-      // Check if WebSocket is defined in window
-      return typeof window.WebSocket !== 'undefined';
-    });
-
-    expect(hasWebSocket).toBe(true);
-    console.log('✓ WebSocket support detected');
-  });
-
-  test('keyboard shortcuts are displayed', async ({ page }) => {
-    // Look for kbd elements anywhere on the page (they're in the top bar)
-    const kbdElements = page.locator('kbd');
-
-    // Verify at least 4 keyboard shortcuts exist (T, B, S, D)
-    await expect(kbdElements.first()).toBeVisible();
-    const kbdCount = await kbdElements.count();
-    expect(kbdCount).toBeGreaterThanOrEqual(4);
-
-    // Get text content of all kbd elements and verify shortcuts exist
-    const kbdTexts = await kbdElements.allTextContents();
-    expect(kbdTexts).toContain('T');  // Template
-    expect(kbdTexts).toContain('B');  // Backlog/Task
-    expect(kbdTexts).toContain('P');  // Planning Chat
-    expect(kbdTexts).toContain('Esc'); // Close
-
-    console.log('✓ Keyboard shortcuts displayed');
-  });
-
-  test('task cards display ID badges when tasks exist', async ({ page }) => {
-    // First create a task to test the badge
-    const taskName = `UI Test Task ${Date.now()}`;
-
-    // Create a task via API to test UI elements
-    const response = await page.evaluate(async (name) => {
-      const res = await fetch('/api/tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name,
-          prompt: 'Test prompt for UI verification',
-          status: 'backlog',
-        }),
-      });
-      return { status: res.status, data: await res.json() };
-    }, taskName);
-
-    expect(response.status).toBe(201);
-
-    // Reload to show the new task
-    await page.reload();
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(2000);
-
-    // Find the task card
-    const taskCard = page.locator('.task-card').filter({ hasText: taskName }).first();
-    await expect(taskCard).toBeVisible({ timeout: 10000 });
-
-    // Check for task ID badge
-    const idBadge = taskCard.locator('.task-id-badge');
-    await expect(idBadge).toBeVisible({ timeout: 5000 });
-
-    // Verify badge format (#number)
-    const badgeText = await idBadge.textContent();
-    expect(badgeText).toMatch(/#\d+/);
-
-    // Cleanup: archive the task using Ctrl+click to skip confirmation
-    const archiveButton = taskCard.locator('button[title*="Archive"], button[title*="archive"]').first();
-    if (await archiveButton.isVisible().catch(() => false)) {
-      await archiveButton.click({ modifiers: ['Control'] });
-      await page.waitForTimeout(1000);
+    for (const status of ['template', 'backlog', 'executing', 'review', 'code-style', 'done']) {
+      await expect(getColumn(page, status)).toBeVisible()
     }
 
-    console.log('✓ Task ID badges displayed correctly');
-  });
+    const shortcutTexts = await page.locator('kbd').allTextContents()
+    expect(shortcutTexts).toEqual(expect.arrayContaining(['T', 'B', 'P', 'Esc']))
+  })
 
-  test('kanban columns have correct data-status attributes', async ({ page }) => {
-    // Verify all expected columns exist with correct data-status
-    const expectedColumns = ['template', 'backlog', 'executing', 'review', 'code-style', 'done'];
+  test('switches between the primary application tabs', async ({ page }) => {
+    await page.getByRole('tab', { name: 'Options' }).click()
+    await expect(page.getByRole('heading', { name: 'Options Configuration' })).toBeVisible()
 
-    for (const status of expectedColumns) {
-      const column = page.locator(`[data-status="${status}"]`);
-      await expect(column).toBeVisible({ timeout: 5000 });
-    }
+    await page.getByRole('tab', { name: 'Containers' }).click()
+    await expect(page.getByRole('heading', { name: 'Container Image Builder' })).toBeVisible()
 
-    console.log('✓ All kanban columns have correct data-status attributes');
-  });
+    await page.getByRole('tab', { name: 'Archived' }).click()
+    await expect(page.getByRole('heading', { name: 'Archived Tasks', exact: true })).toBeVisible()
 
-  test('sidebar has workflow control and stats sections', async ({ page }) => {
-    // Verify sidebar sections exist
-    const workflowControl = page.locator('.sidebar:has-text("Workflow Control")');
-    await expect(workflowControl).toBeVisible({ timeout: 10000 });
+    await page.getByRole('tab', { name: 'Stats' }).click()
+    await expect(page.getByRole('heading', { name: 'System Statistics' })).toBeVisible()
+    await expect(page.getByTestId('avg-duration')).toBeVisible()
 
-    // Verify stats section
-    const statsSection = page.locator('.sidebar .stats-section, .sidebar:has-text("Total")');
-    await expect(statsSection).toBeVisible({ timeout: 5000 });
+    await page.getByRole('tab', { name: 'Kanban' }).click()
+    await expect(page.locator('.kanban-wrapper')).toBeVisible()
+  })
 
-    // Verify Options button
-    const optionsButton = page.locator('button:has-text("Options")');
-    await expect(optionsButton).toBeVisible({ timeout: 5000 });
+  test('creates a task from the modal and shows its task id badge', async ({ page }) => {
+    const taskName = `basic-ui-${Date.now()}`
+    const taskCard = await createTaskViaUI(page, {
+      name: taskName,
+      prompt: 'Create a small note so the kanban shows a freshly added task.',
+    })
 
-    console.log('✓ Sidebar has all expected sections');
-  });
-});
+    await expect(taskCard.locator('.task-id-badge')).toHaveText(/#\d+/)
+    await ctrlArchiveTask(page, taskName)
+  })
+
+  test('opens and closes the planning chat panel', async ({ page }) => {
+    await page.getByRole('button', { name: 'Planning Chat' }).click()
+    await expect(page.getByText('No active chat sessions')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Start New Chat' })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Close panel' }).click()
+    await expect(page.getByText('No active chat sessions')).not.toBeVisible()
+  })
+
+  test('shows newly created tasks in the backlog column', async ({ page }) => {
+    const taskName = `backlog-visibility-${Date.now()}`
+    await createTaskViaUI(page, {
+      name: taskName,
+      prompt: 'Verify that new tasks appear in the backlog column.',
+    })
+
+    await expect(getColumn(page, 'backlog').locator('.task-card').filter({ hasText: taskName })).toBeVisible()
+    await ctrlArchiveTask(page, taskName)
+  })
+})

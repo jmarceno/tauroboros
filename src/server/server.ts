@@ -28,8 +28,8 @@ import { isTaskGroupStatus, isValidHexColor, validateTaskGroupName, validateTask
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// Static file serving paths - React kanban
-const KANBAN_DIST = join(__dirname, "..", "kanban-react", "dist")
+// Static file serving paths - SolidJS kanban
+const KANBAN_DIST = join(__dirname, "..", "kanban-solid", "dist")
 const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
 const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "autoCommit", "deleteWorktree", "skipPermissionAsking"] as const
@@ -1280,12 +1280,16 @@ export class PiKanbanServer {
     })
 
     this.router.get("/api/tasks/:id/runs", ({ params, json, sessionUrlFor }) => {
-      if (!this.db.getTask(params.id)) return json({ error: "Task not found" }, 404)
+      // Check both active and archived tasks
+      const task = this.db.getTask(params.id) ?? this.db.getArchivedTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
       return json(this.db.getTaskRuns(params.id).map((run) => normalizeTaskRunForClient(run, sessionUrlFor)))
     })
 
     this.router.get("/api/tasks/:id/sessions", ({ params, json }) => {
-      if (!this.db.getTask(params.id)) return json({ error: "Task not found" }, 404)
+      // Check both active and archived tasks
+      const task = this.db.getTask(params.id) ?? this.db.getArchivedTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
       return json(this.db.getWorkflowSessionsByTask(params.id))
     })
 

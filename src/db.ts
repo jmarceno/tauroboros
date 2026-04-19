@@ -492,7 +492,7 @@ function asBestOfNSubstage(value: unknown): Task["bestOfNSubstage"] {
   throw new Error(`Invalid best-of-n substage: ${JSON.stringify(value)}. Expected one of: ${BEST_OF_N_SUBSTAGES.join(", ")}.`)
 }
 
-const WORKFLOW_RUN_KINDS: WorkflowRunKind[] = ["all_tasks", "single_task", "workflow_review"]
+const WORKFLOW_RUN_KINDS: WorkflowRunKind[] = ["all_tasks", "single_task", "workflow_review", "group_tasks"]
 
 function isWorkflowRunKind(value: unknown): value is WorkflowRunKind {
   return typeof value === "string" && WORKFLOW_RUN_KINDS.includes(value as WorkflowRunKind)
@@ -3940,7 +3940,7 @@ export class PiKanbanDB {
 
   savePausedRunState(state: {
     runId: string
-    kind: "all_tasks" | "single_task" | "workflow_review"
+    kind: "all_tasks" | "single_task" | "workflow_review" | "group_tasks"
     taskOrder: string[]
     currentTaskIndex: number
     currentTaskId: string | null
@@ -3976,7 +3976,7 @@ export class PiKanbanDB {
 
   loadPausedRunState(runId: string): {
     runId: string
-    kind: "all_tasks" | "single_task" | "workflow_review"
+    kind: "all_tasks" | "single_task" | "workflow_review" | "group_tasks"
     taskOrder: string[]
     currentTaskIndex: number
     currentTaskId: string | null
@@ -4646,7 +4646,9 @@ export class PiKanbanDB {
       )
       .get()!
 
-    return Math.round(Number(row.avg_duration ?? 0))
+    // Convert from seconds to minutes for display
+    const seconds = Number(row.avg_duration ?? 0)
+    return Math.round(seconds / 60)
   }
 
   getHourlyUsageTimeSeries(): HourlyUsage[] {

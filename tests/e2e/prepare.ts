@@ -19,8 +19,8 @@ const PROJECT_ROOT = resolve(__dirname, '../..');
 // Container mode is ALWAYS enabled for E2E tests
 const useContainer = true;
 
-// Mock LLM mode - uses mock server instead of real API calls (default: true for e2e tests)
-const useMockLLM = process.env.USE_MOCK_LLM !== 'false';
+// Mock LLM mode is ALWAYS enabled for E2E tests
+const useMockLLM = true;
 
 console.log(`[PREPARE] Setting up test environment${useContainer ? ' with container mode' : ''}${useMockLLM ? ' with mock LLM' : ''}...`);
 console.log(`[PREPARE] Project root: ${PROJECT_ROOT}`);
@@ -37,6 +37,24 @@ try {
   }
 } catch (e) {
   console.warn('[PREPARE] Warning: Could not clean up previous test:', e);
+}
+
+try {
+  const mockServerMarker = join(tmpdir(), 'pi-e2e-mock-server');
+  if (existsSync(mockServerMarker)) {
+    const { pid } = JSON.parse(readFileSync(mockServerMarker, 'utf-8')) as { pid?: number };
+    if (typeof pid === 'number') {
+      try {
+        process.kill(pid, 'SIGTERM');
+        console.log(`[PREPARE] Stopped previous mock server: ${pid}`);
+      } catch (e) {
+        console.warn('[PREPARE] Warning: Could not stop previous mock server:', e);
+      }
+    }
+    rmSync(mockServerMarker, { force: true });
+  }
+} catch (e) {
+  console.warn('[PREPARE] Warning: Could not clean up previous mock server:', e);
 }
 
 // Create temporary project directory
@@ -89,6 +107,7 @@ writeFileSync(join(projectDir, '.gitignore'), [
 writeFileSync(join(projectDir, 'README.md'), '# Test\n');
 execSync('git add .', { cwd: projectDir, stdio: 'ignore' });
 execSync('git commit -m "init"', { cwd: projectDir, stdio: 'ignore' });
+execSync('git branch e2e-secondary', { cwd: projectDir, stdio: 'ignore' });
 
 // Create .tauroboros directory for infrastructure settings
 const tauroborosDir = join(projectDir, '.tauroboros');
@@ -131,8 +150,12 @@ const settings = {
       portRangeEnd: 40000,
     },
   },
-  // Model configuration - will be set via API in the test
+  // Model configuration is seeded for UI-driven tests via the mock provider
   branch: 'master',
+  planModel: 'fake/fake-model',
+  executionModel: 'fake/fake-model',
+  reviewModel: 'fake/fake-model',
+  repairModel: 'fake/fake-model',
   maxReviews: 2,  // Enable reviews for E2E tests (tasks can override with maxReviewRunsOverride)
 };
 
@@ -148,7 +171,7 @@ if (useMockLLM) {
 
   try {
     const mockLlmServerPath = join(PROJECT_ROOT, 'mock-llm-server');
-    await mockServer.start(mockLlmServerPath);
+    await mockServer.start(mockLlmServerPath, { detached: true });
     console.log('[PREPARE] ✓ Mock LLM server started on port 9999');
 
     // Generate models.json for the mock server
@@ -181,7 +204,11 @@ if (useMockLLM) {
 
     // Write mock server port to marker file for cleanup
     const mockServerMarker = join(tmpdir(), 'pi-e2e-mock-server');
-    writeFileSync(mockServerMarker, JSON.stringify({ port: 9999, pid: process.pid }));
+    const mockServerPid = mockServer.getProcessId();
+    if (typeof mockServerPid !== 'number') {
+      throw new Error('Mock server started without a valid pid');
+    }
+    writeFileSync(mockServerMarker, JSON.stringify({ port: 9999, pid: mockServerPid }));
   } catch (err) {
     console.error('[PREPARE] ✗ Failed to start mock LLM server:', err);
   }

@@ -10,14 +10,14 @@
     "build": "bun build --target=bun src/index.ts --outdir dist && bun run kanban:build",
     "compile": "bun run scripts/compile.ts",
     "compile:test": "bun run scripts/test-binary.ts",
-    "kanban:build": "cd src/kanban-react && npm install && npm run build",
-    "kanban:dev": "SERVER_PORT=3789 bun run src/index.ts & sleep 3 && cd src/kanban-react && npm install && SERVER_PORT=3789 npm run dev",
+    "kanban:build": "cd src/kanban-solid && npm install && npm run build",
+    "kanban:dev": "SERVER_PORT=3789 bun run src/index.ts & sleep 3 && cd src/kanban-solid && npm install && SERVER_PORT=3789 npm run dev",
     "test": "bun test tests/*.test.ts",
-    "test:e2e": "bun run tests/e2e/prepare.ts && bunx playwright test",
-    "test:e2e:ui": "bun run tests/e2e/prepare.ts && bunx playwright test --ui",
-    "test:e2e:debug": "bun run tests/e2e/prepare.ts && bunx playwright test --debug",
-    "test:e2e:headed": "bun run tests/e2e/prepare.ts && bunx playwright test --headed",
-    "test:e2e:real": "bun run tests/e2e/prepare.ts container && TEST_TYPE=real-workflow bunx playwright test tests/e2e/real-workflow.spec.ts",
+    "test:e2e": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test",
+    "test:e2e:ui": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --ui",
+    "test:e2e:debug": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --debug",
+    "test:e2e:headed": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --headed",
+    "test:e2e:real": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && TEST_TYPE=real-workflow USE_MOCK_LLM=true bunx playwright test tests/e2e/real-workflow.spec.ts",
     "skills:sync": "bun run scripts/sync-skills.ts",
     "skills:install": "bun run scripts/sync-skills.ts --clean",
     "skills:verify": "bun run scripts/verify-setup.ts",
@@ -29,7 +29,7 @@
     "mock-llm-server:build": "cd mock-llm-server && npm install && npm run build",
     "mock-llm-server:start": "cd mock-llm-server && npm start",
     "mock-llm-server:dev": "cd mock-llm-server && npm run dev",
-    "test:e2e:mock": "USE_MOCK_LLM=true bun run test:e2e",
+    "test:e2e:mock": "bun run test:e2e",
     "container:build:mock": "cd mock-llm-server && podman build -t mock-llm-server:latest ."
   },
   "devDependencies": {
@@ -39,7 +39,6 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "solid-js": "^1.9.5"
   }
 }

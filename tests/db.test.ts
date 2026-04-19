@@ -1109,7 +1109,7 @@ describe("PiKanbanDB", () => {
         db.getRawHandle().prepare("UPDATE tasks SET created_at = ? WHERE id = ?").run(now - 7200, "duration-task-2")
 
         const duration = db.getAverageTaskDuration()
-        expect(duration).toBe(5400) // Average of 3600 and 7200 seconds
+        expect(duration).toBe(90) // Average of 3600 and 7200 seconds, returned in minutes
 
         db.close()
       })

@@ -1362,6 +1362,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     const executedTaskIds = new Set<string>()
     const options = this.db.getOptions()
     const parallelLimit = options.parallelTasks ?? 1
+    const run = this.db.getWorkflowRun(runId)
 
     // Get task objects for all task IDs
     const tasks: Task[] = []
@@ -1434,6 +1435,12 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           taskIndex++
         }
 
+        const progressedRun = this.db.updateWorkflowRun(runId, {
+          currentTaskIndex: taskIndex,
+          currentTaskId: taskIds[taskIndex] ?? null,
+        })
+        if (progressedRun) this.broadcast({ type: "run_updated", payload: progressedRun })
+
         // If any task failed, stop the workflow (fail-fast behavior)
         if (hasFailure) {
           throw new Error(`One or more tasks in the batch failed`)
@@ -1447,9 +1454,24 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         const finalRun = this.db.updateWorkflowRun(runId, {
           status: this.shouldStop ? "completed" : "completed",
           stopRequested: this.shouldStop,
+          currentTaskId: null,
+          currentTaskIndex: tasks.length,
           finishedAt: nowUnix(),
         })
         if (finalRun) this.broadcast({ type: "run_updated", payload: finalRun })
+        
+        // If this was a group execution, mark the group as completed
+        if (run && run.kind === "group_tasks" && run.groupId) {
+          const completedGroup = this.db.updateTaskGroup(run.groupId, {
+            status: "completed",
+            completedAt: nowUnix(),
+          })
+          if (completedGroup) {
+            this.broadcast({ type: "task_group_updated", payload: completedGroup })
+            this.broadcast({ type: "group_execution_complete", payload: { groupId: run.groupId } })
+          }
+        }
+        
         this.broadcast({ type: "execution_complete", payload: {} })
       }
     } catch (error) {

@@ -8,6 +8,7 @@ import { PiOrchestrator } from "../src/orchestrator.ts"
 import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
 
 const tempDirs: string[] = []
+const TEST_MODEL = "openai/gpt-4"
 
 function createTestSettings(mockPiPath: string): InfrastructureSettings {
   return {
@@ -140,7 +141,7 @@ describe("review loop", () => {
     const settings = createTestSettings(createMockPiBinary(root, "one_gap_then_pass"))
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
-    db.updateOptions({ branch: "master" })
+    db.updateOptions({ branch: "master", executionModel: TEST_MODEL, reviewModel: TEST_MODEL })
     const task = db.createTask({
       id: "review-1",
       name: "Review loop task",
@@ -180,7 +181,7 @@ describe("review loop", () => {
     const settings = createTestSettings(createMockPiBinary(root, "always_gaps"))
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
-    db.updateOptions({ maxReviews: 1, branch: "master" })
+    db.updateOptions({ maxReviews: 1, branch: "master", executionModel: TEST_MODEL, reviewModel: TEST_MODEL })
 
     const task = db.createTask({
       id: "review-3",
