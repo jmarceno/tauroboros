@@ -7,12 +7,22 @@ import { buildExecutionVariables, buildPlanningVariables, buildPlanRevisionVaria
 import { getLatestTaggedOutput, getPlanExecutionEligibility } from "./task-state.ts"
 import type { PiKanbanDB } from "./db.ts"
 import type { PiSessionKind, PiWorkflowSession } from "./db/types.ts"
-import { resolveContainerImage, type Options, type Task, type WSMessage, type WorkflowRun } from "./types.ts"
-import { resolveExecutionTasks, getExecutionGraphTasks, resolveBatches } from "./execution-plan.ts"
+import {
+  resolveContainerImage,
+  type Options,
+  type RunContext,
+  type RunQueueStatus,
+  type SlotUtilization,
+  type Task,
+  type WSMessage,
+  type WorkflowRun,
+} from "./types.ts"
+import { resolveExecutionTasks, getExecutionGraphTasks, isTaskExecutable, resolveBatches } from "./execution-plan.ts"
 import { PiSessionManager } from "./runtime/session-manager.ts"
 import { PiReviewSessionRunner } from "./runtime/review-session.ts"
 import { CodeStyleSessionRunner } from "./runtime/codestyle-session.ts"
 import { BestOfNRunner } from "./runtime/best-of-n.ts"
+import { GlobalScheduler } from "./runtime/global-scheduler.ts"
 import { WorktreeLifecycle, resolveTargetBranch, listWorktrees, type WorktreeInfo, WorktreeError } from "./runtime/worktree.ts"
 import type { PiContainerManager } from "./runtime/container-manager.ts"
 import { PiRpcProcess, CollectEventsTimeoutError } from "./runtime/pi-process.ts"
@@ -144,6 +154,12 @@ export class PiOrchestrator {
   private shouldPause = false
   private isPaused = false
   private currentRunId: string | null = null
+  private readonly activeRuns = new Map<string, RunContext>()
+  private readonly runControls = new Map<string, { shouldStop: boolean; shouldPause: boolean; isPaused: boolean }>()
+  private readonly taskRunLookup = new Map<string, string>()
+  private readonly activeTaskIds = new Set<string>()
+  private readonly scheduler: GlobalScheduler
+  private scheduling = false
   private sessionManager: PiSessionManager
   private readonly reviewRunner: PiReviewSessionRunner
   private readonly worktree: WorktreeLifecycle
@@ -175,6 +191,7 @@ export class PiOrchestrator {
     this.reviewRunner = new PiReviewSessionRunner(db, settings, containerManager, this.sessionManager)
     this.worktree = new WorktreeLifecycle({ baseDirectory: this.projectRoot })
     this.containerManager = containerManager
+    this.scheduler = new GlobalScheduler(Math.max(1, this.db.getOptions().parallelTasks ?? 1))
   }
 
   /**
@@ -187,162 +204,557 @@ export class PiOrchestrator {
     this.reviewRunner = new PiReviewSessionRunner(this.db, this.settings, manager, this.sessionManager)
   }
 
+  private updateSchedulerCapacity(): void {
+    this.scheduler.setMaxSlots(Math.max(1, this.db.getOptions().parallelTasks ?? 1))
+  }
+
+  private getRunControl(runId: string): { shouldStop: boolean; shouldPause: boolean; isPaused: boolean } {
+    let control = this.runControls.get(runId)
+    if (!control) {
+      control = { shouldStop: false, shouldPause: false, isPaused: false }
+      this.runControls.set(runId, control)
+    }
+    return control
+  }
+
+  private isRunActiveStatus(status: WorkflowRun["status"]): boolean {
+    return status === "queued" || status === "running" || status === "stopping" || status === "paused"
+  }
+
+  private isTaskTerminalStatus(status: Task["status"]): boolean {
+    return status === "done" || status === "failed" || status === "stuck"
+  }
+
+  private buildRunContext(run: WorkflowRun): RunContext {
+    return {
+      id: run.id,
+      kind: run.kind,
+      status: run.status,
+      displayName: run.displayName,
+      targetTaskId: run.targetTaskId,
+      groupId: run.groupId,
+      createdAt: run.createdAt,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      taskIds: [...run.taskOrder],
+    }
+  }
+
+  private registerRun(run: WorkflowRun): void {
+    this.activeRuns.set(run.id, this.buildRunContext(run))
+    this.runControls.set(run.id, { shouldStop: false, shouldPause: false, isPaused: false })
+    for (const taskId of run.taskOrder) {
+      this.taskRunLookup.set(taskId, run.id)
+    }
+  }
+
+  private unregisterRun(runId: string): void {
+    this.activeRuns.delete(runId)
+    this.runControls.delete(runId)
+
+    for (const [taskId, mappedRunId] of this.taskRunLookup) {
+      if (mappedRunId === runId) {
+        this.taskRunLookup.delete(taskId)
+      }
+    }
+
+    if (this.currentRunId === runId) {
+      const nextRun = this.db.getWorkflowRuns().find((run) => this.isRunActiveStatus(run.status) && run.id !== runId)
+      this.currentRunId = nextRun?.id ?? null
+    }
+  }
+
+  private enrichWorkflowRun(run: WorkflowRun | null): WorkflowRun | null {
+    if (!run) return null
+    const queueStatus = this.scheduler.getRunQueueStatus(
+      run.id,
+      run.status,
+      run.taskOrder,
+      (taskId) => this.db.getTask(taskId)?.status ?? null,
+    )
+
+    return {
+      ...run,
+      queuedTaskCount: queueStatus.queuedTasks,
+      executingTaskCount: queueStatus.executingTasks,
+    }
+  }
+
+  private broadcastRun(runId: string): void {
+    const run = this.enrichWorkflowRun(this.db.getWorkflowRun(runId))
+    if (!run) return
+    this.broadcast({ type: "run_updated", payload: run })
+  }
+
+  private async queueRunTasks(taskIds: string[]): Promise<void> {
+    for (const taskId of taskIds) {
+      const task = this.db.getTask(taskId)
+      if (!task) {
+        throw new Error(`Task not found: ${taskId}`)
+      }
+      if (task.status === "done") {
+        throw new Error(`Cannot queue completed task ${task.name} (${taskId})`)
+      }
+
+      this.db.updateTask(taskId, {
+        status: "queued",
+        errorMessage: null,
+      })
+      this.broadcastTask(taskId)
+    }
+  }
+
+  private isDependencySatisfiedByAnotherRun(taskId: string): boolean {
+    const runId = this.taskRunLookup.get(taskId)
+    if (!runId) return false
+    const run = this.db.getWorkflowRun(runId)
+    return Boolean(run && this.isRunActiveStatus(run.status))
+  }
+
+  private resolveExecutionTasksWithActiveDependencies(allTasks: Task[], taskId: string): Task[] {
+    const taskMap = new Map(allTasks.map((task) => [task.id, task]))
+    const ordered: Task[] = []
+    const visited = new Set<string>()
+    const visiting = new Set<string>()
+
+    const visit = (candidateId: string, isTarget = false) => {
+      if (visiting.has(candidateId)) {
+        throw new Error(`Circular dependency detected while resolving ${candidateId}`)
+      }
+      if (visited.has(candidateId)) return
+
+      const candidate = taskMap.get(candidateId)
+      if (!candidate) {
+        throw new Error(`Task not found: ${candidateId}`)
+      }
+
+      visiting.add(candidateId)
+      for (const depId of candidate.requirements) {
+        const dependency = taskMap.get(depId)
+        if (!dependency) continue
+        if (dependency.status === "done" || this.isDependencySatisfiedByAnotherRun(depId)) {
+          continue
+        }
+        if (dependency.status === "failed" || dependency.status === "stuck") {
+          throw new Error(`Dependency \"${dependency.name}\" is not done (status: ${dependency.status})`)
+        }
+        if (!isTaskExecutable(dependency)) {
+          throw new Error(
+            isTarget
+              ? `Task \"${candidate.name}\" is blocked by dependency \"${dependency.name}\" in status \"${dependency.status}\"`
+              : `Dependency \"${dependency.name}\" is not done and cannot run from status \"${dependency.status}\" (phase: ${dependency.executionPhase})`,
+          )
+        }
+        visit(depId)
+      }
+      visiting.delete(candidateId)
+      visited.add(candidateId)
+
+      if (candidate.status === "done") return
+      if (!isTaskExecutable(candidate)) {
+        throw new Error(
+          isTarget
+            ? `Task \"${candidate.name}\" is not runnable from status \"${candidate.status}\" (phase: ${candidate.executionPhase})`
+            : `Dependency \"${candidate.name}\" is not done and cannot run from status \"${candidate.status}\" (phase: ${candidate.executionPhase})`,
+        )
+      }
+      ordered.push(candidate)
+    }
+
+    visit(taskId, true)
+    return ordered
+  }
+
+  private getExecutionGraphTasksWithActiveDependencies(tasks: Task[]): Task[] {
+    const taskMap = new Map(tasks.map((task) => [task.id, task]))
+    const selectedIds = new Set<string>()
+    let madeProgress = true
+
+    while (madeProgress) {
+      madeProgress = false
+
+      for (const task of tasks) {
+        if (selectedIds.has(task.id) || task.status === "done" || !isTaskExecutable(task)) {
+          continue
+        }
+
+        const canQueue = task.requirements.every((depId) => {
+          const dependency = taskMap.get(depId)
+          if (!dependency) return true
+          if (dependency.status === "failed" || dependency.status === "stuck") return false
+          return dependency.status === "done" || selectedIds.has(depId) || this.isDependencySatisfiedByAnotherRun(depId)
+        })
+
+        if (!canQueue) continue
+
+        selectedIds.add(task.id)
+        madeProgress = true
+      }
+    }
+
+    return [...selectedIds].map((taskId) => {
+      const task = taskMap.get(taskId)
+      if (!task) {
+        throw new Error(`Task not found while building execution graph: ${taskId}`)
+      }
+      return task
+    })
+  }
+
+  private async startRun(input: {
+    kind: WorkflowRun["kind"]
+    displayName: string
+    taskOrder: string[]
+    targetTaskId?: string | null
+    groupId?: string
+  }): Promise<WorkflowRun> {
+    await this.cleanupStaleRuns()
+
+    for (const taskId of input.taskOrder) {
+      const existingRunId = this.taskRunLookup.get(taskId)
+      if (!existingRunId) continue
+      const existingRun = this.db.getWorkflowRun(existingRunId)
+      if (existingRun && this.isRunActiveStatus(existingRun.status)) {
+        throw new Error(`Task ${taskId} is already part of active run ${existingRunId}`)
+      }
+    }
+
+    const run = this.db.createWorkflowRun({
+      id: randomUUID().slice(0, 8),
+      kind: input.kind,
+      status: "queued",
+      displayName: input.displayName,
+      targetTaskId: input.targetTaskId ?? null,
+      groupId: input.groupId,
+      taskOrder: input.taskOrder,
+      currentTaskId: input.taskOrder[0] ?? null,
+      currentTaskIndex: 0,
+      color: this.db.getNextRunColor(),
+    })
+
+    this.registerRun(run)
+    this.currentRunId = run.id
+    await this.queueRunTasks(input.taskOrder)
+    this.scheduler.enqueueRun(run.id, input.taskOrder)
+
+    const enrichedRun = this.enrichWorkflowRun(this.db.getWorkflowRun(run.id))
+    if (!enrichedRun) {
+      throw new Error(`Failed to reload run ${run.id} after creation`)
+    }
+
+    this.broadcast({ type: "run_created", payload: enrichedRun })
+    this.broadcast({ type: "execution_queued", payload: { runId: run.id } })
+    if (run.kind === "group_tasks" && run.groupId) {
+      this.broadcast({ type: "group_execution_started", payload: { groupId: run.groupId, runId: run.id } })
+    }
+
+    await this.triggerScheduling()
+    return enrichedRun
+  }
+
+  private async refreshRunProgress(runId: string): Promise<void> {
+    const run = this.db.getWorkflowRun(runId)
+    if (!run) return
+
+    const completedCount = run.taskOrder.reduce((count, taskId) => {
+      const status = this.db.getTask(taskId)?.status
+      return status && this.isTaskTerminalStatus(status) ? count + 1 : count
+    }, 0)
+
+    const currentTaskId = this.scheduler.getExecutingStates(runId)[0]?.taskId
+      ?? this.scheduler.getQueuedTasks(runId)[0]
+      ?? null
+
+    const updated = this.db.updateWorkflowRun(runId, {
+      currentTaskIndex: completedCount,
+      currentTaskId,
+    })
+
+    if (updated) {
+      this.broadcastRun(runId)
+    }
+  }
+
+  private isTaskReadyForScheduling(taskId: string, runId: string): boolean {
+    const run = this.db.getWorkflowRun(runId)
+    if (!run || !this.isRunActiveStatus(run.status) || run.status === "paused" || run.status === "stopping") {
+      return false
+    }
+
+    const control = this.getRunControl(runId)
+    if (control.shouldPause || control.shouldStop || control.isPaused) {
+      return false
+    }
+
+    const task = this.db.getTask(taskId)
+    if (!task) {
+      throw new Error(`Task not found: ${taskId}`)
+    }
+    if (task.status !== "queued") {
+      return false
+    }
+
+    for (const depId of task.requirements) {
+      const dep = this.db.getTask(depId)
+      if (!dep) continue
+      if (dep.status === "failed" || dep.status === "stuck") return false
+      if (dep.status !== "done") return false
+    }
+
+    return true
+  }
+
+  private async failTasksBlockedByDependency(runId: string): Promise<void> {
+    const run = this.db.getWorkflowRun(runId)
+    if (!run) return
+
+    let changed = true
+    while (changed) {
+      changed = false
+
+      for (const taskId of run.taskOrder) {
+        if (!this.scheduler.isTaskQueued(taskId)) continue
+        const task = this.db.getTask(taskId)
+        if (!task) continue
+
+        const failedDependency = task.requirements
+          .map((depId) => this.db.getTask(depId))
+          .find((dep) => dep && (dep.status === "failed" || dep.status === "stuck"))
+
+        if (!failedDependency) continue
+
+        this.scheduler.removeQueuedTask(taskId)
+        this.db.updateTask(taskId, {
+          status: "failed",
+          errorMessage: `Dependency \"${failedDependency.name}\" did not complete successfully`,
+        })
+        this.broadcastTask(taskId)
+        changed = true
+      }
+    }
+  }
+
+  private async finalizeRunIfComplete(runId: string): Promise<void> {
+    await this.failTasksBlockedByDependency(runId)
+
+    const run = this.db.getWorkflowRun(runId)
+    if (!run) return
+
+    const tasks = run.taskOrder.map((taskId) => this.db.getTask(taskId)).filter((task): task is Task => Boolean(task))
+    if (tasks.length !== run.taskOrder.length) {
+      throw new Error(`Run ${runId} references missing tasks`)
+    }
+
+    if (tasks.some((task) => !this.isTaskTerminalStatus(task.status))) {
+      await this.refreshRunProgress(runId)
+      return
+    }
+
+    const hasFailures = tasks.some((task) => task.status === "failed" || task.status === "stuck")
+    const updated = this.db.updateWorkflowRun(runId, {
+      status: hasFailures ? "failed" : "completed",
+      currentTaskId: null,
+      currentTaskIndex: run.taskOrder.length,
+      finishedAt: nowUnix(),
+      errorMessage: hasFailures ? "One or more tasks in the run failed" : null,
+    })
+
+    this.scheduler.removeRun(runId)
+    this.unregisterRun(runId)
+
+    if (updated) {
+      const enrichedRun = this.enrichWorkflowRun(updated)
+      if (enrichedRun) {
+        this.broadcast({ type: "run_updated", payload: enrichedRun })
+      }
+    }
+
+    if (run.kind === "group_tasks" && run.groupId && !hasFailures) {
+      const completedGroup = this.db.updateTaskGroup(run.groupId, {
+        status: "completed",
+        completedAt: nowUnix(),
+      })
+      if (completedGroup) {
+        this.broadcast({ type: "task_group_updated", payload: completedGroup })
+        this.broadcast({ type: "group_execution_complete", payload: { groupId: run.groupId, runId } })
+      }
+    }
+
+    this.broadcast({ type: "execution_complete", payload: { runId } })
+  }
+
+  private startScheduledTask(taskId: string, runId: string): void {
+    const task = this.db.getTask(taskId)
+    if (!task) {
+      throw new Error(`Task not found: ${taskId}`)
+    }
+
+    this.activeTaskIds.add(taskId)
+    const run = this.db.getWorkflowRun(runId)
+    if (!run) {
+      throw new Error(`Run not found: ${runId}`)
+    }
+
+    if (run.status === "queued") {
+      const updated = this.db.updateWorkflowRun(runId, { status: "running" })
+      if (updated) {
+        const context = this.activeRuns.get(runId)
+        if (context) context.status = "running"
+        this.broadcast({ type: "execution_started", payload: { runId } })
+      }
+    }
+
+    void (async () => {
+      try {
+        await this.refreshRunProgress(runId)
+        await this.executeTask(task, this.db.getOptions(), runId)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`[orchestrator] Task ${taskId} in run ${runId} failed: ${message}`)
+      } finally {
+        this.activeTaskIds.delete(taskId)
+
+        const latestTask = this.db.getTask(taskId)
+        if (!latestTask) {
+          await this.triggerScheduling()
+          return
+        }
+
+        if (latestTask.status === "queued") {
+          await this.refreshRunProgress(runId)
+          await this.triggerScheduling()
+          return
+        }
+
+        const finalStatus = latestTask.status === "done"
+          ? "done"
+          : latestTask.status === "stuck"
+            ? "stuck"
+            : "failed"
+        this.scheduler.completeTask(taskId, finalStatus, latestTask.sessionId)
+
+        await this.finalizeRunIfComplete(runId)
+        await this.triggerScheduling()
+      }
+    })()
+  }
+
+  private async triggerScheduling(): Promise<void> {
+    if (this.scheduling) return
+
+    this.scheduling = true
+    try {
+      this.updateSchedulerCapacity()
+
+      while (true) {
+        for (const runId of this.activeRuns.keys()) {
+          await this.failTasksBlockedByDependency(runId)
+        }
+
+        const started = this.scheduler.schedule((taskId, runId) => this.isTaskReadyForScheduling(taskId, runId))
+        if (started.length === 0) break
+
+        for (const state of started) {
+          this.startScheduledTask(state.taskId, state.runId)
+        }
+      }
+
+      for (const runId of [...this.activeRuns.keys()]) {
+        await this.refreshRunProgress(runId)
+        await this.finalizeRunIfComplete(runId)
+      }
+    } finally {
+      this.scheduling = false
+    }
+  }
+
+  getSlotUtilization(): SlotUtilization {
+    this.updateSchedulerCapacity()
+    return this.scheduler.getSlotUtilization((taskId) => this.db.getTask(taskId)?.name ?? taskId)
+  }
+
+  getRunQueueStatus(runId: string): RunQueueStatus {
+    const run = this.db.getWorkflowRun(runId)
+    if (!run) {
+      throw new Error(`Run ${runId} not found`)
+    }
+
+    return this.scheduler.getRunQueueStatus(
+      run.id,
+      run.status,
+      run.taskOrder,
+      (taskId) => this.db.getTask(taskId)?.status ?? null,
+    )
+  }
+
   /**
    * Detect and clean up stale workflow runs that are in active status but have no executing tasks.
    * This is a defensive check to prevent ghost runs from blocking new executions.
    */
   private async cleanupStaleRuns(): Promise<void> {
-    const activeRuns = this.db.getWorkflowRuns().filter((r) => r.status === "running" || r.status === "stopping")
-
-    // Defensive check: Validate this.running consistency with database state
-    if (this.running) {
-      const currentRunInActiveList = this.currentRunId && activeRuns.some(r => r.id === this.currentRunId)
-      if (!currentRunInActiveList) {
-        // this.running is true but the current run is not in active state in DB
-        // This can happen if pause/stop raced with runInBackground exit
-        const currentRunFromDb = this.currentRunId ? this.db.getWorkflowRun(this.currentRunId) : null
-        if (!currentRunFromDb || (currentRunFromDb.status !== "running" && currentRunFromDb.status !== "stopping" && currentRunFromDb.status !== "paused")) {
-          console.log(`[orchestrator] cleanupStaleRuns: Resetting stale running flag (run ${this.currentRunId} is not active in DB)`)
-          this.running = false
-          // Don't reset currentRunId here - it might be needed for resume or other operations
-          // Just reset the running flag to unblock new executions
-        }
-      }
-    }
+    const activeRuns = this.db.getWorkflowRuns().filter((run) => this.isRunActiveStatus(run.status))
 
     for (const run of activeRuns) {
-      if (run.id === this.currentRunId && this.running) continue
+      if (this.activeRuns.has(run.id) || run.status === "paused") {
+        continue
+      }
 
-      if (run.status === "stopping") {
-        console.log(`[orchestrator] Force-completing stopping run ${run.id}`)
-        console.log(`[orchestrator] Killing ${this.activeSessionProcesses.size} active sessions during force-complete`)
-        for (const [sessionId, activeProcess] of this.activeSessionProcesses) {
-          console.log(`[orchestrator] Killing session ${sessionId} during force-complete`)
-          if ("forceKill" in activeProcess.process) {
-            await activeProcess.process.forceKill()
-          }
-        }
-        this.activeSessionProcesses.clear()
+      const hasTrackedSchedulerState = this.scheduler.getQueuedTasks(run.id).length > 0 || this.scheduler.getExecutingStates(run.id).length > 0
+      if (hasTrackedSchedulerState) {
+        continue
+      }
 
-        for (const taskId of run.taskOrder ?? []) {
-          const task = this.db.getTask(taskId)
-          if (task && (task.status === "executing" || task.status === "review")) {
-            this.db.updateTask(taskId, {
-              status: "backlog",
-              errorMessage: "Auto-recovered: workflow was stopping",
-              sessionId: null,
-              sessionUrl: null,
-            })
-            this.broadcastTask(taskId)
-          }
-        }
+      const hasTaskActivity = run.taskOrder.some((taskId) => {
+        const task = this.db.getTask(taskId)
+        return task?.status === "queued" || task?.status === "executing" || task?.status === "review"
+      })
 
-        // Mark the run as completed
+      if (!hasTaskActivity) {
         const updated = this.db.updateWorkflowRun(run.id, {
-          status: "completed",
-          stopRequested: true,
+          status: "failed",
+          errorMessage: "Auto-recovered: active run had no queued or executing tasks",
           finishedAt: nowUnix(),
         })
         if (updated) {
-          this.broadcast({ type: "run_updated", payload: updated })
-          this.broadcast({ type: "execution_stopped", payload: {} })
-          console.log(`[orchestrator] Force-completed stopping run ${run.id}`)
-        }
-
-        // Reset orchestrator state if this was the current run
-        if (this.currentRunId === run.id) {
-          this.running = false
-          this.shouldStop = false
-          this.shouldPause = false
-          this.isPaused = false
-          this.currentRunId = null
-          this.activeBestOfNRunner = null
-          this.activeWorktreeInfo = null
-          this.activeTask = null
-          sessionPauseStateManager.clear()
+          const enriched = this.enrichWorkflowRun(updated)
+          if (enriched) {
+            this.broadcast({ type: "run_updated", payload: enriched })
+          }
         }
         continue
       }
 
-      // Check if any tasks in the taskOrder are actually executing or in review
-      const hasActiveTask = run.taskOrder?.some((taskId) => {
+      for (const taskId of run.taskOrder) {
         const task = this.db.getTask(taskId)
-        return task?.status === "executing" || task?.status === "review"
-      })
+        if (!task) continue
+        if (task.status !== "queued" && task.status !== "executing" && task.status !== "review") {
+          continue
+        }
 
-      if (!hasActiveTask) {
-        // This is a stale run - mark it as failed
-        const updated = this.db.updateWorkflowRun(run.id, {
-          status: "failed",
-          errorMessage: "Auto-recovered: no executing tasks found",
-          finishedAt: nowUnix(),
+        this.db.updateTask(taskId, {
+          status: "backlog",
+          errorMessage: "Auto-recovered: workflow run lost scheduler state",
+          sessionId: null,
+          sessionUrl: null,
         })
-        if (updated) {
-          this.broadcast({ type: "run_updated", payload: updated })
-          console.log(`[orchestrator] Cleaned up stale run ${run.id} (was ${run.status})`)
-        }
+        this.broadcastTask(taskId)
+      }
 
-        // Reset orphaned task statuses back to backlog
-        for (const taskId of run.taskOrder ?? []) {
-          const task = this.db.getTask(taskId)
-          if (task && (task.status === "executing" || task.status === "review")) {
-            this.db.updateTask(taskId, {
-              status: "backlog",
-              errorMessage: "Auto-recovered: workflow run was stale",
-              sessionId: null,
-              sessionUrl: null,
-            })
-            this.broadcastTask(taskId)
-          }
-        }
-
-        // Reset orchestrator internal state if this was the current run
-        if (this.currentRunId === run.id) {
-          console.log(`[orchestrator] Resetting orchestrator state for cleaned-up run ${run.id}`)
-          this.running = false
-          this.shouldStop = false
-          this.shouldPause = false
-          this.isPaused = false
-          this.currentRunId = null
-          this.activeBestOfNRunner = null
-          this.activeWorktreeInfo = null
-          this.activeTask = null
-          sessionPauseStateManager.clear()
-          this.broadcast({ type: "execution_stopped", payload: {} })
+      const updated = this.db.updateWorkflowRun(run.id, {
+        status: "failed",
+        errorMessage: "Auto-recovered: active run lost in-memory scheduler state",
+        finishedAt: nowUnix(),
+      })
+      if (updated) {
+        const enriched = this.enrichWorkflowRun(updated)
+        if (enriched) {
+          this.broadcast({ type: "run_updated", payload: enriched })
         }
       }
-    }
-
-    // Safety net: if running is true but no active runs exist in the DB, reset state
-    if (this.running && activeRuns.length === 0) {
-      console.log(`[orchestrator] Running flag set but no active runs found - resetting state`)
-      this.running = false
-      this.shouldStop = false
-      this.shouldPause = false
-      this.isPaused = false
-      this.currentRunId = null
-      this.activeBestOfNRunner = null
-      this.activeWorktreeInfo = null
-      this.activeTask = null
-      sessionPauseStateManager.clear()
     }
   }
 
   async startAll(): Promise<WorkflowRun> {
-    // Phase 2: Clean up any stale runs before checking if already executing
-    await this.cleanupStaleRuns()
-
-    // Defensive check: If still running but current run is not actually active in DB, force reset
-    if (this.running && this.currentRunId) {
-      const activeRun = this.db.getWorkflowRun(this.currentRunId)
-      if (!activeRun || (activeRun.status !== "running" && activeRun.status !== "stopping")) {
-        console.log(`[orchestrator] startAll: Force resetting stale running flag (run ${this.currentRunId} status: ${activeRun?.status ?? "not found"})`)
-        this.running = false
-      }
-    }
-
-    if (this.running) throw new Error("Already executing")
-
     // Get all tasks and validate dependencies
     const allTasks = this.db.getTasks()
     const validTaskIds = new Set(allTasks.map(t => t.id))
@@ -358,7 +770,7 @@ export class PiOrchestrator {
     // Use getExecutionGraphTasks to get ALL tasks that will run,
     // including those whose dependencies will be satisfied during this run
 
-    const tasks = getExecutionGraphTasks(allTasks)
+    const tasks = this.getExecutionGraphTasksWithActiveDependencies(allTasks)
 
     if (tasks.length === 0) throw new Error("No tasks in backlog")
 
@@ -382,42 +794,14 @@ export class PiOrchestrator {
       throw new Error(`Cannot start workflow: The following tasks have invalid container images: ${details}. Build the images first.`)
     }
 
-    const run = this.db.createWorkflowRun({
-      id: randomUUID().slice(0, 8),
+    return await this.startRun({
       kind: "all_tasks",
-      status: "running",
       displayName: "Workflow run",
       taskOrder: tasks.map((task) => task.id),
-      currentTaskId: tasks[0]?.id ?? null,
-      currentTaskIndex: 0,
-      color: this.db.getNextRunColor(),
     })
-
-    this.currentRunId = run.id
-    this.running = true
-    this.shouldStop = false
-    this.broadcast({ type: "run_created", payload: run })
-    this.broadcast({ type: "execution_started", payload: {} })
-
-    void this.runInBackground(run.id, tasks.map((task) => task.id))
-    return run
   }
 
   async startSingle(taskId: string): Promise<WorkflowRun> {
-    // Phase 2: Clean up any stale runs before checking if already executing
-    await this.cleanupStaleRuns()
-
-    // Defensive check: If still running but current run is not actually active in DB, force reset
-    if (this.running && this.currentRunId) {
-      const activeRun = this.db.getWorkflowRun(this.currentRunId)
-      if (!activeRun || (activeRun.status !== "running" && activeRun.status !== "stopping")) {
-        console.log(`[orchestrator] startSingle: Force resetting stale running flag (run ${this.currentRunId} status: ${activeRun?.status ?? "not found"})`)
-        this.running = false
-      }
-    }
-
-    if (this.running) throw new Error("Already executing")
-
     // Get all tasks and validate dependencies
     const allTasks = this.db.getTasks()
     const validTaskIds = new Set(allTasks.map(t => t.id))
@@ -430,7 +814,7 @@ export class PiOrchestrator {
       }
     }
 
-    const chain = resolveExecutionTasks(allTasks, taskId)
+    const chain = this.resolveExecutionTasksWithActiveDependencies(allTasks, taskId)
     if (chain.length === 0) throw new Error("No tasks in backlog")
     const target = this.db.getTask(taskId)
     if (!target) throw new Error("Task not found")
@@ -453,26 +837,12 @@ export class PiOrchestrator {
       throw new Error(`Cannot start workflow: The following tasks have invalid container images: ${details}. Build the images first.`)
     }
 
-    const run = this.db.createWorkflowRun({
-      id: randomUUID().slice(0, 8),
+    return await this.startRun({
       kind: "single_task",
-      status: "running",
       displayName: `Single task: ${target.name}`,
       targetTaskId: target.id,
       taskOrder: chain.map((task) => task.id),
-      currentTaskId: chain[0]?.id ?? null,
-      currentTaskIndex: 0,
-      color: this.db.getNextRunColor(),
     })
-
-    this.currentRunId = run.id
-    this.running = true
-    this.shouldStop = false
-    this.broadcast({ type: "run_created", payload: run })
-    this.broadcast({ type: "execution_started", payload: {} })
-
-    void this.runInBackground(run.id, chain.map((task) => task.id))
-    return run
   }
 
   /**
@@ -530,20 +900,6 @@ export class PiOrchestrator {
    * and executes tasks in dependency order.
    */
   async startGroup(groupId: string): Promise<WorkflowRun> {
-    // Phase 1: Clean up any stale runs before checking if already executing
-    await this.cleanupStaleRuns()
-
-    // Defensive check: If still running but current run is not actually active in DB, force reset
-    if (this.running && this.currentRunId) {
-      const activeRun = this.db.getWorkflowRun(this.currentRunId)
-      if (!activeRun || (activeRun.status !== "running" && activeRun.status !== "stopping")) {
-        console.log(`[orchestrator] startGroup: Force resetting stale running flag (run ${this.currentRunId} status: ${activeRun?.status ?? "not found"})`)
-        this.running = false
-      }
-    }
-
-    if (this.running) throw new Error("Already executing")
-
     // Load group - throws if not found
     const group = this.db.getTaskGroup(groupId)
     if (!group) {
@@ -587,31 +943,12 @@ export class PiOrchestrator {
       throw new Error(`Cannot start group: The following tasks have invalid container images: ${details}`)
     }
 
-    // Create workflow run with kind=group_tasks
-    const run = this.db.createWorkflowRun({
-      id: randomUUID().slice(0, 8),
+    return await this.startRun({
       kind: "group_tasks",
-      status: "running",
       displayName: `Group: ${group.name}`,
       groupId: group.id,
       taskOrder: group.taskIds,
-      currentTaskId: group.taskIds[0] ?? null,
-      currentTaskIndex: 0,
-      color: this.db.getNextRunColor(),
     })
-
-    // Set orchestrator state
-    this.currentRunId = run.id
-    this.running = true
-    this.shouldStop = false
-
-    // Broadcast events
-    this.broadcast({ type: "run_created", payload: run })
-    this.broadcast({ type: "execution_started", payload: {} })
-
-    // Execute in background
-    void this.runInBackground(run.id, group.taskIds)
-    return run
   }
 
   /**
@@ -625,31 +962,33 @@ export class PiOrchestrator {
       return
     }
 
-    if (run.status !== "running" && run.status !== "paused" && run.status !== "stopping") {
+    if (run.status !== "queued" && run.status !== "running" && run.status !== "paused" && run.status !== "stopping") {
       console.error(`[orchestrator] Cannot stop: run ${runId} is not running, paused, or stopping (status: ${run.status})`)
       return
     }
 
     console.log(`[orchestrator] Graceful stop requested for run ${runId}`)
-    this.shouldStop = true
+    const control = this.getRunControl(runId)
+    control.shouldStop = true
 
-    // Kill ALL active tracked sessions immediately with SIGKILL
-    // This kills both sessions with task.sessionId set AND those that are tracked
-    // but haven't had their sessionId saved to the task yet (race condition)
-    console.log(`[orchestrator] Killing ${this.activeSessionProcesses.size} active sessions for stop`)
-    for (const [sessionId, activeProcess] of this.activeSessionProcesses) {
-      console.log(`[orchestrator] Killing session ${sessionId} with SIGKILL`)
+    for (const [sessionId, activeProcess] of [...this.activeSessionProcesses]) {
+      const taskId = activeProcess.session.taskId
+      if (!taskId || !run.taskOrder.includes(taskId)) continue
       if ("forceKill" in activeProcess.process) {
         await activeProcess.process.forceKill("SIGKILL")
       }
+      this.activeSessionProcesses.delete(sessionId)
     }
-    // Clear all tracked sessions
-    this.activeSessionProcesses.clear()
 
-    // Reset any executing/review tasks back to backlog immediately
     for (const taskId of run.taskOrder ?? []) {
       const task = this.db.getTask(taskId)
-      if (task && (task.status === "executing" || task.status === "review")) {
+      if (this.scheduler.isTaskExecuting(taskId)) {
+        this.scheduler.completeTask(taskId, "failed", task?.sessionId ?? null)
+      } else if (this.scheduler.isTaskQueued(taskId)) {
+        this.scheduler.removeQueuedTask(taskId)
+      }
+
+      if (task && (task.status === "queued" || task.status === "executing" || task.status === "review")) {
         this.db.updateTask(taskId, {
           status: "backlog",
           errorMessage: "Workflow stopped by user",
@@ -660,30 +999,25 @@ export class PiOrchestrator {
       }
     }
 
-    // Mark the run as completed immediately - do not wait
     const updated = this.db.updateWorkflowRun(runId, {
       status: "completed",
       stopRequested: true,
+      currentTaskId: null,
+      currentTaskIndex: run.taskOrder.length,
       finishedAt: nowUnix(),
     })
     if (updated) {
-      this.broadcast({ type: "run_updated", payload: updated })
+      const enriched = this.enrichWorkflowRun(updated)
+      if (enriched) {
+        this.broadcast({ type: "run_updated", payload: enriched })
+      }
       this.broadcast({ type: "execution_stopped", payload: { runId } })
       console.log(`[orchestrator] Run ${runId} stopped immediately`)
     }
 
-    // Reset orchestrator state if this was the current run
-    if (this.currentRunId === runId) {
-      this.running = false
-      this.shouldStop = false
-      this.shouldPause = false
-      this.isPaused = false
-      this.currentRunId = null
-      this.activeBestOfNRunner = null
-      this.activeWorktreeInfo = null
-      this.activeTask = null
-      sessionPauseStateManager.clear()
-    }
+    this.scheduler.removeRun(runId)
+    this.unregisterRun(runId)
+    await this.triggerScheduling()
   }
 
   /**
@@ -691,9 +1025,10 @@ export class PiOrchestrator {
    * This is the main STOP action - it kills everything and loses data.
    */
   async stop(): Promise<void> {
-    if (!this.currentRunId) return
+    const activeRunId = this.currentRunId ?? this.db.getWorkflowRuns().find((run) => this.isRunActiveStatus(run.status))?.id ?? null
+    if (!activeRunId) return
     // STOP is destructive by design - kills containers, loses data
-    await this.destructiveStop(this.currentRunId)
+    await this.destructiveStop(activeRunId)
   }
 
   /**
@@ -717,6 +1052,8 @@ export class PiOrchestrator {
 
     console.log(`[orchestrator] Destructive stop for run ${runId}`)
     const result = { killed: 0, cleaned: 0 }
+    const control = this.getRunControl(runId)
+    control.shouldStop = true
 
     // 1. Stop all active sessions for tasks in this run
     for (const taskId of run.taskOrder) {
@@ -799,7 +1136,13 @@ export class PiOrchestrator {
     // 6. Mark all incomplete tasks as failed
     for (const taskId of run.taskOrder) {
       const task = this.db.getTask(taskId)
-      if (task && (task.status === "executing" || task.status === "review")) {
+      if (this.scheduler.isTaskExecuting(taskId)) {
+        this.scheduler.completeTask(taskId, "failed", task?.sessionId ?? null)
+      } else if (this.scheduler.isTaskQueued(taskId)) {
+        this.scheduler.removeQueuedTask(taskId)
+      }
+
+      if (task && (task.status === "queued" || task.status === "executing" || task.status === "review")) {
         this.db.updateTask(taskId, {
           status: "failed",
           errorMessage: "Workflow stopped by user - all work discarded",
@@ -815,30 +1158,27 @@ export class PiOrchestrator {
       status: "failed",
       stopRequested: true,
       errorMessage: "Workflow stopped by user - all work discarded",
+      currentTaskId: null,
+      currentTaskIndex: run.taskOrder.length,
       finishedAt: nowUnix(),
     })
     if (updated) {
-      this.broadcast({ type: "run_updated", payload: updated })
+      const enriched = this.enrichWorkflowRun(updated)
+      if (enriched) {
+        this.broadcast({ type: "run_updated", payload: enriched })
+      }
     }
 
-    // 8. Reset orchestrator state if this was the current run
-    if (this.currentRunId === runId) {
-      this.running = false
-      this.shouldStop = false
-      this.shouldPause = false
-      this.isPaused = false
-      this.currentRunId = null
-      this.activeBestOfNRunner = null
-      this.activeWorktreeInfo = null
-      this.activeTask = null
-      sessionPauseStateManager.clear()
-    }
+    this.scheduler.removeRun(runId)
+    this.unregisterRun(runId)
 
     // Clear any persisted pause state
     clearGlobalPausedRunState()
     clearAllPausedSessionStates(this.db)
 
     this.broadcast({ type: "execution_stopped", payload: { runId, destructive: true } })
+
+    await this.triggerScheduling()
 
     return result
   }
@@ -848,10 +1188,11 @@ export class PiOrchestrator {
    * Uses destructiveStop on the current run.
    */
   async forceStop(): Promise<{ killed: number; cleaned: number }> {
-    if (!this.currentRunId) {
+    const activeRunId = this.currentRunId ?? this.db.getWorkflowRuns().find((run) => this.isRunActiveStatus(run.status))?.id ?? null
+    if (!activeRunId) {
       return { killed: 0, cleaned: 0 }
     }
-    return this.destructiveStop(this.currentRunId)
+    return this.destructiveStop(activeRunId)
   }
 
   /**
@@ -867,28 +1208,22 @@ export class PiOrchestrator {
       return false
     }
 
-    if (run.status !== "running" && run.status !== "stopping") {
+    if (run.status !== "queued" && run.status !== "running" && run.status !== "stopping") {
       console.error(`[orchestrator] Cannot pause: run ${runId} is not running (status: ${run.status})`)
       return false
     }
 
     console.log(`[orchestrator] Pausing run ${runId}`)
-    this.shouldPause = true
+    const control = this.getRunControl(runId)
+    control.shouldPause = true
 
-    // TODO: With parallel execution, multiple tasks may be active simultaneously
-    // Currently we iterate and pause one by one, which works but may leave some
-    // tasks running briefly while others are paused. For true atomic pause,
-    // we'd need to signal all active sessions in parallel and wait for all to ack.
-    // Pause all active sessions for tasks in this run
     const pausedSessions: PausedSessionState[] = []
 
-    // Iterate through all tasks in the run's taskOrder
     for (const taskId of run.taskOrder) {
       const task = this.db.getTask(taskId)
       if (!task) continue
 
-      // Only pause tasks that are currently executing and have a session
-      if (task.status === "executing" && task.sessionId) {
+      if (this.scheduler.isTaskExecuting(taskId) && task.sessionId) {
         const activeProcess = this.activeSessionProcesses.get(task.sessionId)
         if (activeProcess) {
           const pausedState = await this.pauseSession(task.sessionId, activeProcess)
@@ -898,13 +1233,24 @@ export class PiOrchestrator {
             savePausedSessionState(this.db, pausedState)
           }
         } else {
-          // Session exists in DB but not in active processes - mark as paused
           this.db.updateWorkflowSession(task.sessionId, { status: "paused" })
           this.broadcast({
             type: "session_status_changed",
             payload: { sessionId: task.sessionId, status: "paused", taskId },
           })
         }
+      }
+
+      if (this.scheduler.isTaskExecuting(taskId)) {
+        this.scheduler.requeueExecutingTask(taskId)
+      }
+
+      if (task.status === "executing" || task.status === "review") {
+        this.db.updateTask(taskId, {
+          status: "queued",
+          errorMessage: null,
+        })
+        this.broadcastTask(taskId)
       }
     }
 
@@ -924,9 +1270,7 @@ export class PiOrchestrator {
       targetTaskId: run.targetTaskId,
       pausedAt: nowUnix(),
       sessions: pausedSessions,
-      // TODO: With parallel execution, this only captures the phase of one active task
-      // For complete parallel pause support, we'd need to track all active task phases
-      executionPhase: this.activeTask?.status === "review" ? "reviewing" : "executing",
+      executionPhase: pausedSessions.some((session) => session.executionPhase === "implementation_done") ? "reviewing" : "executing",
     }
 
     savePausedRunState(pauseState, this.db)
@@ -934,55 +1278,22 @@ export class PiOrchestrator {
     const updated = this.db.updateWorkflowRun(runId, {
       status: "paused",
       pauseRequested: true,
+      currentTaskId: this.scheduler.getQueuedTasks(runId)[0] ?? null,
     })
     if (updated) {
-      this.broadcast({ type: "run_updated", payload: updated })
+      const enriched = this.enrichWorkflowRun(updated)
+      if (enriched) {
+        this.broadcast({ type: "run_updated", payload: enriched })
+      }
     }
 
-    // TODO: With parallel execution, multiple tasks may be active
-    // Currently only resets the tracked activeTask, but other active tasks in the
-    // batch won't be reset. The batch will complete first (due to shouldPause check)
-    // then on resume they'll restart from backlog since they weren't done.
-    if (this.activeTask && run.taskOrder.includes(this.activeTask.id)) {
-      this.db.updateTask(this.activeTask.id, {
-        status: "backlog", // Move back to backlog so it will be picked up on resume
-        errorMessage: null,
-      })
-      this.broadcastTask(this.activeTask.id)
-    }
-
-    // If this is the current run, update orchestrator state
+    control.shouldPause = false
+    control.isPaused = true
     if (this.currentRunId === runId) {
       this.isPaused = true
-      this.running = false
     }
 
     this.broadcast({ type: "execution_paused", payload: { runId } })
-
-    // SAFETY NET: Set a timeout to ensure the run doesn't get stuck in a transitional state
-    // This handles edge cases where runInBackground hasn't exited yet
-    const SAFETY_TIMEOUT_MS = 5000 // 5 seconds should be plenty for cleanup
-    setTimeout(() => {
-      const currentRun = this.db.getWorkflowRun(runId)
-      if (currentRun?.status === "running" && this.shouldPause) {
-        console.log(`[orchestrator] Safety timeout: force-pausing run ${runId} that was still running`)
-
-        // Update run status to paused
-        const pausedRun = this.db.updateWorkflowRun(runId, {
-          status: "paused",
-          pauseRequested: true,
-        })
-        if (pausedRun) {
-          this.broadcast({ type: "run_updated", payload: pausedRun })
-        }
-
-        // Update orchestrator state
-        if (this.currentRunId === runId) {
-          this.isPaused = true
-          this.running = false
-        }
-      }
-    }, SAFETY_TIMEOUT_MS)
 
     return true
   }
@@ -992,10 +1303,11 @@ export class PiOrchestrator {
    * Delegates to pauseRun with the current run ID.
    */
   async pause(): Promise<boolean> {
-    if (!this.currentRunId) {
+    const pausedRunId = this.currentRunId ?? this.db.getWorkflowRuns().find((run) => run.status === "queued" || run.status === "running")?.id ?? null
+    if (!pausedRunId) {
       return false
     }
-    return this.pauseRun(this.currentRunId)
+    return this.pauseRun(pausedRunId)
   }
 
   /**
@@ -1016,76 +1328,36 @@ export class PiOrchestrator {
     }
 
     console.log(`[orchestrator] Resuming run ${runId}`)
+    clearGlobalPausedRunState(runId, this.db)
 
-    // Load pause state from database
-    const pauseState = loadPausedRunState(runId, this.db)
-    if (pauseState && pauseState.runId === runId) {
-      // Iterate through all tasks in the run to resume their sessions
-      // This ensures we don't miss any sessions that might not be in pauseState.sessions
-      for (const taskId of run.taskOrder) {
-        const task = this.db.getTask(taskId)
-        // Resume sessions for tasks that were executing and have a session
-        if (task?.status === "executing" && task.sessionId) {
-          try {
-            await this.resumeSession(task.sessionId)
-            // Clear individual session pause state
-            clearPausedSessionState(this.db, task.sessionId)
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
-            console.error(`[orchestrator] Failed to resume session ${task.sessionId}: ${message}`)
-          }
-        }
-      }
-
-      // Check and recreate containers if needed for all tasks in the run
-      if (this.containerManager) {
-        for (const taskId of run.taskOrder) {
-          const task = this.db.getTask(taskId)
-          if (task?.sessionId) {
-            const individualState = loadPausedSessionState(this.db, task.sessionId)
-            if (individualState?.containerId) {
-              const containerInfo = await this.containerManager.checkContainerById(individualState.containerId)
-              if (!containerInfo?.running) {
-                console.log(`[orchestrator] Container ${individualState.containerId} for session ${task.sessionId} not running, recreating...`)
-                // Remove the old container reference and let resumeTaskExecution create a new one
-                await this.containerManager.removeContainer(task.sessionId, true)
-              }
-            }
-          }
-        }
-      }
-
-      // Clear global pause state from database after successful resume
-      clearGlobalPausedRunState(runId, this.db)
-    }
-
-    // Clear orchestrator pause state
-    this.shouldPause = false
+    const control = this.getRunControl(runId)
+    control.shouldPause = false
+    control.shouldStop = false
+    control.isPaused = false
     if (this.currentRunId === runId) {
       this.isPaused = false
     }
 
     // Update run status
     const updated = this.db.updateWorkflowRun(runId, {
-      status: "running",
+      status: "queued",
       pauseRequested: false,
+      currentTaskId: this.scheduler.getQueuedTasks(runId)[0] ?? run.currentTaskId,
     })
     if (updated) {
-      this.broadcast({ type: "run_updated", payload: updated })
+      const enriched = this.enrichWorkflowRun(updated)
+      if (enriched) {
+        this.broadcast({ type: "run_updated", payload: enriched })
+      }
     }
 
     this.currentRunId = runId
-    this.running = true
-    this.shouldStop = false
-
-    const remainingTasks = run.taskOrder.slice(run.currentTaskIndex)
-    if (remainingTasks.length > 0) {
-      void this.runInBackground(runId, remainingTasks)
-    }
 
     this.broadcast({ type: "execution_resumed", payload: { runId } })
 
-    return updated
+    await this.triggerScheduling()
+
+    return this.enrichWorkflowRun(this.db.getWorkflowRun(runId))
   }
 
   /**
@@ -1120,79 +1392,47 @@ export class PiOrchestrator {
    */
   private async resumeFromPauseState(pauseState: PausedRunState): Promise<WorkflowRun | null> {
     const updated = this.db.updateWorkflowRun(pauseState.runId, {
-      status: "running",
+      status: "queued",
       pauseRequested: false,
     })
     if (updated) {
-      this.broadcast({ type: "run_updated", payload: updated })
+      const enriched = this.enrichWorkflowRun(updated)
+      if (enriched) {
+        this.broadcast({ type: "run_updated", payload: enriched })
+      }
     }
 
     clearGlobalPausedRunState()
 
     this.currentRunId = pauseState.runId
-    this.running = true
-    this.shouldStop = false
-    this.shouldPause = false
     this.isPaused = false
-
-    const remainingTasks = pauseState.taskOrder.slice(pauseState.currentTaskIndex)
-    if (remainingTasks.length > 0) {
-      void this.runInBackground(pauseState.runId, remainingTasks)
-    }
+    const control = this.getRunControl(pauseState.runId)
+    control.shouldStop = false
+    control.shouldPause = false
+    control.isPaused = false
 
     this.broadcast({ type: "execution_resumed", payload: { runId: pauseState.runId } })
 
-    return updated
+    await this.triggerScheduling()
+
+    return this.enrichWorkflowRun(this.db.getWorkflowRun(pauseState.runId))
   }
 
   /**
    * Check if there's a paused run that can be resumed.
    */
   hasPausedRun(): boolean {
-    if (this.isPaused && this.currentRunId) {
-      return true
-    }
-    // Check database first
-    const pausedRuns = listPausedRunStates(this.db)
-    if (pausedRuns.length > 0) {
-      return true
-    }
-    // Fallback to file-based check
-    return hasPausedRunState()
+    return listPausedRunStates(this.db).length > 0 || hasPausedRunState()
   }
 
   /**
    * Get the paused run state if available.
    */
   getPausedRunState(): PausedRunState | null {
-    if (this.isPaused && this.currentRunId) {
-      // Try to load from database first
-      const dbState = loadPausedRunState(this.currentRunId, this.db)
-      if (dbState) {
-        return dbState
-      }
-      // Fallback: construct from run info
-      const run = this.db.getWorkflowRun(this.currentRunId)
-      if (run) {
-        return {
-          runId: run.id,
-          kind: run.kind,
-          taskOrder: run.taskOrder,
-          currentTaskIndex: run.currentTaskIndex,
-          currentTaskId: run.currentTaskId,
-          targetTaskId: run.targetTaskId,
-          pausedAt: nowUnix(),
-          sessions: [],
-          executionPhase: "executing",
-        }
-      }
-    }
-    // Check database for any paused runs
     const pausedRuns = listPausedRunStates(this.db)
     if (pausedRuns.length > 0) {
       return pausedRuns[0] ?? null
     }
-    // Fallback to file-based storage
     return loadPausedRunState()
   }
 
@@ -1414,7 +1654,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         console.log(`[orchestrator] Executing batch with ${batch.length} tasks in parallel: ${batch.map(t => t.name).join(', ')}`)
 
         const batchResults = await Promise.allSettled(
-          batch.map(task => this.executeTask(task, options))
+          batch.map(task => this.executeTask(task, options, runId))
         )
 
         // Process results
@@ -1515,9 +1755,10 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     }
   }
 
-  private async executeTask(task: Task, options: Options): Promise<void> {
+  private async executeTask(task: Task, options: Options, runId: string): Promise<void> {
     const eligibility = getPlanExecutionEligibility(task)
     if (!eligibility.ok) throw new Error(`Task state is invalid: ${eligibility.reason}`)
+    const runControl = this.getRunControl(runId)
 
     console.log(`[orchestrator] executeTask START: ${task.name}(${task.id}), requirements: ${task.requirements.length > 0 ? task.requirements.join(', ') : 'none'}`)
 
@@ -1623,7 +1864,11 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
         }
       }
 
-      if (task.planmode) {
+      const pausedSession = task.sessionId ? loadPausedSessionState(this.db, task.sessionId) : null
+      if (pausedSession) {
+        await this.resumeTaskExecution(task, pausedSession)
+        clearPausedSessionState(this.db, pausedSession.sessionId)
+      } else if (task.planmode) {
         const planContinue = await this.runPlanMode(task.id, task, options, worktreeInfo)
         if (!planContinue) return
       } else {
@@ -1669,7 +1914,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       this.broadcastTask(task.id)
     } catch (error) {
       // Don't mark as failed if we were stopped
-      if (this.shouldStop) {
+      if (runControl.shouldStop || runControl.shouldPause || runControl.isPaused) {
         throw error
       }
 

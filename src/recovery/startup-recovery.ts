@@ -14,18 +14,18 @@ function log(line: string): void {
 }
 
 function needsTaskRecovery(task: { status: string; reviewActivity: string }): boolean {
-  return task.status === "executing" || (task.status === "review" && task.reviewActivity === "running")
+  return task.status === "queued" || task.status === "executing" || (task.status === "review" && task.reviewActivity === "running")
 }
 
 /**
  * Detect stale workflow runs that are in active status but have no executing tasks.
  * A run is stale if:
- * 1. Status is "running", "stopping", or "paused"
- * 2. None of the tasks in taskOrder have status "executing"
+ * 1. Status is "queued", "running", "stopping", or "paused"
+ * 2. None of the tasks in taskOrder have status "queued", "executing", or "review"
  */
 function needsWorkflowRunRecovery(run: WorkflowRun, db: PiKanbanDB): boolean {
   // Only consider runs in active statuses
-  if (run.status !== "running" && run.status !== "stopping" && run.status !== "paused") {
+  if (run.status !== "queued" && run.status !== "running" && run.status !== "stopping" && run.status !== "paused") {
     return false
   }
 
@@ -38,7 +38,7 @@ function needsWorkflowRunRecovery(run: WorkflowRun, db: PiKanbanDB): boolean {
   const tasks = db.getTasks()
   const hasActiveTask = run.taskOrder.some((taskId) => {
     const task = tasks.find((t) => t.id === taskId)
-    return task?.status === "executing" || task?.status === "review"
+    return task?.status === "queued" || task?.status === "executing" || task?.status === "review"
   })
 
   // If no tasks are active but run claims to be active, it's stale
@@ -114,7 +114,7 @@ export async function runStartupRecovery(args: {
           }
         }
         // Keep the run in paused state - user can resume from UI
-      } else if (run && (run.status === "running" || run.status === "stopping")) {
+      } else if (run && (run.status === "queued" || run.status === "running" || run.status === "stopping")) {
         // Run was running but we have pause state - this is inconsistent
         // Mark as paused so user can decide what to do
         log(`Run ${run.id} was active but pause state exists - marking as paused`)
@@ -141,7 +141,7 @@ export async function runStartupRecovery(args: {
           }
         }
         // Keep the run in paused state - user can resume from UI
-      } else if (run && (run.status === "running" || run.status === "stopping")) {
+      } else if (run && (run.status === "queued" || run.status === "running" || run.status === "stopping")) {
         // Run was running but we have pause state - this is inconsistent
         // Mark as paused so user can decide what to do
         log(`Run ${run.id} was active but file-based pause state exists - marking as paused`)

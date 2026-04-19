@@ -8,7 +8,7 @@ import { BASE_IMAGES } from "../config/base-images.ts"
 import { buildExecutionGraph, getExecutionGraphTasks } from "../execution-plan.ts"
 import { discoverPiModels } from "../pi/model-discovery.ts"
 import { isTaskAwaitingPlanApproval } from "../task-state.ts"
-import type { BestOfNConfig, ImageStatusPayload, Task, TaskRun, ThinkingLevel, WSMessage, SessionMessage } from "../types.ts"
+import type { BestOfNConfig, ImageStatusPayload, RunQueueStatus, SlotUtilization, Task, TaskRun, ThinkingLevel, WorkflowRun, WSMessage, SessionMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
 import type { PackageDefinition, StatsTimeRange } from "../db/types.ts"
 import { runStartupRecovery } from "../recovery/startup-recovery.ts"
@@ -40,6 +40,8 @@ type StartSingleFn = (taskId: string) => Promise<unknown>
 type StartGroupFn = (groupId: string) => Promise<WorkflowRun>
 type StopFn = () => Promise<unknown>
 type StopRunFn = (runId: string, options?: { destructive?: boolean }) => Promise<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>
+type GetSlotsFn = () => SlotUtilization
+type GetRunQueueStatusFn = (runId: string) => Promise<RunQueueStatus> | RunQueueStatus
 
 function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean"
@@ -59,11 +61,6 @@ function isSelectionMode(value: unknown): value is "pick_best" | "synthesize" | 
 
 function isStatsTimeRange(value: unknown): value is StatsTimeRange {
   return value === "24h" || value === "7d" || value === "30d" || value === "lifetime"
-}
-
-// Task Group validation helpers
-function isTaskGroupStatus(value: unknown): value is "active" | "completed" | "archived" {
-  return value === "active" || value === "completed" || value === "archived"
 }
 
 interface BestOfNSlotInput {
@@ -177,6 +174,8 @@ export class PiKanbanServer {
   private readonly onPauseRun: RunControlFn | null
   private readonly onResumeRun: RunControlFn | null
   private readonly onStopRun: StopRunFn | null
+  private readonly onGetSlots: GetSlotsFn | null
+  private readonly onGetRunQueueStatus: GetRunQueueStatusFn | null
   private readonly defaultPort: number
   private readonly smartRepair: SmartRepairService
   private readonly imageManager?: ContainerImageManager
@@ -238,6 +237,8 @@ export class PiKanbanServer {
       onPauseRun?: RunControlFn
       onResumeRun?: RunControlFn
       onStopRun?: StopRunFn  // Unified stop with destructive option
+      onGetSlots?: GetSlotsFn
+      onGetRunQueueStatus?: GetRunQueueStatusFn
       settings?: InfrastructureSettings
       projectRoot?: string
     } = {},
@@ -254,6 +255,8 @@ export class PiKanbanServer {
     this.onPauseRun = opts.onPauseRun ?? null
     this.onResumeRun = opts.onResumeRun ?? null
     this.onStopRun = opts.onStopRun ?? null
+    this.onGetSlots = opts.onGetSlots ?? null
+    this.onGetRunQueueStatus = opts.onGetRunQueueStatus ?? null
 
     // Container mode is the default - only disabled when explicitly set to false
     if (opts.settings?.workflow?.container?.enabled !== false) {
@@ -304,11 +307,11 @@ export class PiKanbanServer {
 
       // Check if notification should be sent based on notification level
       const context: NotificationContext = {
-        isWorkflowDone: this._currentRunId !== null,
+        isWorkflowDone: this.db.hasRunningWorkflows(),
       }
       
       // Validate status values before passing to shouldSendNotification
-      const validStatuses = ["template", "backlog", "executing", "review", "code-style", "done", "failed", "stuck"] as const
+      const validStatuses = ["template", "backlog", "queued", "executing", "review", "code-style", "done", "failed", "stuck"] as const
       if (!validStatuses.includes(oldStatus as typeof validStatuses[number]) || 
           !validStatuses.includes(newStatus as typeof validStatuses[number])) {
         return
@@ -375,14 +378,18 @@ export class PiKanbanServer {
 
     // Track workflow start/completion for notification context
     if (message.type === "execution_started") {
-      // Find the current active run
-      const runs = this.db.getWorkflowRuns()
-      const activeRun = runs.find(r => r.status === "running")
-      this._currentRunId = activeRun?.id ?? null
+      const payload = message.payload as { runId?: unknown } | null
+      this._currentRunId = payload && typeof payload.runId === "string" ? payload.runId : this._currentRunId
+    } else if (message.type === "execution_queued") {
+      const payload = message.payload as { runId?: unknown } | null
+      if (payload && typeof payload.runId === "string") {
+        this._currentRunId = payload.runId
+      }
     } else if (message.type === "execution_complete") {
-      // Workflow completed - send summary notification if level is "workflow_done_and_failures"
-      if (this._currentRunId) {
-        const run = this.db.getWorkflowRun(this._currentRunId)
+      const payload = message.payload as { runId?: unknown } | null
+      const completedRunId = payload && typeof payload.runId === "string" ? payload.runId : this._currentRunId
+      if (completedRunId) {
+        const run = this.db.getWorkflowRun(completedRunId)
         if (run) {
           const options = this.db.getOptions()
           const notificationLevel = options.telegramNotificationLevel
@@ -416,7 +423,9 @@ export class PiKanbanServer {
             })
           }
         }
-        this._currentRunId = null
+        if (this._currentRunId === completedRunId) {
+          this._currentRunId = null
+        }
       }
     }
   }
@@ -932,12 +941,51 @@ export class PiKanbanServer {
       return json(catalog)
     })
 
-    this.router.get("/api/runs", ({ json }) => json(this.db.getWorkflowRuns()))
+    this.router.get("/api/runs", async ({ json }) => {
+      const runs = this.db.getWorkflowRuns()
+      if (!this.onGetRunQueueStatus) {
+        return json(runs)
+      }
+
+      const enrichedRuns = await Promise.all(runs.map(async (run) => {
+        const queueStatus = await this.onGetRunQueueStatus!(run.id)
+        return {
+          ...run,
+          queuedTaskCount: queueStatus.queuedTasks,
+          executingTaskCount: queueStatus.executingTasks,
+        }
+      }))
+
+      return json(enrichedRuns)
+    })
+
+    this.router.get("/api/slots", async ({ json }) => {
+      if (!this.onGetSlots) {
+        return json({ error: "Slot inspection not available" }, 503)
+      }
+      return json(this.onGetSlots())
+    })
+
+    this.router.get("/api/runs/:id/queue-status", async ({ params, json }) => {
+      if (!this.onGetRunQueueStatus) {
+        return json({ error: "Run queue status not available" }, 503)
+      }
+
+      try {
+        return json(await this.onGetRunQueueStatus(params.id))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes("not found")) {
+          return json({ error: message }, 404)
+        }
+        return json({ error: message }, 500)
+      }
+    })
 
     this.router.delete("/api/runs/:id", ({ params, json, broadcast }) => {
       const run = this.db.getWorkflowRun(params.id)
       if (!run || run.isArchived) return json({ error: "Run not found" }, 404)
-      if (run.status === "running" || run.status === "stopping" || run.status === "paused") {
+      if (run.status === "queued" || run.status === "running" || run.status === "stopping" || run.status === "paused") {
         return json({ error: "Only completed or failed workflow runs can be archived" }, 409)
       }
 
@@ -1009,7 +1057,7 @@ export class PiKanbanServer {
     })
 
     this.router.post("/api/execution/pause", async ({ json }) => {
-      const active = this.db.getWorkflowRuns().find((run) => run.status === "running")
+      const active = this.db.getWorkflowRuns().find((run) => run.status === "queued" || run.status === "running")
       if (!active) return json({ error: "No running workflow run" }, 404)
       const updated = this.db.updateWorkflowRun(active.id, {
         pauseRequested: true,

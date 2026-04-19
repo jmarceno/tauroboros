@@ -101,6 +101,7 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
   const getRunStatusClass = (status: string, isStale = false) => {
     if (isStale) return 'stale'
     switch (status) {
+      case 'queued': return 'active'
       case 'running': return 'active'
       case 'paused': return 'paused'
       default: return ''

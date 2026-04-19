@@ -44,7 +44,7 @@ export function createWorkflowControlStore(
   }
 
   const updateStateFromRuns = (runs: WorkflowRun[]) => {
-    const active = runs.find(r => r.status === 'running' || r.status === 'paused')
+    const active = runs.find(r => r.status === 'queued' || r.status === 'running' || r.status === 'paused')
     if (!active) {
       setControlState('idle')
       return

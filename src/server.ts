@@ -100,6 +100,14 @@ export function createPiServer(options: CreateServerOptions = {}): {
         return { success: true, run }
       }
     },
+    onGetSlots: () => {
+      if (!orchestrator) throw new Error("Orchestrator unavailable")
+      return orchestrator.getSlotUtilization()
+    },
+    onGetRunQueueStatus: async (runId: string) => {
+      if (!orchestrator) throw new Error("Orchestrator unavailable")
+      return orchestrator.getRunQueueStatus(runId)
+    },
   })
 
   orchestrator = new PiOrchestrator(

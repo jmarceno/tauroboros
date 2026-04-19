@@ -9,6 +9,20 @@ export const runsApi = {
   // Queries
   getAll: () => apiClient.get<WorkflowRun[]>('/api/runs'),
   getPausedState: () => apiClient.get<{ hasPausedRun: boolean; state: unknown }>('/api/runs/paused-state'),
+  getSlots: () => apiClient.get<{
+    maxSlots: number
+    usedSlots: number
+    availableSlots: number
+    tasks: Array<{ taskId: string; runId: string; taskName: string; slotIndex: number }>
+  }>('/api/slots'),
+  getQueueStatus: (id: string) => apiClient.get<{
+    runId: string
+    status: WorkflowRun['status']
+    totalTasks: number
+    queuedTasks: number
+    executingTasks: number
+    completedTasks: number
+  }>(`/api/runs/${id}/queue-status`),
 
   // Mutations
   pause: (id: string) => apiClient.post<{ success: boolean; run: WorkflowRun }>(`/api/runs/${id}/pause`),

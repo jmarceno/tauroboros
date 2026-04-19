@@ -80,6 +80,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
     const groups: Record<TaskStatus | 'failed' | 'stuck', Task[]> = {
       template: [],
       backlog: [],
+      queued: [],
       executing: [],
       review: [],
       'code-style': [],
@@ -92,6 +93,8 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
       if (!task) continue
       if (task.status === 'failed' || task.status === 'stuck') {
         groups.review.push(task)
+      } else if (task.status === 'queued') {
+        groups.executing.push(task)
       } else if (task.status && task.status in groups) {
         groups[task.status as TaskStatus].push(task)
       }

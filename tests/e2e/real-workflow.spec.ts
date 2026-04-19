@@ -55,8 +55,7 @@ test.describe('REAL Multi-Task Workflow', () => {
       requirements: [task2Name],
     })
 
-    await startWorkflowViaUI(page)
-    await waitForWorkflowStart(page, [task1Name, task2Name, task3Name])
+    await startSingleTaskViaUI(page, task3Name)
     await waitForWorkflowCompletion(page, [task1Name, task2Name, task3Name])
   })
 })
@@ -112,6 +111,23 @@ async function startWorkflowViaUI(page: Page): Promise<void> {
   await expect(startButton).toBeVisible({ timeout: 10000 })
   await expect(startButton).toBeEnabled({ timeout: 10000 })
   await startButton.click()
+}
+
+async function startSingleTaskViaUI(page: Page, taskName: string): Promise<void> {
+  const taskCard = getTaskCard(page, taskName)
+  await expect(taskCard).toBeVisible({ timeout: 15000 })
+
+  const startButton = taskCard.locator('button[title="Start this task"]').first()
+  await expect(startButton).toBeVisible({ timeout: 10000 })
+  await startButton.click()
+
+  const modal = page.locator('.modal-overlay').last()
+  await expect(modal.getByRole('heading', { name: new RegExp(`Start Task: ${escapeRegExp(taskName)}`) })).toBeVisible({ timeout: 10000 })
+
+  await modal.getByRole('button', { name: 'Start Task' }).click()
+  await expect(modal).not.toBeVisible({ timeout: 10000 })
+
+  await expect(page.locator('.animate-slide-in, [class*="animate-slide-in"]').filter({ hasText: 'Task started' }).first()).toBeVisible({ timeout: 15000 })
 }
 
 async function confirmExecutionGraphIfVisible(page: Page): Promise<boolean> {
@@ -174,11 +190,11 @@ async function waitForWorkflowCompletion(page: Page, taskNames: string[]): Promi
     const states = await Promise.all(taskNames.map((name) => readTaskState(page, name)))
     const [task1, task2, task3] = states
 
-    if (task2.status !== 'backlog' && task1.status !== 'done') {
+    if ((task2.status === 'executing' || task2.status === 'review' || task2.status === 'done') && task1.status !== 'done') {
       throw new Error(`Dependency order violated: ${task2.name} left backlog while ${task1.name} was ${task1.status}`)
     }
 
-    if (task3.status !== 'backlog' && task2.status !== 'done') {
+    if ((task3.status === 'executing' || task3.status === 'review' || task3.status === 'done') && task2.status !== 'done') {
       throw new Error(`Dependency order violated: ${task3.name} left backlog while ${task2.name} was ${task2.status}`)
     }
 
@@ -211,7 +227,7 @@ async function readTaskState(page: Page, taskName: string): Promise<WorkflowTask
     }
   }
 
-  for (const status of ['template', 'backlog', 'executing', 'review', 'code-style', 'done']) {
+  for (const status of ['template', 'backlog', 'queued', 'executing', 'review', 'code-style', 'done']) {
     const columnMatch = page.locator(`[data-status="${status}"] .task-card`).filter({ hasText: taskName }).first()
     if (await columnMatch.isVisible().catch(() => false)) {
       return { name: taskName, status }
@@ -219,4 +235,8 @@ async function readTaskState(page: Page, taskName: string): Promise<WorkflowTask
   }
 
   return { name: taskName, status: 'unknown' }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

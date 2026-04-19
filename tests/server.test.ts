@@ -269,6 +269,12 @@ describe("PiKanbanServer API", () => {
       expect(runsRes.response.status).toBe(200)
       expect(Array.isArray(runsRes.data)).toBe(true)
 
+      const slotsRes = await api("/api/slots")
+      expect(slotsRes.response.status).toBe(200)
+      expect(typeof slotsRes.data.maxSlots).toBe("number")
+      expect(typeof slotsRes.data.usedSlots).toBe("number")
+      expect(Array.isArray(slotsRes.data.tasks)).toBe(true)
+
       const finishedRun = db.createWorkflowRun({
         id: "run-api-finished",
         kind: "single_task",
@@ -278,6 +284,14 @@ describe("PiKanbanServer API", () => {
         targetTaskId: taskId,
         finishedAt: Math.floor(Date.now() / 1000),
       })
+
+      db.updateTask(taskId, { status: "done" })
+
+      const queueStatusRes = await api(`/api/runs/${finishedRun.id}/queue-status`)
+      expect(queueStatusRes.response.status).toBe(200)
+      expect(queueStatusRes.data.runId).toBe(finishedRun.id)
+      expect(queueStatusRes.data.totalTasks).toBe(1)
+      expect(queueStatusRes.data.completedTasks).toBe(1)
 
       const runsWithFinishedRes = await api("/api/runs")
       expect(runsWithFinishedRes.response.status).toBe(200)
@@ -1045,8 +1059,7 @@ describe("PiKanbanServer API", () => {
       const event = await executionStartedPromise
       expect(event.type).toBe("group_execution_started")
       expect(event.payload.groupId).toBe(groupId)
-      expect(event.payload.taskIds).toContain(taskId)
-      expect(typeof event.payload.startedAt).toBe("number")
+      expect(typeof event.payload.runId).toBe("string")
     } finally {
       ws.close()
       server.stop()

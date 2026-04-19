@@ -1,4 +1,4 @@
-export type TaskStatus = "template" | "backlog" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
+export type TaskStatus = "template" | "backlog" | "queued" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
 
 export type TelegramNotificationLevel = "all" | "failures" | "done_and_failures" | "workflow_done_and_failures"
 
@@ -26,7 +26,53 @@ export type SelectionMode = "pick_best" | "synthesize" | "pick_or_synthesize"
 
 export type WorkflowRunKind = "all_tasks" | "single_task" | "workflow_review" | "group_tasks"
 
-export type WorkflowRunStatus = "running" | "paused" | "stopping" | "completed" | "failed"
+export type WorkflowRunStatus = "queued" | "running" | "paused" | "stopping" | "completed" | "failed"
+
+export interface RunContext {
+  id: string
+  kind: WorkflowRunKind
+  status: WorkflowRunStatus
+  displayName: string
+  targetTaskId: string | null
+  groupId?: string
+  createdAt: number
+  startedAt: number
+  finishedAt: number | null
+  taskIds: string[]
+}
+
+export interface TaskExecutionState {
+  taskId: string
+  runId: string
+  slotIndex: number | null
+  status: "queued" | "executing" | "done" | "failed" | "stuck"
+  startedAt: number | null
+  finishedAt: number | null
+  sessionId: string | null
+}
+
+export interface SlotTaskInfo {
+  taskId: string
+  runId: string
+  taskName: string
+  slotIndex: number
+}
+
+export interface SlotUtilization {
+  maxSlots: number
+  usedSlots: number
+  availableSlots: number
+  tasks: SlotTaskInfo[]
+}
+
+export interface RunQueueStatus {
+  runId: string
+  status: WorkflowRunStatus
+  totalTasks: number
+  queuedTasks: number
+  executingTasks: number
+  completedTasks: number
+}
 
 export interface BestOfNSlot {
   model: string
@@ -133,6 +179,8 @@ export interface WorkflowRun {
   archivedAt: number | null
   color: string
   groupId?: string
+  queuedTaskCount?: number
+  executingTaskCount?: number
 }
 
 export interface TaskRun {
@@ -291,6 +339,7 @@ export type WSMessageType =
   | "task_reordered"
   | "options_updated"
   | "execution_started"
+  | "execution_queued"
   | "execution_stopped"
   | "execution_complete"
   | "execution_paused"

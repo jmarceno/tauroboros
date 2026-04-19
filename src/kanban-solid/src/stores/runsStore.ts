@@ -32,7 +32,7 @@ export function createRunsStore() {
 
   // Derived state
   const activeRuns = createMemo(() => 
-    runs().filter(r => r.status === 'running' || r.status === 'paused')
+    runs().filter(r => r.status === 'queued' || r.status === 'running' || r.status === 'paused')
   )
 
   const staleRuns = createMemo(() => 
@@ -54,7 +54,7 @@ export function createRunsStore() {
 
   const isTaskMutationLocked = (taskId: string): boolean => {
     const run = getTaskRunLock(taskId)
-    return run !== null && run.status === 'running'
+    return run !== null && (run.status === 'queued' || run.status === 'running')
   }
 
   const getTaskRunColor = (taskId: string): string | null => {
@@ -70,7 +70,7 @@ export function createRunsStore() {
 
   const getRunProgressLabel = (run: WorkflowRun): string => {
     if (!run) return ''
-    const current = run.currentTaskIndex + 1
+    const current = Math.min(run.currentTaskIndex + (run.currentTaskId ? 1 : 0), run.taskOrder.length)
     const total = run.taskOrder.length
     return `${current}/${total}`
   }

@@ -435,7 +435,7 @@ function normalizeBoolean(value: unknown): boolean {
   throw new Error(`Invalid boolean value: ${JSON.stringify(value)}. Expected boolean, 0/1, or "true"/"false".`)
 }
 
-const TASK_STATUSES: TaskStatus[] = ["template", "backlog", "executing", "review", "code-style", "done", "failed", "stuck"]
+const TASK_STATUSES: TaskStatus[] = ["template", "backlog", "queued", "executing", "review", "code-style", "done", "failed", "stuck"]
 
 function isTaskStatus(value: unknown): value is TaskStatus {
   return typeof value === "string" && TASK_STATUSES.includes(value as TaskStatus)
@@ -503,7 +503,7 @@ function asWorkflowRunKind(value: unknown): WorkflowRunKind {
   throw new Error(`Invalid workflow run kind: ${JSON.stringify(value)}. Expected one of: ${WORKFLOW_RUN_KINDS.join(", ")}.`)
 }
 
-const WORKFLOW_RUN_STATUSES: WorkflowRunStatus[] = ["running", "paused", "stopping", "completed", "failed"]
+const WORKFLOW_RUN_STATUSES: WorkflowRunStatus[] = ["queued", "running", "paused", "stopping", "completed", "failed"]
 
 function isWorkflowRunStatus(value: unknown): value is WorkflowRunStatus {
   return typeof value === "string" && WORKFLOW_RUN_STATUSES.includes(value as WorkflowRunStatus)
@@ -782,6 +782,8 @@ function rowToWorkflowRun(row: Record<string, unknown>): WorkflowRun {
     archivedAt: row.archived_at === null || row.archived_at === undefined ? null : Number(row.archived_at),
     color: row.color ? String(row.color) : "#888888",
     groupId: row.group_id ? String(row.group_id) : undefined,
+    queuedTaskCount: undefined,
+    executingTaskCount: undefined,
   }
 }
 
@@ -2081,10 +2083,11 @@ export class PiKanbanDB {
   }
 
   getActiveWorkflowRunForTask(taskId: string): WorkflowRun | null {
-    const row = this.db
-      .prepare("SELECT * FROM workflow_runs WHERE current_task_id = ? AND status IN ('running', 'stopping') ORDER BY started_at ASC LIMIT 1")
-      .get(taskId) as Record<string, unknown> | null
-    return row ? rowToWorkflowRun(row) : null
+    const runs = this.getWorkflowRuns()
+    return runs.find((run) =>
+      (run.status === "queued" || run.status === "running" || run.status === "stopping" || run.status === "paused")
+      && run.taskOrder.includes(taskId)
+    ) ?? null
   }
 
   // ---- task runs / candidates ----
@@ -2321,7 +2324,7 @@ export class PiKanbanDB {
   // ---- workflow runs ----
 
   getNextRunColor(): string {
-    const rows = this.db.prepare("SELECT color FROM workflow_runs WHERE is_archived = 0 AND status IN ('running', 'stopping', 'paused')").all() as Record<string, unknown>[]
+    const rows = this.db.prepare("SELECT color FROM workflow_runs WHERE is_archived = 0 AND status IN ('queued', 'running', 'stopping', 'paused')").all() as Record<string, unknown>[]
     const usedColors = rows.map((row) => row.color).filter((c): c is string => typeof c === "string" && c !== "#888888")
     return pickRunColor(usedColors)
   }
@@ -2342,7 +2345,7 @@ export class PiKanbanDB {
       .run(
         input.id,
         input.kind,
-        input.status ?? "running",
+        input.status ?? "queued",
         input.displayName ?? "",
         input.targetTaskId ?? null,
         JSON.stringify(input.taskOrder ?? []),
@@ -2368,7 +2371,7 @@ export class PiKanbanDB {
   }
 
   getWorkflowRuns(): WorkflowRun[] {
-    const rows = this.db.prepare("SELECT * FROM workflow_runs WHERE is_archived = 0 ORDER BY started_at DESC, created_at DESC").all() as Record<string, unknown>[]
+    const rows = this.db.prepare("SELECT * FROM workflow_runs WHERE is_archived = 0 ORDER BY created_at DESC, started_at DESC").all() as Record<string, unknown>[]
     return rows.map(rowToWorkflowRun)
   }
 
@@ -2443,7 +2446,7 @@ export class PiKanbanDB {
 
     hasRunningWorkflows(): boolean {
     const row = this.db.prepare(
-      "SELECT COUNT(*) as count FROM workflow_runs WHERE is_archived = 0 AND status IN ('running', 'stopping')"
+      "SELECT COUNT(*) as count FROM workflow_runs WHERE is_archived = 0 AND status IN ('queued', 'running', 'stopping', 'paused')"
     ).get() as { count: number }
     return row.count > 0
   }
