@@ -27,6 +27,12 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   let containerRef: HTMLDivElement | undefined
   let editorRef: HTMLDivElement | undefined
   const [isSettingContent, setIsSettingContent] = createSignal(false)
+  let lastExternalContent = props.modelValue || '<p></p>'
+  let lastEmittedContent = props.modelValue || '<p></p>'
+
+  const initialContent = props.modelValue || '<p></p>'
+  const initialEditable = !props.disabled
+  const placeholderText = props.placeholder || 'What should this task do?'
 
   const editor = createTiptapEditor(() => ({
     element: editorRef!,
@@ -42,7 +48,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
         openOnClick: false,
       }),
       Placeholder.configure({
-        placeholder: props.placeholder || 'What should this task do?',
+        placeholder: placeholderText,
       }),
       CodeBlock.configure({
         HTMLAttributes: {
@@ -50,11 +56,14 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
         },
       }),
     ],
-    content: props.modelValue,
-    editable: !props.disabled,
+    content: initialContent,
+    editable: initialEditable,
     onUpdate: ({ editor }) => {
       if (isSettingContent()) return
-      props.onUpdate?.(editor.getHTML())
+      const html = editor.getHTML()
+      lastEmittedContent = html
+      lastExternalContent = html
+      props.onUpdate?.(html)
     },
     editorProps: {
       handleKeyDown: (_view, event) => {
@@ -70,11 +79,19 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     if (!currentEditor || isSettingContent()) return
 
     const targetContent = props.modelValue || '<p></p>'
-    const currentContent = currentEditor.getHTML()
+    if (targetContent === lastEmittedContent || targetContent === lastExternalContent) {
+      lastExternalContent = targetContent
+      return
+    }
 
-    if (currentContent === targetContent) return
+    const currentContent = currentEditor.getHTML()
+    if (currentContent === targetContent) {
+      lastExternalContent = targetContent
+      return
+    }
 
     setIsSettingContent(true)
+    lastExternalContent = targetContent
     currentEditor.commands.setContent(targetContent, false)
     setIsSettingContent(false)
   })

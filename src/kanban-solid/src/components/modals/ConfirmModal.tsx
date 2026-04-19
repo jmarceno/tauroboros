@@ -2,6 +2,7 @@
  * ConfirmModal Component - Generic confirmation dialog
  */
 
+import { Show } from 'solid-js'
 import { ModalWrapper } from '../common/ModalWrapper'
 
 interface ConfirmModalProps {
@@ -13,8 +14,6 @@ interface ConfirmModalProps {
 }
 
 export function ConfirmModal(props: ConfirmModalProps) {
-  if (!props.isOpen) return null
-
   const title = () => {
     if (props.action === 'delete') return 'Confirm Delete'
     if (props.action === 'archive') return 'Confirm Archive'
@@ -44,20 +43,22 @@ export function ConfirmModal(props: ConfirmModalProps) {
   }
 
   return (
-    <ModalWrapper title={title()} onClose={props.onClose} size="sm">
-      <p class="text-dark-text-secondary mb-6">{message()}</p>
-      
-      <div class="modal-footer">
-        <button class="btn" onClick={props.onClose}>
-          Cancel
-        </button>
-        <button 
-          class={buttonClass()}
-          onClick={props.onConfirm}
-        >
-          {buttonText()}
-        </button>
-      </div>
-    </ModalWrapper>
+    <Show when={props.isOpen}>
+      <ModalWrapper title={title()} onClose={props.onClose} size="sm">
+        <p class="text-dark-text-secondary mb-6">{message()}</p>
+
+        <div class="modal-footer">
+          <button class="btn" onClick={props.onClose}>
+            Cancel
+          </button>
+          <button
+            class={buttonClass()}
+            onClick={props.onConfirm}
+          >
+            {buttonText()}
+          </button>
+        </div>
+      </ModalWrapper>
+    </Show>
   )
 }

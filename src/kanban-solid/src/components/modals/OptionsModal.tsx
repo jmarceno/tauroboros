@@ -3,7 +3,7 @@
  * Ported from React to SolidJS
  */
 
-import { createSignal, createEffect, Show, For } from 'solid-js'
+import { createSignal, createEffect, Show, For, createMemo } from 'solid-js'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { HelpButton } from '@/components/common/HelpButton'
 import { ModelPicker } from '@/components/common/ModelPicker'
@@ -23,6 +23,14 @@ export function OptionsModal(props: OptionsModalProps) {
   const [branchesError, setBranchesError] = createSignal<string | null>(null)
   const [isLoading, setIsLoading] = createSignal(true)
   const [isSaving, setIsSaving] = createSignal(false)
+  const branchOptions = createMemo(() => {
+    const options = new Set(availableBranches())
+    const selectedBranch = formData().branch?.trim()
+    if (selectedBranch) {
+      options.add(selectedBranch)
+    }
+    return Array.from(options)
+  })
 
   createEffect(() => {
     const loadData = async () => {
@@ -95,22 +103,6 @@ export function OptionsModal(props: OptionsModalProps) {
     }
   }
 
-  if (isLoading()) {
-    return (
-      <div class="modal-overlay" onClick={props.onClose}>
-        <div class="modal w-[min(560px,calc(100vw-40px))]" onClick={(e) => e.stopPropagation()}>
-          <div class="modal-header">
-            <h2>Options</h2>
-            <button class="icon-btn" onClick={props.onClose}>×</button>
-          </div>
-          <div class="modal-body p-8 text-center">
-            <div class="text-dark-text-muted">Loading options...</div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div class="modal-overlay" onClick={props.onClose}>
       <div class="modal w-[min(560px,calc(100vw-40px))] max-h-[calc(100vh-40px)]" onClick={(e) => e.stopPropagation()}>
@@ -119,8 +111,16 @@ export function OptionsModal(props: OptionsModalProps) {
           <button class="icon-btn" onClick={props.onClose}>×</button>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div class="modal-body space-y-3 max-h-[calc(100vh-180px)] overflow-y-auto">
+        <Show
+          when={!isLoading()}
+          fallback={
+            <div class="modal-body p-8 text-center">
+              <div class="text-dark-text-muted">Loading options...</div>
+            </div>
+          }
+        >
+          <form onSubmit={handleSubmit}>
+            <div class="modal-body space-y-3 max-h-[calc(100vh-180px)] overflow-y-auto">
             {/* Default Branch */}
             <div class="form-group">
               <div class="label-row">
@@ -134,14 +134,14 @@ export function OptionsModal(props: OptionsModalProps) {
                 class="form-select"
                 value={formData().branch || ''}
                 onChange={(e) => updateField('branch', e.currentTarget.value)}
-                disabled={availableBranches().length === 0}
+                disabled={branchOptions().length === 0}
               >
                 <option value="" disabled>No branches available</option>
-                <For each={availableBranches()}>
+                <For each={branchOptions()}>
                   {(branch) => <option value={branch}>{branch}</option>}
                 </For>
               </select>
-              <Show when={availableBranches().length === 0 && !branchesError()}>
+              <Show when={branchOptions().length === 0 && !branchesError()}>
                 <div class="text-xs text-dark-text-muted mt-1">Loading branches...</div>
               </Show>
             </div>
@@ -220,15 +220,16 @@ export function OptionsModal(props: OptionsModalProps) {
                 <span>Show execution graph before starting workflow</span>
               </label>
             </div>
-          </div>
+            </div>
 
-          <div class="modal-footer">
-            <button type="button" class="btn" onClick={props.onClose}>Cancel</button>
-            <button type="submit" class="btn btn-primary" disabled={isSaving()}>
-              {isSaving() ? 'Saving...' : 'Save'}
-            </button>
-          </div>
-        </form>
+            <div class="modal-footer">
+              <button type="button" class="btn" onClick={props.onClose}>Cancel</button>
+              <button type="submit" class="btn btn-primary" disabled={isSaving()}>
+                {isSaving() ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </Show>
       </div>
     </div>
   )

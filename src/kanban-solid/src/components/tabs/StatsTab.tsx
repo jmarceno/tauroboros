@@ -3,7 +3,7 @@
  * Ported from React to SolidJS with full chart support
  */
 
-import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from 'solid-js'
+import { createSignal, createMemo, createEffect, onCleanup, For, Show } from 'solid-js'
 import { createQuery, useQueryClient } from '@tanstack/solid-query'
 import Chart from 'chart.js/auto'
 import { statsApi } from '@/api'
@@ -11,6 +11,11 @@ import type { HourlyUsage, DailyUsage } from '@/types'
 
 // Only 7d data is currently supported by the API
 type TimeRange = '7d'
+
+const EMPTY_USAGE = { totalTokens: 0, totalCost: 0, tokenChange: 0, costChange: 0 }
+const EMPTY_TASK_STATS = { completed: 0, failed: 0, averageReviews: 0 }
+const EMPTY_MODEL_USAGE = { plan: [], execution: [], review: [] }
+const EMPTY_DAILY_USAGE: DailyUsage[] = []
 
 const formatNumber = (num: number): string => {
   if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`
@@ -48,12 +53,7 @@ export function StatsTab() {
 
   const usageQuery = createQuery(() => ({
     queryKey: ['stats', 'usage', timeRange()],
-    queryFn: async () => {
-      const start = performance.now()
-      const result = await statsApi.getUsage(timeRange())
-      console.log(`[StatsTab] usage query took ${(performance.now() - start).toFixed(2)}ms`)
-      return result
-    },
+    queryFn: () => statsApi.getUsage(timeRange()),
     staleTime: 30000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: false,
@@ -62,12 +62,7 @@ export function StatsTab() {
 
   const taskStatsQuery = createQuery(() => ({
     queryKey: ['stats', 'tasks'],
-    queryFn: async () => {
-      const start = performance.now()
-      const result = await statsApi.getTaskStats()
-      console.log(`[StatsTab] taskStats query took ${(performance.now() - start).toFixed(2)}ms`)
-      return result
-    },
+    queryFn: () => statsApi.getTaskStats(),
     staleTime: 30000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: false,
@@ -76,12 +71,7 @@ export function StatsTab() {
 
   const modelUsageQuery = createQuery(() => ({
     queryKey: ['stats', 'models'],
-    queryFn: async () => {
-      const start = performance.now()
-      const result = await statsApi.getModelUsage()
-      console.log(`[StatsTab] modelUsage query took ${(performance.now() - start).toFixed(2)}ms`)
-      return result
-    },
+    queryFn: () => statsApi.getModelUsage(),
     staleTime: 30000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: false,
@@ -90,12 +80,7 @@ export function StatsTab() {
 
   const durationQuery = createQuery(() => ({
     queryKey: ['stats', 'duration'],
-    queryFn: async () => {
-      const start = performance.now()
-      const result = await statsApi.getAverageDuration()
-      console.log(`[StatsTab] duration query took ${(performance.now() - start).toFixed(2)}ms`)
-      return result
-    },
+    queryFn: () => statsApi.getAverageDuration(),
     staleTime: 30000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: false,
@@ -104,23 +89,18 @@ export function StatsTab() {
 
   const dailyUsage7dQuery = createQuery(() => ({
     queryKey: ['stats', 'daily', 7],
-    queryFn: async () => {
-      const start = performance.now()
-      const result = await statsApi.getDailyUsage(7)
-      console.log(`[StatsTab] dailyUsage7d query took ${(performance.now() - start).toFixed(2)}ms`)
-      return result
-    },
+    queryFn: () => statsApi.getDailyUsage(7),
     staleTime: 30000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: false,
     retry: 2,
   }))
 
-  const currentUsage = () => usageQuery.data ?? { totalTokens: 0, totalCost: 0, tokenChange: 0, costChange: 0 }
-  const taskStats = () => taskStatsQuery.data ?? { completed: 0, failed: 0, averageReviews: 0 }
-  const modelUsage = () => modelUsageQuery.data ?? { plan: [], execution: [], review: [] }
+  const currentUsage = () => usageQuery.data ?? EMPTY_USAGE
+  const taskStats = () => taskStatsQuery.data ?? EMPTY_TASK_STATS
+  const modelUsage = () => modelUsageQuery.data ?? EMPTY_MODEL_USAGE
   const averageDuration = () => durationQuery.data ?? 0
-  const dailyUsage7d = () => dailyUsage7dQuery.data ?? []
+  const dailyUsage7d = () => dailyUsage7dQuery.data ?? EMPTY_DAILY_USAGE
 
   const formatTimeSeriesData = (data: HourlyUsage[] | DailyUsage[]) => {
     return data.map(d => {
@@ -347,9 +327,10 @@ export function StatsTab() {
     if (reviewChart) reviewChart.destroy()
   })
 
-  // Show loading spinner only when initially loading
-  if (isQueryLoading() && !hasData()) {
-    return (
+  const errorMessage = createMemo(() => error())
+
+  return (
+    <Show when={!isQueryLoading() || hasData()} fallback={
       <div class="flex-1 flex items-center justify-center p-8">
         <div class="flex flex-col items-center gap-3 text-dark-text-muted">
           <svg class="animate-spin h-6 w-6" fill="none" viewBox="0 0 24 24">
@@ -362,13 +343,8 @@ export function StatsTab() {
           </div>
         </div>
       </div>
-    )
-  }
-
-  // Show error state when error AND no data
-  const errorMessage = error()
-  if (errorMessage && !hasData()) {
-    return (
+    }>
+    <Show when={!errorMessage() || hasData()} fallback={
       <div class="flex-1 flex items-center justify-center p-8">
         <div class="text-center max-w-md">
           <div class="text-red-400 mb-3">
@@ -377,7 +353,7 @@ export function StatsTab() {
             </svg>
           </div>
           <h3 class="text-lg font-medium text-dark-text mb-2">Failed to Load Statistics</h3>
-          <p class="text-dark-text-muted mb-2">{errorMessage}</p>
+          <p class="text-dark-text-muted mb-2">{errorMessage()}</p>
           <p class="text-xs text-dark-text-muted/70 mb-4">
             This can happen if the server is busy or if there's a temporary network issue.
           </p>
@@ -391,10 +367,7 @@ export function StatsTab() {
           </div>
         </div>
       </div>
-    )
-  }
-
-  return (
+    }>
     <div class="flex-1 overflow-y-auto p-6">
       <div class="max-w-6xl mx-auto space-y-6">
         {/* Header */}
@@ -523,5 +496,7 @@ export function StatsTab() {
         </div>
       </div>
     </div>
+    </Show>
+    </Show>
   )
 }

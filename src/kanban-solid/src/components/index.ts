@@ -17,7 +17,6 @@ export { ModalWrapper } from './common/ModalWrapper'
 export { ToastContainer } from './common/ToastContainer'
 export { TabbedLogPanel } from './common/TabbedLogPanel'
 export { HelpButton } from './common/HelpButton'
-export { MarkdownEditor } from './common/MarkdownEditor'
 export { ModelPicker } from './common/ModelPicker'
 export { ThinkingLevelSelect } from './common/ThinkingLevelSelect'
 

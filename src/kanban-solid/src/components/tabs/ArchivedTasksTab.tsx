@@ -5,7 +5,7 @@
 
 import { createSignal, createMemo, onMount, For, Show } from 'solid-js'
 import { tasksApi } from '@/api'
-import type { Task, WorkflowRun } from '@/types'
+import type { Task, WorkflowRun } from '@shared-types'
 import { formatLocalDateTime } from '@/utils/date'
 
 type ArchivedTask = Omit<Task, 'sessionId' | 'completedAt'> & {
@@ -40,7 +40,7 @@ interface ArchivedRun {
 }
 
 interface ArchivedTasksTabProps {
-  onOpenTaskSessions: (taskId: string) => void
+  onOpenTaskSessions: (task: ArchivedTask) => void
 }
 
 export function ArchivedTasksTab(props: ArchivedTasksTabProps) {
@@ -310,7 +310,7 @@ export function ArchivedTasksTab(props: ArchivedTasksTabProps) {
                                     <Show when={task.sessionId}>
                                       <button
                                         class="text-xs text-accent-info hover:text-accent-primary flex items-center gap-1"
-                                        onClick={() => props.onOpenTaskSessions(task.id)}
+                                        onClick={() => props.onOpenTaskSessions(task)}
                                       >
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
@@ -321,7 +321,7 @@ export function ArchivedTasksTab(props: ArchivedTasksTabProps) {
                                   </div>
                                   <h4
                                     class={`font-medium text-dark-text truncate ${task.sessionId ? 'cursor-pointer hover:text-accent-primary' : ''}`}
-                                    onClick={() => task.sessionId ? props.onOpenTaskSessions(task.id) : openTaskDetail(task)}
+                                    onClick={() => task.sessionId ? props.onOpenTaskSessions(task) : openTaskDetail(task)}
                                     title={task.sessionId ? 'Click to view all sessions' : 'Click to view task details'}
                                   >
                                     {task.name}
@@ -435,7 +435,7 @@ export function ArchivedTasksTab(props: ArchivedTasksTabProps) {
                   class="btn btn-primary"
                   onClick={() => {
                     closeTaskDetail()
-                    props.onOpenTaskSessions(selectedTask()!.id)
+                    props.onOpenTaskSessions(selectedTask()!)
                   }}
                 >
                   View Sessions

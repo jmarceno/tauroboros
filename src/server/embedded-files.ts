@@ -7,6 +7,7 @@
  */
 
 import { existsSync } from "fs"
+import * as generatedAssetsModule from "./generated-assets.ts"
 import { dirname, join, basename } from "path"
 import { fileURLToPath } from "url"
 
@@ -16,17 +17,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 export const KANBAN_DIST = join(__dirname, "..", "kanban-solid", "dist")
 export const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
-// Try to import generated assets (will be available in compiled binary)
-let generatedAssets: typeof import("./generated-assets.ts") | null = null
-try {
-  const mod = await import("./generated-assets.ts")
-  // Check if the module has the actual implementation or just a placeholder
-  if (mod && typeof mod.getEmbeddedAsset === 'function') {
-    generatedAssets = mod
-  }
-} catch {
-  // generated-assets.ts doesn't exist or is a placeholder, will use filesystem fallback
-}
+// Static import ensures Bun compile captures generated assets at compile time.
+const generatedAssets =
+  typeof generatedAssetsModule.getEmbeddedAsset === "function"
+    ? generatedAssetsModule
+    : null
 
 /**
  * Extract asset key from full path

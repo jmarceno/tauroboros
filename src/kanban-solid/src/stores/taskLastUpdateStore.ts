@@ -5,6 +5,7 @@
 
 import { createSignal, createMemo } from 'solid-js'
 import { createQuery, useQueryClient } from '@tanstack/solid-query'
+import { tasksApi } from '@/api'
 
 const queryKeys = {
   tasks: {
@@ -30,16 +31,13 @@ export function createTaskLastUpdateStore() {
   // Load last update from backend
   const loadLastUpdate = async (taskId: string): Promise<number | null> => {
     try {
-      const response = await fetch(`/api/tasks/${taskId}/last-update`)
-      if (response.ok) {
-        const data = await response.json() as { lastUpdateAt: number | null }
-        if (data.lastUpdateAt !== null) {
-          // Update local state
-          setLastUpdates(prev => ({ ...prev, [taskId]: data.lastUpdateAt }))
-          // Update query cache
-          queryClient.setQueryData(queryKeys.tasks.lastUpdate(taskId), data.lastUpdateAt)
-          return data.lastUpdateAt
-        }
+      const data = await tasksApi.getLastUpdate(taskId)
+      if (data.lastUpdateAt !== null) {
+        // Update local state
+        setLastUpdates(prev => ({ ...prev, [taskId]: data.lastUpdateAt }))
+        // Update query cache
+        queryClient.setQueryData(queryKeys.tasks.lastUpdate(taskId), data.lastUpdateAt)
+        return data.lastUpdateAt
       }
       return null
     } catch (err) {

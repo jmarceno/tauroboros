@@ -114,7 +114,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   }))
 
   const deleteTaskMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.tasksApi.archive(id),
+    mutationFn: (id: string) => api.tasksApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },

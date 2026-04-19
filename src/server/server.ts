@@ -1245,55 +1245,38 @@ export class PiKanbanServer {
 
     // GET /api/stats/usage?range=24h|7d|30d|lifetime
     this.router.get("/api/stats/usage", ({ url, json }) => {
-      const start = performance.now()
       const rangeParam = url.searchParams.get("range") ?? "lifetime"
       if (!isStatsTimeRange(rangeParam)) {
         return json({ error: "Invalid range. Use: 24h, 7d, 30d, or lifetime" }, 400)
       }
-      const result = this.db.getUsageStats(rangeParam)
-      console.log(`[Server] /api/stats/usage took ${(performance.now() - start).toFixed(2)}ms`)
-      return json(result)
+      return json(this.db.getUsageStats(rangeParam))
     })
 
     // GET /api/stats/tasks
     this.router.get("/api/stats/tasks", ({ json }) => {
-      const start = performance.now()
-      const result = this.db.getTaskStats()
-      console.log(`[Server] /api/stats/tasks took ${(performance.now() - start).toFixed(2)}ms`)
-      return json(result)
+      return json(this.db.getTaskStats())
     })
 
     // GET /api/stats/models
     this.router.get("/api/stats/models", ({ json }) => {
-      const start = performance.now()
-      const result = this.db.getModelUsageByResponsibility()
-      console.log(`[Server] /api/stats/models took ${(performance.now() - start).toFixed(2)}ms`)
-      return json(result)
+      return json(this.db.getModelUsageByResponsibility())
     })
 
     // GET /api/stats/duration
     this.router.get("/api/stats/duration", ({ json }) => {
-      const start = performance.now()
       const duration = this.db.getAverageTaskDuration()
-      console.log(`[Server] /api/stats/duration took ${(performance.now() - start).toFixed(2)}ms`)
       return json(duration)
     })
 
     // GET /api/stats/timeseries/hourly
     this.router.get("/api/stats/timeseries/hourly", ({ json }) => {
-      const start = performance.now()
-      const result = this.db.getHourlyUsageTimeSeries()
-      console.log(`[Server] /api/stats/timeseries/hourly took ${(performance.now() - start).toFixed(2)}ms`)
-      return json(result)
+      return json(this.db.getHourlyUsageTimeSeries())
     })
 
     // GET /api/stats/timeseries/daily?days=30
     this.router.get("/api/stats/timeseries/daily", ({ url, json }) => {
-      const start = performance.now()
       const days = Math.min(Math.max(Number(url.searchParams.get("days") ?? 30), 1), 365)
-      const result = this.db.getDailyUsageTimeSeries(days)
-      console.log(`[Server] /api/stats/timeseries/daily took ${(performance.now() - start).toFixed(2)}ms`)
-      return json(result)
+      return json(this.db.getDailyUsageTimeSeries(days))
     })
 
     this.router.get("/api/tasks/:id/runs", ({ params, json, sessionUrlFor }) => {
@@ -1831,10 +1814,7 @@ export class PiKanbanServer {
     // ---- Planning Chat Routes ----
 
     this.router.get("/api/planning/prompt", ({ json }) => {
-      const startTime = performance.now()
       const prompt = this.db.getPlanningPrompt("default")
-      const endTime = performance.now()
-      console.log(`[Server] /api/planning/prompt executed in ${(endTime - startTime).toFixed(2)}ms`)
       if (!prompt) return json({ error: "Planning prompt not found" }, 404)
       return json(prompt)
     })

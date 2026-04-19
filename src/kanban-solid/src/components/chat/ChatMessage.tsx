@@ -3,10 +3,9 @@
  * Ported from React to SolidJS - Full feature parity with markdown, code highlighting, mermaid
  */
 
-import { createMemo, Show, For, createSignal, createEffect, onMount } from 'solid-js'
+import { createMemo, Show, For, createSignal, createEffect, onCleanup } from 'solid-js'
 import type { SessionMessage } from '@/types'
 import { formatRelativeTime, formatLocalDate } from '@/utils/date'
-import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 
 interface RenderedBlock {
@@ -19,6 +18,14 @@ interface RenderedBlock {
 interface ChatMessageProps {
   message: SessionMessage
   showTimestamp?: boolean
+}
+
+let highlightModulePromise: Promise<typeof import('highlight.js')> | null = null
+
+const loadHighlightJs = async () => {
+  highlightModulePromise ??= import('highlight.js')
+  const module = await highlightModulePromise
+  return module.default
 }
 
 function parseContentBlocks(content: string): RenderedBlock[] {
@@ -135,18 +142,46 @@ export function ChatMessage(props: ChatMessageProps) {
     const blocks = parseContentBlocks(text)
     setRenderedBlocks(blocks)
 
-    // Highlight code blocks
-    blocks.forEach(block => {
-      if (block.type === 'code' && !highlightedCode().has(block.content)) {
-        try {
-          const result = hljs.highlight(block.content, { language: block.language || 'plaintext' })
-          setHighlightedCode(prev => new Map(prev).set(block.content, result.value))
-        } catch (err) {
-          console.error('Failed to highlight code:', err)
-          setHighlightedCode(prev => new Map(prev).set(block.content, block.content))
-        }
-      }
+    const missingCodeBlocks = blocks.filter(
+      (block): block is RenderedBlock & { type: 'code'; language?: string } =>
+        block.type === 'code' && !highlightedCode().has(block.content)
+    )
+
+    if (missingCodeBlocks.length === 0) {
+      return
+    }
+
+    let cancelled = false
+    onCleanup(() => {
+      cancelled = true
     })
+
+    void (async () => {
+      const hljs = await loadHighlightJs()
+      if (cancelled) {
+        return
+      }
+
+      setHighlightedCode(prev => {
+        const next = new Map(prev)
+
+        for (const block of missingCodeBlocks) {
+          if (next.has(block.content)) {
+            continue
+          }
+
+          try {
+            const result = hljs.highlight(block.content, { language: block.language || 'plaintext' })
+            next.set(block.content, result.value)
+          } catch (err) {
+            console.error('Failed to highlight code:', err)
+            next.set(block.content, block.content)
+          }
+        }
+
+        return next
+      })
+    })()
   })
 
   // Render mermaid diagrams

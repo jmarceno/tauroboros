@@ -3,7 +3,7 @@
  * Ported from React to SolidJS
  */
 
-import { createSignal, createEffect, createMemo, onMount, batch, Show } from 'solid-js'
+import { createSignal, createEffect, createMemo, batch, Show, For } from 'solid-js'
 import { createQuery, useQueryClient } from '@tanstack/solid-query'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { HelpButton } from '@/components/common/HelpButton'
@@ -57,6 +57,7 @@ export function OptionsTab() {
   const [branchesError, setBranchesError] = createSignal<string | null>(null)
   const [isLoading, setIsLoading] = createSignal(true)
   const [isSaving, setIsSaving] = createSignal(false)
+  const [hasHydrated, setHasHydrated] = createSignal(false)
 
   // Queries
   const optionsQuery = createQuery(() => ({
@@ -76,12 +77,21 @@ export function OptionsTab() {
   const branchData = createMemo(() => branchesQuery.data)
   const queryIsLoading = createMemo(() => optionsQuery.isLoading || branchesQuery.isLoading)
   const queryError = createMemo(() => optionsQuery.error?.message || branchesQuery.error?.message || null)
+  const branchOptions = createMemo(() => {
+    const options = new Set(availableBranches())
+    const selectedBranch = formData().branch?.trim()
+    if (selectedBranch) {
+      options.add(selectedBranch)
+    }
+    return Array.from(options)
+  })
 
   // Function to process loaded data
   const processLoadedData = (options: Options | undefined, branches: import('@/types').BranchList | undefined, error: string | null) => {
     if (error) {
       setBranchesError(error)
       setIsLoading(false)
+      setHasHydrated(true)
       return
     }
 
@@ -117,25 +127,10 @@ export function OptionsTab() {
         setAvailableBranches(branches.branches || [])
         setCurrentBranch(branches.current || null)
         setIsLoading(false)
+        setHasHydrated(true)
       })
     }
   }
-
-  // Handle initial mount - check if data is already available
-  onMount(() => {
-    // Small delay to let queries initialize
-    setTimeout(() => {
-      const loading = queryIsLoading()
-      const error = queryError()
-      const options = opts()
-      const branches = branchData()
-      
-      // If not loading and we have data, process it
-      if (!loading) {
-        processLoadedData(options, branches, error)
-      }
-    }, 100)
-  })
 
   // Load initial data when queries complete
   createEffect(() => {
@@ -147,6 +142,10 @@ export function OptionsTab() {
 
     // Still loading - wait for next effect run
     if (loading) {
+      return
+    }
+
+    if (hasHydrated()) {
       return
     }
 
@@ -263,14 +262,14 @@ export function OptionsTab() {
             class="form-select"
             value={formData().branch || ''}
             onChange={(e) => updateField('branch', e.currentTarget.value)}
-            disabled={availableBranches().length === 0}
+            disabled={branchOptions().length === 0}
           >
             <option value="" disabled>No branches available</option>
-            {availableBranches().map(branch => (
-              <option value={branch}>{branch}</option>
-            ))}
+            <For each={branchOptions()}>
+              {(branch) => <option value={branch}>{branch}</option>}
+            </For>
           </select>
-          {availableBranches().length === 0 && !queryError() && (
+          {branchOptions().length === 0 && !queryError() && (
             <div class="text-xs text-dark-text-muted mt-1">Loading branches...</div>
           )}
         </div>

@@ -561,7 +561,8 @@ function App() {
   // Get task for modal operations
   const getTaskForModal = () => {
     const taskId = uiStore.modalData().taskId as string | undefined
-    return taskId ? tasksStore.getTaskById(taskId) : undefined
+    const seededTask = uiStore.modalData().task as Task | undefined
+    return taskId ? tasksStore.getTaskById(taskId) ?? seededTask : seededTask
   }
 
   return (
@@ -726,7 +727,7 @@ function App() {
         </Show>
 
         <Show when={tabStore.activeTab() === 'archived'}>
-          <ArchivedTasksTab onOpenTaskSessions={(id) => uiStore.openModal('taskSessions', { taskId: id })} />
+          <ArchivedTasksTab onOpenTaskSessions={(task) => uiStore.openModal('taskSessions', { taskId: task.id, task })} />
         </Show>
 
         <Show when={tabStore.activeTab() === 'stats'}>
@@ -860,6 +861,7 @@ function App() {
 
       <Show when={uiStore.showContainerConfigModal() || containerStatus()?.enabled === false}>
         <ContainerConfigModal
+          isOpen={uiStore.showContainerConfigModal() || containerStatus()?.enabled === false}
           onClose={() => uiStore.setShowContainerConfigModal(false)}
         />
       </Show>
@@ -978,6 +980,7 @@ function App() {
 
       <Show when={uiStore.activeModal() === 'taskSessions'}>
         <TaskSessionsModal
+          taskId={uiStore.modalData().taskId as string | undefined}
           task={getTaskForModal()}
           onClose={uiStore.closeModal}
         />

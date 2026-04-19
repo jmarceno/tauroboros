@@ -8,9 +8,10 @@ import { createQuery } from '@tanstack/solid-query'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { tasksApi, sessionsApi } from '@/api'
 import { formatLocalTime } from '@/utils/date'
-import type { Task, Session, TaskRun, SessionMessage } from '@/types'
+import type { Task, Session, TaskRun, SessionMessage } from '@shared-types'
 
 interface TaskSessionsModalProps {
+  taskId?: string
   task?: Task
   onClose: () => void
 }
@@ -27,15 +28,15 @@ interface SessionData {
 export function TaskSessionsModal(props: TaskSessionsModalProps) {
   const [sessions, setSessions] = createSignal<Map<string, SessionData>>(new Map())
   const [activeSessionId, setActiveSessionId] = createSignal<string | null>(null)
-  const [showUsageDetails, setShowUsageDetails] = createSignal<Record<string, boolean>>({})
 
-  const taskId = () => props.task?.id
+  const taskId = () => props.taskId ?? props.task?.id
+  const task = () => props.task ?? taskQuery.data
 
   const taskQuery = createQuery(() => ({
     queryKey: ['tasks', taskId()],
     queryFn: () => taskId() ? tasksApi.getById(taskId()!) : Promise.reject('No task ID'),
     staleTime: 5000,
-    enabled: !!taskId(),
+    enabled: !!taskId() && !props.task,
   }))
 
   const sessionsQuery = createQuery(() => ({
@@ -104,15 +105,15 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
   const sortedSessions = createMemo(() => {
     const result: SessionData[] = []
     const sessionsArray = Array.from(sessions().values())
-    const task = taskQuery.data
+    const currentTask = task()
 
-    const directSession = sessionsArray.find(s => s.id === task?.sessionId)
+    const directSession = sessionsArray.find(s => s.id === currentTask?.sessionId)
     if (directSession) {
       result.push(directSession)
     }
 
     for (const session of sessionsArray) {
-      if (session.id !== task?.sessionId) {
+      if (session.id !== currentTask?.sessionId) {
         result.push(session)
       }
     }
@@ -138,8 +139,8 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
       const run = sessionData.taskRun
       return `${run.phase} (slot ${run.slotIndex + 1})`
     }
-    const task = taskQuery.data
-    if (sessionData.id === task?.sessionId) {
+    const currentTask = task()
+    if (sessionData.id === currentTask?.sessionId) {
       return 'direct'
     }
     return sessionData.id.substring(0, 8)
@@ -207,12 +208,6 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
     if (currentGroup) groups.push(currentGroup)
     return groups
   })
-
-  const toggleUsageDetails = (id: string) => {
-    setShowUsageDetails(prev => ({ ...prev, [id]: !prev[id] }))
-  }
-
-  const task = () => taskQuery.data
 
   return (
     <ModalWrapper title={task() ? `${task()!.name} • Sessions` : 'Task Sessions'} onClose={props.onClose} size="xl">
@@ -295,7 +290,7 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
                     fallback={<div class="session-entry text-dark-text-muted">No session messages yet.</div>}
                   >
                     <For each={aggregatedMessages()}>
-                      {(group, i) => (
+                      {(group) => (
                         <div class={`session-entry ${group.isError ? 'error' : ''} ${group.isThinking ? 'thinking' : ''}`}>
                           <div class="flex items-center flex-wrap gap-1.5 mb-1.5">
                             <span class="text-xs text-dark-text-muted mr-auto">

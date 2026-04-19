@@ -5,20 +5,17 @@
  * This ensures pi can auto-discover them from .pi/extensions/ and .pi/skills/
  */
 
-import { existsSync, mkdirSync, writeFileSync, readdirSync, statSync, rmSync } from "fs"
+import * as generatedAssetsModule from "./server/generated-assets.ts"
+import { existsSync, mkdirSync, writeFileSync, readdirSync, statSync, rmSync, readFileSync } from "fs"
 import { join, dirname } from "path"
 
-// Import embedded assets - will be available in compiled binary
-let generatedAssets: typeof import("../server/generated-assets.ts") | null = null
-try {
-  const mod = await import("../server/generated-assets.ts")
-  // Check if the module has the actual implementation or just a placeholder
-  if (mod && typeof mod.getAllExtensionAssets === 'function') {
-    generatedAssets = mod
-  }
-} catch {
-  // generated-assets.ts doesn't exist or is a placeholder
-}
+// Static import ensures Bun compile captures generated assets at compile time.
+const generatedAssets =
+  typeof generatedAssetsModule.getAllSkillAssets === "function" &&
+  typeof generatedAssetsModule.getAllConfigAssets === "function" &&
+  typeof generatedAssetsModule.getAllDockerAssets === "function"
+    ? generatedAssetsModule
+    : null
 
 /**
  * Check if running from compiled binary (has embedded assets)
@@ -248,8 +245,6 @@ function countFiles(dir: string): number {
 
   return count
 }
-
-import { readFileSync } from "fs"
 
 /**
  * Copy config files from source directory (development mode)

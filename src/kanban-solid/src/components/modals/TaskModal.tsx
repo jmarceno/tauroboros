@@ -3,15 +3,19 @@
  * Ported from React to SolidJS
  */
 
-import { createSignal, createEffect, createMemo, onMount, Show, For, batch } from 'solid-js'
+import { createSignal, createEffect, createMemo, onMount, Show, For, Suspense, lazy } from 'solid-js'
 import type { Task, TaskStatus, CreateTaskDTO, ThinkingLevel, ExecutionStrategy, BestOfNSlot } from '@/types'
 import { ModalWrapper } from '../common/ModalWrapper'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
-import { MarkdownEditor } from '../common/MarkdownEditor'
 import { HelpButton } from '../common/HelpButton'
 import { createTasksStore, createOptionsStore, createModelSearchStore, uiStore } from '@/stores'
 import { referenceApi, containersApi } from '@/api'
+
+const MarkdownEditor = lazy(async () => {
+  const mod = await import('../common/MarkdownEditor')
+  return { default: mod.MarkdownEditor }
+})
 
 export type TaskModalMode = 'create' | 'edit' | 'deploy' | 'view'
 
@@ -80,6 +84,14 @@ export function TaskModal(props: TaskModalProps) {
   const isCreate = () => props.mode === 'create'
   const isEdit = () => props.mode === 'edit'
   const showBonConfig = () => executionStrategy() === 'best_of_n'
+  const branchOptions = createMemo(() => {
+    const options = new Set(availableBranches())
+    const selectedBranch = branch().trim()
+    if (selectedBranch) {
+      options.add(selectedBranch)
+    }
+    return Array.from(options)
+  })
 
   // Load data on mount
   onMount(async () => {
@@ -309,12 +321,14 @@ export function TaskModal(props: TaskModalProps) {
               <label>Prompt</label>
               <HelpButton tooltip="The main instructions for the agent." />
             </div>
-            <MarkdownEditor
-              modelValue={prompt()}
-              onUpdate={setPrompt}
-              placeholder="What should this task do?"
-              disabled={isViewOnly()}
-            />
+            <Suspense fallback={<div class="form-input min-h-[80px] flex items-center text-dark-text-muted">Loading editor...</div>}>
+              <MarkdownEditor
+                modelValue={prompt()}
+                onUpdate={setPrompt}
+                placeholder="What should this task do?"
+                disabled={isViewOnly()}
+              />
+            </Suspense>
           </div>
 
           {/* Models with Thinking Levels */}
@@ -582,7 +596,7 @@ export function TaskModal(props: TaskModalProps) {
               onChange={(e) => setBranch(e.currentTarget.value)}
               disabled={isViewOnly()}
             >
-              <For each={availableBranches()}>
+              <For each={branchOptions()}>
                 {(b) => <option value={b}>{b}</option>}
               </For>
             </select>

@@ -1,10 +1,10 @@
 /**
  * PlanningPromptModal Component - Planning prompt editor
  * Ported from React to SolidJS with full feature parity
+ * OPTIMIZED: Replaced heavy MarkdownEditor with fast textarea
  */
 
 import { createSignal, createEffect, Show, onCleanup } from 'solid-js'
-import { MarkdownEditor, type MarkdownEditorRef } from '@/components/common/MarkdownEditor'
 import { planningApi } from '@/api'
 
 const DEFAULT_PROMPT = `You are a specialized Planning Assistant for software development task management.
@@ -111,8 +111,6 @@ export function PlanningPromptModal(props: PlanningPromptModalProps) {
     promptText: '',
   })
 
-  let editorRef: MarkdownEditorRef | undefined
-
   const hasChanges = () => promptData()
     ? editedPrompt().name !== promptData()!.name ||
       editedPrompt().description !== promptData()!.description ||
@@ -123,14 +121,10 @@ export function PlanningPromptModal(props: PlanningPromptModalProps) {
     let cancelled = false
     
     const loadPrompt = async () => {
-      const startTime = performance.now()
-      console.log('[PlanningPromptModal] Starting prompt load...')
       setIsLoading(true)
       setError(null)
       try {
         const prompt = await planningApi.getPrompt()
-        const endTime = performance.now()
-        console.log(`[PlanningPromptModal] Prompt loaded in ${(endTime - startTime).toFixed(2)}ms`)
         if (cancelled) return
         setPromptData(prompt)
         setEditedPrompt({
@@ -180,14 +174,12 @@ export function PlanningPromptModal(props: PlanningPromptModalProps) {
   const resetToDefault = () => {
     if (!confirm('Reset to default planning prompt? This will overwrite your customizations.')) return
 
-    const defaultText = DEFAULT_PROMPT.replace(/\\n/g, '\n').replace(/\\`\\`\\`/g, '```')
     setEditedPrompt(prev => ({
       ...prev,
       name: 'Default Planning Prompt',
       description: 'System prompt for the planning assistant agent',
-      promptText: defaultText,
+      promptText: DEFAULT_PROMPT,
     }))
-    editorRef?.clear()
   }
 
   return (
@@ -265,14 +257,12 @@ export function PlanningPromptModal(props: PlanningPromptModalProps) {
                 <p class="text-xs text-dark-text-muted mb-2">
                   This prompt defines how the planning assistant behaves. It uses Markdown formatting.
                 </p>
-                <div class="border border-dark-surface3 rounded overflow-hidden">
-                  <MarkdownEditor
-                    ref={(ref) => { editorRef = ref }}
-                    modelValue={editedPrompt().promptText}
-                    placeholder="Enter the system prompt for the planning assistant..."
-                    onUpdate={(value) => setEditedPrompt(prev => ({ ...prev, promptText: value }))}
-                  />
-                </div>
+                <textarea
+                  class="w-full min-h-[400px] bg-dark-bg border border-dark-surface3 rounded px-3 py-2 text-sm text-dark-text font-mono focus:outline-none focus:ring-1 focus:ring-accent-primary focus:border-accent-primary resize-vertical"
+                  value={editedPrompt().promptText}
+                  placeholder="Enter the system prompt for the planning assistant..."
+                  onChange={(e) => setEditedPrompt(prev => ({ ...prev, promptText: e.currentTarget.value }))}
+                />
               </div>
 
               <div class="bg-dark-surface rounded p-3 text-sm space-y-2">
