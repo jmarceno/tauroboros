@@ -2,7 +2,7 @@ import { ModalWrapper } from '../common/ModalWrapper'
 
 interface ConfirmModalProps {
   isOpen: boolean
-  action: 'delete' | 'convertToTemplate'
+  action: 'delete' | 'archive' | 'convertToTemplate'
   taskName: string
   onClose: () => void
   onConfirm: () => void
@@ -11,12 +11,14 @@ interface ConfirmModalProps {
 export function ConfirmModal({ isOpen, action, taskName, onClose, onConfirm }: ConfirmModalProps) {
   if (!isOpen) return null
 
-  const title = action === 'delete' ? 'Delete Task' : 'Convert to Template'
+  const title = action === 'delete' ? 'Delete Task' : action === 'archive' ? 'Archive Task' : 'Convert to Template'
   const message = action === 'delete'
     ? `Are you sure you want to delete "${taskName}"? This action cannot be undone.`
+    : action === 'archive'
+    ? `Are you sure you want to archive "${taskName}"? Archived tasks can be viewed in the Archived tab.`
     : `Convert "${taskName}" to a template? The task will be moved to the Templates column.`
-  const confirmText = action === 'delete' ? 'Delete' : 'Convert'
-  const confirmClass = action === 'delete' ? 'btn-danger' : 'btn-primary'
+  const confirmText = action === 'delete' ? 'Delete' : action === 'archive' ? 'Archive' : 'Convert'
+  const confirmClass = action === 'delete' ? 'btn-danger' : action === 'archive' ? 'btn-primary' : 'btn-primary'
 
   return (
     <ModalWrapper title={title} onClose={onClose} size="sm">

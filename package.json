@@ -10,8 +10,8 @@
     "build": "bun build --target=bun src/index.ts --outdir dist && bun run kanban:build",
     "compile": "bun run scripts/compile.ts",
     "compile:test": "bun run scripts/test-binary.ts",
-    "kanban:build": "cd src/kanban-react && npm install && npm run build",
-    "kanban:dev": "SERVER_PORT=3789 bun run src/index.ts & sleep 3 && cd src/kanban-react && npm install && SERVER_PORT=3789 npm run dev",
+    "kanban:build": "cd src/kanban-solid && npm install && npm run build",
+    "kanban:dev": "SERVER_PORT=3789 bun run src/index.ts & sleep 3 && cd src/kanban-solid && npm install && SERVER_PORT=3789 npm run dev",
     "test": "bun test tests/*.test.ts",
     "test:e2e": "bun run tests/e2e/prepare.ts && bunx playwright test",
     "test:e2e:ui": "bun run tests/e2e/prepare.ts && bunx playwright test --ui",
@@ -39,7 +39,6 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "solid-js": "^1.9.5"
   }
 }

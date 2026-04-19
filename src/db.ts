@@ -3401,9 +3401,14 @@ export class PiKanbanDB {
   }
 
   getPlanningPrompt(key: string = "default"): PlanningPrompt | null {
+    const start = performance.now()
     const row = this.db
       .prepare("SELECT * FROM planning_prompts WHERE key = ? AND is_active = 1")
       .get(key) as Record<string, unknown> | null
+    const duration = performance.now() - start
+    if (duration > 5) {
+      console.log(`[DB] getPlanningPrompt took ${duration.toFixed(2)}ms`)
+    }
     return row ? rowToPlanningPrompt(row) : null
   }
 
@@ -4514,6 +4519,7 @@ export class PiKanbanDB {
   }
 
   getUsageStats(range: StatsTimeRange): UsageStats {
+    const queryStart = performance.now()
     const { start, previousStart } = this.getTimeRangeBoundary(range)
 
     const currentRow = this.db
@@ -4553,6 +4559,11 @@ export class PiKanbanDB {
 
     const tokenChange = previousTokens > 0 ? ((totalTokens - previousTokens) / previousTokens) * 100 : 0
     const costChange = previousCost > 0 ? ((totalCost - previousCost) / previousCost) * 100 : 0
+
+    const duration = performance.now() - queryStart
+    if (duration > 5) {
+      console.log(`[DB] getUsageStats took ${duration.toFixed(2)}ms`)
+    }
 
     return {
       totalTokens,

@@ -491,3 +491,215 @@ export function resolveContainerImage(
   }
   throw new Error("No container image available: task has no containerImage set and no system default is configured")
 }
+
+// ============================================================================
+// Additional Types for UI (kanban-solid / kanban-react)
+// ============================================================================
+
+// Alias Candidate to TaskCandidate for UI compatibility
+export type Candidate = TaskCandidate
+
+export interface BestOfNSummary {
+  taskId: string
+  substage: BestOfNSubstage
+  workersTotal: number
+  workersDone: number
+  workersFailed: number
+  reviewersTotal: number
+  reviewersDone: number
+  reviewersFailed: number
+  hasFinalApplier: boolean
+  finalApplierDone: boolean
+  finalApplierStatus: string
+  expandedWorkerCount: number
+  expandedReviewerCount: number
+  totalExpandedRuns: number
+  successfulCandidateCount: number
+  selectedCandidate: string | null
+  availableCandidates: number
+  selectedCandidates: number
+}
+
+export interface ContainerImage {
+  tag: string
+  createdAt: number
+  source: 'build' | 'podman'
+  inUseByTasks: number
+}
+
+export interface ExecutionGraph {
+  nodes: ExecutionGraphNode[]
+  edges: ExecutionGraphEdge[]
+}
+
+export interface ExecutionGraphNode {
+  id: string
+  type: 'task' | 'milestone' | 'decision'
+  label: string
+  status: TaskStatus
+  x?: number
+  y?: number
+}
+
+export interface ExecutionGraphEdge {
+  from: string
+  to: string
+  label?: string
+}
+
+export interface PlanningSession {
+  id: string
+  taskId?: string
+  title: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ModelEntry {
+  id: string
+  name: string
+  provider: string
+  description?: string
+}
+
+export interface ModelCatalog {
+  models: ModelEntry[]
+  lastUpdated: number
+}
+
+// Stats types
+export interface HourlyUsage {
+  hour: string
+  requests: number
+  tokens: number
+  cost: number
+}
+
+export interface DailyUsage {
+  date: string
+  requests: number
+  tokens: number
+  cost: number
+}
+
+export interface UsageStats {
+  totalRequests: number
+  totalTokens: number
+  totalCost: number
+  hourlyData: HourlyUsage[]
+  dailyData: DailyUsage[]
+}
+
+export interface TaskStats {
+  total: number
+  byStatus: Record<TaskStatus, number>
+  completionRate: number
+  averageExecutionTime: number
+}
+
+export interface ModelUsageStats {
+  modelId: string
+  requests: number
+  tokens: number
+  cost: number
+}
+
+// DTO types
+export interface CreateTaskDTO {
+  name: string
+  prompt: string
+  status?: TaskStatus
+  branch?: string
+  planModel?: string
+  executionModel?: string
+  planmode?: boolean
+  autoApprovePlan?: boolean
+  review?: boolean
+  codeStyleReview?: boolean
+  autoCommit?: boolean
+  deleteWorktree?: boolean
+  skipPermissionAsking?: boolean
+  requirements?: string[]
+  thinkingLevel?: ThinkingLevel
+  planThinkingLevel?: ThinkingLevel
+  executionThinkingLevel?: ThinkingLevel
+  executionStrategy?: ExecutionStrategy
+  bestOfNConfig?: BestOfNConfig | null
+  maxReviewRunsOverride?: number | null
+  containerImage?: string
+  groupId?: string
+}
+
+export interface UpdateTaskDTO extends Partial<CreateTaskDTO> {
+  planningPrompt?: string
+}
+
+// UI State types
+export interface Toast {
+  id: number
+  message: string
+  variant: 'info' | 'success' | 'warning' | 'error'
+}
+
+export type ToastVariant = Toast['variant']
+
+export interface LogEntry {
+  ts: string
+  message: string
+  variant: ToastVariant
+}
+
+export interface ControlState {
+  isRunning: boolean
+  isPaused: boolean
+  canPause: boolean
+  canResume: boolean
+  canStop: boolean
+}
+
+// Session types
+export interface Session {
+  id: string
+  taskId: string | null
+  model: string | null
+  status: 'pending' | 'active' | 'completed' | 'failed'
+  thinkingLevel: ThinkingLevel
+  sessionKind: string
+  createdAt: number
+  updatedAt: number
+}
+
+// Branch list
+export interface BranchList {
+  current: string
+  branches: string[]
+}
+
+// Review status
+export interface ReviewStatus {
+  taskId: string
+  reviewCount: number
+  maxReviews: number
+  canRequestMore: boolean
+}
+
+// Planning prompt
+export interface PlanningPrompt {
+  taskId: string
+  prompt: string
+  createdAt: number
+  updatedAt: number
+}
+
+// Chat session
+export interface ChatSession {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+}
+
+// Task group with tasks
+export interface TaskGroupWithTasks extends TaskGroup {
+  tasks: Task[]
+}

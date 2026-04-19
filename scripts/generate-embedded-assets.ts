@@ -2,7 +2,7 @@
 /**
  * Generate embedded assets module for compiled binary
  *
- * This script reads all files from kanban-react/dist, extensions/, and skills/
+ * This script reads all files from kanban-solid/dist, extensions/, and skills/
  * and generates a TypeScript module that exports them as data URIs or strings
  * that can be served directly or extracted to the filesystem.
  */
@@ -12,7 +12,7 @@ import { existsSync, readdirSync, statSync, readFileSync } from "fs"
 import { resolve, join, relative } from "path"
 
 const PROJECT_ROOT = resolve(import.meta.dir, "..")
-const KANBAN_DIR = join(PROJECT_ROOT, "src", "kanban-react")
+const KANBAN_DIR = join(PROJECT_ROOT, "src", "kanban-solid")
 const DIST_DIR = join(KANBAN_DIR, "dist")
 const ASSETS_DIR = join(DIST_DIR, "assets")
 const OUTPUT_FILE = join(PROJECT_ROOT, "src", "server", "generated-assets.ts")
@@ -162,8 +162,8 @@ function generateAssetsModule(allFiles: AssetFile[]): string {
   lines.push("")
   lines.push("// Convenience accessors")
   lines.push("export function getEmbeddedAsset(path: string): EmbeddedAsset | undefined {")
-  lines.push("  // Normalize path - remove leading /kanban-react/dist if present")
-  lines.push('  const normalized = path.replace(/^\\/kanban-react\\/dist/, "")')
+  lines.push("  // Normalize path - remove leading /kanban-solid/dist if present")
+  lines.push('  const normalized = path.replace(/^\\/kanban-solid\\/dist/, "")')
   lines.push("  return embeddedAssets.get(normalized)")
   lines.push("}")
   lines.push("")

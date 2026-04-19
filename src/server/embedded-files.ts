@@ -12,8 +12,8 @@ import { fileURLToPath } from "url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// Static file serving paths - React kanban
-export const KANBAN_DIST = join(__dirname, "..", "kanban-react", "dist")
+// Static file serving paths - SolidJS kanban
+export const KANBAN_DIST = join(__dirname, "..", "kanban-solid", "dist")
 export const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
 // Try to import generated assets (will be available in compiled binary)
@@ -30,7 +30,7 @@ try {
 
 /**
  * Extract asset key from full path
- * Converts "/path/to/kanban-react/dist/assets/file.js" → "/assets/file.js"
+ * Converts "/path/to/kanban-solid/dist/assets/file.js" → "/assets/file.js"
  */
 function extractAssetKey(path: string): string | null {
   // Look for /assets/ in the path

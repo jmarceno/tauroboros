@@ -140,7 +140,7 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
   const [showContainerConfigModal, setShowContainerConfigModal] = useState(false)
   const [showStopConfirmModal, setShowStopConfirmModal] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
-  const [confirmModalAction, setConfirmModalAction] = useState<"delete" | "convertToTemplate">("delete")
+  const [confirmModalAction, setConfirmModalAction] = useState<"delete" | "archive" | "convertToTemplate">("delete")
   const [confirmModalTaskId, setConfirmModalTaskId] = useState<string | null>(null)
   const [confirmModalTaskName, setConfirmModalTaskName] = useState('')
   const [logPanelCollapsed, setLogPanelCollapsed] = useState(false)
@@ -215,13 +215,15 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
     return false
   }, [activeModal, showRestoreModal, showContainerConfigModal, showStopConfirmModal, showConfirmModal, showGroupCreateModal, closeModal, multiSelectHook])
 
-  const showConfirmation = useCallback((action: 'delete' | 'convertToTemplate', taskId: string, taskName: string, ctrlHeld: boolean) => {
+  const showConfirmation = useCallback((action: 'delete' | 'archive' | 'convertToTemplate', taskId: string, taskName: string, ctrlHeld: boolean) => {
     if (ctrlHeld) {
-      if (action === 'delete') {
+      if (action === 'delete' || action === 'archive') {
         tasksHook.deleteTask(taskId).then(() => {
-          toastsHook.showToast('Task deleted', 'success')
+          const message = action === 'delete' ? 'Task deleted' : 'Task archived'
+          toastsHook.showToast(message, 'success')
         }).catch(e => {
-          toastsHook.showToast(`Delete failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+          const actionText = action === 'delete' ? 'Delete' : 'Archive'
+          toastsHook.showToast(`${actionText} failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
         })
       } else {
         tasksHook.updateTask(taskId, { status: 'template' }).then(() => {
@@ -238,17 +240,19 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
     setShowConfirmModal(true)
   }, [tasksHook, toastsHook])
 
-  const executeConfirmedAction = useCallback(async (action: 'delete' | 'convertToTemplate', taskId: string) => {
+  const executeConfirmedAction = useCallback(async (action: 'delete' | 'archive' | 'convertToTemplate', taskId: string) => {
     try {
-      if (action === 'delete') {
+      if (action === 'delete' || action === 'archive') {
         await tasksHook.deleteTask(taskId)
-        toastsHook.showToast('Task deleted', 'success')
+        const message = action === 'delete' ? 'Task deleted' : 'Task archived'
+        toastsHook.showToast(message, 'success')
       } else {
         await tasksHook.updateTask(taskId, { status: 'template' })
         toastsHook.showToast('Task converted to template', 'success')
       }
     } catch (e) {
-      toastsHook.showToast(`${action === 'delete' ? 'Delete' : 'Convert'} failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      const actionText = action === 'delete' ? 'Delete' : action === 'archive' ? 'Archive' : 'Convert'
+      toastsHook.showToast(`${actionText} failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
     }
   }, [tasksHook, toastsHook])
 
@@ -749,7 +753,9 @@ function AppInner({ activeTab, setActiveTab }: AppInnerProps) {
     const task = tasksHook.getTaskById(id)
     const taskName = task?.name || 'this task'
     const ctrlHeld = event?.ctrlKey || event?.metaKey || false
-    showConfirmation('delete', id, taskName, ctrlHeld)
+    // Backlog and template tasks are deleted, others are archived
+    const action = task?.status === 'backlog' || task?.status === 'template' ? 'delete' : 'archive'
+    showConfirmation(action, id, taskName, ctrlHeld)
   }, [tasksHook, showConfirmation])
 
   const onArchiveAllDoneBoard = useCallback(async () => {

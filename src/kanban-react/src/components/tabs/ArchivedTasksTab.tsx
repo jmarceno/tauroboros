@@ -311,7 +311,7 @@ export function ArchivedTasksTab({ onOpenTaskSessions }: ArchivedTasksTabProps) 
                                     {task.reviewCount} {task.reviewCount === 1 ? 'review' : 'reviews'}
                                   </span>
                                 )}
-                                {task.sessionId && onOpenTaskSessions && (
+                                {onOpenTaskSessions && (
                                   <button
                                     className="text-xs text-accent-info hover:text-accent-primary flex items-center gap-1"
                                     onClick={() => onOpenTaskSessions(task.id)}
@@ -431,7 +431,7 @@ export function ArchivedTasksTab({ onOpenTaskSessions }: ArchivedTasksTabProps) 
               )}
             </div>
             <div className="flex justify-end gap-2 px-4 py-3 border-t border-dark-surface3">
-              {selectedTask.sessionId && onOpenTaskSessions && (
+              {onOpenTaskSessions && (
                 <button 
                   className="btn btn-primary"
                   onClick={() => {

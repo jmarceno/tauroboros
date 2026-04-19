@@ -28,8 +28,8 @@ import { isTaskGroupStatus, isValidHexColor, validateTaskGroupName, validateTask
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// Static file serving paths - React kanban
-const KANBAN_DIST = join(__dirname, "..", "kanban-react", "dist")
+// Static file serving paths - SolidJS kanban
+const KANBAN_DIST = join(__dirname, "..", "kanban-solid", "dist")
 const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
 const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "autoCommit", "deleteWorktree", "skipPermissionAsking"] as const
@@ -1245,38 +1245,55 @@ export class PiKanbanServer {
 
     // GET /api/stats/usage?range=24h|7d|30d|lifetime
     this.router.get("/api/stats/usage", ({ url, json }) => {
+      const start = performance.now()
       const rangeParam = url.searchParams.get("range") ?? "lifetime"
       if (!isStatsTimeRange(rangeParam)) {
         return json({ error: "Invalid range. Use: 24h, 7d, 30d, or lifetime" }, 400)
       }
-      return json(this.db.getUsageStats(rangeParam))
+      const result = this.db.getUsageStats(rangeParam)
+      console.log(`[Server] /api/stats/usage took ${(performance.now() - start).toFixed(2)}ms`)
+      return json(result)
     })
 
     // GET /api/stats/tasks
     this.router.get("/api/stats/tasks", ({ json }) => {
-      return json(this.db.getTaskStats())
+      const start = performance.now()
+      const result = this.db.getTaskStats()
+      console.log(`[Server] /api/stats/tasks took ${(performance.now() - start).toFixed(2)}ms`)
+      return json(result)
     })
 
     // GET /api/stats/models
     this.router.get("/api/stats/models", ({ json }) => {
-      return json(this.db.getModelUsageByResponsibility())
+      const start = performance.now()
+      const result = this.db.getModelUsageByResponsibility()
+      console.log(`[Server] /api/stats/models took ${(performance.now() - start).toFixed(2)}ms`)
+      return json(result)
     })
 
     // GET /api/stats/duration
     this.router.get("/api/stats/duration", ({ json }) => {
+      const start = performance.now()
       const duration = this.db.getAverageTaskDuration()
+      console.log(`[Server] /api/stats/duration took ${(performance.now() - start).toFixed(2)}ms`)
       return json(duration)
     })
 
     // GET /api/stats/timeseries/hourly
     this.router.get("/api/stats/timeseries/hourly", ({ json }) => {
-      return json(this.db.getHourlyUsageTimeSeries())
+      const start = performance.now()
+      const result = this.db.getHourlyUsageTimeSeries()
+      console.log(`[Server] /api/stats/timeseries/hourly took ${(performance.now() - start).toFixed(2)}ms`)
+      return json(result)
     })
 
     // GET /api/stats/timeseries/daily?days=30
     this.router.get("/api/stats/timeseries/daily", ({ url, json }) => {
+      const start = performance.now()
       const days = Math.min(Math.max(Number(url.searchParams.get("days") ?? 30), 1), 365)
-      return json(this.db.getDailyUsageTimeSeries(days))
+      const result = this.db.getDailyUsageTimeSeries(days)
+      console.log(`[Server] /api/stats/timeseries/daily took ${(performance.now() - start).toFixed(2)}ms`)
+      return json(result)
     })
 
     this.router.get("/api/tasks/:id/runs", ({ params, json, sessionUrlFor }) => {
@@ -1814,7 +1831,10 @@ export class PiKanbanServer {
     // ---- Planning Chat Routes ----
 
     this.router.get("/api/planning/prompt", ({ json }) => {
+      const startTime = performance.now()
       const prompt = this.db.getPlanningPrompt("default")
+      const endTime = performance.now()
+      console.log(`[Server] /api/planning/prompt executed in ${(endTime - startTime).toFixed(2)}ms`)
       if (!prompt) return json({ error: "Planning prompt not found" }, 404)
       return json(prompt)
     })

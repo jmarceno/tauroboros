@@ -54,6 +54,9 @@ export const tasksApi = {
   // Best of N operations
   selectCandidate: (taskId: string, candidateId: string) => apiClient.post(`/api/tasks/${taskId}/best-of-n/select-candidate`, { candidateId }),
   abortBestOfN: (taskId: string, reason: string) => apiClient.post(`/api/tasks/${taskId}/best-of-n/abort`, { reason }),
+  
+  // Archived tasks
+  getArchived: () => apiClient.get<{ runs: { run: import('@/types').WorkflowRun; tasks: Task[] }[] }>('/api/archived/tasks'),
 }
 
 // Helper to batch fetch BestOfN summaries

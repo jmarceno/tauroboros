@@ -1,5 +1,5 @@
 import type { UserConfig } from "vite"
-import react from "@vitejs/plugin-react"
+import solid from "vite-plugin-solid"
 import { resolve } from "path"
 
 // Dev mode requires explicit backend port - dynamic port (0) not supported in dev mode
@@ -16,10 +16,11 @@ if (isDev && (!SERVER_PORT || SERVER_PORT === "0")) {
 }
 
 const config: UserConfig = {
-  plugins: [react()],
+  plugins: [solid()],
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),
+      "@shared-types": resolve(__dirname, "../types.ts"),
     },
   },
   build: {
@@ -29,8 +30,8 @@ const config: UserConfig = {
       output: {
         manualChunks: (id) => {
           if (id.includes("node_modules")) {
-            if (id.includes("react") || id.includes("react-dom")) {
-              return "vendor-react"
+            if (id.includes("solid-js")) {
+              return "vendor-solid"
             }
             if (id.includes("fuse.js")) {
               return "vendor-fuse"
@@ -43,6 +44,9 @@ const config: UserConfig = {
             }
             if (id.includes("highlight.js")) {
               return "vendor-highlight"
+            }
+            if (id.includes("chart.js")) {
+              return "vendor-chart"
             }
           }
         },
