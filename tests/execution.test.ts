@@ -23,6 +23,7 @@ function createTestSettings(mockPiBin: string): InfrastructureSettings {
 }
 
 const tempDirs: string[] = []
+const TEST_MODEL = "openai/gpt-4"
 
 function createTempDir(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix))
@@ -108,7 +109,7 @@ describe("PiOrchestrator standard execution", () => {
     const settings = createTestSettings(mockPi)
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
-    db.updateOptions({ command: "echo preflight-ok", branch: "master" })
+    db.updateOptions({ command: "echo preflight-ok", branch: "master", executionModel: TEST_MODEL })
 
     const task = db.createTask({
       id: "exec-1",

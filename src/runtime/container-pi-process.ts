@@ -166,6 +166,7 @@ export class ContainerPiProcess {
       memoryMb,
       cpuCount,
       env: {},
+      useMockLLM: process.env.USE_MOCK_LLM === 'true',
       mountPodmanSocket: containerSettings?.mountPodmanSocket ?? false,
     }
 

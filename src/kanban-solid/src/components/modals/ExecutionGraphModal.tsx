@@ -6,7 +6,7 @@
 import { createSignal, createEffect, Show, For } from 'solid-js'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { uiStore } from '@/stores'
-import { optionsApi } from '@/api'
+import { optionsApi, referenceApi } from '@/api'
 import type { ExecutionGraph } from '@/types'
 
 interface ExecutionGraphModalProps {
@@ -20,7 +20,7 @@ export function ExecutionGraphModal(props: ExecutionGraphModalProps) {
   createEffect(() => {
     const loadGraph = async () => {
       try {
-        const data = await optionsApi.getExecutionGraph()
+        const data = await referenceApi.getExecutionGraph()
         setGraph(data)
       } catch (e) {
         uiStore.showToast('Failed to load execution graph: ' + (e instanceof Error ? e.message : String(e)), 'error')

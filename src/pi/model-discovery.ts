@@ -1,3 +1,6 @@
+import fs from "fs"
+import path from "path"
+
 type NormalizedModel = {
   id: string
   label: string
@@ -17,6 +20,41 @@ export type NormalizedModelCatalog = {
 }
 
 let cache: { expiresAt: number; value: NormalizedModelCatalog } | null = null
+
+function loadLocalModelsJson(): NormalizedModelCatalog | null {
+  const modelsJsonPath = path.join(process.cwd(), ".tauroboros", "agent", "models.json")
+  if (!fs.existsSync(modelsJsonPath)) return null
+
+  const raw = JSON.parse(fs.readFileSync(modelsJsonPath, "utf-8")) as {
+    providers?: Record<string, { name?: string; models?: Array<{ id?: string; name?: string }> }>
+  }
+
+  const providers = Object.entries(raw.providers ?? {})
+    .map(([providerId, provider]) => {
+      const models = (provider.models ?? [])
+        .filter((model): model is { id: string; name?: string } => typeof model.id === "string" && model.id.trim().length > 0)
+        .map((model) => ({
+          id: model.id,
+          label: model.id,
+          value: `${providerId}/${model.id}`,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label))
+
+      return {
+        id: providerId,
+        name: provider.name || providerId,
+        models,
+      }
+    })
+    .filter((provider) => provider.models.length > 0)
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  if (providers.length === 0) {
+    return null
+  }
+
+  return { providers, defaults: {} }
+}
 
 function parsePiListModelsOutput(stdout: string): NormalizedModelCatalog {
   const lines = stdout.split("\n").filter((line) => line.trim())
@@ -125,6 +163,12 @@ export async function discoverPiModels(options: { forceRefresh?: boolean; ttlMs?
 
   if (!options.forceRefresh && cache && cache.expiresAt > Date.now()) {
     return cache.value
+  }
+
+  const localCatalog = loadLocalModelsJson()
+  if (localCatalog) {
+    cache = { value: localCatalog, expiresAt: Date.now() + ttlMs }
+    return localCatalog
   }
 
   let lastError: unknown = null

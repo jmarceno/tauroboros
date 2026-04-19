@@ -8,6 +8,7 @@ import { PiOrchestrator } from "../src/orchestrator.ts"
 import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
 
 const tempDirs: string[] = []
+const TEST_MODEL = "openai/gpt-4"
 
 function createTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix))
@@ -142,7 +143,7 @@ describe("PiOrchestrator best-of-n execution", () => {
     const settings = createTestSettings(mockPi)
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
-    db.updateOptions({ branch: "master" })
+    db.updateOptions({ branch: "master", executionModel: TEST_MODEL, reviewModel: TEST_MODEL })
     const task = db.createTask({
       id: "bon-1",
       name: "Best of N task",
@@ -200,7 +201,7 @@ describe("PiOrchestrator best-of-n execution", () => {
     const settings = createTestSettings(mockPi)
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
-    db.updateOptions({ branch: "master" })
+    db.updateOptions({ branch: "master", executionModel: TEST_MODEL, reviewModel: TEST_MODEL })
     const task = db.createTask({
       id: "bon-2",
       name: "Best of N manual review task",

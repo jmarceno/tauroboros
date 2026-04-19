@@ -426,6 +426,16 @@ function App() {
   // Current active run
   const currentActiveRun = createMemo(() => runsStore.activeRuns()[0] || null)
 
+  createEffect(() => {
+    const activeRun = currentActiveRun()
+    if (activeRun) {
+      workflowControl.setRun(activeRun)
+      return
+    }
+
+    workflowControl.clearRun()
+  })
+
   // Handlers
   const onToggleExecution = async () => {
     const hasPaused = await workflowControl.checkPausedState()
@@ -436,7 +446,7 @@ function App() {
       return
     }
 
-    const isRunning = runsStore.consumedRunSlots() > 0 || workflowControl.isRunning
+    const isRunning = runsStore.consumedRunSlots() > 0 || workflowControl.isRunning()
     if (isRunning) {
       try {
         await optionsStore.stopExecution()
@@ -476,7 +486,7 @@ function App() {
       uiStore.showToast('Workflow paused', 'success')
       runsStore.loadRuns()
     } else {
-      uiStore.showToast(workflowControl.error || 'Failed to pause workflow', 'error')
+      uiStore.showToast(workflowControl.error() || 'Failed to pause workflow', 'error')
     }
   }
 
@@ -487,7 +497,7 @@ function App() {
       uiStore.showToast('Workflow resumed', 'success')
       runsStore.loadRuns()
     } else {
-      uiStore.showToast(workflowControl.error || 'Failed to resume workflow', 'error')
+      uiStore.showToast(workflowControl.error() || 'Failed to resume workflow', 'error')
     }
   }
 
@@ -496,11 +506,17 @@ function App() {
     uiStore.setShowStopConfirmModal(true)
   }
 
+  const closeStopConfirmModal = () => {
+    uiStore.setShowStopConfirmModal(false)
+    workflowControl.cancelStop()
+  }
+
   const handleCreateGroup = async (name: string) => {
     const { taskIds } = uiStore.groupCreateModalData()
     if (taskIds.length === 0) throw new Error('No tasks selected for group creation')
 
     await taskGroupsStore.createGroup(taskIds, name)
+    await tasksStore.loadTasks()
     uiStore.setShowGroupCreateModal(false)
     multiSelectStore.confirmGroupCreation()
     uiStore.showToast(`Group "${name}" created successfully`, 'success')
@@ -949,30 +965,29 @@ function App() {
           isOpen={uiStore.showStopConfirmModal() || workflowControl.isConfirmingStop()}
           runName={currentActiveRun()?.displayName}
           isStopping={workflowControl.isStopping()}
-          onClose={() => {
-            uiStore.setShowStopConfirmModal(false)
-            workflowControl.cancelStop()
-          }}
+          onClose={closeStopConfirmModal}
           onConfirmGraceful={async () => {
             uiStore.showToast('Pausing workflow gracefully...', 'info')
             const success = await workflowControl.confirmStop()
             if (success) {
+              closeStopConfirmModal()
               uiStore.showToast('Workflow paused gracefully - work preserved', 'success')
               runsStore.loadRuns()
             } else {
-              uiStore.showToast(workflowControl.error || 'Failed to pause workflow', 'error')
+              uiStore.showToast(workflowControl.error() || 'Failed to pause workflow', 'error')
             }
           }}
           onConfirmDestructive={async () => {
             uiStore.showToast('STOPPING workflow - killing all containers...', 'info')
             const success = await workflowControl.confirmStop()
             if (success) {
-              const result = workflowControl.lastResult
+              const result = workflowControl.lastResult()
+              closeStopConfirmModal()
               uiStore.showToast(`Workflow STOPPED. Killed ${result?.killed ?? 0} processes, deleted ${result?.cleaned ?? 0} containers.`, 'error')
               runsStore.loadRuns()
               tasksStore.loadTasks()
             } else {
-              uiStore.showToast(workflowControl.error || 'Failed to stop workflow', 'error')
+              uiStore.showToast(workflowControl.error() || 'Failed to stop workflow', 'error')
             }
           }}
         />

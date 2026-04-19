@@ -1745,7 +1745,7 @@ describe("PiKanbanServer API", () => {
       }
     })
 
-    it("GET /api/stats/duration returns average task duration in milliseconds", async () => {
+    it("GET /api/stats/duration returns average task duration in minutes", async () => {
       const root = createTempDir("tauroboros-stats-duration-")
       const dbPath = join(root, "tasks.db")
       const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
@@ -1781,8 +1781,8 @@ describe("PiKanbanServer API", () => {
         const data = await response.json()
         expect(typeof data).toBe("number")
         expect(data).toBeGreaterThan(0)
-        // Average of 3600 and 7200 = 5400 seconds
-        expect(data).toBe(5400)
+        // Average of 3600 and 7200 = 5400 seconds, returned in minutes
+        expect(data).toBe(90)
       } finally {
         server.stop()
         db.close()

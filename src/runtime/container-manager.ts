@@ -46,6 +46,7 @@ export function createVolumeMounts(
   worktreeDir: string,
   repoRoot: string,
   mountPodmanSocket = false,
+  agentDirOverride?: string,
 ): VolumeMount[] {
   const mounts: VolumeMount[] = []
 
@@ -91,6 +92,15 @@ export function createVolumeMounts(
     ReadOnly: false,
   })
 
+  if (agentDirOverride) {
+    mounts.push({
+      Source: agentDirOverride,
+      Target: "/root/.pi/agent",
+      Type: "bind",
+      ReadOnly: false,
+    })
+  }
+
   // Podman socket for container nesting (Docker-in-Docker via socket mount)
   if (mountPodmanSocket) {
     const uid = process.getuid?.() || 1000
@@ -135,13 +145,17 @@ export class PiContainerManager {
   }
 
   async startMockServerIfNeeded(config: ContainerConfig): Promise<number | null> {
-    if (config.useMockLLM && this.mockServerManager) {
-      const port = 9999
+    if (!config.useMockLLM) {
+      return null
+    }
+
+    const port = process.env.MOCK_LLM_PORT ? parseInt(process.env.MOCK_LLM_PORT, 10) : 9999
+    if (this.mockServerManager) {
       const mockLlmServerPath = path.join(process.cwd(), 'mock-llm-server')
       await this.mockServerManager.start(mockLlmServerPath)
-      return port
     }
-    return null
+
+    return port
   }
 
   async generateModelsJson(containerId: string, mockPort: number, repoRoot: string, useHostNetwork: boolean = false): Promise<void> {
@@ -258,7 +272,8 @@ export class PiContainerManager {
     // Use host network when mock LLM is enabled so container can reach mock server on localhost
     const networkMode = config.useMockLLM ? "host" : (config.networkMode || "bridge")
 
-    const mounts = createVolumeMounts(config.worktreeDir, config.repoRoot, config.mountPodmanSocket)
+    const agentDirOverride = config.useMockLLM ? path.join(config.repoRoot, '.tauroboros', 'agent') : undefined
+    const mounts = createVolumeMounts(config.worktreeDir, config.repoRoot, config.mountPodmanSocket, agentDirOverride)
 
     // Build mount arguments for podman
     const mountArgs: string[] = []

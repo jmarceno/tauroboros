@@ -68,9 +68,11 @@ export function createWorkflowControlStore(
 
   const checkPausedState = async (): Promise<boolean> => {
     try {
-      const status = await api.optionsApi.getWorkflowStatus()
-      if (status.paused && status.runId) {
-        setCurrentRunId(status.runId)
+      const paused = await api.runsApi.getPausedState()
+      const pausedState = paused.state as { runId?: unknown } | null
+
+      if (paused.hasPausedRun && pausedState && typeof pausedState.runId === 'string') {
+        setCurrentRunId(pausedState.runId)
         setControlState('paused')
         return true
       }

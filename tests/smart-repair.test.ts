@@ -9,6 +9,7 @@ import { BASE_IMAGES } from "../src/config/base-images.ts"
 import { wasInCodeStylePhase, chooseDeterministicRepairAction } from "../src/task-state.ts"
 
 const tempDirs: string[] = []
+const TEST_MODEL = "openai/gpt-4"
 
 function createTempDir(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix))
@@ -132,7 +133,7 @@ describe("smart repair", () => {
     const settings = createTestSettings(createRepairMockPi(root, "valid"))
 
     const db = new PiKanbanDB(join(root, "tasks.db"))
-    db.updateOptions({ repairModel: "test-repair-model" })
+    db.updateOptions({ repairModel: TEST_MODEL })
     const task = db.createTask({
       id: "repair-smart-1",
       name: "Smart repair task",

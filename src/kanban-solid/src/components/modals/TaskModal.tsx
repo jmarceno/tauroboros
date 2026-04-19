@@ -3,14 +3,14 @@
  * Ported from React to SolidJS
  */
 
-import { createSignal, createEffect, createMemo, onMount, Show, For, Suspense, lazy } from 'solid-js'
-import type { Task, TaskStatus, CreateTaskDTO, ThinkingLevel, ExecutionStrategy, BestOfNSlot } from '@/types'
+import { createSignal, createMemo, onMount, Show, For, Suspense, lazy } from 'solid-js'
+import type { TaskStatus, CreateTaskDTO, ThinkingLevel, ExecutionStrategy, BestOfNSlot } from '@/types'
 import { ModalWrapper } from '../common/ModalWrapper'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
 import { HelpButton } from '../common/HelpButton'
 import { createTasksStore, createOptionsStore, createModelSearchStore, uiStore } from '@/stores'
-import { referenceApi, containersApi } from '@/api'
+import { referenceApi, containersApi, optionsApi } from '@/api'
 
 const MarkdownEditor = lazy(async () => {
   const mod = await import('../common/MarkdownEditor')
@@ -97,9 +97,10 @@ export function TaskModal(props: TaskModalProps) {
   onMount(async () => {
     setIsLoading(true)
     try {
-      const [branchData, imageData] = await Promise.all([
+      const [branchData, imageData, latestOptions] = await Promise.all([
         referenceApi.getBranches(),
-        containersApi.getImages()
+        containersApi.getImages(),
+        optionsApi.get(),
       ])
 
       setAvailableBranches(branchData.branches || [])
@@ -110,6 +111,8 @@ export function TaskModal(props: TaskModalProps) {
         setBranch(existingTask()!.branch)
       } else if (seedTask()?.branch) {
         setBranch(seedTask()!.branch)
+      } else if (latestOptions.branch?.trim()) {
+        setBranch(latestOptions.branch.trim())
       } else if (branchData.current) {
         setBranch(branchData.current)
       } else if (branchData.branches?.[0]) {
@@ -118,9 +121,7 @@ export function TaskModal(props: TaskModalProps) {
 
       // Set container image
       if (existingTask()?.containerImage) {
-        setContainerImage(existingTask()!.containerImage)
-      } else if (optionsStore.options()?.container?.image) {
-        setContainerImage(optionsStore.options()!.container.image)
+        setContainerImage(existingTask()?.containerImage ?? '')
       }
 
       // Load Best-of-N config if present
@@ -593,7 +594,7 @@ export function TaskModal(props: TaskModalProps) {
             <select
               class="form-select"
               value={branch()}
-              onChange={(e) => setBranch(e.currentTarget.value)}
+              onChange={(e: Event & { currentTarget: HTMLSelectElement }) => setBranch(e.currentTarget.value)}
               disabled={isViewOnly()}
             >
               <For each={branchOptions()}>
