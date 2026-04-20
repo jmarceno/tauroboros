@@ -2275,7 +2275,7 @@ export class PiOrchestrator {
         })
         this.broadcastTask(taskId)
 
-        const reviewRun = await this.reviewRunner.run({
+        const reviewRun = await Effect.runPromise(this.reviewRunner.run({
           task,
           cwd: worktreeInfo.directory,
           worktreeDir: worktreeInfo.directory,
@@ -2291,7 +2291,7 @@ export class PiOrchestrator {
               session: startedSession,
             })
           },
-        })
+        }))
 
         this.db.updateTask(taskId, {
           sessionId: reviewRun.sessionId,
@@ -2567,7 +2567,7 @@ export class PiOrchestrator {
     )
 
     try {
-      const result = await codeStyleRunner.run({
+      const result = await Effect.runPromise(codeStyleRunner.run({
         task,
         cwd: worktreeInfo.directory,
         worktreeDir: worktreeInfo.directory,
@@ -2586,7 +2586,7 @@ export class PiOrchestrator {
             session: startedSession,
           })
         },
-      })
+      }))
 
       if (result.sessionId) {
         this.activeSessionProcesses.delete(result.sessionId)
@@ -2876,12 +2876,12 @@ export class PiOrchestrator {
     })
 
     try {
-      const result = await this.selfHealingService.investigateFailure({
+      const result = await Effect.runPromise(this.selfHealingService.investigateFailure({
         run,
         task,
         errorMessage: task.errorMessage ?? "Task failed without explicit error message",
         hasOtherActiveTasks,
-      })
+      }))
 
       this.db.updateTask(task.id, {
         selfHealStatus: "recovering",

@@ -134,10 +134,10 @@ export class PiKanbanServer {
     this.projectRoot = opts.projectRoot ?? process.cwd()
     this.defaultPort = opts.port ?? this.db.getOptions().port
     this.smartRepair = new SmartRepairService(this.db, opts.settings)
-    this.onStart = opts.onStart ?? (async () => null)
-    this.onStartSingle = opts.onStartSingle ?? (async () => null)
+    this.onStart = opts.onStart ?? (() => Effect.succeed(null))
+    this.onStartSingle = opts.onStartSingle ?? (() => Effect.succeed(null))
     this.onStartGroup = opts.onStartGroup ?? null
-    this.onStop = opts.onStop ?? (async () => null)
+    this.onStop = opts.onStop ?? (() => Effect.succeed(null))
     this.onPauseRun = opts.onPauseRun ?? null
     this.onResumeRun = opts.onResumeRun ?? null
     this.onStopRun = opts.onStopRun ?? null

@@ -130,7 +130,7 @@ export class PiSessionManager {
       onSessionStart?: (session: PiWorkflowSession) => void
       onSessionCreated?: (process: PiRpcProcess | ContainerPiProcess, session: PiWorkflowSession) => void
     }
-  ): Effect.Effect<ExecuteSessionPromptResult, SessionManagerExecuteError> {
+  ): Effect.Effect<ExecuteSessionPromptResult, SessionManagerExecuteError | PiProcessError> {
     const self = this
     return Effect.gen(function* () {
       const sessionId = input.resumedSessionId ?? randomUUID().slice(0, 8)
@@ -218,7 +218,7 @@ export class PiSessionManager {
                 })),
               )
             } else {
-              proc.start()
+              yield* proc.start()
             }
 
             if (!(proc instanceof ContainerPiProcess)) {

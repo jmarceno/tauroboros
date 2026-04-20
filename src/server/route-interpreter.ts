@@ -16,6 +16,50 @@ function toErrorResponse(error: HttpRouteError): Response {
   })
 }
 
+export function httpRouteError(
+  message: string,
+  code: ErrorCode,
+  status: number,
+  options?: { details?: Record<string, unknown>; cause?: unknown },
+): HttpRouteError {
+  return new HttpRouteError({
+    message,
+    code,
+    status,
+    details: options?.details,
+    cause: options?.cause,
+  })
+}
+
+export function badRequestError(message: string, code: ErrorCode, details?: Record<string, unknown>): HttpRouteError {
+  return httpRouteError(message, code, 400, { details })
+}
+
+export function notFoundError(message: string, code: ErrorCode, details?: Record<string, unknown>): HttpRouteError {
+  return httpRouteError(message, code, 404, { details })
+}
+
+export function conflictError(message: string, code: ErrorCode, details?: Record<string, unknown>): HttpRouteError {
+  return httpRouteError(message, code, 409, { details })
+}
+
+export function serviceUnavailableError(
+  message: string,
+  code: ErrorCode,
+  details?: Record<string, unknown>,
+): HttpRouteError {
+  return httpRouteError(message, code, 503, { details })
+}
+
+export function internalRouteError(
+  message: string,
+  code: ErrorCode,
+  cause?: unknown,
+  details?: Record<string, unknown>,
+): HttpRouteError {
+  return httpRouteError(message, code, 500, { cause, details })
+}
+
 export function runRouteEffect(effect: Effect.Effect<Response, HttpRouteError>): Promise<Response> {
   return Effect.runPromise(
     effect.pipe(

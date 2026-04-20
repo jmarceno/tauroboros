@@ -1,9 +1,15 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import { resolveContainerImage, type Task, type ThinkingLevel, resolveCodeStylePrompt } from "../types.ts"
 import { PiSessionManager } from "./session-manager.ts"
 import type { PiContainerManager } from "./container-manager.ts"
+
+export class CodeStyleError extends Schema.TaggedError<CodeStyleError>()("CodeStyleError", {
+  operation: Schema.String,
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 export interface RunCodeStyleInput {
   task: Task
@@ -24,14 +30,6 @@ export interface RunCodeStyleResult {
   errorMessage?: string
 }
 
-/**
- * CodeStyleSessionRunner - Manages a single-pass code style check session
- *
- * Similar to PiReviewSessionRunner but:
- * - Uses reviewModel and reviewThinkingLevel from options
- * - Runs a single pass (no retry loop)
- * - The agent uses edit tool to apply fixes directly
- */
 export class CodeStyleSessionRunner {
   private readonly sessions: PiSessionManager
 
@@ -44,35 +42,37 @@ export class CodeStyleSessionRunner {
     this.sessions = externalSessionManager ?? new PiSessionManager(db, containerManager, settings)
   }
 
-  async run(input: RunCodeStyleInput): Promise<RunCodeStyleResult> {
-    const promptText = resolveCodeStylePrompt(input.codeStylePrompt)
-    const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
+  run(input: RunCodeStyleInput): Effect.Effect<RunCodeStyleResult, CodeStyleError> {
+    return Effect.gen(function* () {
+      const promptText = resolveCodeStylePrompt(input.codeStylePrompt)
+      const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
 
-    const response = await Effect.runPromise(this.sessions.executePrompt({
-      taskId: input.task.id,
-      sessionKind: "task_run_reviewer",
-      cwd: input.cwd,
-      worktreeDir: input.worktreeDir,
-      branch: input.branch,
-      model: input.model,
-      thinkingLevel: input.thinkingLevel,
-      promptText,
-      containerImage: imageToUse,
-    }, {
-      onOutput: input.onOutput,
-      onSessionCreated: input.onSessionCreated,
-    }))
+      const response = yield* this.sessions.executePrompt({
+        taskId: input.task.id,
+        sessionKind: "task_run_reviewer",
+        cwd: input.cwd,
+        worktreeDir: input.worktreeDir,
+        branch: input.branch,
+        model: input.model,
+        thinkingLevel: input.thinkingLevel,
+        promptText,
+        containerImage: imageToUse,
+      }, {
+        onOutput: input.onOutput,
+        onSessionCreated: input.onSessionCreated,
+      })
 
-    const session = this.db.getWorkflowSession(response.session.id)
-    const finalStatus = session?.status ?? "completed"
+      const session = this.db.getWorkflowSession(response.session.id)
+      const finalStatus = session?.status ?? "completed"
 
-    const success = finalStatus === "completed"
+      const success = finalStatus === "completed"
 
-    return {
-      success,
-      responseText: response.responseText,
-      sessionId: response.session.id,
-      errorMessage: success ? undefined : session?.errorMessage ?? undefined,
-    }
+      return {
+        success,
+        responseText: response.responseText,
+        sessionId: response.session.id,
+        errorMessage: success ? undefined : session?.errorMessage ?? undefined,
+      }
+    }.bind(this))
   }
 }

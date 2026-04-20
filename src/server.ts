@@ -7,6 +7,8 @@ import { PiKanbanDB } from "./db.ts"
 import { PiKanbanServer } from "./server/server.ts"
 import {
   PiOrchestrator,
+  runOrchestratorOperationPromiseEffect,
+  runOrchestratorOperationSyncEffect,
   runOrchestratorOperationPromise,
   runOrchestratorOperationSync,
 } from "./orchestrator.ts"
@@ -87,45 +89,47 @@ export const makePiServerRuntime = Effect.fn("makePiServerRuntime")(
     port: options.port,
     settings: options.settings,
     projectRoot: projectRoot,
-    onStart: async () => await runOrchestratorOperationPromise(orchestrator, "startAll", (instance) => instance.startAll()),
-    onStartSingle: async (taskId: string) => await runOrchestratorOperationPromise(orchestrator, "startSingle", (instance) => instance.startSingle(taskId)),
-    onStartGroup: async (groupId: string) => await runOrchestratorOperationPromise(orchestrator, "startGroup", (instance) => instance.startGroup(groupId)),
-    onStop: async () => {
-      await runOrchestratorOperationPromise(orchestrator, "stop", (instance) => instance.stop())
-      return { ok: true }
-    },
-    onPauseRun: async (runId: string) => {
-      const success = await runOrchestratorOperationPromise(orchestrator, "pauseRun", (instance) => instance.pauseRun(runId))
-      const run = db.getWorkflowRun(runId)
-      return { success, run }
-    },
-    onResumeRun: async (runId: string) => await runOrchestratorOperationPromise(orchestrator, "resumeRun", (instance) => instance.resumeRun(runId)),
-    onStopRun: async (runId: string, options?: { destructive?: boolean }) => {
+    onStart: () => runOrchestratorOperationPromiseEffect(orchestrator, "startAll", (instance) => instance.startAll()),
+    onStartSingle: (taskId: string) => runOrchestratorOperationPromiseEffect(orchestrator, "startSingle", (instance) => instance.startSingle(taskId)),
+    onStartGroup: (groupId: string) => runOrchestratorOperationPromiseEffect(orchestrator, "startGroup", (instance) => instance.startGroup(groupId)),
+    onStop: () =>
+      runOrchestratorOperationPromiseEffect(orchestrator, "stop", (instance) => instance.stop()).pipe(
+        Effect.as({ ok: true }),
+      ),
+    onPauseRun: (runId: string) =>
+      runOrchestratorOperationPromiseEffect(orchestrator, "pauseRun", (instance) => instance.pauseRun(runId)).pipe(
+        Effect.map((success) => {
+          const run = db.getWorkflowRun(runId)
+          return { success, run }
+        }),
+      ),
+    onResumeRun: (runId: string) => runOrchestratorOperationPromiseEffect(orchestrator, "resumeRun", (instance) => instance.resumeRun(runId)),
+    onStopRun: (runId: string, options?: { destructive?: boolean }) => Effect.gen(function* () {
       if (options?.destructive) {
-        const result = await runOrchestratorOperationPromise(orchestrator, "destructiveStop", (instance) => instance.destructiveStop(runId))
+        const result = yield* runOrchestratorOperationPromiseEffect(orchestrator, "destructiveStop", (instance) => instance.destructiveStop(runId))
         const run = db.getWorkflowRun(runId)!
         return { success: true, run, killed: result.killed, cleaned: result.cleaned }
       }
 
-      await runOrchestratorOperationPromise(orchestrator, "stopRun", (instance) => instance.stopRun(runId))
+      yield* runOrchestratorOperationPromiseEffect(orchestrator, "stopRun", (instance) => instance.stopRun(runId))
       const run = db.getWorkflowRun(runId)!
       return { success: true, run }
-    },
+    }),
     onGetSlots: () => {
       if (!orchestrator) {
         const maxSlots = Math.max(1, db.getOptions().parallelTasks ?? 1)
-        return {
+        return Effect.succeed({
           maxSlots,
           usedSlots: 0,
           availableSlots: maxSlots,
           tasks: [],
-        }
+        })
       }
-      return runOrchestratorOperationSync(orchestrator, "getSlotUtilization", (instance) => instance.getSlotUtilization())
+      return runOrchestratorOperationSyncEffect(orchestrator, "getSlotUtilization", (instance) => instance.getSlotUtilization())
     },
-    onGetRunQueueStatus: async (runId: string) => runOrchestratorOperationSync(orchestrator, "getRunQueueStatus", (instance) => instance.getRunQueueStatus(runId)),
-    onManualSelfHealRecover: async (taskId: string, reportId: string, action: "restart_task" | "keep_failed") =>
-      await runOrchestratorOperationPromise(orchestrator, "manualSelfHealRecover", (instance) => instance.manualSelfHealRecover(taskId, reportId, action)),
+    onGetRunQueueStatus: (runId: string) => runOrchestratorOperationSyncEffect(orchestrator, "getRunQueueStatus", (instance) => instance.getRunQueueStatus(runId)),
+    onManualSelfHealRecover: (taskId: string, reportId: string, action: "restart_task" | "keep_failed") =>
+      runOrchestratorOperationPromiseEffect(orchestrator, "manualSelfHealRecover", (instance) => instance.manualSelfHealRecover(taskId, reportId, action)),
   })
 
   orchestrator = new PiOrchestrator(

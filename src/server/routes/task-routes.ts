@@ -1,8 +1,17 @@
 import { randomUUID } from "crypto"
+import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
-import type { Task, WorkflowRun } from "../../types.ts"
+import type { Task, WorkflowRun, WSMessage } from "../../types.ts"
 import type { SmartRepairAction } from "../../runtime/smart-repair.ts"
+import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
+import {
+  HttpRouteError,
+  badRequestError,
+  internalRouteError,
+  notFoundError,
+  serviceUnavailableError,
+} from "../route-interpreter.ts"
 import {
   getInvalidTaskBooleanField,
   isAutoDeployCondition,
@@ -13,7 +22,168 @@ import {
   validateBestOfNConfig,
 } from "../validators.ts"
 
+function parseJsonRecord(req: Request): Effect.Effect<Record<string, unknown>, HttpRouteError> {
+  return Effect.tryPromise({
+    try: () => req.json(),
+    catch: () => badRequestError("Invalid JSON body", ErrorCode.INVALID_JSON_BODY),
+  }).pipe(
+    Effect.flatMap((body) => {
+      if (body !== null && typeof body === "object" && !Array.isArray(body)) {
+        return Effect.succeed(body as Record<string, unknown>)
+      }
+      return Effect.fail(badRequestError("Request body must be an object", ErrorCode.INVALID_REQUEST_BODY))
+    }),
+  )
+}
+
+function requireTask(db: { getTask: (taskId: string) => Task | null }, taskId: string): Effect.Effect<Task, HttpRouteError> {
+  const task = db.getTask(taskId)
+  if (!task) {
+    return Effect.fail(notFoundError("Task not found", ErrorCode.TASK_NOT_FOUND, { taskId }))
+  }
+  return Effect.succeed(task)
+}
+
+function requirePlanModeTask(db: { getTask: (taskId: string) => Task | null }, taskId: string): Effect.Effect<Task, HttpRouteError> {
+  return requireTask(db, taskId).pipe(
+    Effect.flatMap((task) =>
+      task.planmode
+        ? Effect.succeed(task)
+        : Effect.fail(badRequestError("Task is not in plan mode", ErrorCode.INVALID_REQUEST_BODY, { taskId })),
+    ),
+  )
+}
+
+function requireBestOfNTask(db: { getTask: (taskId: string) => Task | null }, taskId: string): Effect.Effect<Task, HttpRouteError> {
+  return requireTask(db, taskId).pipe(
+    Effect.flatMap((task) =>
+      task.executionStrategy === "best_of_n"
+        ? Effect.succeed(task)
+        : Effect.fail(badRequestError("Task is not a best_of_n task", ErrorCode.INVALID_REQUEST_BODY, { taskId })),
+    ),
+  )
+}
+
 export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): void {
+  const mapOrchestratorRouteError = (taskId: string, messagePrefix: string, error: unknown): HttpRouteError => {
+    if (typeof error === "object" && error !== null && "_tag" in error && error._tag === "OrchestratorUnavailableError") {
+      const message = "message" in error && typeof error.message === "string" ? error.message : "Orchestrator unavailable"
+      return serviceUnavailableError(`${messagePrefix} ${taskId}: ${message}`, ErrorCode.SERVICE_UNAVAILABLE)
+    }
+    const message = error instanceof Error ? error.message : String(error)
+    return internalRouteError(`${messagePrefix} ${taskId}: ${message}`, ErrorCode.EXECUTION_OPERATION_FAILED, error)
+  }
+
+  const startSingleTaskEffect = (taskId: string): Effect.Effect<WorkflowRun | null, HttpRouteError> =>
+    Effect.tryPromise({
+      try: () => Effect.runPromise(ctx.onStartSingle(taskId)),
+      catch: (error) => mapOrchestratorRouteError(taskId, "Failed to start task", error),
+    })
+
+  const manualSelfHealRecoverEffect = (
+    taskId: string,
+    reportId: string,
+    action: "restart_task" | "keep_failed",
+  ): Effect.Effect<{ ok: boolean; message: string }, HttpRouteError> =>
+    Effect.tryPromise({
+      try: () => Effect.runPromise(ctx.onManualSelfHealRecover!(taskId, reportId, action)),
+      catch: (error) => mapOrchestratorRouteError(taskId, "Failed manual self-heal recovery for task", error),
+    })
+
+  const buildPlanRevisionResponse = (
+    taskId: string,
+    req: Request,
+    json: (data: unknown, status?: number) => Response,
+    sessionUrlFor: (sessionId: string) => string,
+    broadcast: (message: WSMessage) => void,
+    db: { getTask: (taskId: string) => Task | null; getActiveWorkflowRunForTask: (taskId: string) => WorkflowRun | null; updateTask: (taskId: string, patch: Partial<Task>) => Task | null },
+  ) =>
+    Effect.gen(function* () {
+      const task = yield* requirePlanModeTask(db, taskId)
+      const body = yield* parseJsonRecord(req)
+      if (typeof body.feedback !== "string" || !body.feedback.trim()) {
+        return yield* Effect.fail(badRequestError("feedback is required", ErrorCode.INVALID_REQUEST_BODY, { taskId }))
+      }
+      if (typeof task.planRevisionCount !== "number") {
+        return yield* Effect.fail(
+          internalRouteError(
+            `Task ${task.id} has invalid planRevisionCount: expected number, got ${typeof task.planRevisionCount}`,
+            ErrorCode.INVALID_REQUEST_BODY,
+          ),
+        )
+      }
+
+      const feedback = body.feedback.trim()
+      const nextPlanRevisionCount = task.planRevisionCount + 1
+      const nextAgentOutput = `${task.agentOutput}\n[user-revision-request]\n${feedback}\n`
+
+      const startRevisionRunWhenReady = async (maxAttempts: number, delayMs: number): Promise<WorkflowRun | null> => {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          const activeRun = db.getActiveWorkflowRunForTask(task.id)
+          if (activeRun) {
+            await Bun.sleep(delayMs)
+            continue
+          }
+
+          const prepared = db.updateTask(task.id, {
+            status: "backlog",
+            awaitingPlanApproval: false,
+            executionPhase: "plan_revision_pending",
+            planRevisionCount: nextPlanRevisionCount,
+            agentOutput: nextAgentOutput,
+          })
+          if (!prepared) {
+            return null
+          }
+
+          const normalizedPrepared = normalizeTaskForClient(prepared, sessionUrlFor)
+          broadcast({ type: "task_updated", payload: normalizedPrepared })
+          broadcast({ type: "plan_revision_requested", payload: { taskId: task.id } })
+          return await Effect.runPromise(startSingleTaskEffect(task.id))
+        }
+
+        return null
+      }
+
+      const run = yield* Effect.tryPromise({
+        try: () => startRevisionRunWhenReady(24, 50),
+        catch: (error) =>
+          error instanceof HttpRouteError
+            ? error
+            : internalRouteError(`Failed to queue revision run for ${task.id}`, ErrorCode.EXECUTION_OPERATION_FAILED, error),
+      })
+
+      if (run) {
+        const taskForResponse = db.getTask(task.id)
+        if (!taskForResponse) {
+          return yield* Effect.fail(
+            internalRouteError(`Task ${task.id} not found after scheduling plan revision run`, ErrorCode.TASK_NOT_FOUND),
+          )
+        }
+        return json({ task: normalizeTaskForClient(taskForResponse, sessionUrlFor), run })
+      }
+
+      void (async () => {
+        try {
+          const queuedRun = await startRevisionRunWhenReady(200, 100)
+          if (!queuedRun) {
+            console.error(`[plan-revision] Timed out queuing revision run for ${task.id} after prior run remained active`)
+          }
+        } catch (error) {
+          console.error(`[plan-revision] Failed to queue revision run for ${task.id}:`, error)
+        }
+      })()
+
+      const pendingTask: Task = {
+        ...task,
+        awaitingPlanApproval: false,
+        executionPhase: "plan_revision_pending",
+        planRevisionCount: nextPlanRevisionCount,
+        agentOutput: nextAgentOutput,
+      }
+      return json({ task: normalizeTaskForClient(pendingTask, sessionUrlFor), run: null, queued: true })
+    })
+
   router.get("/api/tasks", ({ json, sessionUrlFor, db }) => {
     const tasks = db.getTasks().map((task) => normalizeTaskForClient(task, sessionUrlFor))
     return json(tasks)
@@ -191,7 +361,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     const normalized = normalizeTaskForClient(task, sessionUrlFor)
     broadcast({ type: "task_created", payload: normalized })
 
-    const run = await ctx.onStartSingle(task.id)
+    const run = await Effect.runPromise(ctx.onStartSingle(task.id))
     if (!run) {
       return json({ error: "Failed to start task execution" }, 500)
     }
@@ -199,50 +369,44 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     const startTime = Date.now()
     const terminalStatuses = ["done", "failed", "stuck"] as const
 
-    return new Promise((resolve) => {
-      const checkCompletion = () => {
-        const currentTask = db.getTask(task.id)
-        if (!currentTask) {
-          resolve(json({ error: "Task was deleted during execution" }, 500))
-          return
-        }
+    while (true) {
+      await Bun.sleep(pollIntervalMs)
 
-        if (terminalStatuses.includes(currentTask.status as (typeof terminalStatuses)[number])) {
-          const result = {
+      const currentTask = db.getTask(task.id)
+      if (!currentTask) {
+        return json(createApiError("Task was deleted during execution", ErrorCode.TASK_NOT_FOUND), 500)
+      }
+
+      if (terminalStatuses.includes(currentTask.status as (typeof terminalStatuses)[number])) {
+        return json(
+          {
             task: normalizeTaskForClient(currentTask, sessionUrlFor),
             run: db.getWorkflowRun(run.id),
             completedAt: Date.now(),
             durationMs: Date.now() - startTime,
             status: currentTask.status,
-          }
-          resolve(json(result, 200))
-          return
-        }
-
-        if (Date.now() - startTime >= timeoutMs) {
-          ctx.onStopRun?.(run.id, { destructive: false }).catch((err: unknown) => {
-            console.error(`[API /create-and-wait] Failed to stop run ${run.id} on timeout:`, err)
-          })
-          resolve(
-            json(
-              {
-                error: "Timeout waiting for task completion",
-                task: normalizeTaskForClient(currentTask, sessionUrlFor),
-                run: db.getWorkflowRun(run.id),
-                timeoutMs,
-                elapsedMs: Date.now() - startTime,
-              },
-              408,
-            ),
-          )
-          return
-        }
-
-        setTimeout(checkCompletion, pollIntervalMs)
+          },
+          200,
+        )
       }
 
-      setTimeout(checkCompletion, pollIntervalMs)
-    })
+      if (Date.now() - startTime >= timeoutMs) {
+        if (ctx.onStopRun) {
+          Effect.runPromise(ctx.onStopRun(run.id, { destructive: false })).catch((err: unknown) => {
+            console.error(`[API /create-and-wait] Failed to stop run ${run.id} on timeout:`, err)
+          })
+        }
+        return json(
+          createApiError("Timeout waiting for task completion", ErrorCode.EXECUTION_OPERATION_FAILED, {
+            task: normalizeTaskForClient(currentTask, sessionUrlFor),
+            run: db.getWorkflowRun(run.id),
+            timeoutMs,
+            elapsedMs: Date.now() - startTime,
+          }),
+          408,
+        )
+      }
+    }
   })
 
   router.put("/api/tasks/reorder", async ({ req, json, broadcast, db }) => {
@@ -430,15 +594,13 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     return json(db.getTaskCandidates(params.id))
   })
 
-  router.get("/api/tasks/:id/best-of-n-summary", ({ params, json, db }) => {
-    try {
-      const task = db.getTask(params.id)
-      if (!task) return json({ error: "Task not found" }, 404)
-      if (task.executionStrategy !== "best_of_n") {
-        return json({ error: "Task is not a best_of_n task" }, 400)
-      }
-
-      const summary = db.getBestOfNSummary(params.id)
+  router.get("/api/tasks/:id/best-of-n-summary", ({ params, json, db }) =>
+    Effect.gen(function* () {
+      const task = yield* requireBestOfNTask(db, params.id)
+      const summary = yield* Effect.try({
+        try: () => db.getBestOfNSummary(params.id),
+        catch: (error) => internalRouteError(`Failed to get summary for task ${params.id}`, ErrorCode.TASK_NOT_FOUND, error),
+      })
       const candidates = db.getTaskCandidates(params.id)
       const expandedWorkerCount = task.bestOfNConfig
         ? task.bestOfNConfig.workers.reduce((sum, slot) => sum + slot.count, 0)
@@ -467,71 +629,60 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
         availableCandidates: summary.availableCandidates,
         selectedCandidates: summary.selectedCandidates,
       })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error(`[API /best-of-n-summary] Error getting summary for task ${params.id}:`, message)
-      return json({ error: "Task not found" }, 404)
-    }
-  })
+    }),
+  )
 
-  router.post("/api/tasks/:id/best-of-n/select-candidate", async ({ params, req, json, broadcast, db }) => {
-    const task = db.getTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
-    if (task.executionStrategy !== "best_of_n") return json({ error: "Task is not a best_of_n task" }, 400)
+  router.post("/api/tasks/:id/best-of-n/select-candidate", ({ params, req, json, broadcast, db }) =>
+    Effect.gen(function* () {
+      const task = yield* requireBestOfNTask(db, params.id)
+      const body = yield* parseJsonRecord(req)
+      const candidateId = typeof body.candidateId === "string" ? body.candidateId : ""
+      if (!candidateId) {
+        return yield* Effect.fail(badRequestError("candidateId is required", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id }))
+      }
 
-    let body: Record<string, unknown>
-    try {
-      body = await req.json()
-    } catch (_err) {
-      return json({ error: "Invalid JSON body" }, 400)
-    }
-    const candidateId = typeof body?.candidateId === "string" ? body.candidateId : ""
-    if (!candidateId) return json({ error: "candidateId is required" }, 400)
+      const candidates = db.getTaskCandidates(task.id)
+      if (!candidates.some((candidate) => candidate.id === candidateId)) {
+        return yield* Effect.fail(notFoundError("Candidate not found", ErrorCode.TASK_NOT_FOUND, { taskId: params.id, candidateId }))
+      }
 
-    const candidates = db.getTaskCandidates(task.id)
-    if (!candidates.some((candidate) => candidate.id === candidateId)) {
-      return json({ error: "Candidate not found" }, 404)
-    }
+      const updatedCandidates = candidates
+        .map((candidate) =>
+          db.updateTaskCandidate(candidate.id, { status: candidate.id === candidateId ? "selected" : "rejected" }),
+        )
+        .filter(Boolean)
 
-    const updatedCandidates = candidates
-      .map((candidate) =>
-        db.updateTaskCandidate(candidate.id, { status: candidate.id === candidateId ? "selected" : "rejected" }),
-      )
-      .filter(Boolean)
+      for (const candidate of updatedCandidates) {
+        broadcast({ type: "task_candidate_updated", payload: candidate })
+      }
 
-    for (const candidate of updatedCandidates) {
-      broadcast({ type: "task_candidate_updated", payload: candidate })
-    }
+      return json({ ok: true, selectedCandidate: candidateId })
+    }),
+  )
 
-    return json({ ok: true, selectedCandidate: candidateId })
-  })
+  router.post("/api/tasks/:id/best-of-n/abort", ({ params, req, json, sessionUrlFor, broadcast, db }) =>
+    Effect.gen(function* () {
+      const task = yield* requireBestOfNTask(db, params.id)
+      const body = yield* parseJsonRecord(req)
+      const reason =
+        typeof body.reason === "string" && body.reason.trim()
+          ? body.reason.trim()
+          : "Best-of-n execution aborted manually"
 
-  router.post("/api/tasks/:id/best-of-n/abort", async ({ params, req, json, sessionUrlFor, broadcast, db }) => {
-    const task = db.getTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
-    if (task.executionStrategy !== "best_of_n") return json({ error: "Task is not a best_of_n task" }, 400)
+      const updated = db.updateTask(task.id, {
+        status: "review",
+        bestOfNSubstage: "blocked_for_manual_review",
+        errorMessage: reason,
+      })
+      if (!updated) {
+        return yield* Effect.fail(notFoundError("Task not found", ErrorCode.TASK_NOT_FOUND, { taskId: task.id }))
+      }
 
-    let body: Record<string, unknown>
-    try {
-      body = await req.json()
-    } catch (_err) {
-      return json({ error: "Invalid JSON body" }, 400)
-    }
-    const reason =
-      typeof body?.reason === "string" && body.reason.trim()
-        ? body.reason.trim()
-        : "Best-of-n execution aborted manually"
-
-    const updated = db.updateTask(task.id, {
-      status: "review",
-      bestOfNSubstage: "blocked_for_manual_review",
-      errorMessage: reason,
-    })
-    if (!updated) return json({ error: "Task not found" }, 404)
-    const normalized = normalizeTaskForClient(updated, sessionUrlFor)
-    broadcast({ type: "task_updated", payload: normalized })
-    return json({ ok: true, task: normalized })
-  })
+      const normalized = normalizeTaskForClient(updated, sessionUrlFor)
+      broadcast({ type: "task_updated", payload: normalized })
+      return json({ ok: true, task: normalized })
+    }),
+  )
 
   router.get("/api/tasks/:id/review-status", ({ params, json, db }) => {
     const task = db.getTask(params.id)
@@ -545,198 +696,39 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     })
   })
 
-  router.post("/api/tasks/:id/approve-plan", async ({ params, req, json, sessionUrlFor, broadcast, db }) => {
-    const task = db.getTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
-    if (!task.planmode) return json({ error: "Task is not in plan mode" }, 400)
-    let body: Record<string, unknown>
-    try {
-      body = await req.json()
-    } catch (_err) {
-      return json({ error: "Invalid JSON body" }, 400)
-    }
+  router.post("/api/tasks/:id/approve-plan", ({ params, req, json, sessionUrlFor, broadcast, db }) =>
+    Effect.gen(function* () {
+      const task = yield* requirePlanModeTask(db, params.id)
+      const body = yield* parseJsonRecord(req)
 
-    const updated = db.updateTask(task.id, {
-      status: "backlog",
-      awaitingPlanApproval: false,
-      executionPhase: "implementation_pending",
-      errorMessage: null,
-      ...(typeof body?.approvalNote === "string" && body.approvalNote.trim().length > 0
-        ? { agentOutput: `${task.agentOutput}\n[user-approval-note]\n${body.approvalNote.trim()}\n` }
-        : typeof body?.message === "string" && body.message.trim().length > 0
-          ? { agentOutput: `${task.agentOutput}\n[user-approval-note]\n${body.message.trim()}\n` }
-          : {}),
-    })
-
-    if (!updated) return json({ error: "Task not found" }, 404)
-    const normalized = normalizeTaskForClient(updated, sessionUrlFor)
-    broadcast({ type: "task_updated", payload: normalized })
-    return json(normalized)
-  })
-
-  router.post(
-    "/api/tasks/:id/request-plan-revision",
-    async ({ params, req, json, sessionUrlFor, broadcast, db }) => {
-      const task = db.getTask(params.id)
-      if (!task) return json({ error: "Task not found" }, 404)
-      if (!task.planmode) return json({ error: "Task is not in plan mode" }, 400)
-      const body = await req.json()
-      if (typeof body?.feedback !== "string" || !body.feedback.trim()) {
-        return json({ error: "feedback is required" }, 400)
-      }
-
-      if (typeof task.planRevisionCount !== "number") {
-        throw new Error(
-          `Task ${task.id} has invalid planRevisionCount: expected number, got ${typeof task.planRevisionCount}`,
-        )
-      }
-
-      const feedback = body.feedback.trim()
-      const nextPlanRevisionCount = task.planRevisionCount + 1
-      const nextAgentOutput = `${task.agentOutput}\n[user-revision-request]\n${feedback}\n`
-
-      const startRevisionRunWhenReady = async (
-        maxAttempts: number,
-        delayMs: number,
-      ): Promise<WorkflowRun | null> => {
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          const activeRun = db.getActiveWorkflowRunForTask(task.id)
-          if (activeRun) {
-            await Bun.sleep(delayMs)
-            continue
-          }
-
-          const prepared = db.updateTask(task.id, {
-            status: "backlog",
-            awaitingPlanApproval: false,
-            executionPhase: "plan_revision_pending",
-            planRevisionCount: nextPlanRevisionCount,
-            agentOutput: nextAgentOutput,
-          })
-          if (!prepared) {
-            throw new Error(`Task ${task.id} disappeared while queuing a plan revision run`)
-          }
-
-          const normalizedPrepared = normalizeTaskForClient(prepared, sessionUrlFor)
-          broadcast({ type: "task_updated", payload: normalizedPrepared })
-          broadcast({ type: "plan_revision_requested", payload: { taskId: task.id } })
-          return await ctx.onStartSingle(task.id)
-        }
-
-        return null
-      }
-
-      const run = await startRevisionRunWhenReady(24, 50)
-      if (run) {
-        const taskForResponse = db.getTask(task.id)
-        if (!taskForResponse) {
-          throw new Error(`Task ${task.id} not found after scheduling plan revision run`)
-        }
-        return json({ task: normalizeTaskForClient(taskForResponse, sessionUrlFor), run })
-      }
-
-      void (async () => {
-        try {
-          const queuedRun = await startRevisionRunWhenReady(200, 100)
-          if (!queuedRun) {
-            console.error(
-              `[plan-revision] Timed out queuing revision run for ${task.id} after prior run remained active`,
-            )
-          }
-        } catch (error) {
-          console.error(`[plan-revision] Failed to queue revision run for ${task.id}:`, error)
-        }
-      })()
-
-      const pendingTask: Task = {
-        ...task,
+      const updated = db.updateTask(task.id, {
+        status: "backlog",
         awaitingPlanApproval: false,
-        executionPhase: "plan_revision_pending",
-        planRevisionCount: nextPlanRevisionCount,
-        agentOutput: nextAgentOutput,
+        executionPhase: "implementation_pending",
+        errorMessage: null,
+        ...(typeof body.approvalNote === "string" && body.approvalNote.trim().length > 0
+          ? { agentOutput: `${task.agentOutput}\n[user-approval-note]\n${body.approvalNote.trim()}\n` }
+          : typeof body.message === "string" && body.message.trim().length > 0
+            ? { agentOutput: `${task.agentOutput}\n[user-approval-note]\n${body.message.trim()}\n` }
+            : {}),
+      })
+
+      if (!updated) {
+        return yield* Effect.fail(notFoundError("Task not found", ErrorCode.TASK_NOT_FOUND, { taskId: task.id }))
       }
-      return json({ task: normalizeTaskForClient(pendingTask, sessionUrlFor), run: null, queued: true })
-    },
+      const normalized = normalizeTaskForClient(updated, sessionUrlFor)
+      broadcast({ type: "task_updated", payload: normalized })
+      return json(normalized)
+    }),
   )
 
-  router.post("/api/tasks/:id/request-revision", async ({ params, req, json, sessionUrlFor, broadcast, db }) => {
-    const task = db.getTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
-    if (!task.planmode) return json({ error: "Task is not in plan mode" }, 400)
-    const body = await req.json()
-    if (typeof body?.feedback !== "string" || !body.feedback.trim()) {
-      return json({ error: "feedback is required" }, 400)
-    }
+  router.post("/api/tasks/:id/request-plan-revision", ({ params, req, json, sessionUrlFor, broadcast, db }) =>
+    buildPlanRevisionResponse(params.id, req, json, sessionUrlFor, broadcast, db),
+  )
 
-    if (typeof task.planRevisionCount !== "number") {
-      throw new Error(
-        `Task ${task.id} has invalid planRevisionCount: expected number, got ${typeof task.planRevisionCount}`,
-      )
-    }
-
-    const feedback = body.feedback.trim()
-    const nextPlanRevisionCount = task.planRevisionCount + 1
-    const nextAgentOutput = `${task.agentOutput}\n[user-revision-request]\n${feedback}\n`
-
-    const startRevisionRunWhenReady = async (maxAttempts: number, delayMs: number): Promise<WorkflowRun | null> => {
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const activeRun = db.getActiveWorkflowRunForTask(task.id)
-        if (activeRun) {
-          await Bun.sleep(delayMs)
-          continue
-        }
-
-        const prepared = db.updateTask(task.id, {
-          status: "backlog",
-          awaitingPlanApproval: false,
-          executionPhase: "plan_revision_pending",
-          planRevisionCount: nextPlanRevisionCount,
-          agentOutput: nextAgentOutput,
-        })
-        if (!prepared) {
-          throw new Error(`Task ${task.id} disappeared while queuing a plan revision run`)
-        }
-
-        const normalizedPrepared = normalizeTaskForClient(prepared, sessionUrlFor)
-        broadcast({ type: "task_updated", payload: normalizedPrepared })
-        broadcast({ type: "plan_revision_requested", payload: { taskId: task.id } })
-        return await ctx.onStartSingle(task.id)
-      }
-
-      return null
-    }
-
-    const run = await startRevisionRunWhenReady(24, 50)
-    if (run) {
-      const taskForResponse = db.getTask(task.id)
-      if (!taskForResponse) {
-        throw new Error(`Task ${task.id} not found after scheduling plan revision run`)
-      }
-      return json({ task: normalizeTaskForClient(taskForResponse, sessionUrlFor), run })
-    }
-
-    void (async () => {
-      try {
-        const queuedRun = await startRevisionRunWhenReady(200, 100)
-        if (!queuedRun) {
-          console.error(
-            `[plan-revision] Timed out queuing revision run for ${task.id} after prior run remained active`,
-          )
-        }
-      } catch (error) {
-        console.error(`[plan-revision] Failed to queue revision run for ${task.id}:`, error)
-      }
-    })()
-
-    const pendingTask: Task = {
-      ...task,
-      awaitingPlanApproval: false,
-      executionPhase: "plan_revision_pending",
-      planRevisionCount: nextPlanRevisionCount,
-      agentOutput: nextAgentOutput,
-    }
-    return json({ task: normalizeTaskForClient(pendingTask, sessionUrlFor), run: null, queued: true })
-  })
+  router.post("/api/tasks/:id/request-revision", ({ params, req, json, sessionUrlFor, broadcast, db }) =>
+    buildPlanRevisionResponse(params.id, req, json, sessionUrlFor, broadcast, db),
+  )
 
   router.post("/api/tasks/:id/reset", async ({ params, json, sessionUrlFor, broadcast, db }) => {
     const task = db.getTask(params.id)
@@ -821,161 +813,155 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     return json({ task: normalized, group, restoredToGroup: true })
   })
 
-  router.post("/api/tasks/:id/move-to-group", async ({ params, req, json, sessionUrlFor, broadcast, db }) => {
-    const task = db.getTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
+  router.post("/api/tasks/:id/move-to-group", ({ params, req, json, sessionUrlFor, broadcast, db }) =>
+    Effect.gen(function* () {
+      const task = yield* requireTask(db, params.id)
 
-    const activeRun = db.getActiveWorkflowRunForTask(params.id)
-    if (activeRun) {
-      return json(
-        { error: `Cannot modify task "${task.name}" while it is executing in run ${activeRun.id}.` },
-        409,
-      )
-    }
+      const activeRun = db.getActiveWorkflowRunForTask(params.id)
+      if (activeRun) {
+        return yield* Effect.fail(
+          internalRouteError(
+            `Cannot modify task "${task.name}" while it is executing in run ${activeRun.id}.`,
+            ErrorCode.EXECUTION_OPERATION_FAILED,
+          ),
+        )
+      }
 
-    let body: unknown
-    try {
-      body = await req.json()
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return json({ error: `Invalid JSON body: ${message}` }, 400)
-    }
+      const body = yield* parseJsonRecord(req)
+      const groupIdRaw = body.groupId
 
-    if (body === null || typeof body !== "object") {
-      return json({ error: "Request body must be an object" }, 400)
-    }
+      if (groupIdRaw !== undefined && groupIdRaw !== null && typeof groupIdRaw !== "string") {
+        return yield* Effect.fail(badRequestError("groupId must be a string, null, or undefined", ErrorCode.INVALID_REQUEST_BODY))
+      }
 
-    const bodyObj = body as Record<string, unknown>
-    const groupIdRaw = bodyObj.groupId
+      const groupId: string | null | undefined = groupIdRaw as string | null | undefined
 
-    if (groupIdRaw !== undefined && groupIdRaw !== null && typeof groupIdRaw !== "string") {
-      return json({ error: "groupId must be a string, null, or undefined" }, 400)
-    }
+      if (groupId === null) {
+        if (task.groupId) {
+          db.removeTaskFromGroup(task.groupId, task.id)
+          broadcast({ type: "group_task_removed", payload: { groupId: task.groupId, taskId: task.id } })
+          broadcast({ type: "task_group_members_removed", payload: { groupId: task.groupId, taskIds: [task.id] } })
+        }
+        const updated = db.updateTask(task.id, { groupId: null })
+        const normalized = normalizeTaskForClient(updated ?? task, sessionUrlFor)
+        broadcast({ type: "task_updated", payload: normalized })
+        return json(normalized)
+      }
 
-    const groupId: string | null | undefined = groupIdRaw
+      if (typeof groupId !== "string") {
+        return yield* Effect.fail(badRequestError("groupId must be a string or null", ErrorCode.INVALID_REQUEST_BODY))
+      }
 
-    if (groupId === null) {
-      if (task.groupId) {
+      const group = db.getTaskGroup(groupId)
+      if (!group) {
+        return yield* Effect.fail(notFoundError("Group not found", ErrorCode.TASK_GROUP_NOT_FOUND, { groupId }))
+      }
+
+      if (task.groupId && task.groupId !== groupId) {
         db.removeTaskFromGroup(task.groupId, task.id)
         broadcast({ type: "group_task_removed", payload: { groupId: task.groupId, taskId: task.id } })
         broadcast({ type: "task_group_members_removed", payload: { groupId: task.groupId, taskIds: [task.id] } })
       }
-      const updated = db.updateTask(task.id, { groupId: null })
+
+      db.addTaskToGroup(groupId, task.id)
+
+      const updated = db.getTask(task.id)
       const normalized = normalizeTaskForClient(updated ?? task, sessionUrlFor)
       broadcast({ type: "task_updated", payload: normalized })
+      broadcast({ type: "group_task_added", payload: { groupId, taskId: task.id } })
+      broadcast({ type: "task_group_members_added", payload: { groupId, taskIds: [task.id] } })
+
       return json(normalized)
-    }
+    }),
+  )
 
-    if (typeof groupId !== "string") {
-      return json({ error: "groupId must be a string or null" }, 400)
-    }
+  router.post("/api/tasks/:id/repair-state", ({ params, req, json, sessionUrlFor, broadcast, db }) =>
+    Effect.gen(function* () {
+      const task = yield* requireTask(db, params.id)
+      const body = yield* parseJsonRecord(req)
+      const requestedAction = typeof body.action === "string" ? body.action : "smart"
 
-    const group = db.getTaskGroup(groupId)
-    if (!group) {
-      return json({ error: "Group not found" }, 404)
-    }
+      if (requestedAction === "smart") {
+        const smart = yield* Effect.tryPromise({
+          try: () =>
+            ctx.smartRepair.repair(
+              task.id,
+              typeof body.smartRepairHints === "string" ? body.smartRepairHints : undefined,
+            ),
+          catch: (error) => internalRouteError(`Failed smart repair for task ${task.id}`, ErrorCode.EXECUTION_OPERATION_FAILED, error),
+        })
+        const normalizedSmart = normalizeTaskForClient(smart.task, sessionUrlFor)
+        broadcast({ type: "task_updated", payload: normalizedSmart })
+        return json({ ok: true, action: smart.action, reason: smart.reason, task: normalizedSmart })
+      }
 
-    if (task.groupId && task.groupId !== groupId) {
-      db.removeTaskFromGroup(task.groupId, task.id)
-      broadcast({ type: "group_task_removed", payload: { groupId: task.groupId, taskId: task.id } })
-      broadcast({ type: "task_group_members_removed", payload: { groupId: task.groupId, taskIds: [task.id] } })
-    }
+      const action = requestedAction as SmartRepairAction
+      if (
+        !["queue_implementation", "restore_plan_approval", "reset_backlog", "mark_done", "fail_task", "continue_with_more_reviews"].includes(
+          action,
+        )
+      ) {
+        return yield* Effect.fail(badRequestError(`Unsupported repair action: ${requestedAction}`, ErrorCode.INVALID_REQUEST_BODY))
+      }
 
-    db.addTaskToGroup(groupId, task.id)
+      const reason =
+        typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : "Manual repair action"
 
-    const updated = db.getTask(task.id)
-    const normalized = normalizeTaskForClient(updated ?? task, sessionUrlFor)
-    broadcast({ type: "task_updated", payload: normalized })
-    broadcast({ type: "group_task_added", payload: { groupId, taskId: task.id } })
-    broadcast({ type: "task_group_members_added", payload: { groupId, taskIds: [task.id] } })
-
-    return json(normalized)
-  })
-
-  router.post("/api/tasks/:id/repair-state", async ({ params, req, json, sessionUrlFor, broadcast, db }) => {
-    const task = db.getTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
-
-    let body: Record<string, unknown>
-    try {
-      body = await req.json()
-    } catch (_err) {
-      return json({ error: "Invalid JSON body" }, 400)
-    }
-    const requestedAction = typeof body?.action === "string" ? body.action : "smart"
-
-    if (requestedAction === "smart") {
-      const smart = await ctx.smartRepair.repair(
-        task.id,
-        typeof body?.smartRepairHints === "string" ? body.smartRepairHints : undefined,
-      )
-      const normalizedSmart = normalizeTaskForClient(smart.task, sessionUrlFor)
-      broadcast({ type: "task_updated", payload: normalizedSmart })
-      return json({ ok: true, action: smart.action, reason: smart.reason, task: normalizedSmart })
-    }
-
-    const action = requestedAction as SmartRepairAction
-    if (
-      !["queue_implementation", "restore_plan_approval", "reset_backlog", "mark_done", "fail_task", "continue_with_more_reviews"].includes(
+      const updated = ctx.smartRepair.applyAction(task.id, {
         action,
+        reason,
+        errorMessage:
+          typeof body.errorMessage === "string" && body.errorMessage.trim()
+            ? body.errorMessage.trim()
+            : undefined,
+      })
+      const normalized = normalizeTaskForClient(updated, sessionUrlFor)
+      broadcast({ type: "task_updated", payload: normalized })
+      return json({ ok: true, action, reason, task: normalized })
+    }),
+  )
+
+  router.get("/api/tasks/:id/self-heal-reports", ({ params, json, db }) =>
+    Effect.gen(function* () {
+      yield* requireTask(db, params.id)
+      const runs = db.getWorkflowRuns().filter((run) => run.taskOrder.includes(params.id))
+      const reports = runs.flatMap((run) =>
+        db.getSelfHealReportsForRun(run.id).filter((report) => report.taskId === params.id),
       )
-    ) {
-      return json({ error: `Unsupported repair action: ${requestedAction}` }, 400)
-    }
+      return json(reports)
+    }),
+  )
 
-    const reason =
-      typeof body?.reason === "string" && body.reason.trim() ? body.reason.trim() : "Manual repair action"
+  router.post("/api/tasks/:id/self-heal-recover", ({ params, req, json, db }) =>
+    Effect.gen(function* () {
+      if (!ctx.onManualSelfHealRecover) {
+        return yield* Effect.fail(serviceUnavailableError("Manual self-heal recovery not available", ErrorCode.SERVICE_UNAVAILABLE))
+      }
+      yield* requireTask(db, params.id)
 
-    const updated = ctx.smartRepair.applyAction(task.id, {
-      action,
-      reason,
-      errorMessage:
-        typeof body?.errorMessage === "string" && body.errorMessage.trim()
-          ? body.errorMessage.trim()
-          : undefined,
-    })
-    const normalized = normalizeTaskForClient(updated, sessionUrlFor)
-    broadcast({ type: "task_updated", payload: normalized })
-    return json({ ok: true, action, reason, task: normalized })
-  })
+      const body = yield* parseJsonRecord(req)
+      const reportId = typeof body.reportId === "string" ? body.reportId.trim() : ""
+      if (!reportId) {
+        return yield* Effect.fail(badRequestError("reportId is required", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id }))
+      }
 
-  router.get("/api/tasks/:id/self-heal-reports", ({ params, json, db }) => {
-    const task = db.getTask(params.id)
-    if (!task) {
-      return json({ error: "Task not found" }, 404)
-    }
-    const runs = db.getWorkflowRuns().filter((run) => run.taskOrder.includes(params.id))
-    const reports = runs.flatMap((run) =>
-      db.getSelfHealReportsForRun(run.id).filter((report) => report.taskId === params.id),
-    )
-    return json(reports)
-  })
+      const action = body.action
+      if (action !== "restart_task" && action !== "keep_failed") {
+        return yield* Effect.fail(
+          badRequestError("action must be 'restart_task' or 'keep_failed'", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id }),
+        )
+      }
 
-  router.post("/api/tasks/:id/self-heal-recover", async ({ params, req, json, db }) => {
-    if (!ctx.onManualSelfHealRecover) return json({ error: "Manual self-heal recovery not available" }, 503)
-    const task = db.getTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
+      const report = db.getSelfHealReport(reportId)
+      if (!report) {
+        return yield* Effect.fail(notFoundError("Self-heal report not found", ErrorCode.TASK_NOT_FOUND, { taskId: params.id, reportId }))
+      }
+      if (report.taskId !== params.id) {
+        return yield* Effect.fail(badRequestError("Report does not belong to this task", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id, reportId }))
+      }
 
-    let body: Record<string, unknown>
-    try {
-      body = await req.json()
-    } catch {
-      return json({ error: "Invalid JSON body" }, 400)
-    }
-
-    const reportId = typeof body.reportId === "string" ? body.reportId.trim() : ""
-    if (!reportId) return json({ error: "reportId is required" }, 400)
-
-    const action = body.action
-    if (action !== "restart_task" && action !== "keep_failed") {
-      return json({ error: "action must be 'restart_task' or 'keep_failed'" }, 400)
-    }
-
-    const report = db.getSelfHealReport(reportId)
-    if (!report) return json({ error: "Self-heal report not found" }, 404)
-    if (report.taskId !== params.id) return json({ error: "Report does not belong to this task" }, 400)
-
-    const result = await ctx.onManualSelfHealRecover(params.id, reportId, action)
-    return json(result)
-  })
+      const result = yield* manualSelfHealRecoverEffect(params.id, reportId, action)
+      return json(result)
+    }),
+  )
 }

@@ -6,7 +6,7 @@ import { isTaskAwaitingPlanApproval } from "../../task-state.ts"
 import { loadPausedRunState, loadPausedSessionState } from "../../runtime/session-pause-state.ts"
 import type { BestOfNConfig, WorkflowRun } from "../../types.ts"
 import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
-import { HttpRouteError, runRouteEffect } from "../route-interpreter.ts"
+import { HttpRouteError } from "../route-interpreter.ts"
 
 function mapOperationError(error: unknown, messagePrefix: string): HttpRouteError {
   const message = error instanceof Error ? error.message : String(error)
@@ -19,33 +19,37 @@ function mapOperationError(error: unknown, messagePrefix: string): HttpRouteErro
 }
 
 export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext): void {
-  router.post("/api/start", async ({ json }) => {
-    return runRouteEffect(
-      Effect.tryPromise({
-        try: () => ctx.onStart(),
-        catch: (error) => mapOperationError(error, "Failed to start execution"),
-      }).pipe(Effect.map((run) => json(run))),
-    )
-  })
+  router.post("/api/start", ({ json }) =>
+    ctx.onStart().pipe(
+      Effect.map((run) => json(run)),
+      Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, "Failed to start execution"))),
+      Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, "Failed to start execution"))),
+    ),
+  )
 
-  router.post("/api/execution/start", async ({ json }) => {
-    return runRouteEffect(
-      Effect.tryPromise({
-        try: () => ctx.onStart(),
-        catch: (error) => mapOperationError(error, "Failed to start execution"),
-      }).pipe(Effect.map((run) => json(run))),
-    )
-  })
+  router.post("/api/execution/start", ({ json }) =>
+    ctx.onStart().pipe(
+      Effect.map((run) => json(run)),
+      Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, "Failed to start execution"))),
+      Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, "Failed to start execution"))),
+    ),
+  )
 
-  router.post("/api/stop", async ({ json }) => {
-    const result = await ctx.onStop()
-    return json(result ?? { ok: true })
-  })
+  router.post("/api/stop", ({ json }) =>
+    ctx.onStop().pipe(
+      Effect.map((result) => json(result ?? { ok: true })),
+      Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, "Failed to stop execution"))),
+      Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, "Failed to stop execution"))),
+    ),
+  )
 
-  router.post("/api/execution/stop", async ({ json }) => {
-    const result = await ctx.onStop()
-    return json(result ?? { ok: true })
-  })
+  router.post("/api/execution/stop", ({ json }) =>
+    ctx.onStop().pipe(
+      Effect.map((result) => json(result ?? { ok: true })),
+      Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, "Failed to stop execution"))),
+      Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, "Failed to stop execution"))),
+    ),
+  )
 
   router.post("/api/execution/pause", async ({ json, broadcast, db }) => {
     const active = db.getWorkflowRuns().find((run) => run.status === "queued" || run.status === "running")
@@ -87,69 +91,64 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
       }
     }
 
-    return runRouteEffect(
-      Effect.tryPromise({
-        try: () => ctx.onStartSingle(params.id),
-        catch: (error) => mapOperationError(error, `Failed to start task ${params.id}`),
-      }).pipe(Effect.map((run) => json(run))),
+    return ctx.onStartSingle(params.id).pipe(
+      Effect.map((run) => json(run)),
+      Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, `Failed to start task ${params.id}`))),
+      Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, `Failed to start task ${params.id}`))),
     )
   })
 
-  router.post("/api/runs/:id/pause", async ({ params, json, broadcast, db }) => {
-    return runRouteEffect(
-      Effect.gen(function* () {
-        if (ctx.onPauseRun) {
-          const result = (yield* Effect.tryPromise({
-            try: () => ctx.onPauseRun!(params.id),
-            catch: (error) => mapOperationError(error, `Failed to pause run ${params.id}`),
-          })) as { success: boolean; run: WorkflowRun } | null
-          if (result && result.success) {
-            broadcast({ type: "run_paused", payload: { runId: params.id } })
-            return json({ success: true, run: result.run })
-          }
+  router.post("/api/runs/:id/pause", ({ params, json, broadcast, db }) =>
+    Effect.gen(function* () {
+      if (ctx.onPauseRun) {
+        const result = (yield* ctx.onPauseRun(params.id).pipe(
+          Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, `Failed to pause run ${params.id}`))),
+          Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, `Failed to pause run ${params.id}`))),
+        )) as { success: boolean; run: WorkflowRun } | null
+        if (result && result.success) {
+          broadcast({ type: "run_paused", payload: { runId: params.id } })
+          return json({ success: true, run: result.run })
         }
-        const updated = db.updateWorkflowRun(params.id, { pauseRequested: true, status: "paused" })
-        if (!updated) {
-          return yield* Effect.fail(new HttpRouteError({
-            message: "Run not found",
-            code: ErrorCode.RUN_NOT_FOUND,
-            status: 404,
-          }))
-        }
-        broadcast({ type: "run_updated", payload: updated })
-        broadcast({ type: "run_paused", payload: { runId: params.id } })
-        return json({ success: true, run: updated })
-      }),
-    )
-  })
+      }
+      const updated = db.updateWorkflowRun(params.id, { pauseRequested: true, status: "paused" })
+      if (!updated) {
+        return yield* Effect.fail(new HttpRouteError({
+          message: "Run not found",
+          code: ErrorCode.RUN_NOT_FOUND,
+          status: 404,
+        }))
+      }
+      broadcast({ type: "run_updated", payload: updated })
+      broadcast({ type: "run_paused", payload: { runId: params.id } })
+      return json({ success: true, run: updated })
+    }),
+  )
 
-  router.post("/api/runs/:id/resume", async ({ params, json, broadcast, db }) => {
-    return runRouteEffect(
-      Effect.gen(function* () {
-        if (ctx.onResumeRun) {
-          const run = yield* Effect.tryPromise({
-            try: () => ctx.onResumeRun!(params.id),
-            catch: (error) => mapOperationError(error, `Failed to resume run ${params.id}`),
-          })
-          if (run) {
-            broadcast({ type: "run_resumed", payload: { runId: params.id } })
-            return json({ success: true, run })
-          }
+  router.post("/api/runs/:id/resume", ({ params, json, broadcast, db }) =>
+    Effect.gen(function* () {
+      if (ctx.onResumeRun) {
+        const run = yield* ctx.onResumeRun(params.id).pipe(
+          Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, `Failed to resume run ${params.id}`))),
+          Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, `Failed to resume run ${params.id}`))),
+        )
+        if (run) {
+          broadcast({ type: "run_resumed", payload: { runId: params.id } })
+          return json({ success: true, run })
         }
-        const updated = db.updateWorkflowRun(params.id, { pauseRequested: false, status: "running" })
-        if (!updated) {
-          return yield* Effect.fail(new HttpRouteError({
-            message: "Run not found",
-            code: ErrorCode.RUN_NOT_FOUND,
-            status: 404,
-          }))
-        }
-        broadcast({ type: "run_updated", payload: updated })
-        broadcast({ type: "run_resumed", payload: { runId: params.id } })
-        return json({ success: true, run: updated })
-      }),
-    )
-  })
+      }
+      const updated = db.updateWorkflowRun(params.id, { pauseRequested: false, status: "running" })
+      if (!updated) {
+        return yield* Effect.fail(new HttpRouteError({
+          message: "Run not found",
+          code: ErrorCode.RUN_NOT_FOUND,
+          status: 404,
+        }))
+      }
+      broadcast({ type: "run_updated", payload: updated })
+      broadcast({ type: "run_resumed", payload: { runId: params.id } })
+      return json({ success: true, run: updated })
+    }),
+  )
 
   router.post("/api/runs/:id/stop", async ({ params, req, json, broadcast }) => {
     let body: Record<string, unknown>
@@ -164,25 +163,22 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
       return json(createApiError("Stop handler not available", ErrorCode.SERVICE_UNAVAILABLE), 503)
     }
 
-    return runRouteEffect(
-      Effect.tryPromise({
-        try: () => ctx.onStopRun!(params.id, { destructive }),
-        catch: (error) => mapOperationError(error, `Failed to stop run ${params.id}`),
-      }).pipe(
-        Effect.flatMap((result) => {
-          if (!result || !result.run) {
-            return Effect.fail(new HttpRouteError({
-              message: "Failed to stop run - no result from orchestrator",
-              code: ErrorCode.EXECUTION_OPERATION_FAILED,
-              status: 500,
-            }))
-          }
-          if (destructive) {
-            broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
-          }
-          return Effect.succeed(json(result))
-        }),
-      ),
+    return ctx.onStopRun(params.id, { destructive }).pipe(
+      Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, `Failed to stop run ${params.id}`))),
+      Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, `Failed to stop run ${params.id}`))),
+      Effect.flatMap((result) => {
+        if (!result || !result.run) {
+          return Effect.fail(new HttpRouteError({
+            message: "Failed to stop run - no result from orchestrator",
+            code: ErrorCode.EXECUTION_OPERATION_FAILED,
+            status: 500,
+          }))
+        }
+        if (destructive) {
+          broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
+        }
+        return Effect.succeed(json(result))
+      }),
     )
   })
 
@@ -191,16 +187,13 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
       return json(createApiError("Force stop not available", ErrorCode.SERVICE_UNAVAILABLE), 503)
     }
 
-    return runRouteEffect(
-      Effect.tryPromise({
-        try: () => ctx.onStopRun!(params.id, { destructive: true }),
-        catch: (error) => mapOperationError(error, `Failed to force-stop run ${params.id}`),
-      }).pipe(
-        Effect.map((result) => {
-          broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
-          return json(result)
-        }),
-      ),
+    return ctx.onStopRun(params.id, { destructive: true }).pipe(
+      Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, `Failed to force-stop run ${params.id}`))),
+      Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, `Failed to force-stop run ${params.id}`))),
+      Effect.map((result) => {
+        broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
+        return json(result)
+      }),
     )
   })
 
@@ -303,25 +296,30 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
       return json(runs)
     }
 
-    const enrichedRuns = await Promise.all(
-      runs.map(async (run) => {
-        const queueStatus = await ctx.onGetRunQueueStatus!(run.id)
-        return {
-          ...run,
-          queuedTaskCount: queueStatus.queuedTasks,
-          executingTaskCount: queueStatus.executingTasks,
-        }
-      }),
-    )
-
-    return json(enrichedRuns)
+    return Effect.forEach(
+      runs,
+      (run) =>
+        ctx.onGetRunQueueStatus!(run.id).pipe(
+          Effect.map((queueStatus) => ({
+            ...run,
+            queuedTaskCount: queueStatus.queuedTasks,
+            executingTaskCount: queueStatus.executingTasks,
+          })),
+          Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, `Failed to load queue status for run ${run.id}`))),
+          Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, `Failed to load queue status for run ${run.id}`))),
+        ),
+    ).pipe(Effect.map((enrichedRuns) => json(enrichedRuns)))
   })
 
   router.get("/api/slots", async ({ json }) => {
     if (!ctx.onGetSlots) {
       return json({ error: "Slot inspection not available" }, 503)
     }
-    return json(ctx.onGetSlots())
+    return ctx.onGetSlots().pipe(
+      Effect.map((result) => json(result)),
+      Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, "Failed to inspect slots"))),
+      Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, "Failed to inspect slots"))),
+    )
   })
 
   router.get("/api/runs/:id/queue-status", async ({ params, json }) => {
@@ -329,11 +327,10 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
       return json(createApiError("Run queue status not available", ErrorCode.SERVICE_UNAVAILABLE), 503)
     }
 
-    return runRouteEffect(
-      Effect.tryPromise({
-        try: () => ctx.onGetRunQueueStatus!(params.id),
-        catch: (error) => mapOperationError(error, `Failed to load queue status for run ${params.id}`),
-      }).pipe(Effect.map((result) => json(result))),
+    return ctx.onGetRunQueueStatus(params.id).pipe(
+      Effect.map((result) => json(result)),
+      Effect.catchTag("OrchestratorOperationError", (error) => Effect.fail(mapOperationError(error, `Failed to load queue status for run ${params.id}`))),
+      Effect.catchTag("OrchestratorUnavailableError", (error) => Effect.fail(mapOperationError(error, `Failed to load queue status for run ${params.id}`))),
     )
   })
 

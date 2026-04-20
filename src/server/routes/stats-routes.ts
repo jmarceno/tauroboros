@@ -1,13 +1,14 @@
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
 import { isStatsTimeRange } from "../validators.ts"
+import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
 
 export function registerStatsRoutes(router: Router, _ctx: ServerRouteContext): void {
   // GET /api/stats/usage?range=24h|7d|30d|lifetime
   router.get("/api/stats/usage", ({ url, json, db }) => {
     const rangeParam = url.searchParams.get("range") ?? "lifetime"
     if (!isStatsTimeRange(rangeParam)) {
-      return json({ error: "Invalid range. Allowed values: 24h, 7d, 30d, lifetime" }, 400)
+      return json(createApiError("Invalid range. Allowed values: 24h, 7d, 30d, lifetime", ErrorCode.INVALID_RANGE), 400)
     }
     return json(db.getUsageStats(rangeParam))
   })

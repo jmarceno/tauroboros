@@ -1,3 +1,4 @@
+import type { Effect } from "effect"
 import type { PiKanbanDB } from "../db.ts"
 import type { RunQueueStatus, SlotUtilization, WSMessage, WorkflowRun } from "../types.ts"
 import type { InfrastructureSettings } from "../config/settings.ts"
@@ -6,6 +7,7 @@ import type { PiContainerManager } from "../runtime/container-manager.ts"
 import type { SmartRepairService } from "../runtime/smart-repair.ts"
 import type { PlanningSessionManager } from "../runtime/planning-session.ts"
 import type { PackageDefinition } from "../db/types.ts"
+import type { HttpRouteError } from "./route-interpreter.ts"
 
 export interface RouteParams {
   [key: string]: string
@@ -22,25 +24,25 @@ export interface RequestContext {
   sessionUrlFor: (sessionId: string) => string
 }
 
-export type RouteHandler = (ctx: RequestContext) => Promise<Response> | Response
+export type RouteHandler = (ctx: RequestContext) => Promise<Response> | Response | Effect.Effect<Response, HttpRouteError>
 
 // Server callback function types
-export type RunControlFn = (runId: string) => Promise<unknown>
-export type StartFn = () => Promise<unknown>
-export type StartSingleFn = (taskId: string) => Promise<WorkflowRun | null>
-export type StartGroupFn = (groupId: string) => Promise<WorkflowRun>
-export type StopFn = () => Promise<unknown>
+export type RunControlFn = (runId: string) => Effect.Effect<unknown>
+export type StartFn = () => Effect.Effect<unknown>
+export type StartSingleFn = (taskId: string) => Effect.Effect<WorkflowRun | null>
+export type StartGroupFn = (groupId: string) => Effect.Effect<WorkflowRun>
+export type StopFn = () => Effect.Effect<unknown>
 export type StopRunFn = (
   runId: string,
   options?: { destructive?: boolean },
-) => Promise<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>
-export type GetSlotsFn = () => SlotUtilization
-export type GetRunQueueStatusFn = (runId: string) => Promise<RunQueueStatus> | RunQueueStatus
+) => Effect.Effect<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>
+export type GetSlotsFn = () => Effect.Effect<SlotUtilization>
+export type GetRunQueueStatusFn = (runId: string) => Effect.Effect<RunQueueStatus>
 export type ManualSelfHealRecoverFn = (
   taskId: string,
   reportId: string,
   action: "restart_task" | "keep_failed",
-) => Promise<{ ok: boolean; message: string }>
+) => Effect.Effect<{ ok: boolean; message: string }>
 
 /**
  * Server-level dependency context passed to route registration functions.

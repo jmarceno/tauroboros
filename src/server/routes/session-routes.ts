@@ -1,16 +1,19 @@
+import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
+import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
+import { badRequestError, internalRouteError, runRouteEffect } from "../route-interpreter.ts"
 
 export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): void {
   router.get("/api/sessions/:id", ({ params, json, db }) => {
     const session = db.getWorkflowSession(params.id)
-    if (!session) return json({ error: "Session not found" }, 404)
+    if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
     return json(session)
   })
 
   router.get("/api/sessions/:id/messages", ({ params, url, json, db }) => {
     const session = db.getWorkflowSession(params.id)
-    if (!session) return json({ error: "Session not found" }, 404)
+    if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
 
     const limit = Number(url.searchParams.get("limit") ?? 500)
     const offset = Number(url.searchParams.get("offset") ?? 0)
@@ -19,13 +22,13 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
 
   router.get("/api/sessions/:id/timeline", ({ params, json, db }) => {
     const session = db.getWorkflowSession(params.id)
-    if (!session) return json({ error: "Session not found" }, 404)
+    if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
     return json(db.getSessionTimelineEntries(params.id))
   })
 
   router.get("/api/sessions/:id/usage", ({ params, json, db }) => {
     const session = db.getWorkflowSession(params.id)
-    if (!session) return json({ error: "Session not found" }, 404)
+    if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
     return json(db.getSessionUsageRollup(params.id))
   })
 
@@ -34,14 +37,14 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
 
   router.get("/api/tasks/:id/last-update", ({ params, json, db }) => {
     const task = db.getTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
+    if (!task) return json(createApiError("Task not found", ErrorCode.TASK_NOT_FOUND), 404)
     const lastUpdateAt = db.getTaskLastMessageTimestamp(params.id)
     return json({ taskId: params.id, lastUpdateAt })
   })
 
   router.post("/api/pi/sessions/:id/events", async ({ params, req, json, broadcast, db, sessionUrlFor }) => {
     const session = db.getWorkflowSession(params.id)
-    if (!session) return json({ error: "Session not found" }, 404)
+    if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
 
     const body = await req.json()
     const eventType = String(body?.type ?? "")
@@ -113,6 +116,6 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
       return json({ ok: true })
     }
 
-    return json({ error: "Unsupported event type" }, 400)
+    return Effect.fail(badRequestError("Unsupported event type", ErrorCode.UNSUPPORTED_EVENT_TYPE))
   })
 }

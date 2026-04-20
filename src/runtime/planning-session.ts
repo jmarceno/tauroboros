@@ -184,14 +184,13 @@ export class PlanningSession {
       ).pipe(
         Effect.flatMap((proc) =>
           Effect.gen(function* () {
-            yield* Effect.try({
-              try: () => proc.start(),
-              catch: (cause) => new PlanningSessionError({
+            yield* proc.start().pipe(
+              Effect.mapError((cause) => new PlanningSessionError({
                 operation: "start",
-                message: cause instanceof Error ? cause.message : String(cause),
+                message: cause.message,
                 cause,
-              }),
-            })
+              })),
+            )
 
             self.process = proc
 
@@ -791,14 +790,13 @@ export class PlanningSession {
       ).pipe(
         Effect.flatMap((proc) =>
           Effect.gen(function* () {
-            yield* Effect.try({
-              try: () => proc.start(),
-              catch: (cause) => new PlanningSessionError({
+            yield* proc.start().pipe(
+              Effect.mapError((cause) => new PlanningSessionError({
                 operation: "reconnect",
-                message: cause instanceof Error ? cause.message : String(cause),
+                message: cause.message,
                 cause,
-              }),
-            })
+              })),
+            )
 
             self.process = proc
 

@@ -7,6 +7,7 @@ import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "..
 import { PiKanbanDB } from "../src/db.ts"
 import { PiKanbanServer } from "../src/server/server.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
+import { Effect } from "effect"
 
 function createTestSettings(mockPiBin: string): InfrastructureSettings {
   return {
@@ -110,12 +111,12 @@ describe("Plan mode flows", () => {
     const server = new PiKanbanServer(db, {
       port: 0,
       settings,
-      onStart: async () => await orchestrator.startAll(),
-      onStartSingle: async (taskId) => await orchestrator.startSingle(taskId),
-      onStop: async () => {
+      onStart: () => Effect.tryPromise(() => orchestrator.startAll()),
+      onStartSingle: (taskId) => Effect.tryPromise(() => orchestrator.startSingle(taskId)),
+      onStop: () => Effect.tryPromise(async () => {
         await orchestrator.stop()
         return { ok: true }
-      },
+      }),
     })
 
     const port = await server.start(0)

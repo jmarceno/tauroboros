@@ -50,28 +50,25 @@ export const runStartupRecoveryEffect = Effect.fn("runStartupRecoveryEffect")(
 
   const staleTasks = db.getTasks().filter(needsTaskRecovery)
   yield* Effect.forEach(staleTasks, (task) =>
-    Effect.try({
-      try: () => {
-        let decision: SmartRepairDecision
-        if (task.status === "executing" && (!task.worktreeDir || !existsSync(task.worktreeDir))) {
-          decision = {
-            action: "reset_backlog",
-            reason: "Startup recovery: task was executing without a valid worktree directory",
-          }
-        } else {
-          const deterministic = chooseDeterministicRepairAction(task)
-          decision = {
-            action: deterministic.action,
-            reason: `Startup recovery: ${deterministic.reason}`,
-          }
+    Effect.gen(function* () {
+      let decision: SmartRepairDecision
+      if (task.status === "executing" && (!task.worktreeDir || !existsSync(task.worktreeDir))) {
+        decision = {
+          action: "reset_backlog",
+          reason: "Startup recovery: task was executing without a valid worktree directory",
         }
+      } else {
+        const deterministic = chooseDeterministicRepairAction(task)
+        decision = {
+          action: deterministic.action,
+          reason: `Startup recovery: ${deterministic.reason}`,
+        }
+      }
 
-        const updated = repair.applyAction(task.id, decision)
-        broadcast({ type: "task_updated", payload: updated })
-      },
-      catch: (error) => String(error),
+      const updated = yield* repair.applyAction(task.id, decision)
+      broadcast({ type: "task_updated", payload: updated })
+      yield* Effect.logInfo(`[startup-recovery] Recovered task ${task.id}`)
     }).pipe(
-      Effect.tap(() => Effect.logInfo(`[startup-recovery] Recovered task ${task.id}`)),
       Effect.catchAll((error) => Effect.logError(`[startup-recovery] Failed to recover task ${task.id}: ${error}`)),
     ),
   { concurrency: 1 })

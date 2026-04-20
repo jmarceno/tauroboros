@@ -125,49 +125,59 @@ export class PiRpcProcess {
     }
   }
 
-  start(): void {
-    if (this.proc) return
+  start(): Effect.Effect<void, PiProcessError> {
+    return Effect.gen(this, function* () {
+      if (this.proc) return yield* Effect.void
 
-    const piBin = this.settings?.workflow?.container?.piBin?.trim() || "pi"
-    const configuredArgs = this.settings?.workflow?.container?.piArgs
-      ? parseArgs(this.settings.workflow.container.piArgs)
-      : ["--mode", "rpc"]
+      const piBin = this.settings?.workflow?.container?.piBin?.trim() || "pi"
+      const configuredArgs = this.settings?.workflow?.container?.piArgs
+        ? parseArgs(this.settings.workflow.container.piArgs)
+        : ["--mode", "rpc"]
 
-    // Add system prompt if provided
-    const args = [...configuredArgs]
-    if (this.systemPrompt) {
-      args.push("--system-prompt", this.systemPrompt)
-    }
-
-    // Add session file if available for conversation history persistence
-    if (this.piSessionFile) {
-      // Ensure the session directory exists
-      try {
-        mkdirSync(dirname(this.piSessionFile), { recursive: true })
-      } catch {
-        // Directory may already exist, ignore error
+      const args = [...configuredArgs]
+      if (this.systemPrompt) {
+        args.push("--system-prompt", this.systemPrompt)
       }
-      args.push("--session", this.piSessionFile)
-    }
 
-    this.proc = Bun.spawn({
-      cmd: [piBin, ...args],
-      cwd: this.session.cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "pipe",
-      env: { ...process.env, PI_CODING_AGENT: "true" },
+      if (this.piSessionFile) {
+        const sessionFile = this.piSessionFile
+        yield* Effect.try({
+          try: () => mkdirSync(dirname(sessionFile), { recursive: true }),
+          catch: (cause) => new PiProcessError({
+            operation: "start",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+        })
+        args.push("--session", sessionFile)
+      }
+
+      this.proc = Bun.spawn({
+        cmd: [piBin, ...args],
+        cwd: this.session.cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "pipe",
+        env: { ...process.env, PI_CODING_AGENT: "true" },
+      })
+
+      yield* Effect.try({
+        try: () => this.db.updateWorkflowSession(this.session.id, {
+          status: "active",
+          processPid: this.proc!.pid,
+        }),
+        catch: (cause) => new PiProcessError({
+          operation: "start",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
+
+      this.abortController = new AbortController()
+
+      this.captureStdout()
+      this.captureStderr()
     })
-
-    this.db.updateWorkflowSession(this.session.id, {
-      status: "active",
-      processPid: this.proc.pid,
-    })
-
-    this.abortController = new AbortController()
-
-    this.captureStdout()
-    this.captureStderr()
   }
 
   /**

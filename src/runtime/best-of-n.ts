@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import {
@@ -21,6 +21,13 @@ import { parseStrictJsonObject } from "./strict-json.ts"
 import { PiSessionManager } from "./session-manager.ts"
 import { getChangedFiles, getDiffStats, resolveTargetBranch, WorktreeLifecycle } from "./worktree.ts"
 import type { PiContainerManager } from "./container-manager.ts"
+
+export class BestOfNError extends Schema.TaggedError<BestOfNError>()("BestOfNError", {
+  operation: Schema.String,
+  message: Schema.String,
+  taskId: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -154,10 +161,13 @@ export class BestOfNRunner {
 
   async run(task: Task, options: Options): Promise<void> {
     if (!task.bestOfNConfig) {
-      throw new Error(`Task ${task.id} has executionStrategy=best_of_n but missing bestOfNConfig`)
+      throw new BestOfNError({
+        operation: "run",
+        message: `Task ${task.id} has executionStrategy=best_of_n but missing bestOfNConfig`,
+        taskId: task.id,
+      })
     }
 
-    // Resolve target branch upfront to use as baseRef for all worktrees
     const targetBranch = await resolveTargetBranch({
       baseDirectory: this.deps.projectRoot,
       taskBranch: task.branch,
@@ -190,7 +200,11 @@ export class BestOfNRunner {
 
     const successfulWorkers = this.deps.db.getTaskRunsByPhase(task.id, "worker").filter((run) => run.status === "done")
     if (successfulWorkers.length < task.bestOfNConfig.minSuccessfulWorkers) {
-      throw new Error(`Best-of-n failed: ${successfulWorkers.length} successful workers < required ${task.bestOfNConfig.minSuccessfulWorkers}`)
+      throw new BestOfNError({
+        operation: "run",
+        message: `Best-of-n failed: ${successfulWorkers.length} successful workers < required ${task.bestOfNConfig.minSuccessfulWorkers}`,
+        taskId: task.id,
+      })
     }
 
     const candidates = this.deps.db.getTaskCandidates(task.id)
