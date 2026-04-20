@@ -1,3 +1,4 @@
+import type { ServerWebSocket } from "bun"
 import type { WSMessage } from "../types.ts"
 
 export class WebSocketHub {

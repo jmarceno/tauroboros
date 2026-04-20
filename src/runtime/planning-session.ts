@@ -369,8 +369,7 @@ export class PlanningSession {
         const msgEventType = msgEvent?.type as string
 
         if (!msgEventType) return
-
-        // Initialize streaming state if needed
+        if (!msgEvent) return // Guards TS narrowing; msgEvent is defined when msgEventType is
         if (!this.streamingState) {
           this.messageSeq++
           this.streamingState = {
@@ -394,7 +393,7 @@ export class PlanningSession {
             state.hasThinking = true
             state.thinkingBuffer += delta
 
-            const thinkingMessage: SessionMessage = {
+            const thinkingMessage = {
               id: state.seq,
               seq: state.seq,
               messageId: state.messageId,
@@ -410,7 +409,7 @@ export class PlanningSession {
                 streaming: true,
                 isThinking: true
               },
-            }
+            } as unknown as SessionMessage
             this.onMessage?.(thinkingMessage)
           }
         }
@@ -421,7 +420,7 @@ export class PlanningSession {
             state.hasText = true
             state.textBuffer += delta
 
-            const textMessage: SessionMessage = {
+            const textMessage = {
               id: state.seq + 1, // Different ID for text vs thinking
               seq: state.seq + 1,
               messageId: state.messageId + "-text",
@@ -437,7 +436,7 @@ export class PlanningSession {
                 streaming: true,
                 isThinking: false
               },
-            }
+            } as unknown as SessionMessage
             this.onMessage?.(textMessage)
           }
         }

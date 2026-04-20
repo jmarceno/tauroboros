@@ -111,7 +111,7 @@ function aggregateReviewerOutputs(outputs: ReviewerOutput[]): AggregatedReviewRe
   }
 }
 
-function expandSlots(slots: Array<{ model: string; count: number; taskSuffix?: string }>): Array<{
+function expandSlots(slots: Array<{ model: string; count: number; taskSuffix?: string | null }>): Array<{
   slotIndex: number
   attemptIndex: number
   model: string
@@ -121,7 +121,7 @@ function expandSlots(slots: Array<{ model: string; count: number; taskSuffix?: s
   let slotIndex = 0
   for (const slot of slots) {
     for (let attemptIndex = 0; attemptIndex < slot.count; attemptIndex++) {
-      expanded.push({ slotIndex, attemptIndex, model: slot.model, taskSuffix: slot.taskSuffix })
+      expanded.push({ slotIndex, attemptIndex, model: slot.model, taskSuffix: slot.taskSuffix ?? undefined })
       slotIndex++
     }
   }

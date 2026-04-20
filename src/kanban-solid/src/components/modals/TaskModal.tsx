@@ -77,12 +77,15 @@ export function TaskModal(props: TaskModalProps) {
   const isCreate = () => props.mode === 'create'
   const isEdit = () => props.mode === 'edit'
   const showBonConfig = () => executionStrategy() === 'best_of_n'
-  const allowsAutoDeploy = createMemo(() => {
+  const supportsAutoDeploySettings = createMemo(() => {
     if (isEdit()) {
-      return sourceTask()?.status === 'template'
+      return sourceTask() !== null
     }
     return isCreate() && props.createStatus === 'template'
   })
+  const willConvertToTemplateForAutoDeploy = createMemo(() =>
+    isEdit() && sourceTask()?.status !== 'template' && autoDeploy()
+  )
   const isAwaitingSourceTask = createMemo(() => {
     if (isEdit() && props.taskId) return !existingTask()
     if (isDeploy() && props.seedTaskId) return !seedTask()
@@ -256,7 +259,7 @@ export function TaskModal(props: TaskModalProps) {
       return
     }
 
-    if (allowsAutoDeploy() && autoDeploy() && !autoDeployCondition()) {
+    if (supportsAutoDeploySettings() && autoDeploy() && !autoDeployCondition()) {
       uiStore.showToast('Select an auto-deploy condition', 'error')
       return
     }
@@ -289,8 +292,8 @@ export function TaskModal(props: TaskModalProps) {
         review: review(),
         codeStyleReview: codeStyleReview(),
         autoCommit: autoCommit(),
-        autoDeploy: allowsAutoDeploy() ? autoDeploy() : false,
-        autoDeployCondition: allowsAutoDeploy() && autoDeploy() ? autoDeployCondition() : null,
+        autoDeploy: supportsAutoDeploySettings() ? autoDeploy() : false,
+        autoDeployCondition: supportsAutoDeploySettings() && autoDeploy() ? autoDeployCondition() : null,
         deleteWorktree: deleteWorktree(),
         skipPermissionAsking: skipPermissionAsking(),
         requirements: requirements(),
@@ -320,6 +323,10 @@ export function TaskModal(props: TaskModalProps) {
           minSuccessfulWorkers: bonMinSuccessful(),
           verificationCommand: bonVerificationCmd().trim() || undefined,
         }
+      }
+
+      if (willConvertToTemplateForAutoDeploy()) {
+        taskData.status = 'template'
       }
 
       if (isEdit() && props.taskId) {
@@ -709,14 +716,14 @@ export function TaskModal(props: TaskModalProps) {
                 />
                 <span>Auto-commit</span>
               </label>
-              <Show when={allowsAutoDeploy()}>
+              <Show when={supportsAutoDeploySettings()}>
                 <label class="checkbox-item">
                   <input
                     type="checkbox"
                     checked={autoDeploy()}
                     onChange={(e) => setAutoDeploy(e.currentTarget.checked)}
                   />
-                  <span>Auto Deploy</span>
+                  <span>{isEdit() && sourceTask()?.status !== 'template' ? 'Auto Deploy (convert to template on save)' : 'Auto Deploy'}</span>
                 </label>
               </Show>
               <label class="checkbox-item">
@@ -736,7 +743,7 @@ export function TaskModal(props: TaskModalProps) {
                 <span>Skip Permission Asking</span>
               </label>
             </div>
-            <Show when={allowsAutoDeploy() && autoDeploy()}>
+            <Show when={supportsAutoDeploySettings() && autoDeploy()}>
               <div class="form-group mt-2">
                 <label>Auto Deploy Condition</label>
                 <select
@@ -749,6 +756,11 @@ export function TaskModal(props: TaskModalProps) {
                   <option value="workflow_done">Workflow done</option>
                   <option value="workflow_failed">Workflow failed</option>
                 </select>
+                <Show when={willConvertToTemplateForAutoDeploy()}>
+                  <div class="text-xs text-dark-text-muted mt-1">
+                    Saving will move this task to Templates and enable Auto Deploy.
+                  </div>
+                </Show>
               </div>
             </Show>
           </Show>

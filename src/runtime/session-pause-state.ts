@@ -1,5 +1,6 @@
 import type { PiSessionKind } from "../db/types.ts"
 import type { PiKanbanDB } from "../db.ts"
+import type { RunExecutionPhase } from "../types.ts"
 
 /**
  * Context captured when pausing a session for richer resume
@@ -199,7 +200,7 @@ export interface PausedRunState {
   targetTaskId: string | null
   pausedAt: number
   sessions: PausedSessionState[]
-  executionPhase: "not_started" | "planning" | "executing" | "reviewing" | "committing"
+  executionPhase: RunExecutionPhase
 }
 
 // Legacy file-based imports - kept for backward compatibility during migration

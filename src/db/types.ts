@@ -480,6 +480,7 @@ export interface ContainerProfile {
   description: string
   image: string
   dockerfileTemplate: string
+  packages: Array<{ name: string; category: string }>
 }
 
 export interface PackageValidationResult {

@@ -11,6 +11,8 @@ export type ThinkingLevel = "default" | "low" | "medium" | "high"
 
 export type ExecutionPhase = "not_started" | "plan_complete_waiting_approval" | "plan_revision_pending" | "implementation_pending" | "implementation_done"
 
+export type RunExecutionPhase = "not_started" | "planning" | "executing" | "reviewing" | "committing"
+
 export type ExecutionStrategy = "standard" | "best_of_n"
 
 export type BestOfNSubstage =

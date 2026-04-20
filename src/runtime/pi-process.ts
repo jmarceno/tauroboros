@@ -557,4 +557,10 @@ export class PiRpcProcess {
       if (!line) continue
     }
   }
+
+  private persistStderr(content: string): void {
+    if (this.onOutput) {
+      this.onOutput(`[stderr] ${content}`)
+    }
+  }
 }

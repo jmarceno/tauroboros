@@ -212,6 +212,11 @@ export async function main(): Promise<void> {
   const actualPort = await server.start(port)
 
   console.log(`[tauroboros] server started on http://0.0.0.0:${actualPort}`)
+  const devPort = process.env.DEV_PORT?.trim()
+  if (devPort) {
+    console.log(`[tauroboros] frontend dev server (hot reload) is expected at http://0.0.0.0:${devPort}`)
+    console.log(`[tauroboros] open the frontend URL above for UI changes; backend API remains on http://0.0.0.0:${actualPort}`)
+  }
   // Persist the assigned port to settings.json for subsequent runs
   if (actualPort !== settings.workflow.server.port) {
     settings.workflow.server.port = actualPort

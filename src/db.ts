@@ -11,6 +11,7 @@ import {
   type CreateSessionMessageInput,
   type ExecutionPhase,
   type ExecutionStrategy,
+  type RunExecutionPhase,
   type MessageType,
   type Options,
   type SessionMessage,
@@ -28,7 +29,15 @@ import {
 } from "./types.ts"
 
 export type TaskStatusChangeListener = (taskId: string, oldStatus: TaskStatus, newStatus: TaskStatus) => void
-import { runMigrations, type Migration } from "./db/migrations.ts"
+import { runMigrations, MIGRATIONS, type Migration } from "./db/migrations.ts"
+import {
+  getUsageStats as _getUsageStats,
+  getTaskStats as _getTaskStats,
+  getModelUsageByResponsibility as _getModelUsageByResponsibility,
+  getAverageTaskDuration as _getAverageTaskDuration,
+  getHourlyUsageTimeSeries as _getHourlyUsageTimeSeries,
+  getDailyUsageTimeSeries as _getDailyUsageTimeSeries,
+} from "./db/stats-repository.ts"
 import type {
   CreateTaskCandidateInput,
   CreateTaskRunInput,
@@ -486,6 +495,36 @@ function asExecutionPhase(value: unknown): ExecutionPhase {
   throw new Error(`Invalid execution phase: ${JSON.stringify(value)}. Expected one of: ${EXECUTION_PHASES.join(", ")}.`)
 }
 
+const RUN_EXECUTION_PHASES: RunExecutionPhase[] = ["not_started", "planning", "executing", "reviewing", "committing"]
+
+function asRunExecutionPhase(value: unknown): RunExecutionPhase {
+  if (typeof value !== "string") {
+    throw new Error(`Invalid run execution phase: ${JSON.stringify(value)}. Expected a string phase value.`)
+  }
+
+  if (RUN_EXECUTION_PHASES.includes(value as RunExecutionPhase)) {
+    return value as RunExecutionPhase
+  }
+
+  // Historical rows in paused_run_states may contain task-level execution phases.
+  // Map them explicitly to the run-level pause lifecycle.
+  const legacyMappedPhase: Record<ExecutionPhase, RunExecutionPhase> = {
+    not_started: "planning",
+    plan_complete_waiting_approval: "planning",
+    plan_revision_pending: "planning",
+    implementation_pending: "executing",
+    implementation_done: "reviewing",
+  }
+
+  if (value in legacyMappedPhase) {
+    return legacyMappedPhase[value as ExecutionPhase]
+  }
+
+  throw new Error(
+    `Invalid run execution phase: ${JSON.stringify(value)}. Expected one of: ${RUN_EXECUTION_PHASES.join(", ")} or a known legacy task phase.`,
+  )
+}
+
 const EXECUTION_STRATEGIES: ExecutionStrategy[] = ["best_of_n", "standard"]
 
 function isExecutionStrategy(value: unknown): value is ExecutionStrategy {
@@ -623,44 +662,6 @@ function pickString(...values: unknown[]): string | null {
     if (typeof value === "string" && value.length > 0) return value
   }
   return null
-}
-
-const SECONDS_IN_DAY = 86400
-
-// Query result row interfaces for type-safe database access
-interface TokenCostRow {
-  total_tokens: number | null
-  total_cost: number | null
-}
-
-interface CountRow {
-  cnt: number | null
-}
-
-interface AvgReviewsRow {
-  avg_reviews: number | null
-}
-
-interface ModelUsageRow {
-  session_kind: string
-  model: string
-  cnt: number | null
-}
-
-interface AvgDurationRow {
-  avg_duration: number | null
-}
-
-interface HourlyUsageRow {
-  hour_bucket: number
-  tokens: number | null
-  cost: number | null
-}
-
-interface DailyUsageRow {
-  date_str: string
-  tokens: number | null
-  cost: number | null
 }
 
 const SESSION_MESSAGE_SELECT = `
@@ -1138,646 +1139,6 @@ When suggesting packages, categorize them appropriately:
 ## Response Style
 
 Be conversational but focused. Don't overwhelm with technical details unless asked. Use clear, concise explanations.`
-
-const MIGRATIONS: Migration[] = [
-  {
-    version: 1,
-    description: "Initial Pi workflow storage schema",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        idx INTEGER NOT NULL DEFAULT 0,
-        prompt TEXT NOT NULL,
-        branch TEXT NOT NULL DEFAULT '',
-        plan_model TEXT NOT NULL DEFAULT 'default',
-        execution_model TEXT NOT NULL DEFAULT 'default',
-        planmode INTEGER NOT NULL DEFAULT 0,
-        auto_approve_plan INTEGER NOT NULL DEFAULT 0,
-        review INTEGER NOT NULL DEFAULT 1,
-        auto_commit INTEGER NOT NULL DEFAULT 1,
-        delete_worktree INTEGER NOT NULL DEFAULT 1,
-        status TEXT NOT NULL DEFAULT 'backlog',
-        requirements TEXT NOT NULL DEFAULT '[]',
-        agent_output TEXT NOT NULL DEFAULT '',
-        review_count INTEGER NOT NULL DEFAULT 0,
-        json_parse_retry_count INTEGER NOT NULL DEFAULT 0,
-        session_id TEXT,
-        session_url TEXT,
-        worktree_dir TEXT,
-        error_message TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        completed_at INTEGER,
-        thinking_level TEXT NOT NULL DEFAULT 'default',
-        execution_phase TEXT NOT NULL DEFAULT 'not_started',
-        awaiting_plan_approval INTEGER NOT NULL DEFAULT 0,
-        plan_revision_count INTEGER NOT NULL DEFAULT 0,
-        execution_strategy TEXT NOT NULL DEFAULT 'standard',
-        best_of_n_config TEXT,
-        best_of_n_substage TEXT NOT NULL DEFAULT 'idle',
-        skip_permission_asking INTEGER NOT NULL DEFAULT 1,
-        max_review_runs_override INTEGER,
-        smart_repair_hints TEXT,
-        review_activity TEXT NOT NULL DEFAULT 'idle',
-        is_archived INTEGER NOT NULL DEFAULT 0,
-        archived_at INTEGER
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);`,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_idx ON tasks(idx);`,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_status_idx ON tasks(status, idx);`,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_execution_strategy ON tasks(execution_strategy);`,
-      `
-      CREATE TABLE IF NOT EXISTS workflow_runs (
-        id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'running',
-        display_name TEXT NOT NULL DEFAULT '',
-        target_task_id TEXT,
-        task_order_json TEXT NOT NULL DEFAULT '[]',
-        current_task_id TEXT,
-        current_task_index INTEGER NOT NULL DEFAULT 0,
-        pause_requested INTEGER NOT NULL DEFAULT 0,
-        stop_requested INTEGER NOT NULL DEFAULT 0,
-        error_message TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        started_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        finished_at INTEGER,
-        is_archived INTEGER NOT NULL DEFAULT 0,
-        archived_at INTEGER,
-        color TEXT NOT NULL DEFAULT '#888888'
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);`,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_runs_current_task_id ON workflow_runs(current_task_id);`,
-      `
-      CREATE TABLE IF NOT EXISTS workflow_sessions (
-        id TEXT PRIMARY KEY,
-        task_id TEXT,
-        task_run_id TEXT,
-        session_kind TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'starting',
-        cwd TEXT NOT NULL,
-        worktree_dir TEXT,
-        branch TEXT,
-        pi_session_id TEXT,
-        pi_session_file TEXT,
-        process_pid INTEGER,
-        model TEXT NOT NULL DEFAULT 'default',
-        thinking_level TEXT NOT NULL DEFAULT 'default',
-        started_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        finished_at INTEGER,
-        exit_code INTEGER,
-        exit_signal TEXT,
-        error_message TEXT,
-        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE SET NULL
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_task_id ON workflow_sessions(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_status ON workflow_sessions(status);`,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_task_status ON workflow_sessions(task_id, status);`,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_pi_session ON workflow_sessions(pi_session_id);`,
-      `
-      CREATE TABLE IF NOT EXISTS session_messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        message_id TEXT,
-        session_id TEXT NOT NULL,
-        task_id TEXT,
-        task_run_id TEXT,
-        timestamp INTEGER NOT NULL,
-        role TEXT NOT NULL,
-        message_type TEXT NOT NULL,
-        content_json TEXT NOT NULL,
-        model_provider TEXT,
-        model_id TEXT,
-        agent_name TEXT,
-        prompt_tokens INTEGER,
-        completion_tokens INTEGER,
-        total_tokens INTEGER,
-        tool_name TEXT,
-        tool_args_json TEXT,
-        tool_result_json TEXT,
-        tool_status TEXT,
-        edit_diff TEXT,
-        edit_file_path TEXT,
-        session_status TEXT,
-        workflow_phase TEXT,
-        raw_event_json TEXT,
-        FOREIGN KEY(session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE,
-        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE SET NULL
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_session_messages_session_id ON session_messages(session_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_session_messages_task_id ON session_messages(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_session_messages_timestamp ON session_messages(timestamp);`,
-      `CREATE INDEX IF NOT EXISTS idx_session_messages_session_timestamp ON session_messages(session_id, timestamp);`,
-      `
-      CREATE TABLE IF NOT EXISTS options (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      )
-      `,
-      `
-      CREATE TABLE IF NOT EXISTS prompt_templates (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        key TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '',
-        template_text TEXT NOT NULL,
-        variables_json TEXT NOT NULL DEFAULT '[]',
-        is_active INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_prompt_templates_key ON prompt_templates(key);`,
-      `CREATE INDEX IF NOT EXISTS idx_prompt_templates_active ON prompt_templates(is_active);`,
-      `
-      CREATE TABLE IF NOT EXISTS prompt_template_versions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        prompt_template_id INTEGER NOT NULL,
-        version INTEGER NOT NULL,
-        template_text TEXT NOT NULL,
-        variables_json TEXT NOT NULL DEFAULT '[]',
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        FOREIGN KEY(prompt_template_id) REFERENCES prompt_templates(id) ON DELETE CASCADE,
-        UNIQUE(prompt_template_id, version)
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_prompt_template_versions_template_id ON prompt_template_versions(prompt_template_id);`,
-    ],
-  },
-  {
-    version: 2,
-    description: "Add task_runs and task_candidates for best-of-n APIs",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS task_runs (
-        id TEXT PRIMARY KEY,
-        task_id TEXT NOT NULL,
-        phase TEXT NOT NULL,
-        slot_index INTEGER NOT NULL DEFAULT 0,
-        attempt_index INTEGER NOT NULL DEFAULT 0,
-        model TEXT NOT NULL,
-        task_suffix TEXT,
-        status TEXT NOT NULL DEFAULT 'pending',
-        session_id TEXT,
-        session_url TEXT,
-        worktree_dir TEXT,
-        summary TEXT,
-        error_message TEXT,
-        candidate_id TEXT,
-        metadata_json TEXT NOT NULL DEFAULT '{}',
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        completed_at INTEGER,
-        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_task_runs_task_id ON task_runs(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_runs_phase ON task_runs(phase);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_runs_status ON task_runs(status);`,
-      `
-      CREATE TABLE IF NOT EXISTS task_candidates (
-        id TEXT PRIMARY KEY,
-        task_id TEXT NOT NULL,
-        worker_run_id TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'available',
-        changed_files_json TEXT NOT NULL DEFAULT '[]',
-        diff_stats_json TEXT NOT NULL DEFAULT '{}',
-        verification_json TEXT NOT NULL DEFAULT '{}',
-        summary TEXT,
-        error_message TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-        FOREIGN KEY(worker_run_id) REFERENCES task_runs(id) ON DELETE CASCADE
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_task_candidates_task_id ON task_candidates(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_candidates_worker_run_id ON task_candidates(worker_run_id);`,
-    ],
-  },
-  {
-    version: 3,
-    description: "Rebuild session_messages into pi-native event schema",
-    statements: [
-      `
-      CREATE TABLE session_messages_v3 (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        seq INTEGER NOT NULL,
-        message_id TEXT,
-        session_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        role TEXT NOT NULL,
-        event_name TEXT,
-        message_type TEXT NOT NULL,
-        content_json TEXT NOT NULL,
-        model_provider TEXT,
-        model_id TEXT,
-        agent_name TEXT,
-        prompt_tokens INTEGER,
-        completion_tokens INTEGER,
-        cache_read_tokens INTEGER,
-        cache_write_tokens INTEGER,
-        total_tokens INTEGER,
-        cost_json TEXT,
-        cost_total REAL,
-        tool_call_id TEXT,
-        tool_name TEXT,
-        tool_args_json TEXT,
-        tool_result_json TEXT,
-        tool_status TEXT,
-        edit_diff TEXT,
-        edit_file_path TEXT,
-        session_status TEXT,
-        workflow_phase TEXT,
-        raw_event_json TEXT,
-        FOREIGN KEY(session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE,
-        UNIQUE(session_id, seq)
-      )
-      `,
-      `
-      INSERT INTO session_messages_v3 (
-        id,
-        seq,
-        message_id,
-        session_id,
-        timestamp,
-        role,
-        event_name,
-        message_type,
-        content_json,
-        model_provider,
-        model_id,
-        agent_name,
-        prompt_tokens,
-        completion_tokens,
-        cache_read_tokens,
-        cache_write_tokens,
-        total_tokens,
-        cost_json,
-        cost_total,
-        tool_call_id,
-        tool_name,
-        tool_args_json,
-        tool_result_json,
-        tool_status,
-        edit_diff,
-        edit_file_path,
-        session_status,
-        workflow_phase,
-        raw_event_json
-      )
-      SELECT
-        id,
-        ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY timestamp ASC, id ASC),
-        message_id,
-        session_id,
-        timestamp,
-        role,
-        NULL,
-        message_type,
-        content_json,
-        model_provider,
-        model_id,
-        agent_name,
-        prompt_tokens,
-        completion_tokens,
-        NULL,
-        NULL,
-        total_tokens,
-        NULL,
-        NULL,
-        NULL,
-        tool_name,
-        tool_args_json,
-        tool_result_json,
-        tool_status,
-        edit_diff,
-        edit_file_path,
-        session_status,
-        workflow_phase,
-        raw_event_json
-      FROM session_messages
-      `,
-      `DROP TABLE session_messages;`,
-      `ALTER TABLE session_messages_v3 RENAME TO session_messages;`,
-      `CREATE INDEX idx_session_messages_session_id ON session_messages(session_id);`,
-      `CREATE INDEX idx_session_messages_timestamp ON session_messages(timestamp);`,
-      `CREATE INDEX idx_session_messages_session_timestamp ON session_messages(session_id, timestamp);`,
-      `CREATE INDEX idx_session_messages_session_seq ON session_messages(session_id, seq);`,
-      `CREATE INDEX idx_session_messages_event_name ON session_messages(event_name);`,
-      `CREATE INDEX idx_session_messages_tool_call_id ON session_messages(tool_call_id);`,
-    ],
-  },
-  {
-    version: 4,
-    description: "Add planning_prompts table for customizable planning agent system prompt",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS planning_prompts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        key TEXT UNIQUE NOT NULL DEFAULT 'default',
-        name TEXT NOT NULL DEFAULT 'Default Planning Prompt',
-        description TEXT NOT NULL DEFAULT 'System prompt for the planning assistant agent',
-        prompt_text TEXT NOT NULL,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_planning_prompts_key ON planning_prompts(key);`,
-      `CREATE INDEX IF NOT EXISTS idx_planning_prompts_active ON planning_prompts(is_active);`,
-      `
-      CREATE TABLE IF NOT EXISTS planning_prompt_versions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        planning_prompt_id INTEGER NOT NULL,
-        version INTEGER NOT NULL,
-        prompt_text TEXT NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        FOREIGN KEY(planning_prompt_id) REFERENCES planning_prompts(id) ON DELETE CASCADE,
-        UNIQUE(planning_prompt_id, version)
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_planning_prompt_versions_prompt_id ON planning_prompt_versions(planning_prompt_id);`,
-    ],
-  },
-  {
-    version: 5,
-    description: "Add container_packages and container_builds tables for customizable container image system",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS container_packages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        category TEXT NOT NULL,
-        version_constraint TEXT,
-        install_order INTEGER DEFAULT 0,
-        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        source TEXT DEFAULT 'manual'
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_container_packages_category ON container_packages(category);`,
-      `CREATE INDEX IF NOT EXISTS idx_container_packages_order ON container_packages(install_order);`,
-      `
-      CREATE TABLE IF NOT EXISTS container_builds (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        status TEXT NOT NULL,
-        started_at INTEGER,
-        completed_at INTEGER,
-        packages_hash TEXT,
-        error_message TEXT,
-        image_tag TEXT
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_container_builds_status ON container_builds(status);`,
-    ],
-  },
-  {
-    version: 6,
-    description: "Add per-model thinking level columns to tasks and options",
-    statements: [
-      // Add per-model thinking level columns to tasks table
-      `ALTER TABLE tasks ADD COLUMN plan_thinking_level TEXT NOT NULL DEFAULT 'default';`,
-      `ALTER TABLE tasks ADD COLUMN execution_thinking_level TEXT NOT NULL DEFAULT 'default';`,
-      // Add per-model thinking level columns to options
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('plan_thinking_level', 'default');`,
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('execution_thinking_level', 'default');`,
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('review_thinking_level', 'default');`,
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('repair_thinking_level', 'default');`,
-    ],
-  },
-  {
-    version: 7,
-    description: "Add paused_session_states table for workflow pause/resume functionality",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS paused_session_states (
-        session_id TEXT PRIMARY KEY,
-        task_id TEXT,
-        task_run_id TEXT,
-        session_kind TEXT NOT NULL,
-        cwd TEXT,
-        worktree_dir TEXT,
-        branch TEXT,
-        model TEXT NOT NULL,
-        thinking_level TEXT NOT NULL,
-        pi_session_id TEXT,
-        pi_session_file TEXT,
-        container_id TEXT,
-        container_image TEXT,
-        paused_at INTEGER NOT NULL,
-        last_prompt TEXT,
-        execution_phase TEXT,
-        context_json TEXT NOT NULL,
-        pause_reason TEXT,
-        FOREIGN KEY (session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_paused_sessions_task_id ON paused_session_states(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_paused_sessions_session_id ON paused_session_states(session_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_paused_sessions_paused_at ON paused_session_states(paused_at);`,
-    ],
-  },
-  {
-    version: 8,
-    description: "Add paused_run_states table for workflow-level pause state storage",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS paused_run_states (
-        run_id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL,
-        task_order_json TEXT NOT NULL DEFAULT '[]',
-        current_task_index INTEGER NOT NULL DEFAULT 0,
-        current_task_id TEXT,
-        target_task_id TEXT,
-        paused_at INTEGER NOT NULL,
-        execution_phase TEXT NOT NULL DEFAULT 'executing',
-        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_paused_run_states_run_id ON paused_run_states(run_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_paused_run_states_paused_at ON paused_run_states(paused_at);`,
-    ],
-  },
-  {
-    version: 9,
-    description: "Add workflow_runs_indicators table for tracking model failure metrics",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS workflow_runs_indicators (
-        id TEXT PRIMARY KEY,
-        json_out_fails TEXT NOT NULL DEFAULT '{"json-output-fails":[]}',
-        FOREIGN KEY (id) REFERENCES workflow_sessions(id) ON DELETE CASCADE
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_runs_indicators_id ON workflow_runs_indicators(id);`,
-    ],
-  },
-  {
-    version: 10,
-    description: "Add logs column to container_builds for storing build output",
-    statements: [
-      `ALTER TABLE container_builds ADD COLUMN logs TEXT;`,
-    ],
-  },
-  {
-    version: 11,
-    description: "Add container_image column to tasks table for per-task image selection",
-    statements: [
-      `ALTER TABLE tasks ADD COLUMN container_image TEXT;`,
-    ],
-  },
-  {
-    version: 12,
-    description: "Add code style fields to tasks and options tables",
-    statements: [
-      `ALTER TABLE tasks ADD COLUMN code_style_review INTEGER NOT NULL DEFAULT 0;`,
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('code_style_prompt', '');`,
-    ],
-  },
-  {
-    version: 13,
-    description: "Set default values for existing tasks code style fields",
-    statements: [
-      // Ensure all existing tasks have code_style_review = 0 (false)
-      `UPDATE tasks SET code_style_review = 0 WHERE code_style_review IS NULL;`,
-      // Ensure code_style_prompt exists in options with empty string default
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('code_style_prompt', '');`,
-    ],
-  },
-  {
-    version: 25,
-    description: "Add task_groups and task_group_members tables for task grouping feature",
-    statements: [
-      // task_groups table
-      `
-      CREATE TABLE IF NOT EXISTS task_groups (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        color TEXT NOT NULL DEFAULT '#888888',
-        status TEXT NOT NULL DEFAULT 'active',
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        completed_at INTEGER
-      )
-      `,
-      // task_group_members table
-      `
-      CREATE TABLE IF NOT EXISTS task_group_members (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        group_id TEXT NOT NULL,
-        task_id TEXT NOT NULL,
-        idx INTEGER NOT NULL DEFAULT 0,
-        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        FOREIGN KEY(group_id) REFERENCES task_groups(id) ON DELETE CASCADE,
-        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-        UNIQUE(group_id, task_id)
-      )
-      `,
-      // Indexes for task_groups
-      `CREATE INDEX IF NOT EXISTS idx_task_groups_status ON task_groups(status);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_groups_name ON task_groups(name);`,
-      // Indexes for task_group_members
-      `CREATE INDEX IF NOT EXISTS idx_task_group_members_group_id ON task_group_members(group_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_group_members_task_id ON task_group_members(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_group_members_group_idx ON task_group_members(group_id, idx);`,
-      // Add group_id column to tasks table
-      `ALTER TABLE tasks ADD COLUMN group_id TEXT;`,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_group_id ON tasks(group_id);`,
-      // Add group_id column to workflow_runs table
-      `ALTER TABLE workflow_runs ADD COLUMN group_id TEXT;`,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_runs_group_id ON workflow_runs(group_id);`,
-    ],
-  },
-  {
-    version: 26,
-    description: "Migrate telegram_notifications_enabled to telegram_notification_level for granular notification control",
-    statements: [
-      // Migrate existing boolean value to new level format
-      // true -> 'all' (preserve current behavior for users who had notifications enabled)
-      // false -> 'failures' (minimum useful level for users who had notifications disabled)
-      `UPDATE options SET value = 'all' WHERE key = 'telegram_notifications_enabled' AND value = 'true';`,
-      `UPDATE options SET value = 'failures' WHERE key = 'telegram_notifications_enabled' AND value = 'false';`,
-      // Delete the old boolean key after migration
-      `DELETE FROM options WHERE key = 'telegram_notifications_enabled';`,
-    ],
-  },
-  {
-    version: 27,
-    description: "Add indexes for archived tasks queries",
-    statements: [
-      `CREATE INDEX IF NOT EXISTS idx_tasks_is_archived ON tasks(is_archived);`,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_archived_at ON tasks(archived_at);`,
-    ],
-  },
-  {
-    version: 28,
-    description: "Add self-healing task state and self-heal reports",
-    statements: [
-      `ALTER TABLE tasks ADD COLUMN self_heal_status TEXT NOT NULL DEFAULT 'idle';`,
-      `ALTER TABLE tasks ADD COLUMN self_heal_message TEXT;`,
-      `ALTER TABLE tasks ADD COLUMN self_heal_report_id TEXT;`,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_self_heal_status ON tasks(self_heal_status);`,
-      `CREATE TABLE IF NOT EXISTS self_heal_reports (
-        id TEXT PRIMARY KEY,
-        run_id TEXT NOT NULL,
-        task_id TEXT NOT NULL,
-        task_status TEXT NOT NULL,
-        error_message TEXT,
-        diagnostics_summary TEXT NOT NULL,
-        root_causes_json TEXT NOT NULL DEFAULT '[]',
-        proposed_solution TEXT NOT NULL,
-        implementation_plan_json TEXT NOT NULL DEFAULT '[]',
-        recoverable INTEGER NOT NULL DEFAULT 0,
-        recommended_action TEXT NOT NULL,
-        action_rationale TEXT NOT NULL,
-        source_mode TEXT NOT NULL,
-        source_path TEXT,
-        github_url TEXT NOT NULL,
-        tauroboros_version TEXT NOT NULL,
-        db_path TEXT NOT NULL,
-        db_schema_json TEXT NOT NULL,
-        raw_response TEXT NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        FOREIGN KEY(run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE,
-        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
-      );`,
-      `CREATE INDEX IF NOT EXISTS idx_self_heal_reports_run_id ON self_heal_reports(run_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_self_heal_reports_task_id ON self_heal_reports(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_self_heal_reports_created_at ON self_heal_reports(created_at DESC);`,
-    ],
-  },
-  {
-    version: 29,
-    description: "Map legacy execution phase values in paused_run_states to current ExecutionPhase enum",
-    statements: [
-      // Old phases from before the plan-mode ExecutionPhase redesign:
-      // "planning"   → "not_started"            (plan not yet finished)
-      // "executing"  → "implementation_pending" (task was mid-execution when paused)
-      // "reviewing"  → "implementation_done"    (execution finished, review pending)
-      // "committing" → "implementation_done"    (about to commit = effectively done)
-      `UPDATE paused_run_states SET execution_phase = 'not_started' WHERE execution_phase = 'planning';`,
-      `UPDATE paused_run_states SET execution_phase = 'implementation_pending' WHERE execution_phase = 'executing';`,
-      `UPDATE paused_run_states SET execution_phase = 'implementation_done' WHERE execution_phase = 'reviewing';`,
-      `UPDATE paused_run_states SET execution_phase = 'implementation_done' WHERE execution_phase = 'committing';`,
-    ],
-  },
-  {
-    version: 30,
-    description: "Add auto deploy fields for template tasks",
-    statements: [
-      `ALTER TABLE tasks ADD COLUMN auto_deploy INTEGER NOT NULL DEFAULT 0;`,
-      `ALTER TABLE tasks ADD COLUMN auto_deploy_condition TEXT;`,
-    ],
-  },
-]
 
 export class PiKanbanDB {
   private readonly db: Database
@@ -4182,7 +3543,7 @@ export class PiKanbanDB {
     currentTaskId: string | null
     targetTaskId: string | null
     pausedAt: number
-    executionPhase: "not_started" | "planning" | "executing" | "reviewing" | "committing"
+    executionPhase: RunExecutionPhase
   }): void {
     this.db.run(
       `INSERT INTO paused_run_states (
@@ -4218,7 +3579,7 @@ export class PiKanbanDB {
     currentTaskId: string | null
     targetTaskId: string | null
     pausedAt: number
-    executionPhase: ExecutionPhase
+    executionPhase: RunExecutionPhase
   } | null {
     const row = this.db
       .prepare("SELECT * FROM paused_run_states WHERE run_id = ?")
@@ -4234,7 +3595,7 @@ export class PiKanbanDB {
       currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
       targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
       pausedAt: Number(row.paused_at),
-      executionPhase: asExecutionPhase(row.execution_phase),
+      executionPhase: asRunExecutionPhase(row.execution_phase),
     }
   }
 
@@ -4257,7 +3618,7 @@ export class PiKanbanDB {
     currentTaskId: string | null
     targetTaskId: string | null
     pausedAt: number
-    executionPhase: ExecutionPhase
+    executionPhase: RunExecutionPhase
   }> {
     const rows = this.db.prepare("SELECT * FROM paused_run_states ORDER BY paused_at DESC").all() as Record<string, unknown>[]
 
@@ -4269,7 +3630,7 @@ export class PiKanbanDB {
       currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
       targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
       pausedAt: Number(row.paused_at),
-      executionPhase: asExecutionPhase(row.execution_phase),
+      executionPhase: asRunExecutionPhase(row.execution_phase),
     }))
   }
 
@@ -4726,256 +4087,31 @@ export class PiKanbanDB {
     return Number(row.max_idx ?? -1) + 1
   }
 
-  private getTimeRangeBoundary(range: StatsTimeRange): { start: number; previousStart: number } {
-    const now = nowUnix()
-    switch (range) {
-      case "24h":
-        return { start: now - SECONDS_IN_DAY, previousStart: now - 2 * SECONDS_IN_DAY }
-      case "7d":
-        return { start: now - 7 * SECONDS_IN_DAY, previousStart: now - 14 * SECONDS_IN_DAY }
-      case "30d":
-        return { start: now - 30 * SECONDS_IN_DAY, previousStart: now - 60 * SECONDS_IN_DAY }
-      case "lifetime":
-        return { start: 0, previousStart: 0 }
-      default:
-        throw new Error(`Invalid time range: ${JSON.stringify(range)}. Expected "24h", "7d", "30d", or "lifetime".`)
-    }
-  }
-
-  private getSessionKindResponsibility(kind: string): "plan" | "execution" | "review" | "other" {
-    if (kind === "plan" || kind === "plan_revision" || kind === "planning") return "plan"
-    if (kind === "task" || kind === "task_run_worker" || kind === "task_run_final_applier" || kind === "repair") return "execution"
-    if (kind === "task_run_reviewer" || kind === "review_scratch") return "review"
-    return "other"
-  }
 
   getUsageStats(range: StatsTimeRange): UsageStats {
-    const { start, previousStart } = this.getTimeRangeBoundary(range)
-
-    const currentRow = this.db
-      .prepare(
-        `
-        SELECT 
-          COALESCE(SUM(total_tokens), 0) AS total_tokens,
-          COALESCE(SUM(cost_total), 0) AS total_cost
-        FROM session_messages
-        WHERE timestamp >= ?
-        `
-      )
-      .get(start) as TokenCostRow
-
-    let previousTokens = 0
-    let previousCost = 0
-
-    if (range !== "lifetime" && previousStart > 0) {
-      const previousRow = this.db
-        .prepare(
-          `
-          SELECT 
-            COALESCE(SUM(total_tokens), 0) AS total_tokens,
-            COALESCE(SUM(cost_total), 0) AS total_cost
-          FROM session_messages
-          WHERE timestamp >= ? AND timestamp < ?
-          `
-        )
-        .get(previousStart, start) as TokenCostRow
-
-      previousTokens = Number(previousRow.total_tokens ?? 0)
-      previousCost = Number(previousRow.total_cost ?? 0)
-    }
-
-    const totalTokens = Number(currentRow.total_tokens ?? 0)
-    const totalCost = Number(currentRow.total_cost ?? 0)
-
-    const tokenChange = previousTokens > 0 ? ((totalTokens - previousTokens) / previousTokens) * 100 : 0
-    const costChange = previousCost > 0 ? ((totalCost - previousCost) / previousCost) * 100 : 0
-
-    return {
-      totalTokens,
-      totalCost,
-      tokenChange: Math.round(tokenChange * 100) / 100,
-      costChange: Math.round(costChange * 100) / 100,
-    }
+    return _getUsageStats(this.db, range)
   }
 
   getTaskStats(): TaskStats {
-    const completedRow = this.db
-      .prepare("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'done'")
-      .get() as CountRow
-
-    const failedTaskRow = this.db
-      .prepare("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'failed'")
-      .get() as CountRow
-
-    const failedWorkflowRow = this.db
-      .prepare("SELECT COUNT(*) AS cnt FROM workflow_runs WHERE status = 'failed'")
-      .get() as CountRow
-
-    const avgReviewsRow = this.db
-      .prepare(
-        `
-        SELECT COALESCE(AVG(review_count), 0) AS avg_reviews
-        FROM tasks
-        WHERE status = 'done'
-        `
-      )
-      .get() as AvgReviewsRow
-
-    const failedTaskCount = Number(failedTaskRow.cnt ?? 0)
-    const failedWorkflowCount = Number(failedWorkflowRow.cnt ?? 0)
-
-    return {
-      completed: Number(completedRow.cnt ?? 0),
-      // Prefer task failures when available for backward compatibility,
-      // but surface failed workflows when tasks are auto-archived as done.
-      failed: Math.max(failedTaskCount, failedWorkflowCount),
-      averageReviews: Math.round(Number(avgReviewsRow.avg_reviews ?? 0) * 100) / 100,
-    }
+    return _getTaskStats(this.db)
   }
 
   getModelUsageByResponsibility(): ModelUsageStats {
-    const rows = this.db
-      .prepare(
-        `
-        SELECT 
-          session_kind,
-          model,
-          COUNT(*) AS cnt
-        FROM workflow_sessions
-        WHERE model IS NOT NULL AND model != '' AND model != 'default'
-        GROUP BY session_kind, model
-        `
-      )
-      .all() as ModelUsageRow[]
-
-    const plan: Array<{ model: string; count: number }> = []
-    const execution: Array<{ model: string; count: number }> = []
-    const review: Array<{ model: string; count: number }> = []
-
-    for (const row of rows) {
-      const responsibility = this.getSessionKindResponsibility(row.session_kind)
-      const entry = { model: row.model, count: Number(row.cnt ?? 0) }
-
-      switch (responsibility) {
-        case "plan":
-          plan.push(entry)
-          break
-        case "execution":
-          execution.push(entry)
-          break
-        case "review":
-          review.push(entry)
-          break
-        case "other":
-          break
-      }
-    }
-
-    const sortByCount = (a: { count: number }, b: { count: number }) => b.count - a.count
-    plan.sort(sortByCount)
-    execution.sort(sortByCount)
-    review.sort(sortByCount)
-
-    return { plan, execution, review }
+    return _getModelUsageByResponsibility(this.db)
   }
 
   getAverageTaskDuration(): number {
-    const taskRunCountRow = this.db
-      .prepare(
-        `
-        SELECT COUNT(*) AS cnt
-        FROM task_runs
-        WHERE completed_at IS NOT NULL
-          AND created_at IS NOT NULL
-          AND (status = 'done' OR status = 'failed')
-        `,
-      )
-      .get() as CountRow
-
-    const taskRunCount = Number(taskRunCountRow.cnt ?? 0)
-
-    const row = taskRunCount > 0
-      ? this.db
-        .prepare(
-          `
-          SELECT 
-            COALESCE(AVG(completed_at - created_at), 0) AS avg_duration
-          FROM task_runs
-          WHERE completed_at IS NOT NULL
-            AND created_at IS NOT NULL
-            AND (status = 'done' OR status = 'failed')
-          `,
-        )
-        .get() as AvgDurationRow
-      : this.db
-      .prepare(
-        `
-        SELECT 
-          COALESCE(AVG(completed_at - created_at), 0) AS avg_duration
-        FROM tasks
-        WHERE completed_at IS NOT NULL
-          AND created_at IS NOT NULL
-          AND status = 'done'
-        `
-      )
-      .get() as AvgDurationRow
-
-    // Convert from seconds to minutes for display
-    const seconds = Number(row.avg_duration ?? 0)
-    return Math.round(seconds / 60)
+    return _getAverageTaskDuration(this.db)
   }
 
   getHourlyUsageTimeSeries(): HourlyUsage[] {
-    const now = nowUnix()
-    const twentyFourHoursAgo = now - SECONDS_IN_DAY
-
-    const rows = this.db
-      .prepare(
-        `
-        SELECT 
-          (timestamp / 3600) * 3600 AS hour_bucket,
-          COALESCE(SUM(total_tokens), 0) AS tokens,
-          COALESCE(SUM(cost_total), 0) AS cost
-        FROM session_messages
-        WHERE timestamp >= ?
-        GROUP BY hour_bucket
-        ORDER BY hour_bucket ASC
-        `
-      )
-      .all(twentyFourHoursAgo) as HourlyUsageRow[]
-
-    return rows.map((row) => ({
-      hour: new Date(row.hour_bucket * 1000).toISOString(),
-      tokens: Number(row.tokens ?? 0),
-      cost: Number(row.cost ?? 0),
-    }))
+    return _getHourlyUsageTimeSeries(this.db)
   }
 
   getDailyUsageTimeSeries(days: number): DailyUsage[] {
-    const now = nowUnix()
-    const startTime = now - days * SECONDS_IN_DAY
-
-    const rows = this.db
-      .prepare(
-        `
-        SELECT 
-          date(timestamp, 'unixepoch') AS date_str,
-          COALESCE(SUM(total_tokens), 0) AS tokens,
-          COALESCE(SUM(cost_total), 0) AS cost
-        FROM session_messages
-        WHERE timestamp >= ?
-        GROUP BY date_str
-        ORDER BY date_str ASC
-        `
-      )
-      .all(startTime) as DailyUsageRow[]
-
-    return rows.map((row) => ({
-      date: row.date_str,
-      tokens: Number(row.tokens ?? 0),
-      cost: Number(row.cost ?? 0),
-    }))
+    return _getDailyUsageTimeSeries(this.db, days)
   }
+
 
 }
 

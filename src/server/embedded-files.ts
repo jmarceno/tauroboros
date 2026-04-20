@@ -8,6 +8,7 @@
 
 import { existsSync } from "fs"
 import * as generatedAssetsModule from "./generated-assets.ts"
+import type { GeneratedAssetsModule } from "./generated-assets.ts"
 import { dirname, join, basename } from "path"
 import { fileURLToPath } from "url"
 
@@ -18,9 +19,9 @@ export const KANBAN_DIST = join(__dirname, "..", "kanban-solid", "dist")
 export const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
 // Static import ensures Bun compile captures generated assets at compile time.
-const generatedAssets =
+const generatedAssets: GeneratedAssetsModule | null =
   typeof generatedAssetsModule.getEmbeddedAsset === "function"
-    ? generatedAssetsModule
+    ? (generatedAssetsModule as unknown as GeneratedAssetsModule)
     : null
 
 /**

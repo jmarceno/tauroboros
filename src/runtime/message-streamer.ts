@@ -76,6 +76,7 @@ export class MessageStreamer {
       const msgEventType = msgEvent?.type as string
 
       if (!msgEventType) return true // Handled (prevent raw persistence)
+      if (!msgEvent) return true // Should never happen if msgEventType is set, but guards TS narrowing
 
       if (!this.streamingState) {
         this.streamingState = {
@@ -116,7 +117,7 @@ export class MessageStreamer {
                 streaming: true,
                 isThinking: true
               },
-            } as SessionMessage)
+            } as unknown as SessionMessage)
           }
         }
         return true
@@ -146,7 +147,7 @@ export class MessageStreamer {
                 streaming: true,
                 isThinking: false
               },
-            } as SessionMessage)
+            } as unknown as SessionMessage)
           }
         }
         return true
