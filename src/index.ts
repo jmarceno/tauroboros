@@ -13,6 +13,13 @@ interface CliArgs {
   native: boolean
 }
 
+type ContainerSetupStatus = {
+  ready: boolean
+  podmanAvailable: boolean
+  imageReady: boolean
+  error?: string
+}
+
 class StartupError extends Schema.TaggedError<StartupError>()("StartupError", {
   message: Schema.String,
 }) {}
@@ -24,85 +31,81 @@ function parseCliArgs(args: string[]): CliArgs {
 }
 
 const checkAndPrepareContainerEffect = Effect.fn("checkAndPrepareContainerEffect")(
-  function* (projectRoot: string): Effect.Effect<{
-  ready: boolean
-  podmanAvailable: boolean
-  imageReady: boolean
-  error?: string
-}, StartupError> {
-  // Check if podman is available
-  const podmanAvailable = PiContainerManager.isAvailable()
+  function* (projectRoot: string) {
+    // Check if podman is available
+    const podmanAvailable = PiContainerManager.isAvailable()
 
-  if (!podmanAvailable) {
-    return {
-      ready: false,
-      podmanAvailable: false,
-      imageReady: false,
-      error: "Podman is not available. Install Podman or run with --native flag to use native mode.",
+    if (!podmanAvailable) {
+      return {
+        ready: false,
+        podmanAvailable: false,
+        imageReady: false,
+        error: "Podman is not available. Install Podman or run with --native flag to use native mode.",
+      } as const satisfies ContainerSetupStatus
     }
-  }
 
-  // Check if image exists
-  const manager = new PiContainerManager()
-  const setupStatus = yield* Effect.tryPromise({
-    try: () => manager.validateSetup(),
-    catch: (cause) => new StartupError({ message: `Failed to validate container setup: ${String(cause)}` }),
-  })
-
-  if (!setupStatus.image) {
-    // Image not found, need to auto-build
-    console.log("[tauroboros] Building container image for first run (this may take a minute)...")
-    const cacheDir = resolve(projectRoot, ".tauroboros")
-    const imageManager = new ContainerImageManager({
-      imageName: BASE_IMAGES.piAgent,
-      imageSource: "dockerfile",
-      dockerfilePath: "docker/pi-agent/Dockerfile",
-      cacheDir,
-      onStatusChange: (event) => {
-        if (event.status === "error") {
-          console.error(`[tauroboros] ${event.message}`)
-
-        }
-      },
-    })
-
-    const prepared = yield* Effect.tryPromise({
-      try: async () => {
-        await imageManager.prepare()
-        return true
-      },
-      catch: (error) => {
-        const message = error instanceof Error ? error.message : String(error)
-        return new StartupError({ message: `Failed to build container image: ${message}` })
-      },
+    // Check if image exists
+    const manager = new PiContainerManager()
+    const setupStatus = yield* Effect.tryPromise({
+      try: () => manager.validateSetup(),
+      catch: (cause) => new StartupError({ message: `Failed to validate container setup: ${String(cause)}` }),
     }).pipe(
-      Effect.catchTag("StartupError", (error) =>
-        Effect.succeed({
-          ready: false,
-          podmanAvailable: true,
-          imageReady: false,
-          error: error.message,
-        }),
-      ),
+      Effect.map((status) => ({
+        ready: status.podman && status.image,
+        podmanAvailable: status.podman,
+        imageReady: status.image,
+        error: status.errors.length > 0 ? status.errors.join("\n") : undefined,
+      }) as const satisfies ContainerSetupStatus),
     )
 
-    if (typeof prepared === "boolean") {
-      return {
-        ready: true,
-        podmanAvailable: true,
-        imageReady: true,
-      }
+    if (!setupStatus.imageReady) {
+      // Image not found, need to auto-build
+      console.log("[tauroboros] Building container image for first run (this may take a minute)...")
+      const cacheDir = resolve(projectRoot, ".tauroboros")
+      const imageManager = new ContainerImageManager({
+        imageName: BASE_IMAGES.piAgent,
+        imageSource: "dockerfile",
+        dockerfilePath: "docker/pi-agent/Dockerfile",
+        cacheDir,
+        onStatusChange: (event) => {
+          if (event.status === "error") {
+            console.error(`[tauroboros] ${event.message}`)
+
+          }
+        }
+      })
+
+      return yield* Effect.tryPromise({
+        try: async () => {
+          await imageManager.prepare()
+          return {
+            ready: true,
+            podmanAvailable: true,
+            imageReady: true,
+          } as const satisfies ContainerSetupStatus
+        },
+        catch: (error) => {
+          const message = error instanceof Error ? error.message : String(error)
+          return new StartupError({ message: `Failed to build container image: ${message}` })
+        },
+      }).pipe(
+        Effect.catchTag("StartupError", (error) =>
+          Effect.succeed({
+            ready: false,
+            podmanAvailable: true,
+            imageReady: false,
+            error: error.message,
+          } as const satisfies ContainerSetupStatus),
+        ),
+      )
     }
 
-    return prepared
-  }
-
-  return {
-    ready: true,
-    podmanAvailable: true,
-    imageReady: true,
-  }
-},
+    return {
+      ready: true,
+      podmanAvailable: true,
+      imageReady: true,
+    } as const satisfies ContainerSetupStatus
+  },
 )
 
 function createInitialSettings(

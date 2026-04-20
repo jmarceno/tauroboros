@@ -58,6 +58,12 @@ function tagOutput(tag: string, text: string): string {
   return text.trim() ? `\n[${tag}]\n${text.trim()}\n` : ""
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
 /**
  * Determine if a task that timed out was "essentially complete" based on collected events.
  * This heuristic checks if meaningful work was done before the timeout occurred.
@@ -80,7 +86,7 @@ function isMergeConflictError(error: unknown): boolean {
   return false
 }
 
-function checkEssentialCompletion(collectedEvents: Record<string, unknown>[]): {
+function checkEssentialCompletion(collectedEvents: readonly unknown[]): {
   isEssentiallyComplete: boolean
   reason: string
 } {
@@ -107,7 +113,8 @@ function checkEssentialCompletion(collectedEvents: Record<string, unknown>[]): {
   let hasMessageUpdate = false
 
   for (const event of collectedEvents) {
-    const eventType = event.type as string
+    const eventRecord = asRecord(event)
+    const eventType = typeof eventRecord.type === "string" ? eventRecord.type : ""
     if (workIndicators.has(eventType)) {
       workEventCount++
     }

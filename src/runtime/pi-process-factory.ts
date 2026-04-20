@@ -70,7 +70,7 @@ export function createPiProcess(
 }
 
 export const createPiProcessEffect = Effect.fn("createPiProcessEffect")(
-  function* (options: UnifiedPiProcessOptions): Effect.Effect<PiRpcProcess | ContainerPiProcess, PiProcessFactoryError> {
+  function* (options: UnifiedPiProcessOptions) {
     const runtime = options.forceRuntime || getConfiguredRuntime(options.settings)
 
     if (runtime === "container") {
@@ -127,18 +127,23 @@ export async function isContainerRuntimeAvailable(
 }
 
 export const isContainerRuntimeAvailableEffect = Effect.fn("isContainerRuntimeAvailableEffect")(
-  function* (containerManager?: PiContainerManager): Effect.Effect<boolean> {
+  function* (containerManager?: PiContainerManager) {
     if (!containerManager) {
       return false
     }
 
-    return yield* Effect.tryPromise({
+    const status = yield* Effect.tryPromise({
       try: async () => {
-        const status = await containerManager.validateSetup()
-        return status.podman && status.image
+        return await containerManager.validateSetup()
       },
-      catch: () => false,
+      catch: (cause) =>
+        new PiProcessFactoryError({
+          operation: "isContainerRuntimeAvailable",
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
     })
+
+    return status.podman && status.image
   },
 )
 
@@ -160,14 +165,7 @@ export const validateContainerSetupEffect = Effect.fn("validateContainerSetupEff
   function* (
     containerManager: PiContainerManager,
     settings?: InfrastructureSettings,
-  ): Effect.Effect<
-    {
-      available: boolean
-      runtime: PiRuntimeMode
-      issues: string[]
-    },
-    PiProcessFactoryError
-  > {
+  ) {
     const status = yield* Effect.tryPromise({
       try: () => containerManager.validateSetup(),
       catch: (cause) =>

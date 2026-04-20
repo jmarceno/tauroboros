@@ -394,7 +394,7 @@ export class ContainerPiProcess {
    */
   close(): Effect.Effect<void, PiProcessError> {
     return Effect.gen(this, function* () {
-      if (!this.containerProcess) return
+      if (!this.containerProcess) return yield* Effect.void
 
       const process = this.containerProcess
       this.containerProcess = null
@@ -417,12 +417,23 @@ export class ContainerPiProcess {
       // Kill container
       yield* Effect.tryPromise({
         try: () => process.kill(),
-        catch: () => undefined,
+        catch: (cause) => new PiProcessError({
+          operation: "close",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
       })
 
-      this.db.updateWorkflowSession(this.session.id, {
-        status: "completed",
-        finishedAt: Math.floor(Date.now() / 1000),
+      yield* Effect.try({
+        try: () => this.db.updateWorkflowSession(this.session.id, {
+          status: "completed",
+          finishedAt: Math.floor(Date.now() / 1000),
+        }),
+        catch: (cause) => new PiProcessError({
+          operation: "close",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
       })
     })
   }
@@ -433,7 +444,7 @@ export class ContainerPiProcess {
    */
   forceKill(signal: "SIGTERM" | "SIGKILL" = "SIGKILL"): Effect.Effect<void, PiProcessError> {
     return Effect.gen(this, function* () {
-      if (!this.containerProcess) return
+      if (!this.containerProcess) return yield* Effect.void
 
       const process = this.containerProcess
       this.containerProcess = null
@@ -466,15 +477,26 @@ export class ContainerPiProcess {
       // Force kill the container
       yield* Effect.tryPromise({
         try: () => process.kill(),
-        catch: () => undefined,
+        catch: (cause) => new PiProcessError({
+          operation: "forceKill",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
       })
 
       // Don't wait for exit - force kill is immediate
-      this.db.updateWorkflowSession(this.session.id, {
-        status: "aborted",
-        finishedAt: Math.floor(Date.now() / 1000),
-        exitCode: -1,
-        exitSignal: signal,
+      yield* Effect.try({
+        try: () => this.db.updateWorkflowSession(this.session.id, {
+          status: "aborted",
+          finishedAt: Math.floor(Date.now() / 1000),
+          exitCode: -1,
+          exitSignal: signal,
+        }),
+        catch: (cause) => new PiProcessError({
+          operation: "forceKill",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
       })
     })
   }

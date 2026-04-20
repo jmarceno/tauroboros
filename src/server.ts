@@ -69,9 +69,7 @@ export function createPiServer(options: CreateServerOptions = {}): {
   )
 
   return Effect.runSync(
-    Effect.gen(function* () {
-      return yield* PiServerRuntimeContext
-    }).pipe(Effect.provide(runtimeLayer)),
+    PiServerRuntimeContext.pipe(Effect.provide(runtimeLayer)),
   )
 }
 
@@ -125,7 +123,7 @@ export const makePiServerRuntime = Effect.fn("makePiServerRuntime")(
       }
       return runOrchestratorOperationSync(orchestrator, "getSlotUtilization", (instance) => instance.getSlotUtilization())
     },
-    onGetRunQueueStatus: async (runId: string) => await runOrchestratorOperationPromise(orchestrator, "getRunQueueStatus", (instance) => instance.getRunQueueStatus(runId)),
+    onGetRunQueueStatus: async (runId: string) => runOrchestratorOperationSync(orchestrator, "getRunQueueStatus", (instance) => instance.getRunQueueStatus(runId)),
     onManualSelfHealRecover: async (taskId: string, reportId: string, action: "restart_task" | "keep_failed") =>
       await runOrchestratorOperationPromise(orchestrator, "manualSelfHealRecover", (instance) => instance.manualSelfHealRecover(taskId, reportId, action)),
   })
@@ -185,9 +183,7 @@ export const createPiServerEffect = Effect.fn("createPiServerEffect")(
       Layer.provideMerge(CreateServerOptionsLayer(options)),
     )
 
-    return yield* Effect.gen(function* () {
-      return yield* PiServerRuntimeContext
-    }).pipe(Effect.provide(runtimeLayer))
+    return yield* PiServerRuntimeContext.pipe(Effect.provide(runtimeLayer))
   },
 )
 

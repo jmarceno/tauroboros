@@ -4,7 +4,7 @@ import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiSessionKind, PiWorkflowSession } from "../db/types.ts"
 import type { ThinkingLevel } from "../types.ts"
-import { PiRpcProcess } from "./pi-process.ts"
+import { CollectEventsTimeoutError, PiProcessError, PiRpcProcess } from "./pi-process.ts"
 import type { PiContainerManager } from "./container-manager.ts"
 import { ContainerPiProcess } from "./container-pi-process.ts"
 import { createPiProcess, type PiRuntimeMode } from "./pi-process-factory.ts"
@@ -93,8 +93,17 @@ export class SessionManagerExecuteError extends Schema.TaggedError<SessionManage
   {
     operation: Schema.String,
     message: Schema.String,
+    cause: Schema.optional(Schema.Unknown),
   },
 ) {}
+
+function toSessionManagerError(operation: string, cause: unknown): SessionManagerExecuteError {
+  return new SessionManagerExecuteError({
+    operation,
+    message: cause instanceof Error ? cause.message : String(cause),
+    cause,
+  })
+}
 
 /**
  * PiSessionManager - Manages pi RPC sessions
@@ -111,9 +120,7 @@ export class PiSessionManager {
   ) {}
 
   async executePrompt(input: ExecuteSessionPromptInput): Promise<ExecuteSessionPromptResult> {
-    return await Effect.runPromise(this.executePromptProgram(input).pipe(
-      Effect.mapError((e) => new Error(e.message)),
-    ))
+    return await Effect.runPromise(this.executePromptProgram(input))
   }
 
   private executePromptProgram(input: ExecuteSessionPromptInput): Effect.Effect<ExecuteSessionPromptResult, SessionManagerExecuteError> {
@@ -124,7 +131,7 @@ export class PiSessionManager {
 
       const resolvedModel = yield* Effect.try({
         try: () => self.resolveModel(input.model, input.sessionKind),
-        catch: (cause) => new SessionManagerExecuteError({ operation: "resolveModel", message: cause instanceof Error ? cause.message : String(cause) }),
+        catch: (cause) => toSessionManagerError("resolveModel", cause),
       })
 
       let session: PiWorkflowSession
@@ -180,7 +187,7 @@ export class PiSessionManager {
             existingContainerId,
             containerImage: input.containerImage,
           }),
-        catch: (cause) => new SessionManagerExecuteError({ operation: "createProcess", message: cause instanceof Error ? cause.message : String(cause) }),
+        catch: (cause) => toSessionManagerError("createProcess", cause),
       })
 
       if (input.onSessionCreated) {
@@ -190,11 +197,7 @@ export class PiSessionManager {
       // Use acquireRelease to guarantee process cleanup
       const result = yield* Effect.acquireRelease(
         Effect.succeed(process),
-        (proc) =>
-          Effect.tryPromise({
-            try: () => proc.close(),
-            catch: () => undefined,
-          }).pipe(Effect.orElse(() => Effect.void)),
+        (proc) => proc.close().pipe(Effect.orDie),
       ).pipe(
         Effect.flatMap((proc) =>
           Effect.gen(function* () {
@@ -203,10 +206,13 @@ export class PiSessionManager {
             }
 
             if (proc instanceof ContainerPiProcess) {
-              yield* Effect.tryPromise({
-                try: () => proc.start(),
-                catch: (cause) => new SessionManagerExecuteError({ operation: "startContainer", message: cause instanceof Error ? cause.message : String(cause) }),
-              })
+              yield* proc.start().pipe(
+                Effect.mapError((cause) => new SessionManagerExecuteError({
+                  operation: "startContainer",
+                  message: cause.message,
+                  cause,
+                })),
+              )
             } else {
               proc.start()
             }
@@ -219,47 +225,46 @@ export class PiSessionManager {
 
             const modelSelection = parseModelSelection(resolvedModel)
             if (!modelSelection) {
-              return yield* Effect.fail(
-                new SessionManagerExecuteError({
-                  operation: "parseModel",
-                  message: `Invalid model format: ${resolvedModel}. Expected 'provider/modelId' (e.g., 'openai/gpt-4')`,
-                }),
-              )
+              return yield* new SessionManagerExecuteError({
+                operation: "parseModel",
+                message: `Invalid model format: ${resolvedModel}. Expected 'provider/modelId' (e.g., 'openai/gpt-4')`,
+              })
             }
 
-            yield* Effect.tryPromise({
-              try: async () => {
-                await proc.send(
-                  {
-                    type: "set_model",
-                    provider: modelSelection.provider,
-                    modelId: modelSelection.modelId,
-                  },
-                  60_000,
-                )
-                console.log(`[session-manager] set_model readiness check succeeded: ${resolvedModel}`)
+            yield* proc.send(
+              {
+                type: "set_model",
+                provider: modelSelection.provider,
+                modelId: modelSelection.modelId,
               },
-              catch: (cause) => {
-                const errMsg = cause instanceof Error ? cause.message : String(cause)
+              60_000,
+            ).pipe(
+              Effect.tap(() => Effect.sync(() => {
+                console.log(`[session-manager] set_model readiness check succeeded: ${resolvedModel}`)
+              })),
+              Effect.mapError((cause) => {
+                const errMsg = cause.message
                 const msg = errMsg.includes("timeout") || errMsg.includes("time out") || errMsg.includes("timed out")
                   ? `Container pi agent failed to respond within 60 seconds: ${errMsg}`
                   : `Failed to set model ${resolvedModel}: ${errMsg}`
-                return new SessionManagerExecuteError({ operation: "setModel", message: msg })
-              },
-            })
+                return new SessionManagerExecuteError({ operation: "setModel", message: msg, cause })
+              }),
+            )
 
             if (input.thinkingLevel && input.thinkingLevel !== "default") {
-              yield* Effect.tryPromise({
-                try: () =>
-                  proc.send(
-                    {
-                      type: "set_thinking_level",
-                      level: input.thinkingLevel,
-                    },
-                    30_000,
-                  ),
-                catch: (cause) => new SessionManagerExecuteError({ operation: "setThinkingLevel", message: cause instanceof Error ? cause.message : String(cause) }),
-              })
+              yield* proc.send(
+                {
+                  type: "set_thinking_level",
+                  level: input.thinkingLevel,
+                },
+                30_000,
+              ).pipe(
+                Effect.mapError((cause) => new SessionManagerExecuteError({
+                  operation: "setThinkingLevel",
+                  message: cause.message,
+                  cause,
+                })),
+              )
             }
 
             session =
@@ -268,23 +273,28 @@ export class PiSessionManager {
               }) ?? session
 
             if (input.isResume && input.continuationPrompt) {
-              yield* Effect.tryPromise({
-                try: () =>
-                  proc.send(
-                    {
-                      type: "prompt",
-                      message: input.continuationPrompt,
-                    },
-                    30_000,
-                  ),
-                catch: (cause) => new SessionManagerExecuteError({ operation: "sendContinuationPrompt", message: cause instanceof Error ? cause.message : String(cause) }),
-              })
+              yield* proc.send(
+                {
+                  type: "prompt",
+                  message: input.continuationPrompt,
+                },
+                30_000,
+              ).pipe(
+                Effect.mapError((cause) => new SessionManagerExecuteError({
+                  operation: "sendContinuationPrompt",
+                  message: cause.message,
+                  cause,
+                })),
+              )
             }
 
-            const events = yield* Effect.tryPromise({
-              try: () => proc.promptAndWait(input.promptText, 600_000),
-              catch: (cause) => new SessionManagerExecuteError({ operation: "promptAndWait", message: cause instanceof Error ? cause.message : String(cause) }),
-            })
+            const events = yield* proc.promptAndWait(input.promptText, 600_000).pipe(
+              Effect.mapError((cause) => new SessionManagerExecuteError({
+                operation: cause instanceof CollectEventsTimeoutError ? "promptAndWaitTimeout" : "promptAndWait",
+                message: cause.message,
+                cause,
+              })),
+            )
 
             let responseText = ""
             for (let i = events.length - 1; i >= 0; i--) {
@@ -307,10 +317,9 @@ export class PiSessionManager {
             }
 
             if (!responseText) {
-              const messagesResult = yield* Effect.tryPromise({
-                try: () => proc.send({ type: "get_messages" }, 30_000),
-                catch: () => null,
-              })
+              const messagesResult = yield* proc.send({ type: "get_messages" }, 30_000).pipe(
+                Effect.catchTag("PiProcessError", () => Effect.succeed(null)),
+              )
               if (messagesResult && Array.isArray(messagesResult.messages)) {
                 const messages = messagesResult.messages as PiMessage[]
                 const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant")
@@ -330,15 +339,12 @@ export class PiSessionManager {
               Effect.sync(() => {
                 self.db.updateWorkflowSession(session.id, {
                   status: "failed",
-                  errorMessage: error instanceof SessionManagerExecuteError ? error.message : String(error),
+                  errorMessage: error.message,
                   finishedAt: nowUnix(),
                 })
               }),
             ),
           ),
-        ),
-        Effect.mapError((error) =>
-          error ?? new SessionManagerExecuteError({ operation: "executePrompt", message: "Unknown session manager error" }),
         ),
         Effect.scoped,
       )
