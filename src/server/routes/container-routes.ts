@@ -73,14 +73,14 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
     }
 
     return runRouteEffect(
-      Effect.try({
-        try: () => {
+      Effect.tryPromise({
+        try: async () => {
           const profilesPath = ctx.getContainerProfilesPath()
           let data: ProfilesFile
 
           if (existsSync(profilesPath)) {
             const raw = readFileSync(profilesPath, "utf-8")
-            data = JSON.parse(raw) as ProfilesFile
+            data = await new Response(raw).json() as ProfilesFile
           } else {
             data = { profiles: [] }
           }
@@ -91,7 +91,7 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
           }
 
           data.profiles.push(profile)
-          writeFileSync(profilesPath, JSON.stringify(data, null, 2), "utf-8")
+          writeFileSync(profilesPath, `${await Response.json(data).text()}\n`, "utf-8")
           return profile
         },
         catch: (error) =>
@@ -328,11 +328,11 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
             .filter((b) => b.imageTag && b.status === "success")
             .map((b) => {
               if (!b.completedAt && !b.startedAt) {
-                throw new Error(`Build ${b.id} has no completedAt or startedAt timestamp`)
+                throw internalRouteError(`Build ${b.id} has no completedAt or startedAt timestamp`, ErrorCode.CONTAINER_OPERATION_FAILED)
               }
               const createdAt = b.completedAt ?? b.startedAt
               if (!createdAt) {
-                throw new Error(`Build ${b.id} has invalid timestamps: completedAt=${b.completedAt}, startedAt=${b.startedAt}`)
+                throw internalRouteError(`Build ${b.id} has invalid timestamps: completedAt=${b.completedAt}, startedAt=${b.startedAt}`, ErrorCode.CONTAINER_OPERATION_FAILED)
               }
               return {
                 tag: b.imageTag!,

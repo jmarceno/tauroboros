@@ -2,8 +2,9 @@ import { Effect, Schema } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import { resolveContainerImage, type Task, type ThinkingLevel, resolveCodeStylePrompt } from "../types.ts"
-import { PiSessionManager } from "./session-manager.ts"
+import { PiSessionManager, SessionManagerExecuteError } from "./session-manager.ts"
 import type { PiContainerManager } from "./container-manager.ts"
+import { PiProcessError } from "./pi-process.ts"
 
 export class CodeStyleError extends Schema.TaggedError<CodeStyleError>()("CodeStyleError", {
   operation: Schema.String,
@@ -43,11 +44,12 @@ export class CodeStyleSessionRunner {
   }
 
   run(input: RunCodeStyleInput): Effect.Effect<RunCodeStyleResult, CodeStyleError> {
+    const self = this
     return Effect.gen(function* () {
       const promptText = resolveCodeStylePrompt(input.codeStylePrompt)
-      const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
+      const imageToUse = resolveContainerImage(input.task, self.settings?.workflow?.container?.image)
 
-      const response = yield* this.sessions.executePrompt({
+      const response = yield* self.sessions.executePrompt({
         taskId: input.task.id,
         sessionKind: "task_run_reviewer",
         cwd: input.cwd,
@@ -60,9 +62,17 @@ export class CodeStyleSessionRunner {
       }, {
         onOutput: input.onOutput,
         onSessionCreated: input.onSessionCreated,
-      })
+      }).pipe(
+        Effect.mapError((cause) =>
+          new CodeStyleError({
+            operation: cause instanceof SessionManagerExecuteError ? cause.operation : cause instanceof PiProcessError ? cause.operation : "run",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+        ),
+      )
 
-      const session = this.db.getWorkflowSession(response.session.id)
+      const session = self.db.getWorkflowSession(response.session.id)
       const finalStatus = session?.status ?? "completed"
 
       const success = finalStatus === "completed"
@@ -73,6 +83,6 @@ export class CodeStyleSessionRunner {
         sessionId: response.session.id,
         errorMessage: success ? undefined : session?.errorMessage ?? undefined,
       }
-    }.bind(this))
+    })
   }
 }

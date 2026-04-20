@@ -9,7 +9,7 @@ import { HelpButton } from '@/components/common/HelpButton'
 import { ModelPicker } from '@/components/common/ModelPicker'
 import { ThinkingLevelSelect } from '@/components/common/ThinkingLevelSelect'
 import { uiStore } from '@/stores'
-import { optionsApi, referenceApi } from '@/api'
+import { optionsApi, referenceApi, runApiEffect } from '@/api'
 import type { Options, ThinkingLevel } from '@/types'
 import { DEFAULT_CODE_STYLE_PROMPT } from '@/types'
 
@@ -36,8 +36,8 @@ export function OptionsModal(props: OptionsModalProps) {
     const loadData = async () => {
       try {
         const [loadedOpts, branchData] = await Promise.all([
-          optionsApi.get(),
-          referenceApi.getBranches()
+          runApiEffect(optionsApi.get()),
+          runApiEffect(referenceApi.getBranches())
         ])
 
         const currentOpts = loadedOpts || {}
@@ -93,7 +93,7 @@ export function OptionsModal(props: OptionsModalProps) {
         ...formData(),
         codeStylePrompt: formData().codeStylePrompt?.trim() ? formData().codeStylePrompt : DEFAULT_CODE_STYLE_PROMPT,
       }
-      await optionsApi.save(optionsToSave)
+      await runApiEffect(optionsApi.update(optionsToSave))
       uiStore.showToast('Options saved successfully', 'success')
       props.onClose()
     } catch (e) {

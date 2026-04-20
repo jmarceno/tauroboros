@@ -5,7 +5,7 @@
  */
 
 import { createSignal, createEffect, Show, onCleanup } from 'solid-js'
-import { planningApi } from '@/api'
+import { planningApi, runApiEffect } from '@/api'
 
 const DEFAULT_PROMPT = `You are a specialized Planning Assistant for software development task management.
 
@@ -124,7 +124,7 @@ export function PlanningPromptModal(props: PlanningPromptModalProps) {
       setIsLoading(true)
       setError(null)
       try {
-        const prompt = await planningApi.getPrompt()
+        const prompt = await runApiEffect(planningApi.getPrompt())
         if (cancelled) return
         setPromptData(prompt)
         setEditedPrompt({
@@ -135,7 +135,6 @@ export function PlanningPromptModal(props: PlanningPromptModalProps) {
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : 'Failed to load planning prompt')
-          console.error('Failed to load planning prompt:', e)
         }
       } finally {
         if (!cancelled) setIsLoading(false)
@@ -155,17 +154,16 @@ export function PlanningPromptModal(props: PlanningPromptModalProps) {
     setIsSaving(true)
     setError(null)
     try {
-      const updated = await planningApi.updatePrompt({
+      const updated = await runApiEffect(planningApi.updatePrompt({
         key: promptData()!.key,
         name: editedPrompt().name,
         description: editedPrompt().description,
         promptText: editedPrompt().promptText,
-      })
+      }))
       setPromptData(updated)
       props.onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save planning prompt')
-      console.error('Failed to save planning prompt:', e)
     } finally {
       setIsSaving(false)
     }

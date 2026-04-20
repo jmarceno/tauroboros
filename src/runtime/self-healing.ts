@@ -1,13 +1,15 @@
 import { existsSync, mkdirSync } from "fs"
 import { dirname, join, resolve } from "path"
 import { Effect, Schema } from "effect"
+import { inspect } from "node:util"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { Task, WorkflowRun } from "../types.ts"
 import { resolveContainerImage } from "../types.ts"
 import { VERSION, IS_COMPILED } from "../server/version.ts"
-import { PiSessionManager } from "./session-manager.ts"
+import { PiSessionManager, SessionManagerExecuteError } from "./session-manager.ts"
 import { parseStrictJsonObject } from "./strict-json.ts"
+import { PiProcessError } from "./pi-process.ts"
 
 export class SelfHealingError extends Schema.TaggedError<SelfHealingError>()("SelfHealingError", {
   operation: Schema.String,
@@ -54,12 +56,13 @@ export class SelfHealingService {
   }
 
   investigateFailure(input: InvestigateFailureInput): Effect.Effect<SelfHealingInvestigationResult, SelfHealingError> {
+    const self = this
     return Effect.gen(function* () {
-      const options = this.db.getOptions()
-      const source = yield* this.resolveSourceContextEffect(input.run.id)
+      const options = self.db.getOptions()
+      const source = yield* self.resolveSourceContextEffect(input.run.id)
 
-      const schemaSnapshot = this.db.getSchemaSnapshot()
-      const schemaJson = JSON.stringify(schemaSnapshot)
+      const schemaSnapshot = self.db.getSchemaSnapshot()
+      const schemaJson = inspect(schemaSnapshot, { depth: null, breakLength: Infinity })
 
       const prompt = [
         "You are the TaurOboros self-healing diagnostics agent.",
@@ -74,10 +77,10 @@ export class SelfHealingService {
         `- Run Status: ${input.run.status}`,
         `- Error Message: ${input.errorMessage}`,
         `- Has Other Active Tasks In Same Run: ${input.hasOtherActiveTasks ? "yes" : "no"}`,
-        `- DB Path: ${this.db.getDatabasePath()}`,
+        `- DB Path: ${self.db.getDatabasePath()}`,
         `- TaurOboros Version: ${VERSION}`,
         `- Is Compiled Binary: ${IS_COMPILED ? "yes" : "no"}`,
-        `- GitHub Repository: ${this.githubUrl}`,
+        `- GitHub Repository: ${self.githubUrl}`,
         `- Source Mode: ${source.sourceMode}`,
         `- Source Notes: ${source.notes}`,
         "",
@@ -104,19 +107,27 @@ export class SelfHealingService {
         "}",
       ].join("\n")
 
-      const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
+      const imageToUse = resolveContainerImage(input.task, self.settings?.workflow?.container?.image)
 
-      const session = yield* this.sessions.executePrompt({
+      const session = yield* self.sessions.executePrompt({
         taskId: input.task.id,
         sessionKind: "review_scratch",
-        cwd: source.sourcePath ?? this.projectRoot,
+        cwd: source.sourcePath ?? self.projectRoot,
         worktreeDir: source.sourcePath,
         branch: input.task.branch,
         model: options.reviewModel,
         thinkingLevel: options.reviewThinkingLevel,
         promptText: prompt,
         containerImage: imageToUse,
-      })
+      }).pipe(
+        Effect.mapError((cause) =>
+          new SelfHealingError({
+            operation: cause instanceof SessionManagerExecuteError ? cause.operation : cause instanceof PiProcessError ? cause.operation : "investigateFailure",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+        ),
+      )
 
       const parsed = parseStrictJsonObject(session.responseText, "Self-heal diagnostics response")
 
@@ -145,13 +156,13 @@ export class SelfHealingService {
         : {}
 
       const recoverable = recoverabilityRaw.recoverable === true
-      const recommendedAction = recoverabilityRaw.recommendedAction === "restart_task" ? "restart_task" : "keep_failed"
+      const recommendedAction: SelfHealingInvestigationResult["recommendedAction"] = recoverabilityRaw.recommendedAction === "restart_task" ? "restart_task" : "keep_failed"
       const actionRationale =
         typeof recoverabilityRaw.rationale === "string" && recoverabilityRaw.rationale.trim().length > 0
           ? recoverabilityRaw.rationale.trim()
           : "No recoverability rationale provided"
 
-      const report = this.db.createSelfHealReport({
+      const report = self.db.createSelfHealReport({
         id: `${input.run.id}-${input.task.id}-${nowUnix()}`,
         runId: input.run.id,
         taskId: input.task.id,
@@ -168,7 +179,7 @@ export class SelfHealingService {
         sourcePath: source.sourcePath,
         githubUrl: source.githubUrl,
         tauroborosVersion: VERSION,
-        dbPath: this.db.getDatabasePath(),
+        dbPath: self.db.getDatabasePath(),
         dbSchemaJson: schemaSnapshot,
         rawResponse: session.responseText,
       })
@@ -180,27 +191,28 @@ export class SelfHealingService {
         diagnosticsSummary,
         actionRationale,
       }
-    }.bind(this))
+    })
   }
 
   private resolveSourceContextEffect(runId: string): Effect.Effect<SourceContext, SelfHealingError> {
+    const self = this
     return Effect.gen(function* () {
-      const localLooksLikeSource = existsSync(join(this.projectRoot, ".git")) && existsSync(join(this.projectRoot, "src", "orchestrator.ts"))
+      const localLooksLikeSource = existsSync(join(self.projectRoot, ".git")) && existsSync(join(self.projectRoot, "src", "orchestrator.ts"))
 
       if (localLooksLikeSource) {
         return {
           sourceMode: "local" as const,
-          sourcePath: this.projectRoot,
-          githubUrl: this.githubUrl,
+          sourcePath: self.projectRoot,
+          githubUrl: self.githubUrl,
           notes: "Running in development/source mode, local repository used.",
         }
       }
 
-      const cloneDir = resolve(this.projectRoot, ".tauroboros", "self-heal-source", `${VERSION}-${runId}`)
+      const cloneDir = resolve(self.projectRoot, ".tauroboros", "self-heal-source", `${VERSION}-${runId}`)
       mkdirSync(dirname(cloneDir), { recursive: true })
 
       if (!existsSync(cloneDir)) {
-        const cloneResult = yield* runCommandEffect(["git", "clone", "--depth", "1", this.githubUrl, cloneDir], this.projectRoot)
+        const cloneResult = yield* runCommandEffect(["git", "clone", "--depth", "1", self.githubUrl, cloneDir], self.projectRoot)
         if (cloneResult.exitCode !== 0) {
           return yield* new SelfHealingError({
             operation: "resolveSourceContext",
@@ -212,15 +224,15 @@ export class SelfHealingService {
       return {
         sourceMode: "github_clone" as const,
         sourcePath: cloneDir,
-        githubUrl: this.githubUrl,
+        githubUrl: self.githubUrl,
         notes: `Cloned source for diagnostics at ${cloneDir}`,
       }
-    }.bind(this)).pipe(
+    }).pipe(
       Effect.catchAll((error) =>
         Effect.succeed({
           sourceMode: "github_metadata_only" as const,
           sourcePath: null,
-          githubUrl: this.githubUrl,
+          githubUrl: self.githubUrl,
           notes: `Unable to clone source locally: ${error instanceof Error ? error.message : String(error)}`,
         })
       ),

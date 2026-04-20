@@ -8,6 +8,7 @@ import type { SmartRepairService } from "../runtime/smart-repair.ts"
 import type { PlanningSessionManager } from "../runtime/planning-session.ts"
 import type { PackageDefinition } from "../db/types.ts"
 import type { HttpRouteError } from "./route-interpreter.ts"
+import type { OrchestratorOperationError, OrchestratorUnavailableError } from "../orchestrator.ts"
 
 export interface RouteParams {
   [key: string]: string
@@ -27,22 +28,24 @@ export interface RequestContext {
 export type RouteHandler = (ctx: RequestContext) => Promise<Response> | Response | Effect.Effect<Response, HttpRouteError>
 
 // Server callback function types
-export type RunControlFn = (runId: string) => Effect.Effect<unknown>
-export type StartFn = () => Effect.Effect<unknown>
-export type StartSingleFn = (taskId: string) => Effect.Effect<WorkflowRun | null>
-export type StartGroupFn = (groupId: string) => Effect.Effect<WorkflowRun>
-export type StopFn = () => Effect.Effect<unknown>
+type OrchestratorRouteEffect<A> = Effect.Effect<A, OrchestratorOperationError | OrchestratorUnavailableError>
+
+export type RunControlFn = (runId: string) => OrchestratorRouteEffect<unknown>
+export type StartFn = () => OrchestratorRouteEffect<unknown>
+export type StartSingleFn = (taskId: string) => OrchestratorRouteEffect<WorkflowRun | null>
+export type StartGroupFn = (groupId: string) => OrchestratorRouteEffect<WorkflowRun>
+export type StopFn = () => OrchestratorRouteEffect<unknown>
 export type StopRunFn = (
   runId: string,
   options?: { destructive?: boolean },
-) => Effect.Effect<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>
-export type GetSlotsFn = () => Effect.Effect<SlotUtilization>
-export type GetRunQueueStatusFn = (runId: string) => Effect.Effect<RunQueueStatus>
+) => OrchestratorRouteEffect<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>
+export type GetSlotsFn = () => OrchestratorRouteEffect<SlotUtilization>
+export type GetRunQueueStatusFn = (runId: string) => OrchestratorRouteEffect<RunQueueStatus>
 export type ManualSelfHealRecoverFn = (
   taskId: string,
   reportId: string,
   action: "restart_task" | "keep_failed",
-) => Effect.Effect<{ ok: boolean; message: string }>
+) => OrchestratorRouteEffect<{ ok: boolean; message: string }>
 
 /**
  * Server-level dependency context passed to route registration functions.

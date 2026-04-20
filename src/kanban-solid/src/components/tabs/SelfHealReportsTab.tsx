@@ -4,7 +4,7 @@
 
 import { createSignal, createMemo, For, Show } from 'solid-js'
 import { createQuery, useQueryClient } from '@tanstack/solid-query'
-import { selfHealApi } from '@/api'
+import { selfHealApi, runApiEffect } from '@/api'
 import { uiStore } from '@/stores'
 import type { SelfHealReport, WorkflowRun } from '@/types'
 import { runsApi } from '@/api'
@@ -182,7 +182,7 @@ export function SelfHealReportsTab() {
 
   const runsQuery = createQuery(() => ({
     queryKey: ['runs'],
-    queryFn: () => runsApi.getAll(),
+    queryFn: () => runApiEffect(runsApi.getAll()),
     staleTime: 10000,
     refetchOnMount: 'always' as const,
     refetchOnWindowFocus: false,
@@ -195,12 +195,8 @@ export function SelfHealReportsTab() {
       const runs = runsQuery.data ?? []
       const entries = await Promise.all(
         runs.map(async (run: WorkflowRun): Promise<SelfHealReportEntry[]> => {
-          try {
-            const reports = await selfHealApi.getReportsForRun(run.id)
-            return reports.map((report) => ({ report, run }))
-          } catch {
-            return []
-          }
+          const reports = await runApiEffect(selfHealApi.getReportsForRun(run.id))
+          return reports.map((report) => ({ report, run }))
         }),
       )
       return entries.flat().sort((a: SelfHealReportEntry, b: SelfHealReportEntry) => b.report.createdAt - a.report.createdAt)
@@ -245,7 +241,7 @@ export function SelfHealReportsTab() {
   const handleRecover = async (taskId: string, reportId: string, action: 'restart_task' | 'keep_failed') => {
     setRecoveringId(reportId)
     try {
-      const result = await selfHealApi.manualRecover(taskId, reportId, action)
+      const result = await runApiEffect(selfHealApi.manualRecover(taskId, reportId, action))
       uiStore.showToast(result.message, 'success')
       await queryClient.invalidateQueries({ queryKey: ['self-heal-reports'] })
     } catch (e) {

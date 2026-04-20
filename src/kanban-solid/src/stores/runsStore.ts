@@ -17,12 +17,13 @@ const queryKeys = {
 
 export function createRunsStore() {
   const queryClient = useQueryClient()
+  const runApi = api.runApiEffect
   const setTasksRef = (_tasks: Task[]) => {}
 
   // Query
   const runsQuery = createQuery(() => ({
     queryKey: queryKeys.runs.lists(),
-    queryFn: () => api.runsApi.getAll(),
+    queryFn: () => runApi(api.runsApi.getAll()),
     staleTime: 3000,
   }))
 
@@ -102,22 +103,22 @@ export function createRunsStore() {
 
   // Mutations
   const pauseRunMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.runsApi.pause(id),
+    mutationFn: (id: string) => runApi(api.runsApi.pause(id)),
     onSuccess: () => loadRuns(),
   }))
 
   const resumeRunMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.runsApi.resume(id),
+    mutationFn: (id: string) => runApi(api.runsApi.resume(id)),
     onSuccess: () => loadRuns(),
   }))
 
   const stopRunMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.runsApi.stop(id),
+    mutationFn: (id: string) => runApi(api.runsApi.stop(id)),
     onSuccess: () => loadRuns(),
   }))
 
   const archiveRunMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.runsApi.archive(id),
+    mutationFn: (id: string) => runApi(api.runsApi.archive(id)),
     onSuccess: () => loadRuns(),
   }))
 

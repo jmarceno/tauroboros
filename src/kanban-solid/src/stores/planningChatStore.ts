@@ -40,6 +40,7 @@ export interface ChatSession {
 
 export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, handler: (payload: unknown) => void) => () => void }) {
   const queryClient = useQueryClient()
+  const runApi = api.runApiEffect
 
   const [isOpen, setIsOpen] = createSignal(false)
   const [width, setWidth] = createSignal(DEFAULT_WIDTH)
@@ -59,7 +60,7 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
   // Queries
   const planningPromptQuery = createQuery(() => ({
     queryKey: queryKeys.planningPrompt,
-    queryFn: () => api.planningApi.getPrompt(),
+    queryFn: () => runApi(api.planningApi.getPrompt()),
     staleTime: 30000,
   }))
 
@@ -95,10 +96,10 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
   }
 
   const savePlanningPrompt = async (updates: { name?: string; description?: string; promptText: string }) => {
-    return await api.planningApi.updatePrompt({
+    return await runApi(api.planningApi.updatePrompt({
       key: 'default',
       ...updates,
-    })
+    }))
   }
 
   const createNewSession = async (model?: string, thinkingLevel?: string) => {
@@ -119,10 +120,10 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     setActiveSessionId(sessionId)
 
     try {
-      const planningSession = await api.planningApi.createSession({
+      const planningSession = await runApi(api.planningApi.createSession({
         model,
         thinkingLevel: thinkingLevel as import('@/types').ThinkingLevel | undefined,
-      })
+      }))
 
       setSessions(prev => prev.map(s =>
         s.id === sessionId
@@ -156,7 +157,7 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
   const closeSession = (sessionId: string) => {
     const session = sessions().find(s => s.id === sessionId)
     if (session?.session?.id) {
-      api.planningApi.closeSession(session.session.id).catch(console.error)
+      void runApi(api.planningApi.closeSession(session.session.id)).catch(() => undefined)
     }
 
     // Clean up refs
@@ -270,7 +271,7 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     const backendSessionId = session.session.id
 
     try {
-      await api.planningApi.sendMessage(backendSessionId, content, attachments)
+      await runApi(api.planningApi.sendMessage(backendSessionId, content, attachments))
 
       // Success - clear sending state
       sendingSet.delete(sessionId)
@@ -311,10 +312,10 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
 
         try {
           // Attempt to reconnect with the session's current model and thinking level
-          const reconnectedSession = await api.planningApi.reconnectSession(backendSessionId, {
+          const reconnectedSession = await runApi(api.planningApi.reconnectSession(backendSessionId, {
             model: session.session.model,
             thinkingLevel: session.session.thinkingLevel,
-          })
+          }))
 
           reconnectingSet.delete(sessionId)
 
@@ -326,7 +327,7 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
           ))
 
           // Retry sending the message after successful reconnect
-          await api.planningApi.sendMessage(reconnectedSession.id, content, attachments)
+          await runApi(api.planningApi.sendMessage(reconnectedSession.id, content, attachments))
 
           // Success after retry - clear sending state
           sendingSet.delete(sessionId)
@@ -417,9 +418,8 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     }
 
     try {
-      return await api.planningApi.createTasksFromSession(session.session.id, tasks)
+      return await runApi(api.planningApi.createTasksFromSession(session.session.id, tasks))
     } catch (e) {
-      console.error('Failed to create tasks:', e)
       throw e
     }
   }
@@ -444,10 +444,10 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     ))
 
     try {
-      const reconnectedSession = await api.planningApi.reconnectSession(session.session.id, {
+      const reconnectedSession = await runApi(api.planningApi.reconnectSession(session.session.id, {
         model,
         thinkingLevel,
-      })
+      }))
 
       reconnectingSet.delete(sessionId)
 
@@ -477,7 +477,7 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     }
 
     try {
-      await api.planningApi.setSessionModel(session.session.id, model, thinkingLevel)
+      await runApi(api.planningApi.setSessionModel(session.session.id, model, thinkingLevel))
       setSessions(prev => prev.map(s =>
         s.id === sessionId
           ? { ...s, session: s.session ? { ...s.session, model, thinkingLevel } : null }
@@ -485,7 +485,6 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
       ))
       return { ok: true, model, thinkingLevel }
     } catch (e) {
-      console.error('Failed to change model:', e)
       throw e
     }
   }

@@ -4,7 +4,7 @@
  */
 
 import { createSignal, createMemo, onMount, For, Show } from 'solid-js'
-import { tasksApi } from '@/api'
+import { tasksApi, runApiEffect } from '@/api'
 import type { Task, WorkflowRun } from '@shared-types'
 import { formatLocalDateTime } from '@/utils/date'
 
@@ -54,7 +54,7 @@ export function ArchivedTasksTab(props: ArchivedTasksTabProps) {
     setIsLoading(true)
     setError(null)
     try {
-      const data = await tasksApi.getArchived()
+      const data = await runApiEffect(tasksApi.getArchived())
 
       if (!data || !Array.isArray(data.runs)) {
         throw new Error('Invalid response: runs must be an array')

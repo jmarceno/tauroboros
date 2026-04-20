@@ -15,7 +15,7 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
     const body = await req.json()
 
     const nameValidation = validateTaskGroupName(body?.name)
-    if (!nameValidation.valid) return json(createApiError(nameValidation.error, ErrorCode.INVALID_REQUEST_BODY), 400)
+    if (!nameValidation.valid) return json(createApiError(nameValidation.error ?? "name is invalid", ErrorCode.INVALID_REQUEST_BODY), 400)
 
     if (body?.color !== undefined && !isValidHexColor(body.color)) {
       return json(createApiError("color must be a valid hex color (e.g., #888888)", ErrorCode.INVALID_COLOR), 400)
@@ -28,7 +28,7 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
     let memberTaskIds: string[] = []
     if (body?.taskIds !== undefined) {
       const taskValidation = validateTaskIds(body.taskIds, db)
-      if (!taskValidation.valid) return json(createApiError(taskValidation.error, ErrorCode.INVALID_REQUEST_BODY), 400)
+      if (!taskValidation.valid) return json(createApiError(taskValidation.error ?? "taskIds are invalid", ErrorCode.INVALID_REQUEST_BODY), 400)
       memberTaskIds = body.taskIds as string[]
     }
 
@@ -73,7 +73,7 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
 
     if (body?.name !== undefined) {
       const nameValidation = validateTaskGroupName(body.name)
-      if (!nameValidation.valid) return json(createApiError(nameValidation.error, ErrorCode.INVALID_REQUEST_BODY), 400)
+      if (!nameValidation.valid) return json(createApiError(nameValidation.error ?? "name is invalid", ErrorCode.INVALID_REQUEST_BODY), 400)
     }
 
     if (body?.color !== undefined && !isValidHexColor(body.color)) {
@@ -129,7 +129,7 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
     }
 
     const taskValidation = validateTaskIds(body.taskIds, db)
-    if (!taskValidation.valid) return json(createApiError(taskValidation.error, ErrorCode.INVALID_REQUEST_BODY), 400)
+    if (!taskValidation.valid) return json(createApiError(taskValidation.error ?? "taskIds are invalid", ErrorCode.INVALID_REQUEST_BODY), 400)
 
     return runRouteEffect(
       Effect.try({
@@ -207,8 +207,9 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
 
     return runRouteEffect(
       ctx.onStartGroup(params.id).pipe(
-        Effect.catchTag("OrchestratorOperationError", (err) => {
-          const message = err.message
+        Effect.catchAll((err) => {
+          const error = err instanceof Error ? err : new Error(String(err))
+          const message = error.message
           if (
             message.includes("external dependencies") ||
             message.includes("blocked") ||
@@ -221,9 +222,14 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
           if (message.includes("not found")) {
             return Effect.fail(badRequestError(message, ErrorCode.TASK_GROUP_NOT_FOUND))
           }
+          const operation = "operation" in (err as object) && typeof (err as { operation?: unknown }).operation === "string"
+            ? (err as { operation: string }).operation
+            : null
+          if (operation) {
+            return Effect.fail(internalRouteError(`Group execution unavailable: ${operation}`, ErrorCode.SERVICE_UNAVAILABLE, err))
+          }
           return Effect.fail(internalRouteError(message, ErrorCode.EXECUTION_OPERATION_FAILED, err))
         }),
-        Effect.catchTag("OrchestratorUnavailableError", (err) => Effect.fail(internalRouteError(`Group execution unavailable: ${err.operation}`, ErrorCode.SERVICE_UNAVAILABLE, err))),
         Effect.map((run) => {
           broadcast({ type: "run_created", payload: run })
           broadcast({

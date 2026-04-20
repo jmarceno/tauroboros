@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto"
-import { Effect } from "effect"
+import { Effect, Runtime } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
 import type { Task, WorkflowRun, WSMessage } from "../../types.ts"
@@ -99,18 +99,18 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     db: { getTask: (taskId: string) => Task | null; getActiveWorkflowRunForTask: (taskId: string) => WorkflowRun | null; updateTask: (taskId: string, patch: Partial<Task>) => Task | null },
   ) =>
     Effect.gen(function* () {
+      const runtime = yield* Effect.runtime<never>()
       const task = yield* requirePlanModeTask(db, taskId)
       const body = yield* parseJsonRecord(req)
       if (typeof body.feedback !== "string" || !body.feedback.trim()) {
-        return yield* Effect.fail(badRequestError("feedback is required", ErrorCode.INVALID_REQUEST_BODY, { taskId }))
+        return yield* badRequestError("feedback is required", ErrorCode.INVALID_REQUEST_BODY, { taskId })
       }
       if (typeof task.planRevisionCount !== "number") {
-        return yield* Effect.fail(
+        return yield* 
           internalRouteError(
             `Task ${task.id} has invalid planRevisionCount: expected number, got ${typeof task.planRevisionCount}`,
             ErrorCode.INVALID_REQUEST_BODY,
-          ),
-        )
+          )
       }
 
       const feedback = body.feedback.trim()
@@ -139,7 +139,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
           const normalizedPrepared = normalizeTaskForClient(prepared, sessionUrlFor)
           broadcast({ type: "task_updated", payload: normalizedPrepared })
           broadcast({ type: "plan_revision_requested", payload: { taskId: task.id } })
-          return await Effect.runPromise(startSingleTaskEffect(task.id))
+          return await Runtime.runPromise(runtime)(startSingleTaskEffect(task.id))
         }
 
         return null
@@ -156,9 +156,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       if (run) {
         const taskForResponse = db.getTask(task.id)
         if (!taskForResponse) {
-          return yield* Effect.fail(
-            internalRouteError(`Task ${task.id} not found after scheduling plan revision run`, ErrorCode.TASK_NOT_FOUND),
-          )
+          return yield* internalRouteError(`Task ${task.id} not found after scheduling plan revision run`, ErrorCode.TASK_NOT_FOUND)
         }
         return json({ task: normalizeTaskForClient(taskForResponse, sessionUrlFor), run })
       }
@@ -638,12 +636,12 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       const body = yield* parseJsonRecord(req)
       const candidateId = typeof body.candidateId === "string" ? body.candidateId : ""
       if (!candidateId) {
-        return yield* Effect.fail(badRequestError("candidateId is required", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id }))
+        return yield* badRequestError("candidateId is required", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id })
       }
 
       const candidates = db.getTaskCandidates(task.id)
       if (!candidates.some((candidate) => candidate.id === candidateId)) {
-        return yield* Effect.fail(notFoundError("Candidate not found", ErrorCode.TASK_NOT_FOUND, { taskId: params.id, candidateId }))
+        return yield* notFoundError("Candidate not found", ErrorCode.TASK_NOT_FOUND, { taskId: params.id, candidateId })
       }
 
       const updatedCandidates = candidates
@@ -675,7 +673,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
         errorMessage: reason,
       })
       if (!updated) {
-        return yield* Effect.fail(notFoundError("Task not found", ErrorCode.TASK_NOT_FOUND, { taskId: task.id }))
+        return yield* notFoundError("Task not found", ErrorCode.TASK_NOT_FOUND, { taskId: task.id })
       }
 
       const normalized = normalizeTaskForClient(updated, sessionUrlFor)
@@ -714,7 +712,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       })
 
       if (!updated) {
-        return yield* Effect.fail(notFoundError("Task not found", ErrorCode.TASK_NOT_FOUND, { taskId: task.id }))
+        return yield* notFoundError("Task not found", ErrorCode.TASK_NOT_FOUND, { taskId: task.id })
       }
       const normalized = normalizeTaskForClient(updated, sessionUrlFor)
       broadcast({ type: "task_updated", payload: normalized })
@@ -819,19 +817,18 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
 
       const activeRun = db.getActiveWorkflowRunForTask(params.id)
       if (activeRun) {
-        return yield* Effect.fail(
+        return yield* 
           internalRouteError(
             `Cannot modify task "${task.name}" while it is executing in run ${activeRun.id}.`,
             ErrorCode.EXECUTION_OPERATION_FAILED,
-          ),
-        )
+          )
       }
 
       const body = yield* parseJsonRecord(req)
       const groupIdRaw = body.groupId
 
       if (groupIdRaw !== undefined && groupIdRaw !== null && typeof groupIdRaw !== "string") {
-        return yield* Effect.fail(badRequestError("groupId must be a string, null, or undefined", ErrorCode.INVALID_REQUEST_BODY))
+        return yield* badRequestError("groupId must be a string, null, or undefined", ErrorCode.INVALID_REQUEST_BODY)
       }
 
       const groupId: string | null | undefined = groupIdRaw as string | null | undefined
@@ -849,12 +846,12 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       }
 
       if (typeof groupId !== "string") {
-        return yield* Effect.fail(badRequestError("groupId must be a string or null", ErrorCode.INVALID_REQUEST_BODY))
+        return yield* badRequestError("groupId must be a string or null", ErrorCode.INVALID_REQUEST_BODY)
       }
 
       const group = db.getTaskGroup(groupId)
       if (!group) {
-        return yield* Effect.fail(notFoundError("Group not found", ErrorCode.TASK_GROUP_NOT_FOUND, { groupId }))
+        return yield* notFoundError("Group not found", ErrorCode.TASK_GROUP_NOT_FOUND, { groupId })
       }
 
       if (task.groupId && task.groupId !== groupId) {
@@ -882,14 +879,14 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       const requestedAction = typeof body.action === "string" ? body.action : "smart"
 
       if (requestedAction === "smart") {
-        const smart = yield* Effect.tryPromise({
-          try: () =>
-            ctx.smartRepair.repair(
-              task.id,
-              typeof body.smartRepairHints === "string" ? body.smartRepairHints : undefined,
-            ),
-          catch: (error) => internalRouteError(`Failed smart repair for task ${task.id}`, ErrorCode.EXECUTION_OPERATION_FAILED, error),
-        })
+        const smart = yield* ctx.smartRepair.repair(
+          task.id,
+          typeof body.smartRepairHints === "string" ? body.smartRepairHints : undefined,
+        ).pipe(
+          Effect.mapError((error) =>
+            internalRouteError(`Failed smart repair for task ${task.id}`, ErrorCode.EXECUTION_OPERATION_FAILED, error),
+          ),
+        )
         const normalizedSmart = normalizeTaskForClient(smart.task, sessionUrlFor)
         broadcast({ type: "task_updated", payload: normalizedSmart })
         return json({ ok: true, action: smart.action, reason: smart.reason, task: normalizedSmart })
@@ -901,20 +898,24 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
           action,
         )
       ) {
-        return yield* Effect.fail(badRequestError(`Unsupported repair action: ${requestedAction}`, ErrorCode.INVALID_REQUEST_BODY))
+        return yield* badRequestError(`Unsupported repair action: ${requestedAction}`, ErrorCode.INVALID_REQUEST_BODY)
       }
 
       const reason =
         typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : "Manual repair action"
 
-      const updated = ctx.smartRepair.applyAction(task.id, {
+      const updated = yield* ctx.smartRepair.applyAction(task.id, {
         action,
         reason,
         errorMessage:
           typeof body.errorMessage === "string" && body.errorMessage.trim()
             ? body.errorMessage.trim()
             : undefined,
-      })
+      }).pipe(
+        Effect.mapError((error) =>
+          internalRouteError(`Failed to apply repair action for task ${task.id}`, ErrorCode.EXECUTION_OPERATION_FAILED, error),
+        ),
+      )
       const normalized = normalizeTaskForClient(updated, sessionUrlFor)
       broadcast({ type: "task_updated", payload: normalized })
       return json({ ok: true, action, reason, task: normalized })
@@ -935,29 +936,31 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
   router.post("/api/tasks/:id/self-heal-recover", ({ params, req, json, db }) =>
     Effect.gen(function* () {
       if (!ctx.onManualSelfHealRecover) {
-        return yield* Effect.fail(serviceUnavailableError("Manual self-heal recovery not available", ErrorCode.SERVICE_UNAVAILABLE))
+        return yield* serviceUnavailableError("Manual self-heal recovery not available", ErrorCode.SERVICE_UNAVAILABLE)
       }
       yield* requireTask(db, params.id)
 
       const body = yield* parseJsonRecord(req)
       const reportId = typeof body.reportId === "string" ? body.reportId.trim() : ""
       if (!reportId) {
-        return yield* Effect.fail(badRequestError("reportId is required", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id }))
+        return yield* badRequestError("reportId is required", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id })
       }
 
       const action = body.action
       if (action !== "restart_task" && action !== "keep_failed") {
-        return yield* Effect.fail(
-          badRequestError("action must be 'restart_task' or 'keep_failed'", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id }),
+        return yield* badRequestError(
+          "action must be 'restart_task' or 'keep_failed'",
+          ErrorCode.INVALID_REQUEST_BODY,
+          { taskId: params.id },
         )
       }
 
       const report = db.getSelfHealReport(reportId)
       if (!report) {
-        return yield* Effect.fail(notFoundError("Self-heal report not found", ErrorCode.TASK_NOT_FOUND, { taskId: params.id, reportId }))
+        return yield* notFoundError("Self-heal report not found", ErrorCode.TASK_NOT_FOUND, { taskId: params.id, reportId })
       }
       if (report.taskId !== params.id) {
-        return yield* Effect.fail(badRequestError("Report does not belong to this task", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id, reportId }))
+        return yield* badRequestError("Report does not belong to this task", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id, reportId })
       }
 
       const result = yield* manualSelfHealRecoverEffect(params.id, reportId, action)

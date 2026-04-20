@@ -2,18 +2,17 @@ import { readFileSync, existsSync, mkdirSync } from "fs"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import type { InfrastructureSettings } from "../config/settings.ts"
-import { BASE_IMAGES } from "../config/base-images.ts"
 import { discoverPiModels } from "../pi/model-discovery.ts"
 import type { ImageStatusPayload, RunQueueStatus, SlotUtilization, WorkflowRun, WSMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
 import type { PackageDefinition } from "../db/types.ts"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { runStartupRecoveryEffect } from "../recovery/startup-recovery.ts"
 import { ContainerImageManager } from "../runtime/container-image-manager.ts"
 import { PiContainerManager } from "../runtime/container-manager.ts"
 import { SmartRepairService } from "../runtime/smart-repair.ts"
 import { PlanningSessionManager } from "../runtime/planning-session.ts"
-import { sendTelegramNotification, sendTelegramWorkflowSummary, shouldSendNotification, type NotificationContext } from "../telegram.ts"
+import { sendTelegramNotificationEffect, sendTelegramWorkflowSummaryEffect, shouldSendNotification, type NotificationContext } from "../telegram.ts"
 import { Router } from "./router.ts"
 import type { RequestContext, ServerRouteContext } from "./types.ts"
 import { WebSocketHub } from "./websocket.ts"
@@ -27,6 +26,16 @@ import { registerPlanningRoutes } from "./routes/planning-routes.ts"
 import { registerContainerRoutes } from "./routes/container-routes.ts"
 import { registerTaskGroupRoutes } from "./routes/task-group-routes.ts"
 import { registerStatsRoutes } from "./routes/stats-routes.ts"
+
+class ServerRuntimeError extends Schema.TaggedError<ServerRuntimeError>()("ServerRuntimeError", {
+  operation: Schema.String,
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
+
+function failServerRuntime(operation: string, message: string, cause?: unknown): never {
+  throw new ServerRuntimeError({ operation, message, cause })
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -49,7 +58,7 @@ import type {
 export class PiKanbanServer {
   private readonly db: PiKanbanDB
   private readonly router = new Router()
-  private readonly wsHub = new WebSocketHub()
+  private readonly wsHub: WebSocketHub
   private server: Bun.Server<unknown> | null = null
   private readonly onStart: StartFn
   private readonly onStartSingle: StartSingleFn
@@ -127,13 +136,29 @@ export class PiKanbanServer {
       onManualSelfHealRecover?: ManualSelfHealRecoverFn
       settings?: InfrastructureSettings
       projectRoot?: string
-    } = {},
+      smartRepair?: SmartRepairService
+      planningSessionManager?: PlanningSessionManager
+      imageManager?: ContainerImageManager
+      containerManager?: PiContainerManager
+      wsHub?: WebSocketHub
+    },
   ) {
     this.db = db
     this.settings = opts.settings
     this.projectRoot = opts.projectRoot ?? process.cwd()
     this.defaultPort = opts.port ?? this.db.getOptions().port
-    this.smartRepair = new SmartRepairService(this.db, opts.settings)
+    if (!opts.smartRepair) {
+      failServerRuntime("constructor", "smartRepair service is required")
+    }
+    if (!opts.planningSessionManager) {
+      failServerRuntime("constructor", "planningSessionManager service is required")
+    }
+    if (!opts.wsHub) {
+      failServerRuntime("constructor", "wsHub service is required")
+    }
+
+    this.smartRepair = opts.smartRepair
+    this.wsHub = opts.wsHub
     this.onStart = opts.onStart ?? (() => Effect.succeed(null))
     this.onStartSingle = opts.onStartSingle ?? (() => Effect.succeed(null))
     this.onStartGroup = opts.onStartGroup ?? null
@@ -144,46 +169,9 @@ export class PiKanbanServer {
     this.onGetSlots = opts.onGetSlots ?? null
     this.onGetRunQueueStatus = opts.onGetRunQueueStatus ?? null
     this.onManualSelfHealRecover = opts.onManualSelfHealRecover ?? null
-
-    // Container mode is the default - only disabled when explicitly set to false
-    if (opts.settings?.workflow?.container?.enabled !== false) {
-      console.log("[container] Container mode enabled (default) - initializing image manager...")
-      const containerSettings = opts.settings?.workflow?.container ?? {
-        image: BASE_IMAGES.piAgent,
-        imageSource: "dockerfile" as const,
-        dockerfilePath: "docker/pi-agent/Dockerfile",
-        registryUrl: null,
-      }
-      this.imageManager = new ContainerImageManager({
-        imageName: containerSettings.image,
-        imageSource: containerSettings.imageSource,
-        dockerfilePath: containerSettings.dockerfilePath,
-        registryUrl: containerSettings.registryUrl,
-        cacheDir: join(this.projectRoot, ".tauroboros"),
-        projectRoot: this.projectRoot,
-        onStatusChange: (event) => {
-          const payload: ImageStatusPayload = {
-            status: event.status,
-            message: event.message,
-            progress: event.progress,
-            errorMessage: event.errorMessage,
-          }
-          this.broadcast({ type: "image_status", payload })
-        },
-      })
-      console.log("[container] Image manager initialized successfully")
-
-      // Initialize container manager for image operations
-      this.containerManager = new PiContainerManager(
-        containerSettings.image,
-        this.imageManager,
-      )
-      console.log("[container] Container manager initialized successfully")
-    } else {
-      console.log("[container] Container mode explicitly disabled - running in native mode. Tasks will execute directly on the host without container isolation.")
-    }
-
-    this.planningSessionManager = new PlanningSessionManager(this.db, undefined, opts.settings)
+    this.imageManager = opts.imageManager
+    this.containerManager = opts.containerManager
+    this.planningSessionManager = opts.planningSessionManager
 
     // Register Telegram notification listener for task status changes
     this.db.setTaskStatusChangeListener((taskId: string, oldStatus: string, newStatus: string) => {
@@ -213,15 +201,23 @@ export class PiKanbanServer {
         return
       }
 
-      sendTelegramNotification(
-        { botToken: options.telegramBotToken, chatId: options.telegramChatId },
-        task.name,
-        oldStatus,
-        newStatus,
-        (msg: string) => console.debug(msg)
-      ).catch((err: unknown) => {
-        console.error("[telegram] notification failed:", err)
-      })
+      void Effect.runPromise(
+        sendTelegramNotificationEffect(
+          { botToken: options.telegramBotToken, chatId: options.telegramChatId },
+          task.name,
+          oldStatus,
+          newStatus,
+        ).pipe(
+          Effect.tap((msg) =>
+            msg.success && msg.messageId
+              ? Effect.logDebug(`[telegram] notification sent for "${task.name}" (${oldStatus} -> ${newStatus})`)
+              : Effect.void,
+          ),
+          Effect.catchAll((err) =>
+            Effect.logError(`[telegram] notification failed: ${err.message}`),
+          ),
+        ),
+      )
     })
 
     this.registerRoutes()
@@ -297,17 +293,25 @@ export class PiKanbanServer {
               }
             }
             
-            sendTelegramWorkflowSummary(
-              { botToken: options.telegramBotToken, chatId: options.telegramChatId },
-              run.displayName || "Workflow",
-              run.taskOrder?.length ?? 0,
-              completed,
-              failed,
-              stuck,
-              (msg: string) => console.debug(msg)
-            ).catch((err: unknown) => {
-              console.error("[telegram] workflow summary notification failed:", err)
-            })
+            void Effect.runPromise(
+              sendTelegramWorkflowSummaryEffect(
+                { botToken: options.telegramBotToken, chatId: options.telegramChatId },
+                run.displayName || "Workflow",
+                run.taskOrder?.length ?? 0,
+                completed,
+                failed,
+                stuck,
+              ).pipe(
+                Effect.tap((msg) =>
+                  msg.success && msg.messageId
+                    ? Effect.logDebug(`[telegram] workflow summary sent for "${run.displayName || "Workflow"}" (${completed}/${run.taskOrder?.length ?? 0} done, ${failed} failed, ${stuck} stuck)`)
+                    : Effect.void,
+                ),
+                Effect.catchAll((err) =>
+                  Effect.logError(`[telegram] workflow summary notification failed: ${err.message}`),
+                ),
+              ),
+            )
           }
         }
         if (this._currentRunId === completedRunId) {
@@ -329,9 +333,11 @@ export class PiKanbanServer {
         const message = error instanceof Error ? error.message : String(error)
         console.error("[server] CRITICAL: Failed to prepare container image:", message)
         console.error("[server] Container mode is enabled but image preparation failed. Server cannot start.")
-        throw new Error(
+        failServerRuntime(
+          "start",
           `Container mode is enabled but image preparation failed: ${message}. ` +
-            `Fix the issue or disable container mode in .tauroboros/settings.json`
+            `Fix the issue or disable container mode in .tauroboros/settings.json`,
+          error,
         )
       }
     }
@@ -342,16 +348,18 @@ export class PiKanbanServer {
       if (!setupStatus.podman) {
         console.error("[server] CRITICAL: Container mode is enabled but Podman is not available.")
         console.error("[server] Install Podman or explicitly disable container mode in .tauroboros/settings.json")
-        throw new Error(
+        failServerRuntime(
+          "start",
           "Container mode is enabled but Podman is not available. " +
-            "Install Podman or set workflow.container.enabled to false in .tauroboros/settings.json"
+            "Install Podman or set workflow.container.enabled to false in .tauroboros/settings.json",
         )
       }
       if (!setupStatus.image) {
         console.error("[server] CRITICAL: Container mode is enabled but container image is not available.")
-        throw new Error(
+        failServerRuntime(
+          "start",
           "Container mode is enabled but container image is not available. " +
-            `Build it with: podman build -t ${this.settings?.workflow?.container?.image ?? BASE_IMAGES.piAgent} -f docker/pi-agent/Dockerfile .`
+            `Build it with: podman build -t ${this.settings?.workflow?.container?.image} -f docker/pi-agent/Dockerfile .`,
         )
       }
     }
@@ -396,6 +404,7 @@ export class PiKanbanServer {
   }
 
   stop(): void {
+    this.db.setTaskStatusChangeListener(null)
     this.server?.stop()
     this.server = null
   }
@@ -571,14 +580,14 @@ export class PiKanbanServer {
 
     for (const img of images) {
       if (!Array.isArray(img.Names)) {
-        throw new Error(`Invalid podman image data: 'Names' must be an array, got ${typeof img.Names}`)
+        failServerRuntime("getPodmanImages", `Invalid podman image data: 'Names' must be an array, got ${typeof img.Names}`)
       }
       for (const tag of img.Names) {
         if (!img.CreatedAt) {
-          throw new Error(`Invalid podman image data: 'CreatedAt' is required for image '${tag}'`)
+          failServerRuntime("getPodmanImages", `Invalid podman image data: 'CreatedAt' is required for image '${tag}'`)
         }
         if (!img.Size) {
-          throw new Error(`Invalid podman image data: 'Size' is required for image '${tag}'`)
+          failServerRuntime("getPodmanImages", `Invalid podman image data: 'Size' is required for image '${tag}'`)
         }
         result.push({
           tag,
@@ -610,7 +619,7 @@ export class PiKanbanServer {
    */
   private async validateContainerImage(tag: string): Promise<boolean> {
     if (!tag || tag.trim() === "") {
-      throw new Error("Cannot validate container image: tag is empty or whitespace-only")
+      failServerRuntime("validateContainerImage", "Cannot validate container image: tag is empty or whitespace-only")
     }
 
     // Check container_builds table
@@ -628,7 +637,7 @@ export class PiKanbanServer {
       return exitCode === 0
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
-      throw new Error(`Failed to validate container image '${tag}' via podman: ${errorMessage}`)
+      failServerRuntime("validateContainerImage", `Failed to validate container image '${tag}' via podman: ${errorMessage}`, error)
     }
   }
 }

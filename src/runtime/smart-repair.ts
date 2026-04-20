@@ -7,9 +7,10 @@ import { resolveContainerImage, type Task } from "../types.ts"
 import type { TaskRepairAction } from "../task-state.ts"
 import { chooseDeterministicRepairAction } from "../task-state.ts"
 import { buildRepairVariables } from "../prompts/index.ts"
-import { PiSessionManager } from "./session-manager.ts"
+import { PiSessionManager, SessionManagerExecuteError } from "./session-manager.ts"
 import { parseStrictJsonObject } from "./strict-json.ts"
 import { formatLocalDateTime } from "../utils/date-format.ts"
+import { PiProcessError } from "./pi-process.ts"
 
 export type SmartRepairAction = TaskRepairAction
 
@@ -134,8 +135,9 @@ export class SmartRepairService {
   }
 
   decide(taskId: string): Effect.Effect<SmartRepairDecision, SmartRepairError> {
+    const self = this
     return Effect.gen(function* () {
-      const task = this.db.getTask(taskId)
+      const task = self.db.getTask(taskId)
       if (!task) {
         return yield* new SmartRepairError({
           operation: "decide",
@@ -144,24 +146,24 @@ export class SmartRepairService {
         })
       }
 
-      const options = this.db.getOptions()
+      const options = self.db.getOptions()
       const worktreeStatus = getGitStatusPorcelain(task.worktreeDir)
       const sessionHistory = [
         "Workflow sessions:",
-        buildSessionHistoryText(this.db, task.id),
+        buildSessionHistoryText(self.db, task.id),
         "",
         "Recent session messages:",
-        buildRecentMessagesText(this.db, task.id),
+        buildRecentMessagesText(self.db, task.id),
         task.smartRepairHints?.trim() ? `\nUser hints:\n${task.smartRepairHints.trim()}` : "",
       ].join("\n")
 
       const latestOutput = buildLatestTaggedOutputText(task)
       const promptVars = buildRepairVariables(task, worktreeStatus, sessionHistory, latestOutput)
-      const prompt = this.db.renderPrompt("repair", promptVars)
+      const prompt = self.db.renderPrompt("repair", promptVars)
 
-      const repairImageToUse = resolveContainerImage(task, this.settings?.workflow?.container?.image)
+      const repairImageToUse = resolveContainerImage(task, self.settings?.workflow?.container?.image)
 
-      const session = yield* this.sessions.executePrompt({
+      const session = yield* self.sessions.executePrompt({
         taskId: task.id,
         sessionKind: "repair",
         cwd: task.worktreeDir ?? process.cwd(),
@@ -171,15 +173,25 @@ export class SmartRepairService {
         thinkingLevel: options.repairThinkingLevel,
         promptText: prompt.renderedText,
         containerImage: repairImageToUse,
-      })
+      }).pipe(
+        Effect.mapError((cause) =>
+          new SmartRepairError({
+            operation: cause instanceof SessionManagerExecuteError ? cause.operation : cause instanceof PiProcessError ? cause.operation : "decide",
+            message: cause instanceof Error ? cause.message : String(cause),
+            taskId,
+            cause,
+          }),
+        ),
+      )
 
       return yield* parseRepairDecisionEffect(session.responseText)
-    }.bind(this))
+    })
   }
 
   applyAction(taskId: string, decision: SmartRepairDecision): Effect.Effect<Task, SmartRepairError> {
+    const self = this
     return Effect.gen(function* () {
-      const task = this.db.getTask(taskId)
+      const task = self.db.getTask(taskId)
       if (!task) {
         return yield* new SmartRepairError({
           operation: "applyAction",
@@ -261,7 +273,7 @@ export class SmartRepairService {
         }
       }
 
-      const updated = this.db.updateTask(taskId, update)
+      const updated = self.db.updateTask(taskId, update)
       if (!updated) {
         return yield* new SmartRepairError({
           operation: "applyAction",
@@ -269,14 +281,15 @@ export class SmartRepairService {
           taskId,
         })
       }
-      this.db.appendAgentOutput(taskId, reasonNote)
-      return this.db.getTask(taskId) ?? updated
-    }.bind(this))
+      self.db.appendAgentOutput(taskId, reasonNote)
+      return self.db.getTask(taskId) ?? updated
+    })
   }
 
   repair(taskId: string, smartRepairHints?: string): Effect.Effect<SmartRepairDecision & { task: Task }, SmartRepairError> {
+    const self = this
     return Effect.gen(function* () {
-      const task = this.db.getTask(taskId)
+      const task = self.db.getTask(taskId)
       if (!task) {
         return yield* new SmartRepairError({
           operation: "repair",
@@ -286,12 +299,12 @@ export class SmartRepairService {
       }
 
       if (typeof smartRepairHints === "string") {
-        this.db.updateTask(taskId, { smartRepairHints })
+        self.db.updateTask(taskId, { smartRepairHints })
       }
 
-      const decision = yield* this.decide(taskId)
-      const updated = yield* this.applyAction(taskId, decision)
+      const decision = yield* self.decide(taskId)
+      const updated = yield* self.applyAction(taskId, decision)
       return { ...decision, task: updated }
-    }.bind(this))
+    })
   }
 }

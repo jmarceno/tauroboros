@@ -14,11 +14,12 @@ const queryKeys = {
 
 export function createOptionsStore() {
   const queryClient = useQueryClient()
+  const runApi = api.runApiEffect
 
   // Query
   const optionsQuery = createQuery(() => ({
     queryKey: queryKeys.options,
-    queryFn: () => api.optionsApi.get(),
+    queryFn: () => runApi(api.optionsApi.get()),
     staleTime: 10000,
   }))
 
@@ -32,36 +33,29 @@ export function createOptionsStore() {
   }
 
   // Mutations
-  const saveOptionsMutation = createMutation(() => ({
-    mutationFn: (data: Partial<Options>) => api.optionsApi.save(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.options })
-    },
-  }))
-
   const updateOptionsMutation = createMutation(() => ({
-    mutationFn: (data: Partial<Options>) => api.optionsApi.update(data),
+    mutationFn: (data: Partial<Options>) => runApi(api.optionsApi.update(data)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.options })
     },
   }))
 
   const startExecutionMutation = createMutation(() => ({
-    mutationFn: () => api.optionsApi.startExecution(),
+    mutationFn: () => runApi(api.optionsApi.startExecution()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.options })
     },
   }))
 
   const stopExecutionMutation = createMutation(() => ({
-    mutationFn: () => api.optionsApi.stopExecution(),
+    mutationFn: () => runApi(api.optionsApi.stopExecution()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.options })
     },
   }))
 
   const saveOptions = async (data: Partial<Options>) => {
-    return await saveOptionsMutation.mutateAsync(data)
+    return await updateOptionsMutation.mutateAsync(data)
   }
 
   const updateOptions = async (data: Partial<Options>) => {

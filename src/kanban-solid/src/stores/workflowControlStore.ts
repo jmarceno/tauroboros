@@ -11,6 +11,7 @@ export function createWorkflowControlStore(
   onStateChange?: (state: ControlState) => void,
   onRunUpdate?: (run: WorkflowRun) => void
 ) {
+  const runApi = api.runApiEffect
   const [currentRunId, setCurrentRunId] = createSignal<string | null>(null)
   const [controlState, setControlState] = createSignal<ControlState>('idle')
   const [isLoading, setIsLoading] = createSignal(false)
@@ -68,7 +69,7 @@ export function createWorkflowControlStore(
 
   const checkPausedState = async (): Promise<boolean> => {
     try {
-      const paused = await api.runsApi.getPausedState()
+      const paused = await runApi(api.runsApi.getPausedState())
       const pausedState = paused.state as { runId?: unknown } | null
 
       if (paused.hasPausedRun && pausedState && typeof pausedState.runId === 'string') {
@@ -94,7 +95,7 @@ export function createWorkflowControlStore(
     setControlState('pausing')
 
     try {
-      const result = await api.runsApi.pause(targetId)
+      const result = await runApi(api.runsApi.pause(targetId))
       if (result.success) {
         setControlState('paused')
         onStateChange?.('paused')
@@ -125,7 +126,7 @@ export function createWorkflowControlStore(
     setControlState('resuming')
 
     try {
-      const result = await api.runsApi.resume(targetId)
+      const result = await runApi(api.runsApi.resume(targetId))
       if (result.success) {
         setControlState('running')
         onStateChange?.('running')
@@ -155,7 +156,7 @@ export function createWorkflowControlStore(
     setError(null)
 
     try {
-      const result = await api.runsApi.stop(targetId)
+      const result = await runApi(api.runsApi.stop(targetId))
       if (result.success) {
         setControlState('idle')
         setCurrentRunId(null)
@@ -184,7 +185,7 @@ export function createWorkflowControlStore(
     setError(null)
 
     try {
-      const result = await api.runsApi.forceStop(targetId)
+      const result = await runApi(api.runsApi.forceStop(targetId))
       if (result.success) {
         setLastResult({ killed: result.killed, cleaned: result.cleaned })
         setControlState('idle')

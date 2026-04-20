@@ -4,19 +4,11 @@
  */
 
 import { createResource } from 'solid-js'
-import { referenceApi } from '@/api'
+import { referenceApi, runApiEffect } from '@/api'
 
 export function createVersionStore() {
   const [versionData, { refetch }] = createResource(
-    async () => {
-      try {
-        const data = await referenceApi.getVersion()
-        return data
-      } catch (e) {
-        console.error('Failed to load version:', e)
-        return null
-      }
-    },
+    () => runApiEffect(referenceApi.getVersion()),
     {
       initialValue: null,
     }

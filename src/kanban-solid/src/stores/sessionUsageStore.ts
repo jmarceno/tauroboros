@@ -3,8 +3,8 @@
  * Replaces: SessionUsageContext
  */
 
-import { createSignal, createMemo, batch } from 'solid-js'
-import { createQuery, useQueryClient, createMutation } from '@tanstack/solid-query'
+import { createSignal } from 'solid-js'
+import { useQueryClient } from '@tanstack/solid-query'
 import type { SessionUsageRollup } from '@/types'
 import * as api from '@/api'
 
@@ -16,6 +16,7 @@ const queryKeys = {
 
 export function createSessionUsageStore() {
   const queryClient = useQueryClient()
+  const runApi = api.runApiEffect
   const [activeSessionIds, setActiveSessionIds] = createSignal<Set<string>>(new Set())
   const [taskSessionMap, setTaskSessionMap] = createSignal<Record<string, string[]>>({})
 
@@ -54,12 +55,11 @@ export function createSessionUsageStore() {
     try {
       const data = await queryClient.fetchQuery({
         queryKey: queryKeys.sessions.usage(sessionId),
-        queryFn: () => api.sessionsApi.getUsage(sessionId),
+        queryFn: () => runApi(api.sessionsApi.getUsage(sessionId)),
         staleTime: 5000,
       })
       return data
-    } catch (e) {
-      console.error('Failed to load session usage:', e)
+    } catch {
       return null
     }
   }
@@ -87,7 +87,7 @@ export function createSessionUsageStore() {
   // Start watching all sessions for a task
   const startWatchingTask = async (taskId: string) => {
     try {
-      const sessions = await api.tasksApi.getTaskSessions(taskId)
+      const sessions = await runApi(api.tasksApi.getTaskSessions(taskId))
       const sessionIds = sessions.map(s => s.id)
       
       setTaskSessionMap(prev => ({ ...prev, [taskId]: sessionIds }))
@@ -96,8 +96,8 @@ export function createSessionUsageStore() {
       sessionIds.forEach(sessionId => {
         startWatching(sessionId)
       })
-    } catch (e) {
-      console.error('Failed to start watching task:', e)
+    } catch {
+      return
     }
   }
 

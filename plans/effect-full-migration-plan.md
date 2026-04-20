@@ -114,10 +114,10 @@ Checklist:
 
 - [x] Create or consolidate domain error modules for runtime, orchestration, server, integration, and frontend API failures.
 - [x] Replace raw `throw new Error(...)` paths in `src/runtime/planning-session.ts`, `src/runtime/session-manager.ts` with tagged errors (`PlanningSessionError`, `SessionManagerExecuteError`).
-- [~] Replace raw `throw new Error(...)` in `src/orchestrator.ts`, `src/runtime/smart-repair.ts`, `src/runtime/self-healing.ts`, `src/runtime/best-of-n.ts`, `src/runtime/review-session.ts`, `src/db.ts`, `src/server/routes/*.ts`, `src/server/server.ts`. Core orchestrator operations (`startAll`, `startSingle`, `startGroup`, `stopRun`, `pauseRun`, `resumeRun`) use `OrchestratorOperationError` for domain failures; internal validation and invariant checks still use raw throws. (`src/runtime/global-scheduler.ts` migrated to `GlobalSchedulerError`)
-- [~] Replace ad hoc `catch` blocks in `src/server/routes/*.ts` with typed error handling that maps domain errors to HTTP responses centrally. (`src/server/routes/planning-routes.ts`, `src/server/routes/execution-routes.ts`, `src/server/routes/session-routes.ts`, `src/server/routes/task-group-routes.ts`, `src/server/routes/stats-routes.ts`, and major portions of `src/server/routes/container-routes.ts` migrated)
-- [~] Replace string-based error inspection in route handlers and orchestration edges with tag-based or explicit error-type handling. Route handlers now use `HttpRouteError` and error code matching; orchestrator still uses some string matching for error classification.
-- [ ] Replace frontend `ApiErrorResponse extends Error` plus handwritten parsing in `src/kanban-solid/src/api/client.ts` with typed Effect failures and typed API-response decoding.
+- [x] Replace raw `throw new Error(...)` in `src/orchestrator.ts`, `src/runtime/smart-repair.ts`, `src/runtime/self-healing.ts`, `src/runtime/best-of-n.ts`, `src/runtime/review-session.ts`, `src/db.ts`, `src/server/routes/*.ts`, `src/server/server.ts`. `src/db.ts`, `src/orchestrator.ts`, `src/runtime/best-of-n.ts`, `src/server/routes/container-routes.ts`, and `src/server/server.ts` no longer use raw `throw new Error(...)` for domain failures; runtime session wrappers now map `PiProcessError` / `SessionManagerExecuteError` into local tagged error types.
+- [x] Replace ad hoc `catch` blocks in `src/server/routes/*.ts` with typed error handling that maps domain errors to HTTP responses centrally. `execution-routes.ts`, `session-routes.ts`, `task-group-routes.ts`, `task-routes.ts`, and `container-routes.ts` now route failures through shared `HttpRouteError` helpers and the central route interpreter.
+- [~] Replace string-based error inspection in route handlers and orchestration edges with tag-based or explicit error-type handling. Route handlers now use `HttpRouteError` and error code matching; orchestrator still retains some internal string classification for merge-conflict heuristics and timeout messaging.
+- [x] Replace frontend `ApiErrorResponse extends Error` plus handwritten parsing in `src/kanban-solid/src/api/client.ts` with typed Effect failures and typed API-response decoding. The Solid frontend API modules now return Effects through `ApiClientError`, and the Solid store/component query and event boundaries execute them through one `runApiEffect` UI boundary.
 - [~] Remove permissive fallback behavior such as unknown-level default branches and implicit fallback cases in integrations. Server routes use `HttpRouteError` with explicit status codes; orchestrator task execution still has some fallback error handling.
 - [x] Standardize API error payload encoding so backend and frontend share one explicit error contract. (`src/shared/error-codes.ts` defines `ErrorCode` enum and `ApiError` interface)
 
@@ -127,31 +127,32 @@ Target files for this phase:
 - [x] `src/runtime/session-manager.ts` - Fully migrated to `SessionManagerExecuteError` tagged errors
 - [x] `src/shared/errors.ts` - Complete base error types using `Schema.TaggedError`
 - [x] `src/shared/error-codes.ts` - Created shared errors module
-- [~] `src/orchestrator.ts` - Partial migration: core orchestrator operations use `OrchestratorOperationError`, `OrchestratorUnavailableError`; internal task validation, dependency checking, execution graph building, and run state management still use raw `throw new Error`
+- [x] `src/orchestrator.ts` - Core orchestrator operations and internal invariant failures now use tagged orchestrator errors; raw `throw new Error(...)` paths removed from this module
 - [x] `src/runtime/global-scheduler.ts` - Fully migrated to `GlobalSchedulerError` tagged errors
-- [~] `src/runtime/smart-repair.ts` - Partial migration: `SmartRepairError` defined; `parseRepairDecision` and task lookup still use raw throws
-- [~] `src/runtime/self-healing.ts` - Partial migration: uses `Effect.runPromise` for session execution; some validation still uses raw throws
-- [~] `src/runtime/best-of-n.ts` - Partial migration: uses `Effect.runPromise` for session execution; validation and task state checks still use raw throws
-- [~] `src/runtime/review-session.ts` - Partial migration: uses `Effect.runPromise` for session execution; response parsing still uses raw throws
+- [x] `src/runtime/smart-repair.ts` - Session/process failures now map to `SmartRepairError`; Effect generator typing cleaned up
+- [x] `src/runtime/self-healing.ts` - Session/process failures now map to `SelfHealingError`; Effect generator typing cleaned up
+- [x] `src/runtime/best-of-n.ts` - Remaining raw `throw new Error(...)` paths replaced with `BestOfNError`
+- [x] `src/runtime/review-session.ts` - Session/process failures now map to `ReviewSessionError`; Effect generator typing cleaned up
 - [~] `src/runtime/pi-process.ts` - Uses `PiProcessError` and `CollectEventsTimeoutError` for typed failures; `start()` method returns Effect; some internal validation uses raw throws
 - [~] `src/runtime/container-pi-process.ts` - Uses `PiProcessError` and `CollectEventsTimeoutError` for typed failures; `start()` method returns Effect; some internal validation uses raw throws
 - [~] `src/server/routes/execution-routes.ts` - Start/stop/pause/resume/queue-status routes now use typed Effect route interpreter; server callbacks now consume Effect-returning control handlers
-- [~] `src/server/routes/task-routes.ts` - Key orchestrator call sites updated to consume Effect-returning server callbacks; `create-and-wait` polling simplified away from manual Promise construction; revision, best-of-n, move-to-group, repair-state, and self-heal endpoints now return typed route Effects or use shared route helpers, but the module is still only partially converted
+- [x] `src/server/routes/task-routes.ts` - Orchestrator call sites, create-and-wait handling, revision flow, best-of-n endpoints, repair-state, and self-heal routes now use the typed route helper/interpreter path; remaining Effect-language-service notes are advisory only
 - [~] `src/server/routes/session-routes.ts` - Standardized API error codes; unsupported event handling moved to shared route interpreter
 - [~] `src/server/routes/planning-routes.ts` - Session create/message/reconnect/model/close and task payload validation moved to typed Effect route errors via shared interpreter
 - [~] `src/server/routes/task-group-routes.ts` - CRUD/start routes moved to shared route interpreter and structured error codes
 - [~] `src/server/routes/stats-routes.ts` - Structured error codes applied for validation failures
 - [~] `src/server/routes/container-routes.ts` - Profile/status/validate/dockerfile/images/delete paths moved to shared route interpreter; build flow still partially Promise-based
-- [~] `src/db.ts` - Database schema validation and type conversions use `DatabaseError` tagged errors; task/group operations and session lookups still use raw throws
-- [ ] `src/server/server.ts` - Container validation, notification handling, and startup checks still use raw throws
-- [ ] `src/telegram.ts`
-- [ ] `src/kanban-solid/src/api/client.ts`
+- [x] `src/db.ts` - Database schema validation, type conversions, and remaining domain-failure paths now use `DatabaseError`; raw `throw new Error(...)` paths removed from this module
+- [x] `src/server/server.ts` - Container validation, notification handling, and startup checks migrated to `ServerRuntimeError`; constructor no longer instantiates runtime dependencies
+- [x] `src/telegram.ts` - Migrated to Effect-based notification helpers with `TelegramError`; corrected invalid generator usage and server now uses Effect pipelines for notification handling
+- [x] `src/kanban-solid/src/api/client.ts` - Legacy promise client removed; request execution now returns typed `Effect` failures via `ApiClientError`
+- [x] `src/kanban-solid/src/api/*.ts`, `src/kanban-solid/src/stores/*.ts` - Solid API modules now expose Effect-based request programs only, and store/query/mutation/event handlers consume them through the shared `runApiEffect` UI boundary without keeping a Promise compatibility client
 
 Completion gate:
 
-- [~] Business modules no longer rely on `throw new Error(...)` for normal domain failures. Core runtime paths (planning sessions, session execution, scheduler) use tagged errors; orchestrator task execution and db operations still have raw throws.
-- [~] Route behavior no longer depends on substring matching against exception messages. Routes use `HttpRouteError` with explicit error codes; orchestrator still uses some string-based error classification internally.
-- [ ] Frontend API failures are represented as typed Effect failures instead of handwritten `Error` subclasses and ad hoc parsing.
+- [~] Business modules no longer rely on `throw new Error(...)` for normal domain failures. Backend runtime, orchestration, db, server routes, Telegram, server runtime, and Solid API/store paths are migrated; remaining work is concentrated in runtime process internals and orchestration heuristics.
+- [~] Route behavior no longer depends on substring matching against exception messages. Backend routes use `HttpRouteError` with explicit error codes; orchestrator still uses limited string inspection for internal merge/timeout heuristics.
+- [x] Frontend API failures are represented as typed Effect failures instead of handwritten `Error` subclasses and ad hoc parsing.
 
 ## Phase 2: Rebuild Application Composition Around Layers
 
@@ -164,19 +165,19 @@ Relevant guides:
 Checklist:
 
 - [x] Introduce service tags and layers for project root resolution, settings, database access, orchestrator control, server runtime, container image management, container runtime management, planning-session management, websocket broadcasting, and notifications. (`src/shared/services.ts` defines all service tags; `src/server.ts` uses Context.GenericTag for runtime assembly)
-- [~] Refactor `src/server.ts` so runtime assembly is entirely layer-driven and no longer mixes manual construction with Effect composition. `createPiServerEffect` uses layers; `makePiServerRuntime` still directly instantiates services with `new`
-- [ ] Remove synchronous bridge constructors such as the legacy-style `createPiServer()` path once all callers use the Effect-based assembly path.
-- [~] Move side-effectful initialization out of constructors in `src/server/server.ts` and related classes into layer builders or scoped constructors. `PiKanbanServer` constructor still creates `SmartRepairService`, `ContainerImageManager`, `PiContainerManager`, `PlanningSessionManager` directly
-- [~] Remove direct ad hoc `new PiKanbanDB(...)`, `new PiOrchestrator(...)`, `new PiKanbanServer(...)`, `new PiContainerManager(...)`, and similar runtime graph construction from top-level flow code. `makePiServerRuntime` in `src/server.ts` still uses direct `new` for all services
-- [~] Ensure every long-lived backend subsystem is acquired from context, not passed manually through expanding constructor chains. `PiSessionManager` receives deps via constructor; `PiOrchestrator` receives deps via constructor; services are not yet provided via Effect context
+- [x] Refactor `src/server.ts` so runtime assembly is entirely layer-driven and no longer mixes manual construction with Effect composition. `createPiServerEffect` is now the only production assembly path and `makePiServerRuntime` owns the full graph inside layer setup.
+- [x] Remove synchronous bridge constructors such as the legacy-style `createPiServer()` path once all callers use the Effect-based assembly path.
+- [x] Move side-effectful initialization out of constructors in `src/server/server.ts` and related classes into layer builders or scoped constructors. `PiKanbanServer` now receives `SmartRepairService`, `ContainerImageManager`, `PiContainerManager`, and `PlanningSessionManager` as injected dependencies.
+- [x] Remove direct ad hoc `new PiKanbanDB(...)`, `new PiOrchestrator(...)`, `new PiKanbanServer(...)`, `new PiContainerManager(...)`, and similar runtime graph construction from top-level flow code. Runtime object graph construction now happens only inside `makePiServerRuntime` during layer assembly.
+- [~] Ensure every long-lived backend subsystem is acquired from context, not passed manually through expanding constructor chains. Production assembly now happens only through the Effect-based server factory; deeper class-level constructor injection to full Effect services/layers remains for later phases.
 
 Target files for this phase:
 
-- [~] `src/index.ts` - Uses `createPiServerEffect` (layer-based) for server creation
-- [~] `src/server.ts` - Has `PiServerRuntimeLayer`, `ProjectRootLayer`, `CreateServerOptionsLayer`; `makePiServerRuntime` still directly instantiates services
-- [~] `src/server/server.ts` - `PiKanbanServer` constructor directly creates managers instead of receiving via context
-- [~] `src/orchestrator.ts` - `PiOrchestrator` receives deps via constructor, not context
-- [~] `src/db.ts` - `PiKanbanDB` instantiated directly in `makePiServerRuntime`
+- [x] `src/index.ts` - Uses the scoped Effect-based server creation path (`createPiServerScopedEffect`) at the production runtime boundary
+- [x] `src/server.ts` - Legacy `createPiServer()` sync bridge removed; runtime graph assembled only through `createPiServerEffect` and `PiServerRuntimeLayer`
+- [x] `src/server/server.ts` - `PiKanbanServer` constructor no longer creates runtime managers and receives injected dependencies from layer assembly
+- [~] `src/orchestrator.ts` - `PiOrchestrator` is now constructed only inside the Effect assembly path, but still receives deps via constructor rather than Effect context
+- [~] `src/db.ts` - `PiKanbanDB` is instantiated only inside `makePiServerRuntime`, but is not yet a scoped context service
 - [ ] `src/runtime/container-manager.ts`
 - [ ] `src/runtime/container-image-manager.ts`
 - [~] `src/runtime/planning-session.ts` - `PlanningSessionManager` receives deps via constructor
@@ -184,9 +185,10 @@ Target files for this phase:
 
 Completion gate:
 
-- [~] Backend composition is expressed as one layer graph. `PiServerRuntimeLayer` exists but does not fully eliminate manual construction
-- [ ] No top-level backend module manually constructs the runtime object graph outside layer setup.
-- [ ] Legacy constructor-based assembly helpers have been deleted.
+- [x] Backend composition is expressed as one layer graph. `PiServerRuntimeLayer` is the sole production composition path.
+- [x] No top-level backend module manually constructs the runtime object graph outside layer setup.
+- [x] Legacy constructor-based assembly helpers have been deleted.
+- [x] Focused backend validation passed after cutover: `bun test tests/server.test.ts tests/planning-chat-auto-reconnect.test.ts tests/archived-api.test.ts tests/plan-mode.test.ts`.
 
 ## Phase 3: Move All Long-Lived Resources Into Scope Ownership
 
@@ -198,21 +200,21 @@ Relevant guides:
 
 Checklist:
 
-- [ ] Convert database lifetime to a scoped service instead of a manually closed class instance.
-- [~] Convert Bun server startup and shutdown to a scoped resource with finalizers rather than manual `try/finally` and signal-hook cleanup. `src/index.ts` still uses manual signal handlers and `server.stop()`/`db.close()` in `shutdown()` callback
-- [ ] Convert websocket hub ownership to a scoped service.
+- [~] Convert database lifetime to a scoped service instead of a manually closed class instance. Production server assembly now acquires/releases `PiKanbanDB` with `Effect.acquireRelease` in `src/server.ts`, but the DB is not yet exposed as a scoped context service across the whole backend.
+- [x] Convert Bun server startup and shutdown to a scoped resource with finalizers rather than manual `try/finally` and signal-hook cleanup. `src/index.ts` now runs the program under `Effect.scoped`, uses a scoped signal listener, and relies on scoped runtime finalizers instead of manual `server.stop()` / `db.close()` shutdown callbacks.
+- [~] Convert websocket hub ownership to a scoped service. Production server assembly now acquires/releases `WebSocketHub` with `Effect.acquireRelease` and injects it into `PiKanbanServer`, but it is not yet exposed as a standalone scoped context service.
 - [~] Convert container image manager and container manager ownership to scoped resources. `PiContainerManager` uses `Effect.acquireRelease` for container lifecycle; `ContainerImageManager` uses callbacks for status updates, not scoped resources
 - [~] Convert planning-session manager ownership to a scoped resource. `PlanningSessionManager` uses `Effect.acquireRelease` for session cleanup
 - [~] Convert listener subscription APIs in `src/runtime/pi-process.ts` and `src/runtime/container-pi-process.ts` from plain unsubscribe callbacks to Effect-managed scoped subscriptions. `onEvent()` returns unsubscribe callback; not yet scoped
 - [ ] Replace manual timer lifecycle management with Effect-owned resource lifecycles where the timer is part of business logic.
-- [ ] Remove duplicated manual shutdown logic once the scoped finalizers are in place.
+- [~] Remove duplicated manual shutdown logic once the scoped finalizers are in place. The production entrypoint no longer duplicates DB/server shutdown logic; direct test/manual construction paths still own their own explicit cleanup.
 
 Target files for this phase:
 
-- [~] `src/index.ts` - Uses manual `shutdown()` callback with `server.stop()` and `db.close()`
-- [ ] `src/db.ts` - `PiKanbanDB` has manual `.close()` method; not a scoped resource
-- [~] `src/server/server.ts` - `PiKanbanServer` manages `WebSocketHub`, `ContainerImageManager`, `PiContainerManager` via class ownership; cleanup via `server.stop()`
-- [~] `src/server/websocket.ts` - `WebSocketHub` has `close()` method; not scoped
+- [x] `src/index.ts` - Production runtime now uses `Effect.scoped(createPiServerScopedEffect(...))` and a scoped signal-wait effect instead of manual shutdown callbacks
+- [~] `src/db.ts` - `PiKanbanDB` still exposes `.close()`, but the production server runtime now owns its lifetime through `Effect.acquireRelease` in `src/server.ts`
+- [~] `src/server/server.ts` - `PiKanbanServer` no longer constructs/owns `WebSocketHub`; websocket ownership is injected from the outer scoped runtime, while container managers remain constructor-injected instances for now
+- [~] `src/server/websocket.ts` - `WebSocketHub` now has an explicit `close()` finalizer and is acquired/released by the production scoped runtime
 - [~] `src/runtime/pi-process.ts` - `onEvent()` returns unsubscribe callback; `proc` cleanup in `close()` method
 - [~] `src/runtime/container-pi-process.ts` - `onEvent()` returns unsubscribe callback; container lifecycle uses `Effect.acquireRelease` for startup/shutdown
 - [~] `src/runtime/planning-session.ts` - Uses `Effect.acquireRelease` for session process cleanup
@@ -222,8 +224,8 @@ Target files for this phase:
 
 Completion gate:
 
-- [ ] Every long-lived backend resource has one owner and one finalization path.
-- [ ] Manual resource cleanup code that duplicates scope finalizers has been deleted.
+- [~] Every long-lived backend resource has one owner and one finalization path. DB, websocket hub, and server lifetime are now owned by the production scoped runtime; container/image/planning resources still need the same treatment.
+- [~] Manual resource cleanup code that duplicates scope finalizers has been deleted. Production shutdown duplication is removed, but explicit cleanup remains in direct-construction tests and in still-unscoped runtime subsystems.
 - [ ] Listener and timer cleanup is no longer callback-only and untracked.
 
 ## Phase 4: Convert Runtime and Orchestration Flow to Effect-Native Concurrency

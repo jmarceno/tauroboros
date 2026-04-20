@@ -174,6 +174,10 @@ export class OrchestratorOperationError extends Schema.TaggedError<OrchestratorO
   },
 ) {}
 
+function failOrchestratorOperation(operation: string, message: string): never {
+  throw new OrchestratorOperationError({ operation, message })
+}
+
 export const runOrchestratorOperationPromiseEffect = Effect.fn("runOrchestratorOperationPromiseEffect")(
   function* <A>(
     orchestrator: PiOrchestrator | null,
@@ -186,10 +190,13 @@ export const runOrchestratorOperationPromiseEffect = Effect.fn("runOrchestratorO
 
     return yield* Effect.tryPromise({
       try: async () => await run(orchestrator),
-      catch: (cause) => new OrchestratorOperationError({
-        operation,
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
+      catch: (cause) =>
+        cause instanceof OrchestratorOperationError
+          ? cause
+          : new OrchestratorOperationError({
+              operation,
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
     })
   },
 )
@@ -207,10 +214,12 @@ export const runOrchestratorOperationSyncEffect = Effect.fn("runOrchestratorOper
     return yield* Effect.try({
       try: () => run(orchestrator),
       catch: (cause) =>
-        new OrchestratorOperationError({
-          operation,
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
+        cause instanceof OrchestratorOperationError
+          ? cause
+          : new OrchestratorOperationError({
+              operation,
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
     })
   },
 )
@@ -473,10 +482,10 @@ export class PiOrchestrator {
     for (const taskId of taskIds) {
       const task = this.db.getTask(taskId)
       if (!task) {
-        throw new Error(`Task not found: ${taskId}`)
+        failOrchestratorOperation("queueRunTasks", `Task not found: ${taskId}`)
       }
       if (task.status === "done") {
-        throw new Error(`Cannot queue completed task ${task.name} (${taskId})`)
+        failOrchestratorOperation("queueRunTasks", `Cannot queue completed task ${task.name} (${taskId})`)
       }
 
       this.db.updateTask(taskId, {
@@ -502,13 +511,13 @@ export class PiOrchestrator {
 
     const visit = (candidateId: string, isTarget = false) => {
       if (visiting.has(candidateId)) {
-        throw new Error(`Circular dependency detected while resolving ${candidateId}`)
+        failOrchestratorOperation("resolveExecutionTasksWithActiveDependencies", `Circular dependency detected while resolving ${candidateId}`)
       }
       if (visited.has(candidateId)) return
 
       const candidate = taskMap.get(candidateId)
       if (!candidate) {
-        throw new Error(`Task not found: ${candidateId}`)
+        failOrchestratorOperation("resolveExecutionTasksWithActiveDependencies", `Task not found: ${candidateId}`)
       }
 
       visiting.add(candidateId)
@@ -519,10 +528,11 @@ export class PiOrchestrator {
           continue
         }
         if (dependency.status === "failed" || dependency.status === "stuck") {
-          throw new Error(`Dependency \"${dependency.name}\" is not done (status: ${dependency.status})`)
+          failOrchestratorOperation("resolveExecutionTasksWithActiveDependencies", `Dependency \"${dependency.name}\" is not done (status: ${dependency.status})`)
         }
         if (!isTaskExecutable(dependency)) {
-          throw new Error(
+          failOrchestratorOperation(
+            "resolveExecutionTasksWithActiveDependencies",
             isTarget
               ? `Task \"${candidate.name}\" is blocked by dependency \"${dependency.name}\" in status \"${dependency.status}\"`
               : `Dependency \"${dependency.name}\" is not done and cannot run from status \"${dependency.status}\" (phase: ${dependency.executionPhase})`,
@@ -535,7 +545,8 @@ export class PiOrchestrator {
 
       if (candidate.status === "done") return
       if (!isTaskExecutable(candidate)) {
-        throw new Error(
+        failOrchestratorOperation(
+          "resolveExecutionTasksWithActiveDependencies",
           isTarget
             ? `Task \"${candidate.name}\" is not runnable from status \"${candidate.status}\" (phase: ${candidate.executionPhase})`
             : `Dependency \"${candidate.name}\" is not done and cannot run from status \"${candidate.status}\" (phase: ${candidate.executionPhase})`,
@@ -578,7 +589,7 @@ export class PiOrchestrator {
     return [...selectedIds].map((taskId) => {
       const task = taskMap.get(taskId)
       if (!task) {
-        throw new Error(`Task not found while building execution graph: ${taskId}`)
+        failOrchestratorOperation("getExecutionGraphTasksWithActiveDependencies", `Task not found while building execution graph: ${taskId}`)
       }
       return task
     })
@@ -604,7 +615,7 @@ export class PiOrchestrator {
       if (!existingRunId) continue
       const existingRun = this.db.getWorkflowRun(existingRunId)
       if (existingRun && this.isRunActiveStatus(existingRun.status)) {
-        throw new Error(`Task ${taskId} is already part of active run ${existingRunId}`)
+        failOrchestratorOperation("startRun", `Task ${taskId} is already part of active run ${existingRunId}`)
       }
     }
 
@@ -628,7 +639,7 @@ export class PiOrchestrator {
 
     const enrichedRun = this.enrichWorkflowRun(this.db.getWorkflowRun(run.id))
     if (!enrichedRun) {
-      throw new Error(`Failed to reload run ${run.id} after creation`)
+      failOrchestratorOperation("startRun", `Failed to reload run ${run.id} after creation`)
     }
 
     this.broadcast({ type: "run_created", payload: enrichedRun })
@@ -677,7 +688,7 @@ export class PiOrchestrator {
 
     const task = this.db.getTask(taskId)
     if (!task) {
-      throw new Error(`Task not found: ${taskId}`)
+      failOrchestratorOperation("isTaskReadyForScheduling", `Task not found: ${taskId}`)
     }
     if (task.status !== "queued") {
       return false
@@ -731,7 +742,7 @@ export class PiOrchestrator {
 
     const tasks = run.taskOrder.map((taskId) => this.db.getTask(taskId)).filter((task): task is Task => Boolean(task))
     if (tasks.length !== run.taskOrder.length) {
-      throw new Error(`Run ${runId} references missing tasks`)
+      failOrchestratorOperation("finalizeRunIfComplete", `Run ${runId} references missing tasks`)
     }
 
     if (tasks.some((task) => !this.isTaskRunTerminal(task))) {
@@ -776,13 +787,13 @@ export class PiOrchestrator {
   private startScheduledTask(taskId: string, runId: string): void {
     const task = this.db.getTask(taskId)
     if (!task) {
-      throw new Error(`Task not found: ${taskId}`)
+      failOrchestratorOperation("startScheduledTask", `Task not found: ${taskId}`)
     }
 
     this.activeTaskIds.add(taskId)
     const run = this.db.getWorkflowRun(runId)
     if (!run) {
-      throw new Error(`Run not found: ${runId}`)
+      failOrchestratorOperation("startScheduledTask", `Run not found: ${runId}`)
     }
 
     if (run.status === "queued") {
@@ -881,7 +892,7 @@ export class PiOrchestrator {
   getRunQueueStatus(runId: string): RunQueueStatus {
     const run = this.db.getWorkflowRun(runId)
     if (!run) {
-      throw new Error(`Run ${runId} not found`)
+      failOrchestratorOperation("getRunQueueStatus", `Run ${runId} not found`)
     }
 
     return this.scheduler.getRunQueueStatus(
@@ -978,7 +989,7 @@ export class PiOrchestrator {
     const tasks = this.getExecutionGraphTasksWithActiveDependencies(allTasks)
 
     if (tasks.length === 0 && this.getAutoDeployTemplates("before_workflow_start").length === 0) {
-      throw new Error("No tasks in backlog")
+      failOrchestratorOperation("startAll", "No tasks in backlog")
     }
 
     console.log(`[orchestrator] startAll: ${tasks.length} tasks to execute: ${tasks.map(t => `${t.name}(${t.id})`).join(', ')}`)
@@ -998,7 +1009,7 @@ export class PiOrchestrator {
       const details = imageValidation.invalid
         .map(i => `"${i.taskName}" (${i.taskId}): ${i.image}`)
         .join("; ")
-      throw new Error(`Cannot start workflow: The following tasks have invalid container images: ${details}. Build the images first.`)
+      failOrchestratorOperation("startAll", `Cannot start workflow: The following tasks have invalid container images: ${details}. Build the images first.`)
     }
 
     return await this.startRun({
@@ -1022,9 +1033,9 @@ export class PiOrchestrator {
     }
 
     const chain = this.resolveExecutionTasksWithActiveDependencies(allTasks, taskId)
-    if (chain.length === 0) throw new Error("No tasks in backlog")
+    if (chain.length === 0) failOrchestratorOperation("startSingle", "No tasks in backlog")
     const target = this.db.getTask(taskId)
-    if (!target) throw new Error("Task not found")
+    if (!target) failOrchestratorOperation("startSingle", "Task not found")
 
     // Validate container images for all tasks in the chain before starting
     const imageValidation = await this.validateWorkflowImages(chain.map(t => t.id))
@@ -1041,7 +1052,7 @@ export class PiOrchestrator {
       const details = imageValidation.invalid
         .map(i => `"${i.taskName}" (${i.taskId}): ${i.image}`)
         .join("; ")
-      throw new Error(`Cannot start workflow: The following tasks have invalid container images: ${details}. Build the images first.`)
+      failOrchestratorOperation("startSingle", `Cannot start workflow: The following tasks have invalid container images: ${details}. Build the images first.`)
     }
 
     return await this.startRun({
@@ -1071,7 +1082,7 @@ export class PiOrchestrator {
     }
 
     if (missingIds.length > 0) {
-      throw new Error(`One or more tasks in group were not found in database: ${missingIds.join(', ')}`)
+      failOrchestratorOperation("validateGroupTasksExist", `One or more tasks in group were not found in database: ${missingIds.join(', ')}`)
     }
 
     return tasks
@@ -1110,11 +1121,11 @@ export class PiOrchestrator {
     // Load group - throws if not found
     const group = this.db.getTaskGroup(groupId)
     if (!group) {
-      throw new Error(`Task group with ID "${groupId}" not found`)
+      failOrchestratorOperation("startGroup", `Task group with ID "${groupId}" not found`)
     }
 
     if (group.taskIds.length === 0) {
-      throw new Error(`Cannot start group "${group.name}": group has no tasks`)
+      failOrchestratorOperation("startGroup", `Cannot start group "${group.name}": group has no tasks`)
     }
 
     // Validate all tasks exist
@@ -1127,7 +1138,8 @@ export class PiOrchestrator {
     if (externalDeps.length > 0) {
       // Get unique task names that have external dependencies
       const taskNamesWithExternalDeps = [...new Set(externalDeps.map((d) => d.task.name))]
-      throw new Error(
+      failOrchestratorOperation(
+        "startGroup",
         `Group execution blocked: ${externalDeps.length} tasks have external dependencies that must be completed first: ${taskNamesWithExternalDeps.join(', ')}`
       )
     }
@@ -1147,7 +1159,7 @@ export class PiOrchestrator {
       const details = imageValidation.invalid
         .map((i) => `"${i.taskName}" (${i.taskId}): ${i.image}`)
         .join("; ")
-      throw new Error(`Cannot start group: The following tasks have invalid container images: ${details}`)
+      failOrchestratorOperation("startGroup", `Cannot start group: The following tasks have invalid container images: ${details}`)
     }
 
     return await this.startRun({
@@ -1254,7 +1266,7 @@ export class PiOrchestrator {
   async destructiveStop(runId: string): Promise<{ killed: number; cleaned: number }> {
     const run = this.db.getWorkflowRun(runId)
     if (!run) {
-      throw new Error(`Run ${runId} not found`)
+      failOrchestratorOperation("destructiveStop", `Run ${runId} not found`)
     }
 
     console.log(`[orchestrator] Destructive stop for run ${runId}`)
@@ -1531,7 +1543,7 @@ export class PiOrchestrator {
     }
 
     if (run.status !== "paused") {
-      throw new Error(`Run ${runId} is not paused (status: ${run.status})`)
+      failOrchestratorOperation("resumeRun", `Run ${runId} is not paused (status: ${run.status})`)
     }
 
     console.log(`[orchestrator] Resuming run ${runId}`)
@@ -1724,16 +1736,16 @@ export class PiOrchestrator {
     // Load paused state for this session
     const pauseState = loadPausedRunState()
     if (!pauseState) {
-      throw new Error(`No paused state found for session ${sessionId}`)
+      failOrchestratorOperation("resumeSession", `No paused state found for session ${sessionId}`)
     }
 
     const pausedSession = pauseState.sessions.find(s => s.sessionId === sessionId)
     if (!pausedSession) {
-      throw new Error(`Session ${sessionId} not found in paused state`)
+      failOrchestratorOperation("resumeSession", `Session ${sessionId} not found in paused state`)
     }
 
     const session = this.db.getWorkflowSession(sessionId)
-    if (!session) throw new Error("Session not found")
+    if (!session) failOrchestratorOperation("resumeSession", "Session not found")
 
     // Check if container needs to be restarted
     if (pausedSession.containerId && this.containerManager) {
@@ -1847,7 +1859,7 @@ export class PiOrchestrator {
               const msg = `Dependency "${dep.name}" is not done (status: ${dep.status})`
               this.db.updateTask(task.id, { status: "failed", errorMessage: msg })
               this.broadcastTask(task.id)
-              throw new Error(msg)
+              failOrchestratorOperation("executeRun", msg)
             }
           }
         }
@@ -1894,7 +1906,7 @@ export class PiOrchestrator {
 
         // If any task failed, stop the workflow (fail-fast behavior)
         if (hasFailure) {
-          throw new Error(`One or more tasks in the batch failed`)
+          failOrchestratorOperation("executeRun", "One or more tasks in the batch failed")
         }
 
         console.log(`[orchestrator] Batch complete. Total executed: ${executedTaskIds.size}/${tasks.length}`)
@@ -1968,7 +1980,7 @@ export class PiOrchestrator {
 
   private async executeTask(task: Task, options: Options, runId: string): Promise<void> {
     const eligibility = getPlanExecutionEligibility(task)
-    if (!eligibility.ok) throw new Error(`Task state is invalid: ${eligibility.reason}`)
+    if (!eligibility.ok) failOrchestratorOperation("executeTask", `Task state is invalid: ${eligibility.reason}`)
     const runControl = this.getRunControl(runId)
 
     console.log(`[orchestrator] executeTask START: ${task.name}(${task.id}), requirements: ${task.requirements.length > 0 ? task.requirements.join(', ') : 'none'}`)
@@ -1977,7 +1989,7 @@ export class PiOrchestrator {
       const dep = this.db.getTask(depId)
       if (dep && dep.status !== "done") {
         console.log(`[orchestrator] executeTask BLOCKED: ${task.name}(${task.id}) - dependency "${dep.name}"(${depId}) status is ${dep.status}`)
-        throw new Error(`Dependency "${dep.name}" is not done (status: ${dep.status})`)
+        failOrchestratorOperation("executeTask", `Dependency "${dep.name}" is not done (status: ${dep.status})`)
       }
     }
 
@@ -1998,7 +2010,7 @@ export class PiOrchestrator {
         }
         this.broadcastTask(task.id)
         if (commandResult.exitCode !== 0) {
-          throw new Error(`Pre-execution command failed with exit code ${commandResult.exitCode}`)
+          failOrchestratorOperation("executeTask", `Pre-execution command failed with exit code ${commandResult.exitCode}`)
         }
       }
 
@@ -2073,7 +2085,7 @@ export class PiOrchestrator {
         }
         this.broadcastTask(task.id)
         if (commandResult.exitCode !== 0) {
-          throw new Error(`Pre-execution command failed with exit code ${commandResult.exitCode}`)
+          failOrchestratorOperation("executeTask", `Pre-execution command failed with exit code ${commandResult.exitCode}`)
         }
       }
 
@@ -2471,7 +2483,7 @@ export class PiOrchestrator {
       const currentPlan = getLatestTaggedOutput(task.agentOutput, "plan")
       const revisionFeedback = getLatestTaggedOutput(task.agentOutput, "user-revision-request")
       if (!currentPlan || !revisionFeedback) {
-        throw new Error("Plan revision is missing captured [plan] or [user-revision-request] data")
+        failOrchestratorOperation("runPlanMode", "Plan revision is missing captured [plan] or [user-revision-request] data")
       }
 
       const revisionPrompt = this.db.renderPrompt("plan_revision", buildPlanRevisionVariables(task, currentPlan, revisionFeedback, options))
@@ -2512,7 +2524,7 @@ export class PiOrchestrator {
 
     const approvedPlan = getLatestTaggedOutput(task.agentOutput, "plan")
     if (!approvedPlan) {
-      throw new Error("Execution prompt failed: no approved [plan] block found")
+      failOrchestratorOperation("runPlanMode", "Execution prompt failed: no approved [plan] block found")
     }
     const revisionRequests = task.agentOutput
       .match(/\[user-revision-request\]\s*[\s\S]*?(?=\n\[[a-z0-9-]+\]|$)/g)
@@ -2767,11 +2779,11 @@ export class PiOrchestrator {
     action: "restart_task" | "keep_failed",
   ): Promise<{ ok: boolean; message: string }> {
     const task = this.db.getTask(taskId)
-    if (!task) throw new Error(`Task not found: ${taskId}`)
+    if (!task) failOrchestratorOperation("manualSelfHealRecover", `Task not found: ${taskId}`)
 
     const report = this.db.getSelfHealReport(reportId)
-    if (!report) throw new Error(`Self-heal report not found: ${reportId}`)
-    if (report.taskId !== taskId) throw new Error(`Report ${reportId} does not belong to task ${taskId}`)
+    if (!report) failOrchestratorOperation("manualSelfHealRecover", `Self-heal report not found: ${reportId}`)
+    if (report.taskId !== taskId) failOrchestratorOperation("manualSelfHealRecover", `Report ${reportId} does not belong to task ${taskId}`)
 
     const runId = report.runId
 
@@ -2853,7 +2865,7 @@ export class PiOrchestrator {
 
     const run = this.db.getWorkflowRun(runId)
     if (!run) {
-      throw new Error(`Run not found for self-heal flow: ${runId}`)
+      failOrchestratorOperation("maybeSelfHealTask", `Run not found for self-heal flow: ${runId}`)
     }
 
     const hasOtherActiveTasks =

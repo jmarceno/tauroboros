@@ -2,7 +2,6 @@ import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
 import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
-import { badRequestError, internalRouteError, runRouteEffect } from "../route-interpreter.ts"
 
 export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): void {
   router.get("/api/sessions/:id", ({ params, json, db }) => {
@@ -116,6 +115,6 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
       return json({ ok: true })
     }
 
-    return Effect.fail(badRequestError("Unsupported event type", ErrorCode.UNSUPPORTED_EVENT_TYPE))
+    return json(createApiError("Unsupported event type", ErrorCode.UNSUPPORTED_EVENT_TYPE), 400)
   })
 }

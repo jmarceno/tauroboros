@@ -3,9 +3,9 @@
  * Replaces: TaskLastUpdateContext
  */
 
-import { createSignal, createMemo } from 'solid-js'
-import { createQuery, useQueryClient } from '@tanstack/solid-query'
-import { tasksApi } from '@/api'
+import { createSignal } from 'solid-js'
+import { useQueryClient } from '@tanstack/solid-query'
+import { tasksApi, runApiEffect } from '@/api'
 
 const queryKeys = {
   tasks: {
@@ -31,7 +31,7 @@ export function createTaskLastUpdateStore() {
   // Load last update from backend
   const loadLastUpdate = async (taskId: string): Promise<number | null> => {
     try {
-      const data = await tasksApi.getLastUpdate(taskId)
+      const data = await runApiEffect(tasksApi.getLastUpdate(taskId))
       if (data.lastUpdateAt !== null) {
         // Update local state
         setLastUpdates(prev => ({ ...prev, [taskId]: data.lastUpdateAt }))
@@ -40,8 +40,7 @@ export function createTaskLastUpdateStore() {
         return data.lastUpdateAt
       }
       return null
-    } catch (err) {
-      console.error('Failed to load last update timestamp:', err)
+    } catch {
       return null
     }
   }

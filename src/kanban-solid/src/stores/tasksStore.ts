@@ -30,6 +30,7 @@ const queryKeys = {
 
 export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   const queryClient = useQueryClient()
+  const runApi = api.runApiEffect
 
   const upsertTaskInListCache = (task: Task) => {
     queryClient.setQueryData<Task[]>(queryKeys.tasks.lists(), (current) => {
@@ -53,7 +54,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   // Queries
   const tasksQuery = createQuery(() => ({
     queryKey: queryKeys.tasks.lists(),
-    queryFn: () => api.tasksApi.getAll(),
+    queryFn: () => runApi(api.tasksApi.getAll()),
     staleTime: 5000,
   }))
 
@@ -68,7 +69,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
 
   const bonSummariesQuery = createQuery(() => ({
     queryKey: queryKeys.bonSummaries(bonTaskIds()),
-    queryFn: () => api.fetchBestOfNSummaries(bonTaskIds()),
+    queryFn: () => runApi(api.fetchBestOfNSummaries(bonTaskIds())),
     enabled: bonTaskIds().length > 0,
     staleTime: 3000,
   }))
@@ -127,7 +128,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
 
   // Mutations
   const createTaskMutation = createMutation(() => ({
-    mutationFn: (data: Parameters<typeof api.tasksApi.create>[0]) => api.tasksApi.create(data),
+    mutationFn: (data: Parameters<typeof api.tasksApi.create>[0]) => runApi(api.tasksApi.create(data)),
     onSuccess: (task) => {
       upsertTaskInListCache(task)
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
@@ -135,7 +136,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   }))
 
   const updateTaskMutation = createMutation(() => ({
-    mutationFn: ({ id, data }: { id: string; data: UpdateTaskDTO }) => api.tasksApi.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: UpdateTaskDTO }) => runApi(api.tasksApi.update(id, data)),
     onSuccess: (task) => {
       upsertTaskInListCache(task)
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
@@ -143,7 +144,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   }))
 
   const deleteTaskMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.tasksApi.delete(id),
+    mutationFn: (id: string) => runApi(api.tasksApi.delete(id)),
     onSuccess: (_, id) => {
       removeTaskFromListCache(id)
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
@@ -151,56 +152,56 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   }))
 
   const resetTaskMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.tasksApi.reset(id),
+    mutationFn: (id: string) => runApi(api.tasksApi.reset(id)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
   }))
 
   const resetTaskToGroupMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.tasksApi.resetToGroup(id),
+    mutationFn: (id: string) => runApi(api.tasksApi.resetToGroup(id)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
   }))
 
   const moveTaskToGroupMutation = createMutation(() => ({
-    mutationFn: ({ id, groupId }: { id: string; groupId: string | null }) => api.tasksApi.moveToGroup(id, groupId),
+    mutationFn: ({ id, groupId }: { id: string; groupId: string | null }) => runApi(api.tasksApi.moveToGroup(id, groupId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
   }))
 
   const approvePlanMutation = createMutation(() => ({
-    mutationFn: ({ id, message }: { id: string; message?: string }) => api.tasksApi.approvePlan(id, message),
+    mutationFn: ({ id, message }: { id: string; message?: string }) => runApi(api.tasksApi.approvePlan(id, message)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
   }))
 
   const requestPlanRevisionMutation = createMutation(() => ({
-    mutationFn: ({ id, feedback }: { id: string; feedback: string }) => api.tasksApi.requestPlanRevision(id, feedback),
+    mutationFn: ({ id, feedback }: { id: string; feedback: string }) => runApi(api.tasksApi.requestPlanRevision(id, feedback)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
   }))
 
   const repairTaskMutation = createMutation(() => ({
-    mutationFn: ({ id, action, options }: { id: string; action: string; options?: Record<string, unknown> }) => api.tasksApi.repair(id, action, options),
+    mutationFn: ({ id, action, options }: { id: string; action: string; options?: Record<string, unknown> }) => runApi(api.tasksApi.repair(id, action, options)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
   }))
 
   const startSingleTaskMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.tasksApi.startSingle(id),
+    mutationFn: (id: string) => runApi(api.tasksApi.startSingle(id)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
   }))
 
   const archiveAllDoneMutation = createMutation(() => ({
-    mutationFn: () => api.tasksApi.archiveAllDone(),
+    mutationFn: () => runApi(api.tasksApi.archiveAllDone()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
@@ -208,7 +209,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
 
   const batchUpdateTasksMutation = createMutation(() => ({
     mutationFn: ({ ids, data }: { ids: string[]; data: UpdateTaskDTO }) => 
-      Promise.all(ids.map(id => api.tasksApi.update(id, data))),
+      Promise.all(ids.map((id) => runApi(api.tasksApi.update(id, data)))),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },
@@ -217,9 +218,9 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   const restoreTaskMutation = createMutation(() => ({
     mutationFn: async ({ id, groupId }: { id: string; groupId?: string }) => {
       if (groupId) {
-        return await api.tasksApi.moveToGroup(id, groupId)
+        return await runApi(api.tasksApi.moveToGroup(id, groupId))
       }
-      const result = await api.tasksApi.resetToGroup(id)
+      const result = await runApi(api.tasksApi.resetToGroup(id))
       return result.task
     },
     onSuccess: () => {
@@ -229,7 +230,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
 
   const selectWinnerSessionMutation = createMutation(() => ({
     mutationFn: ({ taskId, candidateId }: { taskId: string; candidateId: string }) => 
-      api.tasksApi.selectCandidate(taskId, candidateId),
+      runApi(api.tasksApi.selectCandidate(taskId, candidateId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
     },

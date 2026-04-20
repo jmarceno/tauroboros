@@ -6,7 +6,7 @@
 import { createSignal, createEffect, For, Show } from 'solid-js'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { uiStore } from '@/stores'
-import { tasksApi } from '@/api'
+import { tasksApi, runApiEffect } from '@/api'
 import type { Task, BestOfNSummary, TaskRun, Candidate } from '@/types'
 
 interface BestOfNDetailModalProps {
@@ -32,9 +32,9 @@ export function BestOfNDetailModal(props: BestOfNDetailModalProps) {
       setIsLoading(true)
       try {
         const [summaryData, runsData, candidatesData] = await Promise.all([
-          tasksApi.getBestOfNSummary(id),
-          tasksApi.getTaskRuns(id),
-          tasksApi.getTaskCandidates(id),
+          runApiEffect(tasksApi.getBestOfNSummary(id)),
+          runApiEffect(tasksApi.getTaskRuns(id)),
+          runApiEffect(tasksApi.getTaskCandidates(id)),
         ])
         setSummary(summaryData)
         setTaskRuns(runsData)

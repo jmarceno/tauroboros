@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiKanbanServer } from "../src/server/server.ts"
+import { WebSocketHub } from "../src/server/websocket.ts"
+import { PlanningSessionManager } from "../src/runtime/planning-session.ts"
+import { SmartRepairService } from "../src/runtime/smart-repair.ts"
 import { mkdirSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
@@ -16,6 +19,9 @@ describe("Archived Tasks API", () => {
     mkdirSync(tempDir, { recursive: true })
     const dbPath = join(tempDir, "test.db")
     db = new PiKanbanDB(dbPath)
+    const smartRepair = new SmartRepairService(db)
+    const planningSessionManager = new PlanningSessionManager(db)
+    const wsHub = new WebSocketHub()
 
     server = new PiKanbanServer(db, {
       port: 0, // Let the system assign an available port
@@ -23,7 +29,10 @@ describe("Archived Tasks API", () => {
         workflow: {
           container: { enabled: false }
         }
-      }
+      },
+      smartRepair,
+      planningSessionManager,
+      wsHub,
     })
     port = await server.start(0)
   })

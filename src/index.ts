@@ -2,7 +2,7 @@ import { resolve } from "path"
 import { existsSync } from "fs"
 import { Effect, Schema } from "effect"
 import { ensureSettingsEffect, saveSettingsEffect, type InfrastructureSettings } from "./config/settings.ts"
-import { createPiServerEffect, findProjectRootEffect } from "./server.ts"
+import { createPiServerScopedEffect, findProjectRootEffect } from "./server.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
 import { ContainerImageManager } from "./runtime/container-image-manager.ts"
 import { validateContainerSetupEffect } from "./runtime/pi-process-factory.ts"
@@ -173,6 +173,32 @@ const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, a
   return result
 })
 
+const waitForShutdownSignalEffect = Effect.async<void>((resume) => {
+  let done = false
+
+  const cleanup = () => {
+    process.off("SIGINT", handleSignal)
+    process.off("SIGTERM", handleSignal)
+  }
+
+  const handleSignal = () => {
+    if (done) {
+      return
+    }
+    done = true
+    cleanup()
+    resume(Effect.void)
+  }
+
+  process.on("SIGINT", handleSignal)
+  process.on("SIGTERM", handleSignal)
+
+  return Effect.sync(() => {
+    done = true
+    cleanup()
+  })
+})
+
 const runProgram = Effect.fn("runProgram")(function* () {
   const projectRoot = yield* findProjectRootEffect()
   const extractionResult = extractEmbeddedResources(projectRoot)
@@ -196,7 +222,7 @@ const runProgram = Effect.fn("runProgram")(function* () {
     return yield* new StartupError({ message: `Invalid SERVER_PORT value '${envPort ?? ""}'. Expected an integer.` })
   }
 
-  const { db, server } = yield* createPiServerEffect({
+  const { server } = yield* createPiServerScopedEffect({
     port,
     dbPath,
     settings,
@@ -221,19 +247,10 @@ const runProgram = Effect.fn("runProgram")(function* () {
     )
   }
 
-  const shutdown = () => {
-    try {
-      server.stop()
-    } finally {
-      db.close()
-    }
-  }
-
-  process.on("SIGINT", shutdown)
-  process.on("SIGTERM", shutdown)
+  yield* waitForShutdownSignalEffect
 })
 
-void Effect.runPromise(runProgram()).catch((error) => {
+void Effect.runPromise(Effect.scoped(runProgram())).catch((error) => {
   const message = error instanceof StartupError
     ? error.message
     : error instanceof Error

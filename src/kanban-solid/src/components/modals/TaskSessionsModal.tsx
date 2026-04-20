@@ -6,7 +6,7 @@
 import { createSignal, createEffect, Show, For, createMemo } from 'solid-js'
 import { createQuery } from '@tanstack/solid-query'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
-import { tasksApi, sessionsApi } from '@/api'
+import { tasksApi, sessionsApi, runApiEffect } from '@/api'
 import { formatLocalTime } from '@/utils/date'
 import type { Task, Session, TaskRun, SessionMessage } from '@shared-types'
 
@@ -34,21 +34,21 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
 
   const taskQuery = createQuery(() => ({
     queryKey: ['tasks', taskId()],
-    queryFn: () => taskId() ? tasksApi.getById(taskId()!) : Promise.reject('No task ID'),
+    queryFn: () => taskId() ? runApiEffect(tasksApi.getById(taskId()!)) : Promise.reject('No task ID'),
     staleTime: 5000,
     enabled: !!taskId() && !props.task,
   }))
 
   const sessionsQuery = createQuery(() => ({
     queryKey: ['tasks', taskId(), 'sessions'],
-    queryFn: () => taskId() ? tasksApi.getTaskSessions(taskId()!) : Promise.reject('No task ID'),
+    queryFn: () => taskId() ? runApiEffect(tasksApi.getTaskSessions(taskId()!)) : Promise.reject('No task ID'),
     staleTime: 5000,
     enabled: !!taskId(),
   }))
 
   const runsQuery = createQuery(() => ({
     queryKey: ['tasks', taskId(), 'runs'],
-    queryFn: () => taskId() ? tasksApi.getTaskRuns(taskId()!) : Promise.reject('No task ID'),
+    queryFn: () => taskId() ? runApiEffect(tasksApi.getTaskRuns(taskId()!)) : Promise.reject('No task ID'),
     staleTime: 5000,
     enabled: !!taskId(),
   }))
@@ -73,7 +73,7 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
       })
 
       // Load messages
-      sessionsApi.getMessages(session.id, 1000).then(messages => {
+      runApiEffect(sessionsApi.getMessages(session.id, 1000)).then(messages => {
         setSessions(prev => {
           const next = new Map(prev)
           const data = next.get(session.id)

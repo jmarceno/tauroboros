@@ -29,6 +29,10 @@ export class BestOfNError extends Schema.TaggedError<BestOfNError>()("BestOfNErr
   cause: Schema.optional(Schema.Unknown),
 }) {}
 
+function failBestOfN(operation: string, message: string, taskId?: string, cause?: unknown): never {
+  throw new BestOfNError({ operation, message, taskId, cause })
+}
+
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
 }
@@ -458,7 +462,7 @@ export class BestOfNRunner {
     if (!task || !task.bestOfNConfig) return
 
     const finalRun = this.deps.db.getTaskRun(finalRunId)
-    if (!finalRun) throw new Error("Final applier run not found")
+    if (!finalRun) failBestOfN("runFinalApplier", "Final applier run not found", taskId)
 
     let worktreeDir: string | null = null
     try {
@@ -555,7 +559,7 @@ export class BestOfNRunner {
         completedAt: nowUnix(),
       })
       this.broadcastRun(finalRun.id)
-      throw new Error(`Best-of-n final applier failed: ${message}`)
+      failBestOfN("runFinalApplier", `Best-of-n final applier failed: ${message}`, taskId, error)
     }
   }
 

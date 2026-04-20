@@ -10,7 +10,7 @@ import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
 import { HelpButton } from '../common/HelpButton'
 import { createTasksStore, createOptionsStore, createModelSearchStore, uiStore } from '@/stores'
-import { referenceApi, containersApi, optionsApi } from '@/api'
+import { referenceApi, containersApi, optionsApi, runApiEffect } from '@/api'
 
 const MarkdownEditor = lazy(async () => {
   const mod = await import('../common/MarkdownEditor')
@@ -176,9 +176,9 @@ export function TaskModal(props: TaskModalProps) {
     setIsLoading(true)
     try {
       const [branchData, imageData, latestOptions] = await Promise.all([
-        referenceApi.getBranches(),
-        containersApi.getImages(),
-        optionsApi.get(),
+        runApiEffect(referenceApi.getBranches()),
+        runApiEffect(containersApi.getImages()),
+        runApiEffect(optionsApi.get()),
       ])
 
       setAvailableBranches(branchData.branches || [])
@@ -196,8 +196,7 @@ export function TaskModal(props: TaskModalProps) {
       setExecutionModel(currentExecutionModel => currentExecutionModel || latestOptions.executionModel || '')
       setPlanThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions.planThinkingLevel || 'default' : currentLevel)
       setExecutionThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions.executionThinkingLevel || 'default' : currentLevel)
-    } catch (e) {
-      console.error('Failed to load data:', e)
+    } catch {
       uiStore.showToast('Failed to load form data', 'error')
     } finally {
       setIsLoading(false)

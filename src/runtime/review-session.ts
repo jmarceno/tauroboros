@@ -3,9 +3,10 @@ import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import { resolveContainerImage, type Task, type ThinkingLevel, type ReviewResult } from "../types.ts"
 import { buildReviewVariables } from "../prompts/index.ts"
-import { PiSessionManager } from "./session-manager.ts"
+import { PiSessionManager, SessionManagerExecuteError } from "./session-manager.ts"
 import { parseStrictJsonObject } from "./strict-json.ts"
 import type { PiContainerManager } from "./container-manager.ts"
+import { PiProcessError } from "./pi-process.ts"
 
 export class ReviewSessionError extends Schema.TaggedError<ReviewSessionError>()("ReviewSessionError", {
   operation: Schema.String,
@@ -85,12 +86,13 @@ export class PiReviewSessionRunner {
   }
 
   run(input: RunReviewScratchInput): Effect.Effect<RunReviewScratchResult, ReviewSessionError> {
+    const self = this
     return Effect.gen(function* () {
-      const rendered = this.db.renderPrompt("review", buildReviewVariables(input.task, input.reviewFilePath))
+      const rendered = self.db.renderPrompt("review", buildReviewVariables(input.task, input.reviewFilePath))
 
-      const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
+      const imageToUse = resolveContainerImage(input.task, self.settings?.workflow?.container?.image)
 
-      const response = yield* this.sessions.executePrompt({
+      const response = yield* self.sessions.executePrompt({
         taskId: input.task.id,
         sessionKind: "review_scratch",
         cwd: input.cwd,
@@ -103,16 +105,35 @@ export class PiReviewSessionRunner {
       }, {
         onOutput: input.onOutput,
         onSessionCreated: input.onSessionCreated,
-      })
+      }).pipe(
+        Effect.mapError((cause) =>
+          new ReviewSessionError({
+            operation: cause instanceof SessionManagerExecuteError ? cause.operation : cause instanceof PiProcessError ? cause.operation : "run",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+        ),
+      )
+
+      const parsedResult = yield* Effect.either(
+        Effect.try({
+          try: () => parseStrictJsonObject(response.responseText, "Review response"),
+          catch: (error) =>
+            new ReviewSessionError({
+              operation: "parseReviewResponse",
+              message: error instanceof Error ? error.message : String(error),
+              cause: error,
+            }),
+        }),
+      )
 
       let parsed: Record<string, unknown>
       let jsonParseFailed = false
-      try {
-        parsed = parseStrictJsonObject(response.responseText, "Review response")
-      } catch (error) {
+      if (parsedResult._tag === "Left") {
+        const error = parsedResult.left
         const msg = error instanceof Error ? error.message : String(error)
-        Effect.logDebug(`[review-session] JSON parse failed: ${msg}`).pipe(Effect.runVoid)
-        this.db.incrementJsonOutFail(response.session.id, input.model)
+        yield* Effect.logDebug(`[review-session] JSON parse failed: ${msg}`)
+        self.db.incrementJsonOutFail(response.session.id, input.model)
         jsonParseFailed = true
 
         const newRetryCount = input.currentJsonParseRetryCount + 1
@@ -136,6 +157,8 @@ export class PiReviewSessionRunner {
           gaps: ["Model response was not valid JSON - retrying with fix"],
           recommendedPrompt: "",
         }
+      } else {
+        parsed = parsedResult.right
       }
       const reviewResult = yield* asReviewResultEffect(parsed)
       return {
@@ -144,6 +167,6 @@ export class PiReviewSessionRunner {
         sessionId: response.session.id,
         jsonParseRetryCount: jsonParseFailed ? input.currentJsonParseRetryCount + 1 : 0,
       }
-    }.bind(this))
+    })
   }
 }

@@ -1,6 +1,6 @@
 import { mkdirSync } from "fs"
 import { dirname } from "path"
-import { Effect, Schema } from "effect"
+import { Effect, Fiber, Schema } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
@@ -356,8 +356,11 @@ export class PiRpcProcess {
    */
   promptAndWait(message: string, timeoutMs = 600_000): Effect.Effect<Record<string, unknown>[], PiProcessError | CollectEventsTimeoutError> {
     return Effect.gen(this, function* () {
-      yield* this.prompt(message)
-      return yield* this.collectEvents(timeoutMs)
+      const eventsFiber = yield* this.collectEvents(timeoutMs).pipe(Effect.fork)
+      return yield* this.prompt(message).pipe(
+        Effect.zipRight(Fiber.join(eventsFiber)),
+        Effect.tapError(() => Fiber.interrupt(eventsFiber)),
+      )
     })
   }
 

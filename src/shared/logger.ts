@@ -1,3 +1,4 @@
+import { inspect } from "node:util"
 /**
  * Structured logging service using Effect.
  * 
@@ -70,7 +71,7 @@ const withMetadata = (
     
     for (const [key, value] of Object.entries(metadata)) {
       if (value !== undefined) {
-        annotations[key] = typeof value === "string" ? value : JSON.stringify(value)
+        annotations[key] = typeof value === "string" ? value : inspect(value, { depth: 4, breakLength: Infinity })
       }
     }
 
@@ -127,32 +128,31 @@ export const withContext = (
   baseMetadata: LogMetadata
 ): LoggerService => ({
   debug: (message, metadata) =>
-    Effect.gen(function* () {
-      const service = yield* LoggerService
-      return yield* service.debug(message, { ...baseMetadata, ...metadata })
-    }),
+    withMetadata(Effect.logDebug(message), { ...baseMetadata, ...metadata }),
   
   info: (message, metadata) =>
-    Effect.gen(function* () {
-      const service = yield* LoggerService
-      return yield* service.info(message, { ...baseMetadata, ...metadata })
-    }),
+    withMetadata(Effect.logInfo(message), { ...baseMetadata, ...metadata }),
   
   warn: (message, metadata) =>
-    Effect.gen(function* () {
-      const service = yield* LoggerService
-      return yield* service.warn(message, { ...baseMetadata, ...metadata })
-    }),
+    withMetadata(Effect.logWarning(message), { ...baseMetadata, ...metadata }),
   
   error: (message, cause, metadata) =>
-    Effect.gen(function* () {
-      const service = yield* LoggerService
-      return yield* service.error(message, cause, { ...baseMetadata, ...metadata })
-    }),
+    withMetadata(
+      cause instanceof Error
+        ? Effect.logError(message).pipe(Effect.annotateLogs({ error: cause.message, stack: cause.stack }))
+        : Effect.logError(message),
+      { ...baseMetadata, ...metadata },
+    ),
   
   log: (level, message, metadata) =>
-    Effect.gen(function* () {
-      const service = yield* LoggerService
-      return yield* service.log(level, message, { ...baseMetadata, ...metadata })
-    }),
+    withMetadata(
+      level === "DEBUG"
+        ? Effect.logDebug(message)
+        : level === "INFO"
+          ? Effect.logInfo(message)
+          : level === "WARN"
+            ? Effect.logWarning(message)
+            : Effect.logError(message),
+      { ...baseMetadata, ...metadata },
+    ),
 })

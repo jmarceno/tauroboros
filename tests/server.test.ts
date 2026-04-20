@@ -3,7 +3,7 @@ import { execFileSync } from "child_process"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
-import { createPiServer } from "../src/server.ts"
+import { createPiServer } from "./test-utils"
 import type { InfrastructureSettings } from "../src/config/settings.ts"
 import { BASE_IMAGES } from "../src/config/base-images.ts"
 

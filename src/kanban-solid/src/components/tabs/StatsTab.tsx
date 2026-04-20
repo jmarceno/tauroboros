@@ -6,7 +6,7 @@
 import { createSignal, createMemo, createEffect, onCleanup, For, Show } from 'solid-js'
 import { createQuery, useQueryClient } from '@tanstack/solid-query'
 import Chart from 'chart.js/auto'
-import { statsApi } from '@/api'
+import { statsApi, runApiEffect } from '@/api'
 import type { HourlyUsage, DailyUsage } from '@/types'
 
 // Only 7d data is currently supported by the API
@@ -53,7 +53,7 @@ export function StatsTab() {
 
   const usageQuery = createQuery(() => ({
     queryKey: ['stats', 'usage', timeRange()],
-    queryFn: () => statsApi.getUsage(timeRange()),
+    queryFn: () => runApiEffect(statsApi.getUsage(timeRange())),
     staleTime: 30000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: false,
@@ -62,7 +62,7 @@ export function StatsTab() {
 
   const taskStatsQuery = createQuery(() => ({
     queryKey: ['stats', 'tasks'],
-    queryFn: () => statsApi.getTaskStats(),
+    queryFn: () => runApiEffect(statsApi.getTaskStats()),
     staleTime: 30000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: false,
@@ -71,7 +71,7 @@ export function StatsTab() {
 
   const modelUsageQuery = createQuery(() => ({
     queryKey: ['stats', 'models'],
-    queryFn: () => statsApi.getModelUsage(),
+    queryFn: () => runApiEffect(statsApi.getModelUsage()),
     staleTime: 30000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: false,
@@ -80,7 +80,7 @@ export function StatsTab() {
 
   const durationQuery = createQuery(() => ({
     queryKey: ['stats', 'duration'],
-    queryFn: () => statsApi.getAverageDuration(),
+    queryFn: () => runApiEffect(statsApi.getAverageDuration()),
     staleTime: 30000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: false,
@@ -89,7 +89,7 @@ export function StatsTab() {
 
   const dailyUsage7dQuery = createQuery(() => ({
     queryKey: ['stats', 'daily', 7],
-    queryFn: () => statsApi.getDailyUsage(7),
+    queryFn: () => runApiEffect(statsApi.getDailyUsage(7)),
     staleTime: 30000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: false,
