@@ -46,7 +46,6 @@ import {
   ApproveModal,
   BatchEditModal,
   BestOfNDetailModal,
-  ContainerConfigModal,
   ExecutionGraphModal,
   OptionsModal,
   PlanningPromptModal,
@@ -899,13 +898,6 @@ function App() {
               uiStore.closeModal()
             }
           }}
-        />
-      </Show>
-
-      <Show when={uiStore.showContainerConfigModal() || containerStatus()?.enabled === false}>
-        <ContainerConfigModal
-          isOpen={uiStore.showContainerConfigModal() || containerStatus()?.enabled === false}
-          onClose={() => uiStore.setShowContainerConfigModal(false)}
         />
       </Show>
 

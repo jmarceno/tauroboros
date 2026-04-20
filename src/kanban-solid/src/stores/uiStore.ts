@@ -60,7 +60,6 @@ function createToastStore() {
 function createModalStore() {
   const [activeModal, setActiveModal] = createSignal<ModalType | null>(null)
   const [modalData, setModalData] = createSignal<Record<string, unknown>>({})
-  const [showContainerConfigModal, setShowContainerConfigModal] = createSignal(false)
   const [showStopConfirmModal, setShowStopConfirmModal] = createSignal(false)
   const [showConfirmModal, setShowConfirmModal] = createSignal(false)
   const [confirmModalAction, setConfirmModalAction] = createSignal<'delete' | 'archive' | 'convertToTemplate'>('delete')
@@ -72,7 +71,6 @@ function createModalStore() {
 
   const isAnyModalOpen = createMemo(() => 
     activeModal() !== null || 
-    showContainerConfigModal() || 
     showStopConfirmModal() || 
     showConfirmModal() || 
     showGroupCreateModal() || 
@@ -101,10 +99,6 @@ function createModalStore() {
       setShowRestoreModal(false)
       return true
     }
-    if (showContainerConfigModal()) {
-      setShowContainerConfigModal(false)
-      return true
-    }
     if (showStopConfirmModal()) {
       setShowStopConfirmModal(false)
       return true
@@ -125,8 +119,6 @@ function createModalStore() {
     activeModal,
     modalData,
     setModalData,
-    showContainerConfigModal,
-    setShowContainerConfigModal,
     showStopConfirmModal,
     setShowStopConfirmModal,
     showConfirmModal,
