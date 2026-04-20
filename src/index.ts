@@ -5,6 +5,7 @@ import { ensureInfrastructureSettings, saveInfrastructureSettings, type Infrastr
 import { createPiServerEffect, findProjectRootEffect } from "./server.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
 import { ContainerImageManager } from "./runtime/container-image-manager.ts"
+import { validateContainerSetupEffect } from "./runtime/pi-process-factory.ts"
 import { extractEmbeddedResources } from "./resource-extractor.ts"
 import { BASE_IMAGES } from "./config/base-images.ts"
 
@@ -22,12 +23,13 @@ function parseCliArgs(args: string[]): CliArgs {
   }
 }
 
-async function checkAndPrepareContainer(projectRoot: string): Promise<{
+const checkAndPrepareContainerEffect = Effect.fn("checkAndPrepareContainerEffect")(
+  function* (projectRoot: string): Effect.Effect<{
   ready: boolean
   podmanAvailable: boolean
   imageReady: boolean
   error?: string
-}> {
+}, StartupError> {
   // Check if podman is available
   const podmanAvailable = PiContainerManager.isAvailable()
 
@@ -42,7 +44,10 @@ async function checkAndPrepareContainer(projectRoot: string): Promise<{
 
   // Check if image exists
   const manager = new PiContainerManager()
-  const setupStatus = await manager.validateSetup()
+  const setupStatus = yield* Effect.tryPromise({
+    try: () => manager.validateSetup(),
+    catch: (cause) => new StartupError({ message: `Failed to validate container setup: ${String(cause)}` }),
+  })
 
   if (!setupStatus.image) {
     // Image not found, need to auto-build
@@ -61,26 +66,35 @@ async function checkAndPrepareContainer(projectRoot: string): Promise<{
       },
     })
 
-    try {
-      await imageManager.prepare()
+    const prepared = yield* Effect.tryPromise({
+      try: async () => {
+        await imageManager.prepare()
+        return true
+      },
+      catch: (error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        return new StartupError({ message: `Failed to build container image: ${message}` })
+      },
+    }).pipe(
+      Effect.catchTag("StartupError", (error) =>
+        Effect.succeed({
+          ready: false,
+          podmanAvailable: true,
+          imageReady: false,
+          error: error.message,
+        }),
+      ),
+    )
 
+    if (typeof prepared === "boolean") {
       return {
         ready: true,
         podmanAvailable: true,
         imageReady: true,
       }
-
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-
-      return {
-        ready: false,
-        podmanAvailable: true,
-        imageReady: false,
-        error: `Failed to build container image: ${message}`,
-      }
-
     }
+
+    return prepared
   }
 
   return {
@@ -88,7 +102,8 @@ async function checkAndPrepareContainer(projectRoot: string): Promise<{
     podmanAvailable: true,
     imageReady: true,
   }
-}
+},
+)
 
 function createInitialSettings(
   projectRoot: string,
@@ -111,10 +126,7 @@ const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, a
     }
 
     console.log("[tauroboros] First run detected - setting up container mode...")
-    const containerCheck = yield* Effect.tryPromise({
-      try: () => checkAndPrepareContainer(projectRoot),
-        catch: (cause) => new StartupError({ message: `Failed to check container setup: ${String(cause)}` }),
-    })
+    const containerCheck = yield* checkAndPrepareContainerEffect(projectRoot)
 
     if (!containerCheck.ready) {
         return yield* new StartupError({ message: `${containerCheck.error}\n[tauroboros] To start in native mode instead, run: bun run start -- --native` })
@@ -135,16 +147,18 @@ const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, a
         return yield* new StartupError({ message: "CRITICAL: Container mode is enabled but Podman is not available.\n[tauroboros] Install Podman or explicitly disable container mode by running with --native flag:\n[tauroboros]   bun run start -- --native\n[tauroboros] Or set workflow.container.enabled to false in .tauroboros/settings.json" })
     }
 
-    const setupStatus = yield* Effect.tryPromise({
-      try: async () => {
-        const manager = new PiContainerManager()
-        return await manager.validateSetup()
-      },
-        catch: (cause) => new StartupError({ message: `Failed to validate container runtime: ${String(cause)}` }),
-    })
+    const containerRuntime = yield* validateContainerSetupEffect(new PiContainerManager(), settings).pipe(
+      Effect.mapError((cause) => new StartupError({ message: `Failed to validate container runtime: ${cause.message}` })),
+    )
 
-    if (!setupStatus.image) {
-        return yield* new StartupError({ message: `CRITICAL: Container mode is enabled but container image is not available.\n[tauroboros] Build it with: podman build -t ${settings.workflow.container.image} -f docker/pi-agent/Dockerfile .\n[tauroboros] Or disable container mode by running with --native flag:\n[tauroboros]   bun run start -- --native` })
+    if (!containerRuntime.available) {
+      const runtimeIssues = containerRuntime.issues.join("\n")
+      return yield* new StartupError({
+        message:
+          `CRITICAL: Container mode is enabled but runtime validation failed.\n${runtimeIssues}\n` +
+          `[tauroboros] Build it with: podman build -t ${settings.workflow.container.image} -f docker/pi-agent/Dockerfile .\n` +
+          `[tauroboros] Or disable container mode by running with --native flag:\n[tauroboros]   bun run start -- --native`,
+      })
     }
 
     console.log("[tauroboros] Container runtime validated successfully")

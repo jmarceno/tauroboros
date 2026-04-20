@@ -2,6 +2,7 @@ import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
 import type { SessionMessage } from "../types.ts"
+import { Effect, Schema } from "effect"
 import { ContainerPiProcess } from "./container-pi-process.ts"
 import type { PiContainerManager } from "./container-manager.ts"
 import { PiRpcProcess } from "./pi-process.ts"
@@ -38,6 +39,14 @@ export interface UnifiedPiProcessOptions {
  */
 export type PiRuntimeMode = "native" | "container"
 
+export class PiProcessFactoryError extends Schema.TaggedError<PiProcessFactoryError>()(
+  "PiProcessFactoryError",
+  {
+    operation: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
 /**
  * Get the configured runtime mode from settings.
  * Container mode is the default. Mode must be explicitly disabled to use native.
@@ -57,48 +66,56 @@ export function getConfiguredRuntime(settings?: InfrastructureSettings): PiRunti
 export function createPiProcess(
   options: UnifiedPiProcessOptions,
 ): PiRpcProcess | ContainerPiProcess {
-  const runtime = options.forceRuntime || getConfiguredRuntime(options.settings)
+  return Effect.runSync(createPiProcessEffect(options))
+}
 
-  if (runtime === "container") {
-    if (!options.containerManager) {
-      throw new Error(
-        "Container runtime requires a PiContainerManager instance. " +
-          "Make sure to pass containerManager when creating the process.",
-      )
+export const createPiProcessEffect = Effect.fn("createPiProcessEffect")(
+  function* (options: UnifiedPiProcessOptions): Effect.Effect<PiRpcProcess | ContainerPiProcess, PiProcessFactoryError> {
+    const runtime = options.forceRuntime || getConfiguredRuntime(options.settings)
+
+    if (runtime === "container") {
+      if (!options.containerManager) {
+        return yield* new PiProcessFactoryError({
+          operation: "createPiProcess",
+          message:
+            "Container runtime requires a PiContainerManager instance. Make sure to pass containerManager when creating the process.",
+        })
+      }
+
+      if (!options.session.worktreeDir) {
+        return yield* new PiProcessFactoryError({
+          operation: "createPiProcess",
+          message:
+            "Container runtime requires a worktree directory. Task cannot execute outside a container when container mode is enabled.",
+        })
+      }
+
+      return new ContainerPiProcess({
+        db: options.db,
+        session: options.session,
+        containerManager: options.containerManager,
+        onOutput: options.onOutput,
+        onSessionMessage: options.onSessionMessage,
+        settings: options.settings,
+        systemPrompt: options.systemPrompt,
+        disableAutoSessionMessages: options.disableAutoSessionMessages,
+        existingContainerId: options.existingContainerId,
+        containerImage: options.containerImage,
+      })
     }
 
-    if (!options.session.worktreeDir) {
-      throw new Error(
-        "Container runtime requires a worktree directory. " +
-          "Task cannot execute outside a container when container mode is enabled."
-      )
-    }
-
-    return new ContainerPiProcess({
+    return new PiRpcProcess({
       db: options.db,
       session: options.session,
-      containerManager: options.containerManager,
       onOutput: options.onOutput,
       onSessionMessage: options.onSessionMessage,
       settings: options.settings,
       systemPrompt: options.systemPrompt,
       disableAutoSessionMessages: options.disableAutoSessionMessages,
-      existingContainerId: options.existingContainerId,
-      containerImage: options.containerImage,
+      piSessionFile: options.piSessionFile,
     })
-  }
-
-  return new PiRpcProcess({
-    db: options.db,
-    session: options.session,
-    onOutput: options.onOutput,
-    onSessionMessage: options.onSessionMessage,
-    settings: options.settings,
-    systemPrompt: options.systemPrompt,
-    disableAutoSessionMessages: options.disableAutoSessionMessages,
-    piSessionFile: options.piSessionFile,
-  })
-}
+  },
+)
 
 /**
  * Check if container runtime is available and properly configured.
@@ -106,15 +123,24 @@ export function createPiProcess(
 export async function isContainerRuntimeAvailable(
   containerManager?: PiContainerManager,
 ): Promise<boolean> {
-  if (!containerManager) return false
-
-  try {
-    const status = await containerManager.validateSetup()
-    return status.podman && status.image
-  } catch {
-    return false
-  }
+  return await Effect.runPromise(isContainerRuntimeAvailableEffect(containerManager))
 }
+
+export const isContainerRuntimeAvailableEffect = Effect.fn("isContainerRuntimeAvailableEffect")(
+  function* (containerManager?: PiContainerManager): Effect.Effect<boolean> {
+    if (!containerManager) {
+      return false
+    }
+
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const status = await containerManager.validateSetup()
+        return status.podman && status.image
+      },
+      catch: () => false,
+    })
+  },
+)
 
 /**
  * Validate container runtime setup and return detailed status.
@@ -127,28 +153,51 @@ export async function validateContainerSetup(
   runtime: PiRuntimeMode
   issues: string[]
 }> {
-  const status = await containerManager.validateSetup()
-  const configuredRuntime = getConfiguredRuntime(settings)
-
-  const issues: string[] = [...status.errors]
-
-  if (configuredRuntime === "container" && !status.podman) {
-    issues.push(
-      "Container runtime is configured but Podman is not available. " +
-        "Install Podman or set workflow.container.enabled to false in .tauroboros/settings.json",
-    )
-  }
-
-  if (configuredRuntime === "container" && !status.image) {
-    issues.push(
-      `Container runtime is configured but the image is not available. ` +
-        `Build it with: podman build -t ${settings?.workflow?.container?.image ?? BASE_IMAGES.piAgent} -f docker/pi-agent/Dockerfile .`,
-    )
-  }
-
-  return {
-    available: status.podman && status.image,
-    runtime: configuredRuntime,
-    issues,
-  }
+  return await Effect.runPromise(validateContainerSetupEffect(containerManager, settings))
 }
+
+export const validateContainerSetupEffect = Effect.fn("validateContainerSetupEffect")(
+  function* (
+    containerManager: PiContainerManager,
+    settings?: InfrastructureSettings,
+  ): Effect.Effect<
+    {
+      available: boolean
+      runtime: PiRuntimeMode
+      issues: string[]
+    },
+    PiProcessFactoryError
+  > {
+    const status = yield* Effect.tryPromise({
+      try: () => containerManager.validateSetup(),
+      catch: (cause) =>
+        new PiProcessFactoryError({
+          operation: "validateContainerSetup",
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    })
+    const configuredRuntime = getConfiguredRuntime(settings)
+
+    const issues: string[] = [...status.errors]
+
+    if (configuredRuntime === "container" && !status.podman) {
+      issues.push(
+        "Container runtime is configured but Podman is not available. " +
+          "Install Podman or set workflow.container.enabled to false in .tauroboros/settings.json",
+      )
+    }
+
+    if (configuredRuntime === "container" && !status.image) {
+      issues.push(
+        `Container runtime is configured but the image is not available. ` +
+          `Build it with: podman build -t ${settings?.workflow?.container?.image ?? BASE_IMAGES.piAgent} -f docker/pi-agent/Dockerfile .`,
+      )
+    }
+
+    return {
+      available: status.podman && status.image,
+      runtime: configuredRuntime,
+      issues,
+    }
+  },
+)

@@ -113,7 +113,18 @@ export const makePiServerRuntime = Effect.fn("makePiServerRuntime")(
       const run = db.getWorkflowRun(runId)!
       return { success: true, run }
     },
-    onGetSlots: () => runOrchestratorOperationSync(orchestrator, "getSlotUtilization", (instance) => instance.getSlotUtilization()),
+    onGetSlots: () => {
+      if (!orchestrator) {
+        const maxSlots = Math.max(1, db.getOptions().parallelTasks ?? 1)
+        return {
+          maxSlots,
+          usedSlots: 0,
+          availableSlots: maxSlots,
+          tasks: [],
+        }
+      }
+      return runOrchestratorOperationSync(orchestrator, "getSlotUtilization", (instance) => instance.getSlotUtilization())
+    },
     onGetRunQueueStatus: async (runId: string) => await runOrchestratorOperationPromise(orchestrator, "getRunQueueStatus", (instance) => instance.getRunQueueStatus(runId)),
     onManualSelfHealRecover: async (taskId: string, reportId: string, action: "restart_task" | "keep_failed") =>
       await runOrchestratorOperationPromise(orchestrator, "manualSelfHealRecover", (instance) => instance.manualSelfHealRecover(taskId, reportId, action)),
