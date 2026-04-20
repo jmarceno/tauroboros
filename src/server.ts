@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "fs"
 import { dirname, resolve } from "path"
 import { fileURLToPath } from "url"
+import { Effect } from "effect"
 import type { InfrastructureSettings } from "./config/settings.ts"
 import { PiKanbanDB } from "./db.ts"
 import { PiKanbanServer } from "./server/server.ts"
@@ -137,5 +138,17 @@ export function createPiServer(options: CreateServerOptions = {}): {
 
   return { db, server, orchestrator }
 }
+
+export const findProjectRootEffect = Effect.fn("findProjectRootEffect")(
+  function* () {
+    return findProjectRoot()
+  },
+)
+
+export const createPiServerEffect = Effect.fn("createPiServerEffect")(
+  function* (options: CreateServerOptions = {}) {
+    return createPiServer(options)
+  },
+)
 
 export { PiKanbanServer }

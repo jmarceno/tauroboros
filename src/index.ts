@@ -2,7 +2,7 @@ import { resolve } from "path"
 import { existsSync } from "fs"
 import { Effect, Schema } from "effect"
 import { ensureInfrastructureSettings, saveInfrastructureSettings, type InfrastructureSettings } from "./config/settings.ts"
-import { createPiServer, findProjectRoot } from "./server.ts"
+import { createPiServerEffect, findProjectRootEffect } from "./server.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
 import { ContainerImageManager } from "./runtime/container-image-manager.ts"
 import { extractEmbeddedResources } from "./resource-extractor.ts"
@@ -154,7 +154,7 @@ const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, a
 })
 
 const runProgram = Effect.fn("runProgram")(function* () {
-  const projectRoot = findProjectRoot()
+  const projectRoot = yield* findProjectRootEffect()
   const extractionResult = extractEmbeddedResources(projectRoot)
   if (extractionResult.mode === "binary") {
     console.log(`[tauroboros] Extracted ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from binary`)
@@ -176,7 +176,7 @@ const runProgram = Effect.fn("runProgram")(function* () {
     return yield* new StartupError({ message: `Invalid SERVER_PORT value '${envPort ?? ""}'. Expected an integer.` })
   }
 
-  const { db, server } = createPiServer({
+  const { db, server } = yield* createPiServerEffect({
     port,
     dbPath,
     settings,
