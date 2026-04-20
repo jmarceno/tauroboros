@@ -1,5 +1,6 @@
 import { existsSync } from "fs"
 import { execFileSync } from "child_process"
+import { Effect } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import { resolveContainerImage, type Task } from "../types.ts"
@@ -134,7 +135,7 @@ export class SmartRepairService {
 
     const repairImageToUse = resolveContainerImage(task, this.settings?.workflow?.container?.image)
 
-    const session = await this.sessions.executePrompt({
+    const session = await Effect.runPromise(this.sessions.executePrompt({
       taskId: task.id,
       sessionKind: "repair",
       cwd: task.worktreeDir ?? process.cwd(),
@@ -144,7 +145,7 @@ export class SmartRepairService {
       thinkingLevel: options.repairThinkingLevel,
       promptText: prompt.renderedText,
       containerImage: repairImageToUse,
-    })
+    }))
 
     return parseRepairDecision(session.responseText)
   }

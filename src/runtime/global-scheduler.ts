@@ -1,4 +1,10 @@
+import { Schema } from "effect"
 import type { RunQueueStatus, SlotUtilization, TaskExecutionState, WorkflowRunStatus } from "../types.ts"
+
+export class GlobalSchedulerError extends Schema.TaggedError<GlobalSchedulerError>()("GlobalSchedulerError", {
+  operation: Schema.String,
+  message: Schema.String,
+}) {}
 
 interface QueuedTask {
   taskId: string
@@ -16,14 +22,20 @@ export class GlobalScheduler {
 
   constructor(maxSlots: number) {
     if (!Number.isInteger(maxSlots) || maxSlots < 1) {
-      throw new Error(`Invalid maxSlots: ${maxSlots}`)
+      throw new GlobalSchedulerError({
+        operation: "constructor",
+        message: `Invalid maxSlots: ${maxSlots}`,
+      })
     }
     this.maxSlots = maxSlots
   }
 
   setMaxSlots(maxSlots: number): void {
     if (!Number.isInteger(maxSlots) || maxSlots < 1) {
-      throw new Error(`Invalid maxSlots: ${maxSlots}`)
+      throw new GlobalSchedulerError({
+        operation: "setMaxSlots",
+        message: `Invalid maxSlots: ${maxSlots}`,
+      })
     }
     this.maxSlots = maxSlots
   }
@@ -45,7 +57,10 @@ export class GlobalScheduler {
   enqueueTask(runId: string, taskId: string): void {
     const current = this.executingTasks.get(taskId)
     if (current) {
-      throw new Error(`Task ${taskId} is already executing in run ${current.runId}`)
+      throw new GlobalSchedulerError({
+        operation: "enqueueTask",
+        message: `Task ${taskId} is already executing in run ${current.runId}`,
+      })
     }
     if (this.queuedTasks.has(taskId)) {
       return
@@ -75,7 +90,10 @@ export class GlobalScheduler {
     for (const [taskId, state] of this.executingTasks) {
       if (state.runId !== runId) continue
       if (state.slotIndex === null) {
-        throw new Error(`Executing task ${taskId} is missing slot assignment`)
+        throw new GlobalSchedulerError({
+          operation: "removeRun",
+          message: `Executing task ${taskId} is missing slot assignment`,
+        })
       }
       this.slotAssignments.delete(state.slotIndex)
       this.executingTasks.delete(taskId)
@@ -105,7 +123,10 @@ export class GlobalScheduler {
       .filter((state) => !runId || state.runId === runId)
       .sort((left, right) => {
         if (left.slotIndex === null || right.slotIndex === null) {
-          throw new Error("Executing task is missing slot assignment")
+          throw new GlobalSchedulerError({
+            operation: "getExecutingStates",
+            message: "Executing task is missing slot assignment",
+          })
         }
         return left.slotIndex - right.slotIndex
       })
@@ -151,7 +172,10 @@ export class GlobalScheduler {
       return null
     }
     if (state.slotIndex === null) {
-      throw new Error(`Executing task ${taskId} is missing slot assignment`)
+      throw new GlobalSchedulerError({
+        operation: "completeTask",
+        message: `Executing task ${taskId} is missing slot assignment`,
+      })
     }
 
     this.slotAssignments.delete(state.slotIndex)
@@ -168,7 +192,10 @@ export class GlobalScheduler {
     const state = this.executingTasks.get(taskId)
     if (!state) return null
     if (state.slotIndex === null) {
-      throw new Error(`Executing task ${taskId} is missing slot assignment`)
+      throw new GlobalSchedulerError({
+        operation: "requeueExecutingTask",
+        message: `Executing task ${taskId} is missing slot assignment`,
+      })
     }
 
     this.slotAssignments.delete(state.slotIndex)
@@ -191,7 +218,10 @@ export class GlobalScheduler {
   getSlotUtilization(getTaskName: (taskId: string) => string): SlotUtilization {
     const tasks = this.getExecutingStates().map((state) => {
       if (state.slotIndex === null) {
-        throw new Error(`Executing task ${state.taskId} is missing slot assignment`)
+        throw new GlobalSchedulerError({
+          operation: "getSlotUtilization",
+          message: `Executing task ${state.taskId} is missing slot assignment`,
+        })
       }
 
       return {
@@ -254,6 +284,9 @@ export class GlobalScheduler {
       }
     }
 
-    throw new Error(`No slot available despite free capacity (maxSlots=${this.maxSlots})`)
+    throw new GlobalSchedulerError({
+      operation: "allocateSlot",
+      message: `No slot available despite free capacity (maxSlots=${this.maxSlots})`,
+    })
   }
 }

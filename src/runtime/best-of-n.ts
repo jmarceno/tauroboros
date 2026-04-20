@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import {
@@ -299,7 +300,7 @@ export class BestOfNRunner {
       const outputChunks: string[] = []
       const workerImageToUse = resolveContainerImage(task, this.deps.settings?.workflow?.container?.image)
 
-      const response = await this.sessions.executePrompt({
+      const response = await Effect.runPromise(this.sessions.executePrompt({
         taskId,
         taskRunId: workerRun.id,
         sessionKind: "task_run_worker",
@@ -310,13 +311,14 @@ export class BestOfNRunner {
         thinkingLevel: task.executionThinkingLevel,
         promptText: prompt.renderedText,
         containerImage: workerImageToUse,
+      }, {
         onOutput: (chunk) => {
           if (!trimText(chunk)) return
           outputChunks.push(chunk)
           appendTaggedOutput(this.deps.db, taskId, `worker-${workerRun.slotIndex}`, chunk)
         },
         onSessionCreated: this.deps.onSessionCreated,
-      })
+      }))
 
       this.deps.db.updateTaskRun(workerRun.id, {
         sessionId: response.session.id,
@@ -396,7 +398,7 @@ export class BestOfNRunner {
 
       const reviewerImageToUse = resolveContainerImage(task, this.deps.settings?.workflow?.container?.image)
 
-      const response = await this.sessions.executePrompt({
+      const response = await Effect.runPromise(this.sessions.executePrompt({
         taskId,
         taskRunId: reviewerRun.id,
         sessionKind: "task_run_reviewer",
@@ -405,8 +407,9 @@ export class BestOfNRunner {
         thinkingLevel: task.executionThinkingLevel,
         promptText: prompt.renderedText,
         containerImage: reviewerImageToUse,
+      }, {
         onSessionCreated: this.deps.onSessionCreated,
-      })
+      }))
 
       const reviewerOutput = toReviewerOutput(response.responseText)
       this.deps.db.updateTaskRun(reviewerRun.id, {
@@ -472,7 +475,7 @@ export class BestOfNRunner {
       const outputChunks: string[] = []
       const finalImageToUse = resolveContainerImage(task, this.deps.settings?.workflow?.container?.image)
 
-      const response = await this.sessions.executePrompt({
+      const response = await Effect.runPromise(this.sessions.executePrompt({
         taskId,
         taskRunId: finalRun.id,
         sessionKind: "task_run_final_applier",
@@ -483,13 +486,14 @@ export class BestOfNRunner {
         thinkingLevel: task.executionThinkingLevel,
         promptText: prompt.renderedText,
         containerImage: finalImageToUse,
+      }, {
         onOutput: (chunk) => {
           if (!trimText(chunk)) return
           outputChunks.push(chunk)
           appendTaggedOutput(this.deps.db, taskId, "final-applier", chunk)
         },
         onSessionCreated: this.deps.onSessionCreated,
-      })
+      }))
 
       this.deps.db.updateTaskRun(finalRun.id, {
         sessionId: response.session.id,

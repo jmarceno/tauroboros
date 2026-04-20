@@ -1,35 +1,40 @@
+import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
 import { buildExecutionGraph, getExecutionGraphTasks } from "../../execution-plan.ts"
 import { isTaskAwaitingPlanApproval } from "../../task-state.ts"
 import { loadPausedRunState, loadPausedSessionState } from "../../runtime/session-pause-state.ts"
 import type { BestOfNConfig, WorkflowRun } from "../../types.ts"
+import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
+import { HttpRouteError, runRouteEffect } from "../route-interpreter.ts"
+
+function mapOperationError(error: unknown, messagePrefix: string): HttpRouteError {
+  const message = error instanceof Error ? error.message : String(error)
+  return new HttpRouteError({
+    message: `${messagePrefix}: ${message}`,
+    code: ErrorCode.EXECUTION_OPERATION_FAILED,
+    status: 500,
+    cause: error,
+  })
+}
 
 export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext): void {
   router.post("/api/start", async ({ json }) => {
-    try {
-      const run = await ctx.onStart()
-      return json(run)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      if (message.includes("invalid container images") || message.includes("not found")) {
-        return json({ error: message }, 409)
-      }
-      return json({ error: message }, 500)
-    }
+    return runRouteEffect(
+      Effect.tryPromise({
+        try: () => ctx.onStart(),
+        catch: (error) => mapOperationError(error, "Failed to start execution"),
+      }).pipe(Effect.map((run) => json(run))),
+    )
   })
 
   router.post("/api/execution/start", async ({ json }) => {
-    try {
-      const run = await ctx.onStart()
-      return json(run)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      if (message.includes("invalid container images") || message.includes("not found")) {
-        return json({ error: message }, 409)
-      }
-      return json({ error: message }, 500)
-    }
+    return runRouteEffect(
+      Effect.tryPromise({
+        try: () => ctx.onStart(),
+        catch: (error) => mapOperationError(error, "Failed to start execution"),
+      }).pipe(Effect.map((run) => json(run))),
+    )
   })
 
   router.post("/api/stop", async ({ json }) => {
@@ -82,101 +87,121 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
       }
     }
 
-    try {
-      const run = await ctx.onStartSingle(params.id)
-      return json(run)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      if (message.includes("invalid container images") || message.includes("not found")) {
-        return json({ error: message }, 409)
-      }
-      return json({ error: message }, 500)
-    }
+    return runRouteEffect(
+      Effect.tryPromise({
+        try: () => ctx.onStartSingle(params.id),
+        catch: (error) => mapOperationError(error, `Failed to start task ${params.id}`),
+      }).pipe(Effect.map((run) => json(run))),
+    )
   })
 
   router.post("/api/runs/:id/pause", async ({ params, json, broadcast, db }) => {
-    try {
-      if (ctx.onPauseRun) {
-        const result = (await ctx.onPauseRun(params.id)) as { success: boolean; run: WorkflowRun } | null
-        if (result && result.success) {
-          broadcast({ type: "run_paused", payload: { runId: params.id } })
-          return json({ success: true, run: result.run })
+    return runRouteEffect(
+      Effect.gen(function* () {
+        if (ctx.onPauseRun) {
+          const result = (yield* Effect.tryPromise({
+            try: () => ctx.onPauseRun!(params.id),
+            catch: (error) => mapOperationError(error, `Failed to pause run ${params.id}`),
+          })) as { success: boolean; run: WorkflowRun } | null
+          if (result && result.success) {
+            broadcast({ type: "run_paused", payload: { runId: params.id } })
+            return json({ success: true, run: result.run })
+          }
         }
-      }
-      const updated = db.updateWorkflowRun(params.id, { pauseRequested: true, status: "paused" })
-      if (!updated) return json({ error: "Run not found" }, 404)
-      broadcast({ type: "run_updated", payload: updated })
-      broadcast({ type: "run_paused", payload: { runId: params.id } })
-      return json({ success: true, run: updated })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return json({ error: message }, 500)
-    }
+        const updated = db.updateWorkflowRun(params.id, { pauseRequested: true, status: "paused" })
+        if (!updated) {
+          return yield* Effect.fail(new HttpRouteError({
+            message: "Run not found",
+            code: ErrorCode.RUN_NOT_FOUND,
+            status: 404,
+          }))
+        }
+        broadcast({ type: "run_updated", payload: updated })
+        broadcast({ type: "run_paused", payload: { runId: params.id } })
+        return json({ success: true, run: updated })
+      }),
+    )
   })
 
   router.post("/api/runs/:id/resume", async ({ params, json, broadcast, db }) => {
-    try {
-      if (ctx.onResumeRun) {
-        const run = await ctx.onResumeRun(params.id)
-        if (run) {
-          broadcast({ type: "run_resumed", payload: { runId: params.id } })
-          return json({ success: true, run })
+    return runRouteEffect(
+      Effect.gen(function* () {
+        if (ctx.onResumeRun) {
+          const run = yield* Effect.tryPromise({
+            try: () => ctx.onResumeRun!(params.id),
+            catch: (error) => mapOperationError(error, `Failed to resume run ${params.id}`),
+          })
+          if (run) {
+            broadcast({ type: "run_resumed", payload: { runId: params.id } })
+            return json({ success: true, run })
+          }
         }
-      }
-      const updated = db.updateWorkflowRun(params.id, { pauseRequested: false, status: "running" })
-      if (!updated) return json({ error: "Run not found" }, 404)
-      broadcast({ type: "run_updated", payload: updated })
-      broadcast({ type: "run_resumed", payload: { runId: params.id } })
-      return json({ success: true, run: updated })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return json({ error: message }, 500)
-    }
+        const updated = db.updateWorkflowRun(params.id, { pauseRequested: false, status: "running" })
+        if (!updated) {
+          return yield* Effect.fail(new HttpRouteError({
+            message: "Run not found",
+            code: ErrorCode.RUN_NOT_FOUND,
+            status: 404,
+          }))
+        }
+        broadcast({ type: "run_updated", payload: updated })
+        broadcast({ type: "run_resumed", payload: { runId: params.id } })
+        return json({ success: true, run: updated })
+      }),
+    )
   })
 
   router.post("/api/runs/:id/stop", async ({ params, req, json, broadcast }) => {
+    let body: Record<string, unknown>
     try {
-      let body: Record<string, unknown>
-      try {
-        body = await req.json()
-      } catch (_err) {
-        return json({ error: "Invalid JSON body" }, 400)
-      }
-      const destructive = body?.destructive === true
-
-      if (!ctx.onStopRun) {
-        return json({ error: "Stop handler not available" }, 503)
-      }
-
-      const result = await ctx.onStopRun(params.id, { destructive })
-
-      if (!result || !result.run) {
-        return json({ error: "Failed to stop run - no result from orchestrator" }, 500)
-      }
-
-      if (destructive) {
-        broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
-      }
-      return json(result)
-    } catch (error) {
-      console.error(`[API /runs/:id/stop] Error stopping run ${params.id}:`, error)
-      const message = error instanceof Error ? error.message : String(error)
-      return json({ error: message }, 500)
+      body = await req.json()
+    } catch (_err) {
+      return json(createApiError("Invalid JSON body", ErrorCode.INVALID_JSON_BODY), 400)
     }
+    const destructive = body?.destructive === true
+
+    if (!ctx.onStopRun) {
+      return json(createApiError("Stop handler not available", ErrorCode.SERVICE_UNAVAILABLE), 503)
+    }
+
+    return runRouteEffect(
+      Effect.tryPromise({
+        try: () => ctx.onStopRun!(params.id, { destructive }),
+        catch: (error) => mapOperationError(error, `Failed to stop run ${params.id}`),
+      }).pipe(
+        Effect.flatMap((result) => {
+          if (!result || !result.run) {
+            return Effect.fail(new HttpRouteError({
+              message: "Failed to stop run - no result from orchestrator",
+              code: ErrorCode.EXECUTION_OPERATION_FAILED,
+              status: 500,
+            }))
+          }
+          if (destructive) {
+            broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
+          }
+          return Effect.succeed(json(result))
+        }),
+      ),
+    )
   })
 
   router.post("/api/runs/:id/force-stop", async ({ params, json, broadcast }) => {
-    try {
-      if (ctx.onStopRun) {
-        const result = await ctx.onStopRun(params.id, { destructive: true })
-        broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
-        return json(result)
-      }
-      return json({ error: "Force stop not available" }, 503)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return json({ error: message }, 500)
+    if (!ctx.onStopRun) {
+      return json(createApiError("Force stop not available", ErrorCode.SERVICE_UNAVAILABLE), 503)
     }
+
+    return runRouteEffect(
+      Effect.tryPromise({
+        try: () => ctx.onStopRun!(params.id, { destructive: true }),
+        catch: (error) => mapOperationError(error, `Failed to force-stop run ${params.id}`),
+      }).pipe(
+        Effect.map((result) => {
+          broadcast({ type: "run_stopped", payload: { runId: params.id, destructive: true } })
+          return json(result)
+        }),
+      ),
+    )
   })
 
   router.get("/api/runs/paused-state", ({ json }) => {
@@ -301,18 +326,15 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
 
   router.get("/api/runs/:id/queue-status", async ({ params, json }) => {
     if (!ctx.onGetRunQueueStatus) {
-      return json({ error: "Run queue status not available" }, 503)
+      return json(createApiError("Run queue status not available", ErrorCode.SERVICE_UNAVAILABLE), 503)
     }
 
-    try {
-      return json(await ctx.onGetRunQueueStatus(params.id))
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (message.includes("not found")) {
-        return json({ error: message }, 404)
-      }
-      return json({ error: message }, 500)
-    }
+    return runRouteEffect(
+      Effect.tryPromise({
+        try: () => ctx.onGetRunQueueStatus!(params.id),
+        catch: (error) => mapOperationError(error, `Failed to load queue status for run ${params.id}`),
+      }).pipe(Effect.map((result) => json(result))),
+    )
   })
 
   router.get("/api/runs/:id/self-heal-reports", ({ params, json, db }) => {

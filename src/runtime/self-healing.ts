@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync } from "fs"
 import { dirname, join, resolve } from "path"
+import { Effect } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { Task, WorkflowRun } from "../types.ts"
@@ -98,7 +99,7 @@ export class SelfHealingService {
 
     const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
 
-    const session = await this.sessions.executePrompt({
+    const session = await Effect.runPromise(this.sessions.executePrompt({
       taskId: input.task.id,
       sessionKind: "review_scratch",
       cwd: source.sourcePath ?? this.projectRoot,
@@ -108,7 +109,7 @@ export class SelfHealingService {
       thinkingLevel: options.reviewThinkingLevel,
       promptText: prompt,
       containerImage: imageToUse,
-    })
+    }))
 
     const parsed = parseStrictJsonObject(session.responseText, "Self-heal diagnostics response")
 

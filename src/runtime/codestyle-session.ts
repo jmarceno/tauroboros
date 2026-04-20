@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import { resolveContainerImage, type Task, type ThinkingLevel, resolveCodeStylePrompt } from "../types.ts"
@@ -47,7 +48,7 @@ export class CodeStyleSessionRunner {
     const promptText = resolveCodeStylePrompt(input.codeStylePrompt)
     const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
 
-    const response = await this.sessions.executePrompt({
+    const response = await Effect.runPromise(this.sessions.executePrompt({
       taskId: input.task.id,
       sessionKind: "task_run_reviewer",
       cwd: input.cwd,
@@ -57,9 +58,10 @@ export class CodeStyleSessionRunner {
       thinkingLevel: input.thinkingLevel,
       promptText,
       containerImage: imageToUse,
+    }, {
       onOutput: input.onOutput,
       onSessionCreated: input.onSessionCreated,
-    })
+    }))
 
     const session = this.db.getWorkflowSession(response.session.id)
     const finalStatus = session?.status ?? "completed"

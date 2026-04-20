@@ -90,17 +90,17 @@ Relevant guides:
 
 Checklist:
 
-- [ ] Freeze the service-definition baseline for this migration: stay on the current Effect dependency line and use `Context.GenericTag` consistently across all new and migrated services.
-- [ ] Define the repository-wide rule that only edge adapters may call `Effect.run*`.
-- [ ] Define the repository-wide rule that no module may export both a legacy Promise API and a new Effect API for the same behavior.
-- [ ] Define the repository-wide rule that fallback branches must be removed, not preserved.
-- [ ] Add migration guardrails to CI or verification scripts so new internal `Effect.runPromise`, `console.log/error/warn`, and `throw new Error` regressions are caught while the migration is in progress.
-- [ ] Document the allowed runtime boundaries and the banned compatibility patterns in the repository docs.
+- [x] Freeze the service-definition baseline for this migration: stay on the current Effect dependency line and use `Context.GenericTag` consistently across all new and migrated services.
+- [x] Define the repository-wide rule that only edge adapters may call `Effect.run*`.
+- [x] Define the repository-wide rule that no module may export both a legacy Promise API and a new Effect API for the same behavior.
+- [x] Define the repository-wide rule that fallback branches must be removed, not preserved.
+- [x] Add migration guardrails to CI or verification scripts so new internal `Effect.runPromise`, `console.log/error/warn`, and `throw new Error` regressions are caught while the migration is in progress.
+- [x] Document the allowed runtime boundaries and the banned compatibility patterns in the repository docs.
 
 Completion gate:
 
-- [ ] The architecture rules are encoded in repo documentation and automated verification.
-- [ ] The implementer can point to one allowed service-definition pattern and one allowed effect-execution pattern.
+- [x] The architecture rules are encoded in repo documentation and automated verification.
+- [x] The implementer can point to one allowed service-definition pattern and one allowed effect-execution pattern.
 
 ## Phase 1: Establish a Single Typed Error Model
 
@@ -112,9 +112,10 @@ Relevant guides:
 
 Checklist:
 
-- [ ] Create or consolidate domain error modules for runtime, orchestration, server, integration, and frontend API failures.
-- [ ] Replace raw `throw new Error(...)` paths in `src/runtime/planning-session.ts`, `src/runtime/session-manager.ts`, `src/orchestrator.ts`, `src/telegram.ts`, and other backend modules with tagged errors or explicit defects where appropriate.
-- [ ] Replace ad hoc `catch` blocks in `src/server/routes/*.ts` with typed error handling that maps domain errors to HTTP responses centrally.
+- [x] Create or consolidate domain error modules for runtime, orchestration, server, integration, and frontend API failures.
+- [x] Replace raw `throw new Error(...)` paths in `src/runtime/planning-session.ts`, `src/runtime/session-manager.ts` with tagged errors (`PlanningSessionError`, `SessionManagerExecuteError`).
+- [~] Replace raw `throw new Error(...)` in `src/orchestrator.ts`, `src/telegram.ts`, and other backend modules. (`src/runtime/global-scheduler.ts` migrated to `GlobalSchedulerError`)
+- [~] Replace ad hoc `catch` blocks in `src/server/routes/*.ts` with typed error handling that maps domain errors to HTTP responses centrally. (`src/server/routes/planning-routes.ts` and `src/server/routes/execution-routes.ts` migrated)
 - [ ] Replace string-based error inspection in route handlers and orchestration edges with tag-based or explicit error-type handling.
 - [ ] Replace frontend `ApiErrorResponse extends Error` plus handwritten parsing in `src/kanban-solid/src/api/client.ts` with typed Effect failures and typed API-response decoding.
 - [ ] Remove permissive fallback behavior such as unknown-level default branches and implicit fallback cases in integrations.
@@ -122,22 +123,23 @@ Checklist:
 
 Target files for this phase:
 
-- `src/runtime/planning-session.ts`
-- `src/runtime/session-manager.ts`
-- `src/runtime/pi-process.ts`
-- `src/runtime/container-pi-process.ts`
-- `src/orchestrator.ts`
-- `src/server/routes/execution-routes.ts`
-- `src/server/routes/task-routes.ts`
-- `src/server/routes/session-routes.ts`
-- `src/server/routes/planning-routes.ts`
-- `src/telegram.ts`
-- `src/kanban-solid/src/api/client.ts`
-- `src/shared/error-codes.ts`
+- [x] `src/runtime/planning-session.ts` - Fully migrated to `PlanningSessionError` tagged errors
+- [x] `src/runtime/session-manager.ts` - Fully migrated to `SessionManagerExecuteError` tagged errors
+- [x] `src/shared/errors.ts` - Complete base error types using `Schema.TaggedError`
+- [x] `src/shared/error-codes.ts` - Created shared errors module
+- [~] `src/orchestrator.ts` - Partial migration with `OrchestratorOperationError`, `OrchestratorUnavailableError`
+- [ ] `src/runtime/pi-process.ts`
+- [ ] `src/runtime/container-pi-process.ts`
+- [~] `src/server/routes/execution-routes.ts` - Start/stop/pause/resume/queue-status routes now use typed Effect route interpreter and no route-local try/catch blocks
+- [ ] `src/server/routes/task-routes.ts`
+- [ ] `src/server/routes/session-routes.ts`
+- [~] `src/server/routes/planning-routes.ts` - Session create/message/reconnect/model/close and task payload validation moved to typed Effect route errors and route-level interpreter
+- [ ] `src/telegram.ts`
+- [ ] `src/kanban-solid/src/api/client.ts`
 
 Completion gate:
 
-- [ ] Business modules no longer rely on `throw new Error(...)` for normal domain failures.
+- [~] Business modules no longer rely on `throw new Error(...)` for normal domain failures.
 - [ ] Route behavior no longer depends on substring matching against exception messages.
 - [ ] Frontend API failures are represented as typed Effect failures instead of handwritten `Error` subclasses and ad hoc parsing.
 
@@ -225,31 +227,31 @@ Relevant guides:
 
 Checklist:
 
-- [ ] Rewrite orchestration control flow so runs, sessions, and background execution are represented as Effect programs rather than Promise-returning methods wrapped by Effect at the boundary.
-- [ ] Convert `PiSessionManager` to expose Effect-only operations. Delete Promise wrapper methods after all callers are migrated.
-- [ ] Convert `PlanningSession` and `PlanningSessionManager` to expose Effect-only operations. Delete Promise wrapper methods after all callers are migrated.
-- [ ] Convert `PiRpcProcess` and `ContainerPiProcess` lifecycle control to Effect-owned interruption, timeout, and supervision rather than handwritten `AbortController`, callback, and timer logic.
+- [~] Rewrite orchestration control flow so runs, sessions, and background execution are represented as Effect programs rather than Promise-returning methods wrapped by Effect at the boundary.
+- [x] Convert `PiSessionManager` to expose Effect-only operations. All Promise wrapper methods removed, callbacks moved to second parameter.
+- [x] Convert `PlanningSession` and `PlanningSessionManager` to expose Effect-only operations. All Promise wrapper methods removed.
+- [~] Convert `PiRpcProcess` and `ContainerPiProcess` lifecycle control to Effect-owned interruption, timeout, and supervision rather than handwritten `AbortController`, callback, and timer logic.
 - [ ] Refactor `src/orchestrator.ts` so run-control operations are native Effects, not Promise methods with thin Effect wrappers.
-- [ ] Convert `src/runtime/global-scheduler.ts` and related execution coordination to Effect-native state/concurrency primitives.
+- [~] Convert `src/runtime/global-scheduler.ts` and related execution coordination to Effect-native state/concurrency primitives. (`throw new Error` removed; typed `GlobalSchedulerError` in place, state model still mutable class)
 - [ ] Replace manual mutable coordination where it exists solely to compensate for missing structured concurrency.
-- [ ] Remove legacy wrapper helpers such as `runOrchestratorOperationPromise` and similar bridging utilities once call sites use native Effect services.
+- [~] Remove legacy wrapper helpers such as `runOrchestratorOperationPromise` and similar bridging utilities once call sites use native Effect services.
 
 Target files for this phase:
 
-- `src/orchestrator.ts`
-- `src/runtime/session-manager.ts`
-- `src/runtime/planning-session.ts`
-- `src/runtime/pi-process.ts`
-- `src/runtime/container-pi-process.ts`
-- `src/runtime/global-scheduler.ts`
-- `src/runtime/review-session.ts`
-- `src/runtime/best-of-n.ts`
-- `src/runtime/codestyle-session.ts`
+- [~] `src/orchestrator.ts` - Core methods still use Promises, helper functions use Effect
+- [x] `src/runtime/session-manager.ts` - **COMPLETE** - `executePrompt` now returns `Effect.Effect<ExecuteSessionPromptResult, SessionManagerExecuteError>`
+- [x] `src/runtime/planning-session.ts` - **COMPLETE** - All methods (`start`, `sendMessage`, `close`, `reconnect`, `setModel`, `setThinkingLevel`) now return Effects
+- [~] `src/runtime/pi-process.ts` - Uses Effect for `send`, `prompt`, `collectEvents`, `close`, `forceKill`
+- [~] `src/runtime/container-pi-process.ts` - Uses Effect for `send`, `prompt`, `collectEvents`, `close`, `forceKill`
+- [~] `src/runtime/global-scheduler.ts` - Raw throws replaced with tagged `GlobalSchedulerError`; API remains sync/mutable and still needs Effect-native primitives
+- [~] `src/runtime/review-session.ts` - Updated caller to use `Effect.runPromise`
+- [~] `src/runtime/best-of-n.ts` - Updated callers to use `Effect.runPromise`
+- [~] `src/runtime/codestyle-session.ts` - Updated caller to use `Effect.runPromise`
 
 Completion gate:
 
-- [ ] Runtime and orchestration modules no longer export duplicate Promise and Effect APIs for the same actions.
-- [ ] Run/session cancellation is driven by Effect interruption and scope ownership.
+- [~] Runtime and orchestration modules no longer export duplicate Promise and Effect APIs for the same actions.
+- [~] Run/session cancellation is driven by Effect interruption and scope ownership.
 - [ ] Manual bridging helpers that existed only to call Promise methods from Effects have been deleted.
 
 ## Phase 5: Replace Ad Hoc Logging With Effect Observability
@@ -297,8 +299,8 @@ Relevant guides:
 Checklist:
 
 - [ ] Change `src/server/types.ts` so route and control contracts are Effect-based rather than Promise-based.
-- [ ] Refactor route registration functions in `src/server/routes/*.ts` so they build Effects instead of wrapping business logic in per-route `try/catch` blocks.
-- [ ] Introduce one central interpreter that maps typed errors to HTTP responses.
+- [~] Refactor route registration functions in `src/server/routes/*.ts` so they build Effects instead of wrapping business logic in per-route `try/catch` blocks. (`src/server/routes/planning-routes.ts` and `src/server/routes/execution-routes.ts` partial complete)
+- [~] Introduce one central interpreter that maps typed errors to HTTP responses. (`src/server/route-interpreter.ts` introduced and used by planning/execution routes)
 - [ ] Keep only one Bun adapter layer that executes route Effects at the request boundary.
 - [ ] Refactor `PiKanbanServer` so callbacks and integration points are Effect-based services, not Promise-returning function slots.
 - [ ] Migrate notification and external HTTP integrations behind Effect services before they are invoked from routes or server lifecycle code.
@@ -309,10 +311,10 @@ Target files for this phase:
 - `src/server/types.ts`
 - `src/server/router.ts`
 - `src/server/server.ts`
-- `src/server/routes/execution-routes.ts`
+- [~] `src/server/routes/execution-routes.ts`
 - `src/server/routes/task-routes.ts`
 - `src/server/routes/session-routes.ts`
-- `src/server/routes/planning-routes.ts`
+- [~] `src/server/routes/planning-routes.ts`
 - `src/server/routes/container-routes.ts`
 - `src/server/routes/task-group-routes.ts`
 - `src/server/routes/stats-routes.ts`

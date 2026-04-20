@@ -218,19 +218,33 @@ export class PiContainerManager {
    * Called at server startup (not on every container creation).
    * This method triggers a build/pull if the image is missing.
    */
-  async ensureImageReady(): Promise<void> {
-    if (this.imageManager) {
-      await this.imageManager.prepare()
-    } else {
-    try {
-      await this.execPodman(["image", "exists", this.imageName])
-    } catch (err) {
-      throw new Error(
-        `Podman image '${this.imageName}' not found. ` +
-        `Build it with: podman build -t ${this.imageName} -f docker/pi-agent/Dockerfile .`,
-      )
-    }
-    }
+  ensureImageReady(): Effect.Effect<void, ContainerManagerError> {
+    const self = this
+    return Effect.gen(function* () {
+      if (self.imageManager) {
+        yield* Effect.tryPromise({
+          try: () => self.imageManager!.prepare(),
+          catch: (cause) => new ContainerManagerError({
+            operation: "ensureImageReady",
+            message: `Failed to prepare image: ${cause instanceof Error ? cause.message : String(cause)}`,
+            cause,
+          }),
+        })
+      } else {
+        const exists = yield* Effect.promise(() =>
+          self.execPodman(["image", "exists", self.imageName]).then(
+            () => true,
+            () => false,
+          ),
+        )
+        if (!exists) {
+          return yield* new ContainerManagerError({
+            operation: "ensureImageReady",
+            message: `Podman image '${self.imageName}' not found. Build it with: podman build -t ${self.imageName} -f docker/pi-agent/Dockerfile .`,
+          })
+        }
+      }
+    })
   }
 
   /**
@@ -240,14 +254,11 @@ export class PiContainerManager {
    * fallback to building/pulling during task execution.
    */
   verifyImageReady(): void {
-    if (this.imageManager) {
-      if (!this.imageManager.isReady()) {
-        throw new Error(
-          `Container image '${this.imageName}' has not been prepared. ` +
-          `The server must prepare the image on startup before containers can be created. ` +
-          `Ensure 'autoPrepare: true' is set in .tauroboros/settings.json or manually prepare the image.`,
-        )
-      }
+    if (this.imageManager && !this.imageManager.isReady()) {
+      throw new ContainerManagerError({
+        operation: "verifyImageReady",
+        message: `Container image '${this.imageName}' has not been prepared. The server must prepare the image on startup before containers can be created. Ensure 'autoPrepare: true' is set in .tauroboros/settings.json or manually prepare the image.`,
+      })
     }
   }
 
@@ -308,7 +319,10 @@ export class PiContainerManager {
       defaultEnv.DOCKER_HOST = "unix:///var/run/docker.sock"
     }
     if (!config.env) {
-      throw new Error(`Container config.env is required but was not provided`)
+      throw new ContainerManagerError({
+        operation: "createContainer",
+        message: "Container config.env is required but was not provided",
+      })
     }
     const envVars = { ...defaultEnv, ...config.env }
     const envArgs: string[] = []
@@ -385,11 +399,10 @@ export class PiContainerManager {
     }
 
     if (!containerId) {
-      throw new Error(
-        `Container failed to start within ${maxWaitMs}ms. ` +
-        `The container process started but podman could not find a running container with name ${containerName}. ` +
-        `Check podman logs with: podman logs ${containerName}`
-      )
+      throw new ContainerManagerError({
+        operation: "createContainer",
+        message: `Container failed to start within ${maxWaitMs}ms. The container process started but podman could not find a running container with name ${containerName}. Check podman logs with: podman logs ${containerName}`,
+      })
     }
 
     // Create process wrapper with stdio streams

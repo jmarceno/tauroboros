@@ -3,7 +3,7 @@ import { Effect, Schema } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiSessionKind, PiWorkflowSession } from "../db/types.ts"
-import type { ThinkingLevel } from "../types.ts"
+import type { ThinkingLevel, SessionMessage } from "../types.ts"
 import { CollectEventsTimeoutError, PiProcessError, PiRpcProcess } from "./pi-process.ts"
 import type { PiContainerManager } from "./container-manager.ts"
 import { ContainerPiProcess } from "./container-pi-process.ts"
@@ -58,13 +58,6 @@ export interface ExecuteSessionPromptInput {
   model?: string
   thinkingLevel?: ThinkingLevel
   promptText: string
-  onOutput?: (chunk: string) => void
-  onSessionMessage?: (message: import("../types.ts").SessionMessage) => void
-  onSessionStart?: (session: PiWorkflowSession) => void
-  /**
-   * Called when the process is created. Used to track processes for pause/stop operations.
-   */
-  onSessionCreated?: (process: PiRpcProcess | ContainerPiProcess, session: PiWorkflowSession) => void
   /**
    * Force specific runtime mode for this session.
    * If not specified, uses workflow.container.enabled from settings.
@@ -83,9 +76,13 @@ export interface ExecuteSessionPromptInput {
   containerImage?: string | null
 }
 
+/**
+ * Effect-based session execution result with event stream
+ */
 export interface ExecuteSessionPromptResult {
   session: PiWorkflowSession
   responseText: string
+  events: Record<string, unknown>[]
 }
 
 export class SessionManagerExecuteError extends Schema.TaggedError<SessionManagerExecuteError>()(
@@ -111,6 +108,8 @@ function toSessionManagerError(operation: string, cause: unknown): SessionManage
  * Supports both native and containerized execution modes.
  * - Native mode: Spawns pi directly on the host
  * - Container mode: Runs pi inside a gVisor container for isolation
+ * 
+ * NOTE: All methods return Effects. Callers must run Effects at the boundary.
  */
 export class PiSessionManager {
   constructor(
@@ -119,20 +118,25 @@ export class PiSessionManager {
     private readonly settings?: InfrastructureSettings,
   ) {}
 
-  async executePrompt(input: ExecuteSessionPromptInput): Promise<ExecuteSessionPromptResult> {
-    return await Effect.runPromise(this.executePromptProgram(input))
-  }
-
-  private executePromptProgram(input: ExecuteSessionPromptInput): Effect.Effect<ExecuteSessionPromptResult, SessionManagerExecuteError> {
+  /**
+   * Execute a prompt and return the complete result.
+   * Returns an Effect that must be run at the runtime boundary.
+   */
+  executePrompt(
+    input: ExecuteSessionPromptInput,
+    callbacks?: {
+      onOutput?: (chunk: string) => void
+      onSessionMessage?: (message: SessionMessage) => void
+      onSessionStart?: (session: PiWorkflowSession) => void
+      onSessionCreated?: (process: PiRpcProcess | ContainerPiProcess, session: PiWorkflowSession) => void
+    }
+  ): Effect.Effect<ExecuteSessionPromptResult, SessionManagerExecuteError> {
     const self = this
     return Effect.gen(function* () {
       const sessionId = input.resumedSessionId ?? randomUUID().slice(0, 8)
       const existingContainerId = yield* self.resolveExistingContainerIdEffect(input)
 
-      const resolvedModel = yield* Effect.try({
-        try: () => self.resolveModel(input.model, input.sessionKind),
-        catch: (cause) => toSessionManagerError("resolveModel", cause),
-      })
+      const resolvedModel = yield* self.resolveModel(input.model, input.sessionKind)
 
       let session: PiWorkflowSession
       if (input.isResume && input.resumedSessionId) {
@@ -180,8 +184,8 @@ export class PiSessionManager {
             db: self.db,
             session,
             containerManager: self.containerManager,
-            onOutput: input.onOutput,
-            onSessionMessage: input.onSessionMessage,
+            onOutput: callbacks?.onOutput,
+            onSessionMessage: callbacks?.onSessionMessage,
             forceRuntime: input.forceRuntime,
             settings: self.settings,
             existingContainerId,
@@ -190,8 +194,8 @@ export class PiSessionManager {
         catch: (cause) => toSessionManagerError("createProcess", cause),
       })
 
-      if (input.onSessionCreated) {
-        input.onSessionCreated(process, session)
+      if (callbacks?.onSessionCreated) {
+        callbacks.onSessionCreated(process, session)
       }
 
       // Use acquireRelease to guarantee process cleanup
@@ -201,8 +205,8 @@ export class PiSessionManager {
       ).pipe(
         Effect.flatMap((proc) =>
           Effect.gen(function* () {
-            if (input.onSessionStart) {
-              input.onSessionStart(session)
+            if (callbacks?.onSessionStart) {
+              callbacks.onSessionStart(session)
             }
 
             if (proc instanceof ContainerPiProcess) {
@@ -217,9 +221,7 @@ export class PiSessionManager {
               proc.start()
             }
 
-            if (proc instanceof ContainerPiProcess) {
-              console.log("[session-manager] Container process started, sending initial command as readiness check...")
-            } else {
+            if (!(proc instanceof ContainerPiProcess)) {
               yield* Effect.sleep(500)
             }
 
@@ -239,9 +241,6 @@ export class PiSessionManager {
               },
               60_000,
             ).pipe(
-              Effect.tap(() => Effect.sync(() => {
-                console.log(`[session-manager] set_model readiness check succeeded: ${resolvedModel}`)
-              })),
               Effect.mapError((cause) => {
                 const errMsg = cause.message
                 const msg = errMsg.includes("timeout") || errMsg.includes("time out") || errMsg.includes("timed out")
@@ -332,6 +331,7 @@ export class PiSessionManager {
             return {
               session: self.db.getWorkflowSession(session.id) ?? session,
               responseText,
+              events,
             }
           }).pipe(
             // On any failure, mark session as failed before propagating error
@@ -373,7 +373,6 @@ export class PiSessionManager {
       try: async () => {
         const containerInfo = await this.containerManager!.checkContainerById(pausedContainerId)
         if (!containerInfo?.running) {
-          console.log(`[session-manager] Container ${pausedContainerId} no longer exists, will create new one`)
           return null
         }
         return pausedContainerId
@@ -389,7 +388,7 @@ export class PiSessionManager {
    * If 'default' is specified, looks up the corresponding model in options.
    * Fails if no model can be resolved.
    */
-  private resolveModel(model: string | undefined, sessionKind: PiSessionKind): string {
+  private resolveModel(model: string | undefined, sessionKind: PiSessionKind): Effect.Effect<string, SessionManagerExecuteError> {
     const options = this.db.getOptions()
     let resolved = model || "default"
 
@@ -417,10 +416,13 @@ export class PiSessionManager {
     }
 
     if (!resolved || resolved === "default" || resolved.trim() === "") {
-      throw new Error(`Failed to resolve model for ${sessionKind}: No model is set for this task and no default model is configured in options. Please set a model in task settings or global options.`)
+      return Effect.fail(new SessionManagerExecuteError({
+        operation: "resolveModel",
+        message: `Failed to resolve model for ${sessionKind}: No model is set for this task and no default model is configured in options. Please set a model in task settings or global options.`,
+      }))
     }
 
-    return resolved
+    return Effect.succeed(resolved)
   }
 }
 

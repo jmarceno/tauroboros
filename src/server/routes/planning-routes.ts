@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto"
+import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
 import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
@@ -7,6 +8,93 @@ import type { SessionMessage } from "../../types.ts"
 import type { Task } from "../../types.ts"
 import type { ContextAttachment } from "../../runtime/planning-session.ts"
 import { isThinkingLevel, normalizeTaskForClient } from "../validators.ts"
+import { HttpRouteError, runRouteEffect } from "../route-interpreter.ts"
+
+function validateTasksPayload(
+  tasks: unknown,
+): Effect.Effect<Array<{ name: string; prompt: string; status: Task["status"]; requirements: string[] }>, HttpRouteError> {
+  if (tasks === undefined) {
+    return Effect.succeed([])
+  }
+  if (!Array.isArray(tasks)) {
+    return Effect.fail(
+      new HttpRouteError({
+        message: "Invalid tasks payload. Expected an array.",
+        code: ErrorCode.INVALID_TASK_CREATION_INPUT,
+        status: 400,
+      }),
+    )
+  }
+
+  const validated: Array<{ name: string; prompt: string; status: Task["status"]; requirements: string[] }> = []
+  for (const entry of tasks) {
+    if (typeof entry !== "object" || entry === null) {
+      return Effect.fail(
+        new HttpRouteError({
+          message: "Task entry must be an object.",
+          code: ErrorCode.INVALID_TASK_CREATION_INPUT,
+          status: 400,
+        }),
+      )
+    }
+
+    const candidate = entry as {
+      name?: unknown
+      prompt?: unknown
+      status?: unknown
+      requirements?: unknown
+    }
+
+    if (typeof candidate.name !== "string" || candidate.name.trim() === "") {
+      return Effect.fail(
+        new HttpRouteError({
+          message: "Task data missing required field: name",
+          code: ErrorCode.INVALID_TASK_CREATION_INPUT,
+          status: 400,
+        }),
+      )
+    }
+
+    if (typeof candidate.prompt !== "string" || candidate.prompt.trim() === "") {
+      return Effect.fail(
+        new HttpRouteError({
+          message: "Task data missing required field: prompt",
+          code: ErrorCode.INVALID_TASK_CREATION_INPUT,
+          status: 400,
+        }),
+      )
+    }
+
+    if (typeof candidate.status !== "string" || candidate.status.trim() === "") {
+      return Effect.fail(
+        new HttpRouteError({
+          message: "Task data missing required field: status",
+          code: ErrorCode.INVALID_TASK_CREATION_INPUT,
+          status: 400,
+        }),
+      )
+    }
+
+    if (!Array.isArray(candidate.requirements) || candidate.requirements.some((r) => typeof r !== "string")) {
+      return Effect.fail(
+        new HttpRouteError({
+          message: "Task data missing or invalid field: requirements (must be an array)",
+          code: ErrorCode.INVALID_TASK_CREATION_INPUT,
+          status: 400,
+        }),
+      )
+    }
+
+    validated.push({
+      name: candidate.name,
+      prompt: candidate.prompt,
+      status: candidate.status as Task["status"],
+      requirements: candidate.requirements,
+    })
+  }
+
+  return Effect.succeed(validated)
+}
 
 export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext): void {
   router.get("/api/planning/prompt", ({ json, db }) => {
@@ -58,29 +146,35 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       return json(createApiError("Planning prompt not configured", ErrorCode.PLANNING_PROMPT_NOT_CONFIGURED), 500)
     }
 
-    try {
-      const { session } = await ctx.planningSessionManager.createSession({
+    return runRouteEffect(
+      ctx.planningSessionManager.createSession({
         cwd: body.cwd ?? process.cwd(),
         systemPrompt: planningPrompt.promptText,
         model: body.model ?? "default",
         thinkingLevel: body.thinkingLevel ?? "default",
         sessionKind,
         onMessage: (message: SessionMessage) => {
-          broadcast({ type: "planning_session_message", payload: { sessionId: session.id, message } })
+          broadcast({ type: "planning_session_message", payload: { sessionId: message.sessionId, message } })
         },
         onStatusChange: (updatedSession) => {
           const withUrl = { ...updatedSession, sessionUrl: sessionUrlFor(updatedSession.id) }
           broadcast({ type: "planning_session_updated", payload: withUrl })
         },
-      })
-
-      const withUrl = { ...session, sessionUrl: sessionUrlFor(session.id) }
-      broadcast({ type: "planning_session_created", payload: withUrl })
-      return json(withUrl, 201)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return json({ error: `Failed to create planning session: ${message}` }, 500)
-    }
+      }).pipe(
+        Effect.map(({ session }) => {
+          const withUrl = { ...session, sessionUrl: sessionUrlFor(session.id) }
+          broadcast({ type: "planning_session_created", payload: withUrl })
+          return json(withUrl, 201)
+        }),
+        Effect.catchTag("PlanningSessionError", (error) =>
+          Effect.fail(new HttpRouteError({
+            message: `Failed to create planning session: ${error.message}`,
+            code: ErrorCode.PLANNING_SESSION_CREATE_FAILED,
+            status: 500,
+            cause: error,
+          }))),
+      ),
+    )
   })
 
   router.post("/api/planning/sessions/:id/messages", async ({ params, req, json, db }) => {
@@ -97,17 +191,21 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       return json(createApiError("Planning session not active", ErrorCode.PLANNING_SESSION_NOT_ACTIVE), 400)
     }
 
-    try {
-      await planningSession.sendMessage({
+    return runRouteEffect(
+      planningSession.sendMessage({
         content: body.content,
         contextAttachments: body.contextAttachments as ContextAttachment[] | undefined,
-      })
-
-      return json({ ok: true })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return json(createApiError(`Failed to send message: ${message}`, ErrorCode.MESSAGE_SEND_FAILED), 500)
-    }
+      }).pipe(
+        Effect.as(json({ ok: true })),
+        Effect.catchTag("PlanningSessionError", (error) =>
+          Effect.fail(new HttpRouteError({
+            message: `Failed to send message: ${error.message}`,
+            code: ErrorCode.MESSAGE_SEND_FAILED,
+            status: 500,
+            cause: error,
+          }))),
+      ),
+    )
   })
 
   router.post("/api/planning/sessions/:id/reconnect", async ({ params, req, json, broadcast, sessionUrlFor, db }) => {
@@ -129,8 +227,8 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       return json(createApiError("Planning prompt not configured", ErrorCode.PLANNING_PROMPT_NOT_CONFIGURED), 500)
     }
 
-    try {
-      const result = await ctx.planningSessionManager.reconnectSession(params.id, {
+    return runRouteEffect(
+      ctx.planningSessionManager.reconnectSession(params.id, {
         systemPrompt: planningPrompt.promptText,
         model: body.model ?? session.model ?? "default",
         thinkingLevel: body.thinkingLevel ?? session.thinkingLevel ?? "default",
@@ -141,22 +239,21 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
           const withUrl = { ...updatedSession, sessionUrl: sessionUrlFor(updatedSession.id) }
           broadcast({ type: "planning_session_updated", payload: withUrl })
         },
-      })
-
-      if (!result) {
-        return json(createApiError("Failed to reconnect to session", ErrorCode.PLANNING_SESSION_RECONNECT_FAILED), 500)
-      }
-
-      const withUrl = { ...result.session, sessionUrl: sessionUrlFor(result.session.id) }
-      broadcast({ type: "planning_session_updated", payload: withUrl })
-      return json(withUrl)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return json(
-        createApiError(`Failed to reconnect to session: ${message}`, ErrorCode.PLANNING_SESSION_RECONNECT_FAILED),
-        500,
-      )
-    }
+      }).pipe(
+        Effect.map((result) => {
+          const withUrl = { ...result.session, sessionUrl: sessionUrlFor(result.session.id) }
+          broadcast({ type: "planning_session_updated", payload: withUrl })
+          return json(withUrl)
+        }),
+        Effect.catchTag("PlanningSessionError", (error) =>
+          Effect.fail(new HttpRouteError({
+            message: `Failed to reconnect to session: ${error.message}`,
+            code: ErrorCode.PLANNING_SESSION_RECONNECT_FAILED,
+            status: 500,
+            cause: error,
+          }))),
+      ),
+    )
   })
 
   router.post("/api/planning/sessions/:id/model", async ({ params, req, json, broadcast, sessionUrlFor, db }) => {
@@ -181,23 +278,31 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       return json(createApiError("Planning session not active", ErrorCode.PLANNING_SESSION_NOT_ACTIVE), 400)
     }
 
-    try {
-      await planningSession.setModel(body.model)
+    const setThinkingLevelEffect =
+      body.thinkingLevel && body.thinkingLevel !== "default"
+        ? planningSession.setThinkingLevel(body.thinkingLevel)
+        : Effect.void
 
-      if (body.thinkingLevel && body.thinkingLevel !== "default") {
-        await planningSession.setThinkingLevel(body.thinkingLevel)
-      }
-
-      const updated = db.getWorkflowSession(params.id)
-      const withUrl = updated ? { ...updated, sessionUrl: sessionUrlFor(updated.id) } : null
-      if (withUrl) {
-        broadcast({ type: "planning_session_updated", payload: withUrl })
-      }
-      return json({ ok: true, model: body.model, thinkingLevel: body.thinkingLevel })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return json(createApiError(`Failed to change model: ${message}`, ErrorCode.INVALID_MODEL), 500)
-    }
+    return runRouteEffect(
+      Effect.gen(function* () {
+        yield* planningSession.setModel(body.model)
+        yield* setThinkingLevelEffect
+        const updated = db.getWorkflowSession(params.id)
+        const withUrl = updated ? { ...updated, sessionUrl: sessionUrlFor(updated.id) } : null
+        if (withUrl) {
+          broadcast({ type: "planning_session_updated", payload: withUrl })
+        }
+        return json({ ok: true, model: body.model, thinkingLevel: body.thinkingLevel })
+      }).pipe(
+        Effect.catchTag("PlanningSessionError", (error) =>
+          Effect.fail(new HttpRouteError({
+            message: `Failed to change model: ${error.message}`,
+            code: ErrorCode.INVALID_MODEL,
+            status: 500,
+            cause: error,
+          }))),
+      ),
+    )
   })
 
   router.post(
@@ -211,65 +316,56 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
 
       const body = await req.json()
 
-      try {
-        const serverPort = ctx.getPort()
-        const planningSession = ctx.planningSessionManager.getSession(params.id)
-        if (!planningSession) {
-          return json({ error: "Planning session not active" }, 400)
-        }
-
-        const taskSetupPrompt = renderPromptTemplate(joinPrompt(PROMPT_CATALOG.taskSetupPromptLines), {
-          server_port: String(serverPort),
-        })
-
-        await planningSession.sendMessage({ content: taskSetupPrompt })
-
-        const tasks = body.tasks as
-          | Array<{ name: string; prompt: string; status?: string; requirements?: string[] }>
-          | undefined
-
-        if (tasks && tasks.length > 0) {
-          const createdTasks = []
-          for (const taskData of tasks) {
-            if (!taskData.name) {
-              throw new Error("Task data missing required field: name")
-            }
-            if (!taskData.prompt) {
-              throw new Error("Task data missing required field: prompt")
-            }
-            const taskStatus = taskData.status as Task["status"]
-            if (!taskStatus) {
-              throw new Error("Task data missing required field: status")
-            }
-            if (!Array.isArray(taskData.requirements)) {
-              throw new Error("Task data missing or invalid field: requirements (must be an array)")
-            }
-            const task = db.createTask({
-              id: randomUUID().slice(0, 8),
-              name: taskData.name,
-              prompt: taskData.prompt,
-              status: taskStatus,
-              requirements: taskData.requirements,
-            })
-            createdTasks.push(normalizeTaskForClient(task, sessionUrlFor))
-            broadcast({ type: "task_created", payload: normalizeTaskForClient(task, sessionUrlFor) })
-          }
-          return json({
-            tasks: createdTasks,
-            count: createdTasks.length,
-            message:
-              "Tasks created. The AI has also been instructed to review the conversation and create additional tasks if needed.",
-          })
-        }
-
-        return json({
-          message:
-            "Task creation request sent to the AI. The agent will use the workflow-task-setup skill to analyze the conversation and create appropriate kanban tasks.",
-        })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        return json({ error: `Failed to create tasks: ${message}` }, 500)
+      const serverPort = ctx.getPort()
+      const planningSession = ctx.planningSessionManager.getSession(params.id)
+      if (!planningSession) {
+        return json(createApiError("Planning session not active", ErrorCode.PLANNING_SESSION_NOT_ACTIVE), 400)
       }
+
+      const taskSetupPrompt = renderPromptTemplate(joinPrompt(PROMPT_CATALOG.taskSetupPromptLines), {
+        server_port: String(serverPort),
+      })
+
+      return runRouteEffect(
+        Effect.gen(function* () {
+          yield* planningSession.sendMessage({ content: taskSetupPrompt })
+
+          const validatedTasks = yield* validateTasksPayload(body.tasks)
+          if (validatedTasks.length > 0) {
+            const createdTasks = []
+            for (const taskData of validatedTasks) {
+              const task = db.createTask({
+                id: randomUUID().slice(0, 8),
+                name: taskData.name,
+                prompt: taskData.prompt,
+                status: taskData.status,
+                requirements: taskData.requirements,
+              })
+              createdTasks.push(normalizeTaskForClient(task, sessionUrlFor))
+              broadcast({ type: "task_created", payload: normalizeTaskForClient(task, sessionUrlFor) })
+            }
+            return json({
+              tasks: createdTasks,
+              count: createdTasks.length,
+              message:
+                "Tasks created. The AI has also been instructed to review the conversation and create additional tasks if needed.",
+            })
+          }
+
+          return json({
+            message:
+              "Task creation request sent to the AI. The agent will use the workflow-task-setup skill to analyze the conversation and create appropriate kanban tasks.",
+          })
+        }).pipe(
+          Effect.catchTag("PlanningSessionError", (error) =>
+            Effect.fail(new HttpRouteError({
+              message: `Failed to create tasks: ${error.message}`,
+              code: ErrorCode.MESSAGE_SEND_FAILED,
+              status: 500,
+              cause: error,
+            }))),
+        ),
+      )
     },
   )
 
@@ -304,15 +400,26 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
     if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
       return json({ error: "Not a planning session" }, 400)
 
-    await ctx.planningSessionManager.closeSession(params.id)
+    return runRouteEffect(
+      ctx.planningSessionManager.closeSession(params.id).pipe(
+        Effect.map(() => {
+          const updated = db.updateWorkflowSession(params.id, {
+            status: "completed",
+            finishedAt: Math.floor(Date.now() / 1000),
+          })
 
-    const updated = db.updateWorkflowSession(params.id, {
-      status: "completed",
-      finishedAt: Math.floor(Date.now() / 1000),
-    })
-
-    broadcast({ type: "planning_session_closed", payload: { id: params.id } })
-    return json(updated)
+          broadcast({ type: "planning_session_closed", payload: { id: params.id } })
+          return json(updated)
+        }),
+        Effect.catchTag("PlanningSessionError", (error) =>
+          Effect.fail(new HttpRouteError({
+            message: `Failed to close session: ${error.message}`,
+            code: ErrorCode.PLANNING_SESSION_CLOSE_FAILED,
+            status: 500,
+            cause: error,
+          }))),
+      ),
+    )
   })
 
   router.get("/api/planning/sessions/:id/messages", ({ params, url, json, db }) => {

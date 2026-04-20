@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import { resolveContainerImage, type Task, type ThinkingLevel, type ReviewResult } from "../types.ts"
@@ -72,7 +73,7 @@ export class PiReviewSessionRunner {
 
     const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
 
-    const response = await this.sessions.executePrompt({
+    const response = await Effect.runPromise(this.sessions.executePrompt({
       taskId: input.task.id,
       sessionKind: "review_scratch",
       cwd: input.cwd,
@@ -82,9 +83,10 @@ export class PiReviewSessionRunner {
       thinkingLevel: input.thinkingLevel,
       promptText: rendered.renderedText,
       containerImage: imageToUse,
+    }, {
       onOutput: input.onOutput,
       onSessionCreated: input.onSessionCreated,
-    })
+    }))
 
     let parsed: Record<string, unknown>
     let jsonParseFailed = false

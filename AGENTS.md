@@ -139,6 +139,28 @@ Topics: quick-start, project-setup, tsconfig, basics, services-and-layers, data-
 
 Never guess at Effect patterns - check the guide first.
 When migrating something to Effect, completely replace the old way, do not leave code paths or legacy support.
+
+### Effect Architecture Reference
+
+See `docs/EFFECT_ARCHITECTURE.md` for:
+- Service definition patterns (`Context.GenericTag`)
+- Error handling (`Schema.TaggedError`)
+- Resource management (`Effect.acquireRelease`)
+- Layer composition
+- Logging patterns
+- Migration examples
+
+### Effect Migration Status
+
+Current migration progress is tracked in:
+- `plans/effect-full-migration-plan.md` - Full migration plan
+- `plans/MIGRATION_PROGRESS.md` - Progress report
+- `scripts/verify-migration.ts` - Verification script
+
+Run verification:
+```bash
+bun run scripts/verify-migration.ts
+```
 <!-- effect-solutions:end -->
 
 # How you must behave
@@ -152,7 +174,7 @@ When migrating something to Effect, completely replace the old way, do not leave
 
 ## Fallbacks
   NEVER add fallbacks, all conditions and cases must be explicitly.
-  If a condition or case is not explicit, it must not exist and it must just throw an error.
+  If a condition or case is not explicit, it must not exist and it must return an explicit Effect failure using Schema.TaggedError.
 
 ## Pre-existing errors
   You must always fix errors you find, it does not matter if were introduced by your changes or not. We are a team and we work on all the issues together.

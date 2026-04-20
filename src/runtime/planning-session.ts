@@ -120,11 +120,11 @@ export class PlanningSession {
     return true
   }
 
-  async start(systemPrompt: string, model?: string, thinkingLevel?: "default" | "low" | "medium" | "high", forceRuntime?: PiRuntimeMode): Promise<void> {
-    return await Effect.runPromise(this.startEffect(systemPrompt, model, thinkingLevel, forceRuntime))
-  }
-
-  private startEffect(
+  /**
+   * Start the planning session.
+   * Returns an Effect that must be run at the runtime boundary.
+   */
+  start(
     systemPrompt: string,
     model?: string,
     thinkingLevel?: "default" | "low" | "medium" | "high",
@@ -318,13 +318,10 @@ export class PlanningSession {
   }
 
   /**
-   * Change the model for this session mid-conversation
+   * Change the model for this session mid-conversation.
+   * Returns an Effect that must be run at the runtime boundary.
    */
-  async setModel(model: string): Promise<void> {
-    return await Effect.runPromise(this.setModelEffect(model))
-  }
-
-  private setModelEffect(model: string): Effect.Effect<void, PlanningSessionError> {
+  setModel(model: string): Effect.Effect<void, PlanningSessionError> {
     const self = this
     return Effect.gen(function* () {
       if (!self.process || !self.isReady) {
@@ -377,11 +374,11 @@ export class PlanningSession {
     })
   }
 
-  async setThinkingLevel(thinkingLevel: "default" | "low" | "medium" | "high"): Promise<void> {
-    return await Effect.runPromise(this.setThinkingLevelEffect(thinkingLevel))
-  }
-
-  private setThinkingLevelEffect(thinkingLevel: "default" | "low" | "medium" | "high"): Effect.Effect<void, PlanningSessionError> {
+  /**
+   * Set the thinking level for this session.
+   * Returns an Effect that must be run at the runtime boundary.
+   */
+  setThinkingLevel(thinkingLevel: "default" | "low" | "medium" | "high"): Effect.Effect<void, PlanningSessionError> {
     const self = this
     return Effect.gen(function* () {
       if (!self.process || !self.isReady) {
@@ -425,11 +422,11 @@ export class PlanningSession {
     })
   }
 
-  async sendMessage(input: SendMessageInput): Promise<void> {
-    return await Effect.runPromise(this.sendMessageEffect(input))
-  }
-
-  private sendMessageEffect(input: SendMessageInput): Effect.Effect<void, PlanningSessionError> {
+  /**
+   * Send a message to the planning session.
+   * Returns an Effect that must be run at the runtime boundary.
+   */
+  sendMessage(input: SendMessageInput): Effect.Effect<void, PlanningSessionError> {
     const self = this
     return Effect.gen(function* () {
       if (!self.process || !self.isReady) {
@@ -689,11 +686,11 @@ export class PlanningSession {
     })
   }
 
-  async close(): Promise<void> {
-    return await Effect.runPromise(this.closeEffect())
-  }
-
-  private closeEffect(): Effect.Effect<void, PlanningSessionError> {
+  /**
+   * Close the planning session.
+   * Returns an Effect that must be run at the runtime boundary.
+   */
+  close(): Effect.Effect<void, PlanningSessionError> {
     const self = this
     return Effect.gen(function* () {
       if (!self.process) {
@@ -745,12 +742,9 @@ export class PlanningSession {
   /**
    * Reconnect to an existing session that is not currently active.
    * This creates a new Pi process and restores the session state.
+   * Returns an Effect that must be run at the runtime boundary.
    */
-  async reconnect(systemPrompt: string, model?: string, thinkingLevel?: "default" | "low" | "medium" | "high", forceRuntime?: PiRuntimeMode): Promise<void> {
-    return await Effect.runPromise(this.reconnectEffect(systemPrompt, model, thinkingLevel, forceRuntime))
-  }
-
-  private reconnectEffect(
+  reconnect(
     systemPrompt: string,
     model?: string,
     thinkingLevel?: "default" | "low" | "medium" | "high",
@@ -904,7 +898,11 @@ export class PlanningSessionManager {
     private readonly settings?: InfrastructureSettings,
   ) {}
 
-  async createSession(input: {
+  /**
+   * Create a new planning session.
+   * Returns an Effect that must be run at the runtime boundary.
+   */
+  createSession(input: {
     cwd: string
     systemPrompt: string
     model?: string
@@ -912,37 +910,41 @@ export class PlanningSessionManager {
     onMessage?: (message: SessionMessage) => void
     onStatusChange?: (session: PiWorkflowSession) => void
     sessionKind?: "planning" | "container_config"
-  }): Promise<{ session: PiWorkflowSession; planningSession: PlanningSession }> {
-    const sessionId = randomUUID().slice(0, 8)
-    const sessionKind = input.sessionKind ?? "planning"
+  }): Effect.Effect<{ session: PiWorkflowSession; planningSession: PlanningSession }, PlanningSessionError> {
+    const self = this
+    return Effect.gen(function* () {
+      const sessionId = randomUUID().slice(0, 8)
+      const sessionKind = input.sessionKind ?? "planning"
 
-    const session = this.db.createWorkflowSession({
-      id: sessionId,
-      sessionKind,
-      status: "starting",
-      cwd: input.cwd,
-      model: input.model ?? "default",
-      thinkingLevel: input.thinkingLevel ?? "default",
-      startedAt: nowUnix(),
+      const session = self.db.createWorkflowSession({
+        id: sessionId,
+        sessionKind,
+        status: "starting",
+        cwd: input.cwd,
+        model: input.model ?? "default",
+        thinkingLevel: input.thinkingLevel ?? "default",
+        startedAt: nowUnix(),
+      })
+
+      const planningSession = new PlanningSession({
+        session,
+        db: self.db,
+        settings: self.settings,
+        containerManager: self.containerManager,
+        onMessage: input.onMessage,
+        onStatusChange: input.onStatusChange,
+      })
+
+      // Store in active sessions
+      self.sessions.set(sessionId, planningSession)
+
+      // Start the planning session
+      yield* planningSession.start(input.systemPrompt, input.model, input.thinkingLevel, "native")
+
+      const updatedSession = self.db.getWorkflowSession(sessionId) ?? session
+
+      return { session: updatedSession, planningSession }
     })
-
-    const planningSession = new PlanningSession({
-      session,
-      db: this.db,
-      settings: this.settings,
-      containerManager: this.containerManager,
-      onMessage: input.onMessage,
-      onStatusChange: input.onStatusChange,
-    })
-
-    // Store in active sessions
-    this.sessions.set(sessionId, planningSession)
-
-    await planningSession.start(input.systemPrompt, input.model, input.thinkingLevel, "native")
-
-    const updatedSession = this.db.getWorkflowSession(sessionId) ?? session
-
-    return { session: updatedSession, planningSession }
   }
 
   getSession(sessionId: string): PlanningSession | undefined {
@@ -953,25 +955,42 @@ export class PlanningSessionManager {
     return Array.from(this.sessions.values()).filter((s) => s.isActive())
   }
 
-  async closeSession(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId)
-    if (session) {
-      await session.close()
-      this.sessions.delete(sessionId)
-    }
+  /**
+   * Close a specific planning session.
+   * Returns an Effect that must be run at the runtime boundary.
+   */
+  closeSession(sessionId: string): Effect.Effect<void, PlanningSessionError> {
+    const self = this
+    return Effect.gen(function* () {
+      const session = self.sessions.get(sessionId)
+      if (session) {
+        yield* session.close()
+        self.sessions.delete(sessionId)
+      }
+    })
   }
 
-  async closeAllSessions(): Promise<void> {
-    const promises = Array.from(this.sessions.values()).map((s) => s.close())
-    await Promise.all(promises)
-    this.sessions.clear()
+  /**
+   * Close all active planning sessions.
+   * Returns an Effect that must be run at the runtime boundary.
+   */
+  closeAllSessions(): Effect.Effect<void, PlanningSessionError> {
+    const self = this
+    return Effect.gen(function* () {
+      const sessions = Array.from(self.sessions.values())
+      for (const session of sessions) {
+        yield* session.close()
+      }
+      self.sessions.clear()
+    })
   }
 
   /**
    * Reconnect to an existing planning session that is not currently active.
    * Creates a new PlanningSession instance and connects it to the existing DB session.
+   * Returns an Effect that must be run at the runtime boundary.
    */
-  async reconnectSession(
+  reconnectSession(
     sessionId: string,
     input: {
       systemPrompt: string
@@ -980,40 +999,52 @@ export class PlanningSessionManager {
       onMessage?: (message: SessionMessage) => void
       onStatusChange?: (session: PiWorkflowSession) => void
     },
-  ): Promise<{ session: PiWorkflowSession; planningSession: PlanningSession } | null> {
-    // Check if session already has an active planning session
-    const existingSession = this.sessions.get(sessionId)
-    if (existingSession && existingSession.isActive()) {
-      throw new Error("Session is already active")
-    }
+  ): Effect.Effect<{ session: PiWorkflowSession; planningSession: PlanningSession }, PlanningSessionError> {
+    const self = this
+    return Effect.gen(function* () {
+      // Check if session already has an active planning session
+      const existingSession = self.sessions.get(sessionId)
+      if (existingSession && existingSession.isActive()) {
+        return yield* new PlanningSessionError({
+          operation: "reconnectSession",
+          message: "Session is already active",
+        })
+      }
 
-    // Get the existing session from DB
-    const dbSession = this.db.getWorkflowSession(sessionId)
-    if (!dbSession) {
-      return null
-    }
-    if (dbSession.sessionKind !== "planning" && dbSession.sessionKind !== "container_config") {
-      throw new Error("Not a planning or container_config session")
-    }
+      // Get the existing session from DB
+      const dbSession = self.db.getWorkflowSession(sessionId)
+      if (!dbSession) {
+        return yield* new PlanningSessionError({
+          operation: "reconnectSession",
+          message: `Session ${sessionId} not found`,
+        })
+      }
+      if (dbSession.sessionKind !== "planning" && dbSession.sessionKind !== "container_config") {
+        return yield* new PlanningSessionError({
+          operation: "reconnectSession",
+          message: "Not a planning or container_config session",
+        })
+      }
 
-    // Create a new PlanningSession wrapper for the existing DB session
-    const planningSession = new PlanningSession({
-      session: dbSession,
-      db: this.db,
-      settings: this.settings,
-      containerManager: this.containerManager,
-      onMessage: input.onMessage,
-      onStatusChange: input.onStatusChange,
+      // Create a new PlanningSession wrapper for the existing DB session
+      const planningSession = new PlanningSession({
+        session: dbSession,
+        db: self.db,
+        settings: self.settings,
+        containerManager: self.containerManager,
+        onMessage: input.onMessage,
+        onStatusChange: input.onStatusChange,
+      })
+
+      // Store in active sessions (or replace old one)
+      self.sessions.set(sessionId, planningSession)
+
+      // Reconnect to the Pi process (planning sessions always use native mode)
+      yield* planningSession.reconnect(input.systemPrompt, input.model, input.thinkingLevel, "native")
+
+      const updatedSession = self.db.getWorkflowSession(sessionId) ?? dbSession
+
+      return { session: updatedSession, planningSession }
     })
-
-    // Store in active sessions (or replace old one)
-    this.sessions.set(sessionId, planningSession)
-
-    // Reconnect to the Pi process (planning sessions always use native mode)
-    await planningSession.reconnect(input.systemPrompt, input.model, input.thinkingLevel, "native")
-
-    const updatedSession = this.db.getWorkflowSession(sessionId) ?? dbSession
-
-    return { session: updatedSession, planningSession }
   }
 }

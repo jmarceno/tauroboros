@@ -1760,7 +1760,7 @@ export class PiOrchestrator {
       },
     )
 
-    const execution = await this.sessionManager.executePrompt({
+    const execution = await Effect.runPromise(this.sessionManager.executePrompt({
       taskId: task.id,
       sessionKind: pausedState.sessionKind,
       cwd: pausedState.cwd ?? pausedState.worktreeDir ?? "",
@@ -1774,6 +1774,7 @@ export class PiOrchestrator {
       continuationPrompt: continuePrompt,
       // Pass container image for container recreation on resume
       containerImage: pausedState.containerImage,
+    }, {
       onSessionCreated: (process, startedSession) => {
         this.activeSessionProcesses.set(startedSession.id, {
           process,
@@ -1787,7 +1788,7 @@ export class PiOrchestrator {
           sessionUrl: this.sessionUrlFor(startedSession.id),
         })
       },
-    })
+    }))
 
     this.activeSessionProcesses.delete(execution.session.id)
   }
@@ -2357,7 +2358,7 @@ export class PiOrchestrator {
 
         const fixImageToUse = resolveContainerImage(currentTask, this.settings?.workflow?.container?.image)
 
-        const fixSession = await this.sessionManager.executePrompt({
+        const fixSession = await Effect.runPromise(this.sessionManager.executePrompt({
           taskId,
           sessionKind: "task",
           cwd: worktreeInfo.directory,
@@ -2367,6 +2368,7 @@ export class PiOrchestrator {
           thinkingLevel: currentTask.executionThinkingLevel,
           promptText: fixPrompt,
           containerImage: fixImageToUse,
+        }, {
           onSessionCreated: (process, startedSession) => {
             // Track review fix sessions for pause/stop operations
             this.activeSessionProcesses.set(startedSession.id, {
@@ -2374,7 +2376,7 @@ export class PiOrchestrator {
               session: startedSession,
             })
           },
-        })
+        }))
 
         this.db.updateTask(taskId, {
           status: "executing",
@@ -2705,7 +2707,7 @@ export class PiOrchestrator {
 
     const imageToUse = resolveContainerImage(input.task, this.settings?.workflow?.container?.image)
 
-    const session = await this.sessionManager.executePrompt({
+    const session = await Effect.runPromise(this.sessionManager.executePrompt({
       taskId: input.task.id,
       sessionKind: input.sessionKind,
       cwd: input.cwd,
@@ -2715,6 +2717,7 @@ export class PiOrchestrator {
       thinkingLevel: (input.thinkingLevel ?? input.task.thinkingLevel) as import("./types.ts").ThinkingLevel,
       promptText: input.promptText,
       containerImage: imageToUse,
+    }, {
       onSessionCreated: (process, startedSession) => {
         createdProcess = process
         createdSession = startedSession
@@ -2744,7 +2747,7 @@ export class PiOrchestrator {
           payload: message,
         })
       },
-    })
+    }))
 
     // Clean up tracking after session completes
     if (createdSession) {
