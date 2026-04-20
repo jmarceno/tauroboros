@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto"
+import { Effect, Schema } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiSessionKind, PiWorkflowSession } from "../db/types.ts"
@@ -86,6 +87,14 @@ export interface ExecuteSessionPromptResult {
   session: PiWorkflowSession
   responseText: string
 }
+
+export class SessionManagerExecuteError extends Schema.TaggedError<SessionManagerExecuteError>()(
+  "SessionManagerExecuteError",
+  {
+    operation: Schema.String,
+    message: Schema.String,
+  },
+) {}
 
 /**
  * PiSessionManager - Manages pi RPC sessions
@@ -342,3 +351,15 @@ if (process instanceof ContainerPiProcess) {
     return resolved
   }
 }
+
+export const executePromptEffect = Effect.fn("executePromptEffect")(
+  function* (manager: PiSessionManager, input: ExecuteSessionPromptInput) {
+    return yield* Effect.tryPromise({
+      try: () => manager.executePrompt(input),
+      catch: (cause) => new SessionManagerExecuteError({
+        operation: "executePrompt",
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+    })
+  },
+)

@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto"
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "fs"
 import { join } from "path"
+import { Effect, Schema } from "effect"
 import type { InfrastructureSettings } from "./config/settings.ts"
 import { BASE_IMAGES } from "./config/base-images.ts"
 import { buildExecutionVariables, buildPlanningVariables, buildPlanRevisionVariables, buildCommitVariables, buildReviewFixVariables } from "./prompts/index.ts"
@@ -149,6 +150,57 @@ async function runShellCommand(command: string, cwd: string): Promise<{ stdout: 
     proc.exited,
   ])
   return { stdout, stderr, exitCode }
+}
+
+export class OrchestratorUnavailableError extends Schema.TaggedError<OrchestratorUnavailableError>()(
+  "OrchestratorUnavailableError",
+  {
+    operation: Schema.String,
+  },
+) {}
+
+export class OrchestratorOperationError extends Schema.TaggedError<OrchestratorOperationError>()(
+  "OrchestratorOperationError",
+  {
+    operation: Schema.String,
+    message: Schema.String,
+  },
+) {}
+
+export const runOrchestratorOperation = Effect.fn("runOrchestratorOperation")(
+  function* <A>(
+    orchestrator: PiOrchestrator | null,
+    operation: string,
+    run: (instance: PiOrchestrator) => Promise<A> | A,
+  ) {
+    if (!orchestrator) {
+      return yield* new OrchestratorUnavailableError({ operation })
+    }
+
+    return yield* Effect.tryPromise({
+      try: async () => await run(orchestrator),
+      catch: (cause) => new OrchestratorOperationError({
+        operation,
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+    })
+  },
+)
+
+export async function runOrchestratorOperationPromise<A>(
+  orchestrator: PiOrchestrator | null,
+  operation: string,
+  run: (instance: PiOrchestrator) => Promise<A> | A,
+): Promise<A> {
+  return await Effect.runPromise(runOrchestratorOperation(orchestrator, operation, run))
+}
+
+export function runOrchestratorOperationSync<A>(
+  orchestrator: PiOrchestrator | null,
+  operation: string,
+  run: (instance: PiOrchestrator) => A,
+): A {
+  return Effect.runSync(runOrchestratorOperation(orchestrator, operation, run))
 }
 
 export class PiOrchestrator {
