@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "fs"
 import { dirname } from "path"
 import {
+  type AutoDeployCondition,
   DEFAULT_COMMIT_PROMPT,
   DEFAULT_CODE_STYLE_PROMPT,
   type BestOfNConfig,
@@ -442,6 +443,13 @@ function normalizeBoolean(value: unknown): boolean {
 
 const TASK_STATUSES: TaskStatus[] = ["template", "backlog", "queued", "executing", "review", "code-style", "done", "failed", "stuck"]
 
+const AUTO_DEPLOY_CONDITIONS: AutoDeployCondition[] = [
+  "before_workflow_start",
+  "after_workflow_end",
+  "workflow_done",
+  "workflow_failed",
+]
+
 function isTaskStatus(value: unknown): value is TaskStatus {
   return typeof value === "string" && TASK_STATUSES.includes(value as TaskStatus)
 }
@@ -449,6 +457,16 @@ function isTaskStatus(value: unknown): value is TaskStatus {
 function asTaskStatus(value: unknown): TaskStatus {
   if (isTaskStatus(value)) return value
   throw new Error(`Invalid task status: ${JSON.stringify(value)}. Expected one of: ${TASK_STATUSES.join(", ")}.`)
+}
+
+function isAutoDeployCondition(value: unknown): value is AutoDeployCondition {
+  return typeof value === "string" && AUTO_DEPLOY_CONDITIONS.includes(value as AutoDeployCondition)
+}
+
+function asAutoDeployConditionOrNull(value: unknown): AutoDeployCondition | null {
+  if (value === null || value === undefined || value === "") return null
+  if (isAutoDeployCondition(value)) return value
+  throw new Error(`Invalid auto deploy condition: ${JSON.stringify(value)}. Expected one of: ${AUTO_DEPLOY_CONDITIONS.join(", ")}.`)
 }
 
 const EXECUTION_PHASES: ExecutionPhase[] = [
@@ -669,6 +687,8 @@ function rowToTask(row: Record<string, unknown>): Task {
     autoApprovePlan: Number(row.auto_approve_plan ?? 0) === 1,
     review: Number(row.review ?? 1) === 1,
     autoCommit: Number(row.auto_commit ?? 1) === 1,
+    autoDeploy: Number(row.auto_deploy ?? 0) === 1,
+    autoDeployCondition: asAutoDeployConditionOrNull(row.auto_deploy_condition),
     deleteWorktree: Number(row.delete_worktree ?? 1) === 1,
     status: asTaskStatus(row.status),
     requirements: parseJSON<string[]>(row.requirements) ?? [],
@@ -1749,6 +1769,14 @@ const MIGRATIONS: Migration[] = [
       `UPDATE paused_run_states SET execution_phase = 'implementation_done' WHERE execution_phase = 'committing';`,
     ],
   },
+  {
+    version: 30,
+    description: "Add auto deploy fields for template tasks",
+    statements: [
+      `ALTER TABLE tasks ADD COLUMN auto_deploy INTEGER NOT NULL DEFAULT 0;`,
+      `ALTER TABLE tasks ADD COLUMN auto_deploy_condition TEXT;`,
+    ],
+  },
 ]
 
 export class PiKanbanDB {
@@ -1858,12 +1886,12 @@ export class PiKanbanDB {
       .prepare(`
         INSERT INTO tasks (
           id, name, idx, prompt, branch, plan_model, execution_model, planmode,
-          auto_approve_plan, review, auto_commit, delete_worktree, status,
+          auto_approve_plan, review, auto_commit, auto_deploy, auto_deploy_condition, delete_worktree, status,
           requirements, agent_output, review_count, created_at, updated_at,
           thinking_level, plan_thinking_level, execution_thinking_level, execution_phase, awaiting_plan_approval, plan_revision_count,
           execution_strategy, best_of_n_config, best_of_n_substage, skip_permission_asking,
           max_review_runs_override, smart_repair_hints, review_activity, is_archived, archived_at, container_image, code_style_review
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         taskId,
@@ -1877,9 +1905,13 @@ export class PiKanbanDB {
         input.autoApprovePlan ? 1 : 0,
         input.review !== false ? 1 : 0,
         input.autoCommit !== false ? 1 : 0,
+        input.autoDeploy === true ? 1 : 0,
+        input.autoDeployCondition ?? null,
         input.deleteWorktree !== false ? 1 : 0,
         input.status ?? "backlog",
         JSON.stringify(validatedRequirements),
+        "",
+        0,
         now,
         now,
         input.thinkingLevel ?? "default",
@@ -1895,6 +1927,8 @@ export class PiKanbanDB {
         input.maxReviewRunsOverride ?? null,
         input.smartRepairHints ?? null,
         input.reviewActivity ?? "idle",
+        0,
+        null,
         input.containerImage ?? null,
         input.codeStyleReview === true ? 1 : 0,
       )
@@ -1952,6 +1986,14 @@ export class PiKanbanDB {
     if (input.autoCommit !== undefined) {
       sets.push("auto_commit = ?")
       values.push(input.autoCommit ? 1 : 0)
+    }
+    if (input.autoDeploy !== undefined) {
+      sets.push("auto_deploy = ?")
+      values.push(input.autoDeploy ? 1 : 0)
+    }
+    if (input.autoDeployCondition !== undefined) {
+      sets.push("auto_deploy_condition = ?")
+      values.push(input.autoDeployCondition)
     }
     if (input.deleteWorktree !== undefined) {
       sets.push("delete_worktree = ?")

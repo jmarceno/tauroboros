@@ -15,6 +15,8 @@ function createMockTask(status: Task['status'], overrides: Partial<Task> = {}): 
     autoApprovePlan: false,
     review: false,
     autoCommit: false,
+    autoDeploy: false,
+    autoDeployCondition: null,
     deleteWorktree: false,
     status,
     requirements: [],

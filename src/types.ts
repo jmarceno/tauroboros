@@ -1,6 +1,7 @@
 import { PROMPT_CATALOG, joinPrompt } from "./prompts/catalog.ts"
 
 export type TaskStatus = "template" | "backlog" | "queued" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
+export type AutoDeployCondition = "before_workflow_start" | "after_workflow_end" | "workflow_done" | "workflow_failed"
 
 export type TelegramNotificationLevel = "all" | "failures" | "done_and_failures" | "workflow_done_and_failures"
 
@@ -127,6 +128,8 @@ export interface Task {
   autoApprovePlan: boolean
   review: boolean
   autoCommit: boolean
+  autoDeploy: boolean
+  autoDeployCondition: AutoDeployCondition | null
   deleteWorktree: boolean
   status: TaskStatus
   requirements: string[]
@@ -669,6 +672,8 @@ export interface CreateTaskDTO {
   review?: boolean
   codeStyleReview?: boolean
   autoCommit?: boolean
+  autoDeploy?: boolean
+  autoDeployCondition?: AutoDeployCondition | null
   deleteWorktree?: boolean
   skipPermissionAsking?: boolean
   requirements?: string[]

@@ -9,7 +9,7 @@ import { buildExecutionGraph, getExecutionGraphTasks } from "../execution-plan.t
 import { PROMPT_CATALOG, joinPrompt, renderPromptTemplate } from "../prompts/catalog.ts"
 import { discoverPiModels } from "../pi/model-discovery.ts"
 import { isTaskAwaitingPlanApproval } from "../task-state.ts"
-import type { BestOfNConfig, ImageStatusPayload, RunQueueStatus, SlotUtilization, Task, TaskRun, ThinkingLevel, WorkflowRun, WSMessage, SessionMessage } from "../types.ts"
+import type { AutoDeployCondition, BestOfNConfig, ImageStatusPayload, RunQueueStatus, SlotUtilization, Task, TaskRun, ThinkingLevel, WorkflowRun, WSMessage, SessionMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
 import type { PackageDefinition, StatsTimeRange } from "../db/types.ts"
 import { runStartupRecovery } from "../recovery/startup-recovery.ts"
@@ -33,7 +33,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const KANBAN_DIST = join(__dirname, "..", "kanban-solid", "dist")
 const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
-const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "codeStyleReview", "autoCommit", "deleteWorktree", "skipPermissionAsking"] as const
+const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "codeStyleReview", "autoCommit", "autoDeploy", "deleteWorktree", "skipPermissionAsking"] as const
 
 type RunControlFn = (runId: string) => Promise<unknown>
 type StartFn = () => Promise<unknown>
@@ -63,6 +63,13 @@ function isSelectionMode(value: unknown): value is "pick_best" | "synthesize" | 
 
 function isStatsTimeRange(value: unknown): value is StatsTimeRange {
   return value === "24h" || value === "7d" || value === "30d" || value === "lifetime"
+}
+
+function isAutoDeployCondition(value: unknown): value is AutoDeployCondition {
+  return value === "before_workflow_start"
+    || value === "after_workflow_end"
+    || value === "workflow_done"
+    || value === "workflow_failed"
 }
 
 interface BestOfNSlotInput {
@@ -588,6 +595,22 @@ export class PiKanbanServer {
         if (!valid.valid) return json({ error: valid.error }, 400)
       }
 
+      if (body?.autoDeployCondition !== undefined && body.autoDeployCondition !== null && !isAutoDeployCondition(body.autoDeployCondition)) {
+        return json({ error: "Invalid autoDeployCondition. Allowed values: before_workflow_start, after_workflow_end, workflow_done, workflow_failed" }, 400)
+      }
+
+      const requestedStatus = body?.status ?? "backlog"
+      if (body?.autoDeploy === true) {
+        if (requestedStatus !== "template") {
+          return json({ error: "autoDeploy can only be enabled for template tasks" }, 400)
+        }
+        if (!isAutoDeployCondition(body?.autoDeployCondition)) {
+          return json({ error: "autoDeployCondition is required when autoDeploy is enabled" }, 400)
+        }
+      } else if (body?.autoDeployCondition !== undefined && body.autoDeployCondition !== null) {
+        return json({ error: "autoDeployCondition requires autoDeploy=true" }, 400)
+      }
+
       // Validate container image if provided
       if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
         const imageExists = await this.validateContainerImage(String(body.containerImage))
@@ -621,6 +644,8 @@ export class PiKanbanServer {
         review: body.review,
         codeStyleReview: body.codeStyleReview,
         autoCommit: body.autoCommit,
+        autoDeploy: body.autoDeploy,
+        autoDeployCondition: body.autoDeployCondition,
         deleteWorktree: body.deleteWorktree,
         requirements: validRequirements,
         thinkingLevel: body.thinkingLevel,
@@ -668,6 +693,10 @@ export class PiKanbanServer {
         if (!valid.valid) return json({ error: valid.error }, 400)
       }
 
+      if (body?.autoDeploy !== undefined || body?.autoDeployCondition !== undefined) {
+        return json({ error: "autoDeploy is only supported for template tasks and cannot be used with create-and-wait" }, 400)
+      }
+
       // Validate timeout (optional, default 30 minutes, max 2 hours)
       const timeoutMs = Math.min(Math.max(Number(body.timeoutMs) || 1800000, 60000), 7200000)
 
@@ -696,6 +725,8 @@ export class PiKanbanServer {
         review: body.review,
         codeStyleReview: body.codeStyleReview,
         autoCommit: body.autoCommit,
+        autoDeploy: false,
+        autoDeployCondition: null,
         deleteWorktree: body.deleteWorktree,
         requirements: Array.isArray(body.requirements) ? body.requirements : [],
         thinkingLevel: body.thinkingLevel,
@@ -828,6 +859,35 @@ export class PiKanbanServer {
       if (body?.executionStrategy === "best_of_n" || (body?.bestOfNConfig && existing.executionStrategy === "best_of_n")) {
         const validation = validateBestOfNConfig(body.bestOfNConfig ?? existing.bestOfNConfig)
         if (!validation.valid) return json({ error: validation.error }, 400)
+      }
+
+      if (body?.autoDeployCondition !== undefined && body.autoDeployCondition !== null && !isAutoDeployCondition(body.autoDeployCondition)) {
+        return json({ error: "Invalid autoDeployCondition. Allowed values: before_workflow_start, after_workflow_end, workflow_done, workflow_failed" }, 400)
+      }
+
+      const nextStatus = body?.status ?? existing.status
+      if (nextStatus !== "template") {
+        if (body?.autoDeploy === true) {
+          return json({ error: "autoDeploy can only be enabled for template tasks" }, 400)
+        }
+        if (body?.autoDeployCondition !== undefined && body.autoDeployCondition !== null) {
+          return json({ error: "autoDeployCondition can only be set for template tasks" }, 400)
+        }
+        if (body?.status !== undefined && body.status !== "template") {
+          body.autoDeploy = false
+          body.autoDeployCondition = null
+        }
+      } else {
+        const nextAutoDeploy = body?.autoDeploy !== undefined ? body.autoDeploy === true : existing.autoDeploy === true
+        const nextAutoDeployCondition = body?.autoDeployCondition !== undefined ? body.autoDeployCondition : existing.autoDeployCondition
+
+        if (nextAutoDeploy) {
+          if (!isAutoDeployCondition(nextAutoDeployCondition)) {
+            return json({ error: "autoDeployCondition is required when autoDeploy is enabled" }, 400)
+          }
+        } else if (body?.autoDeployCondition !== undefined && body.autoDeployCondition !== null) {
+          return json({ error: "autoDeployCondition requires autoDeploy=true" }, 400)
+        }
       }
 
       // Validate container image if provided

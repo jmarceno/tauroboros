@@ -9,6 +9,7 @@ import { getLatestTaggedOutput, getPlanExecutionEligibility } from "./task-state
 import type { PiKanbanDB } from "./db.ts"
 import type { PiSessionKind, PiWorkflowSession } from "./db/types.ts"
 import {
+  type AutoDeployCondition,
   resolveContainerImage,
   type Options,
   type RunContext,
@@ -229,6 +230,85 @@ export class PiOrchestrator {
     return status === "done" || status === "failed" || status === "stuck"
   }
 
+  private shouldCheckAutoDeploy(kind: WorkflowRun["kind"]): boolean {
+    return kind !== "single_task"
+  }
+
+  private getAutoDeployTemplates(condition: AutoDeployCondition): Task[] {
+    return this.db.getTasks().filter((task) => task.status === "template" && task.autoDeploy === true && task.autoDeployCondition === condition)
+  }
+
+  private deployTemplateTask(template: Task): Task {
+    const deployed = this.db.createTask({
+      name: template.name,
+      prompt: template.prompt,
+      status: "backlog",
+      branch: template.branch,
+      planModel: template.planModel,
+      executionModel: template.executionModel,
+      planmode: template.planmode,
+      autoApprovePlan: template.autoApprovePlan,
+      review: template.review,
+      autoCommit: template.autoCommit,
+      autoDeploy: false,
+      autoDeployCondition: null,
+      deleteWorktree: template.deleteWorktree,
+      requirements: [...template.requirements],
+      thinkingLevel: template.thinkingLevel,
+      planThinkingLevel: template.planThinkingLevel,
+      executionThinkingLevel: template.executionThinkingLevel,
+      executionPhase: "not_started",
+      awaitingPlanApproval: false,
+      planRevisionCount: 0,
+      executionStrategy: template.executionStrategy,
+      bestOfNConfig: template.bestOfNConfig,
+      bestOfNSubstage: "idle",
+      skipPermissionAsking: template.skipPermissionAsking,
+      maxReviewRunsOverride: template.maxReviewRunsOverride,
+      smartRepairHints: template.smartRepairHints,
+      reviewActivity: "idle",
+      containerImage: template.containerImage,
+      codeStyleReview: template.codeStyleReview,
+    })
+
+    this.broadcast({ type: "task_created", payload: deployed })
+    return deployed
+  }
+
+  private deployTemplatesForCondition(condition: AutoDeployCondition): Task[] {
+    const templates = this.getAutoDeployTemplates(condition)
+    if (templates.length === 0) {
+      return []
+    }
+
+    const deployedTasks: Task[] = []
+    for (const template of templates) {
+      deployedTasks.push(this.deployTemplateTask(template))
+    }
+
+    return deployedTasks
+  }
+
+  private async launchAutoDeployPostRunTasks(runKind: WorkflowRun["kind"], hasFailures: boolean): Promise<void> {
+    if (!this.shouldCheckAutoDeploy(runKind)) {
+      return
+    }
+
+    const condition: AutoDeployCondition = hasFailures ? "workflow_failed" : "workflow_done"
+    const deployedTasks = [
+      ...this.deployTemplatesForCondition(condition),
+      ...this.deployTemplatesForCondition("after_workflow_end"),
+    ]
+
+    if (deployedTasks.length === 0) {
+      return
+    }
+
+    for (const deployedTask of deployedTasks) {
+      await this.startSingle(deployedTask.id)
+    }
+  }
+
   private buildRunContext(run: WorkflowRun): RunContext {
     return {
       id: run.id,
@@ -412,9 +492,15 @@ export class PiOrchestrator {
     targetTaskId?: string | null
     groupId?: string
   }): Promise<WorkflowRun> {
+    let resolvedTaskOrder = [...input.taskOrder]
+    if (this.shouldCheckAutoDeploy(input.kind)) {
+      const beforeStartTasks = this.deployTemplatesForCondition("before_workflow_start")
+      resolvedTaskOrder = [...beforeStartTasks.map((task) => task.id), ...resolvedTaskOrder]
+    }
+
     await this.cleanupStaleRuns()
 
-    for (const taskId of input.taskOrder) {
+    for (const taskId of resolvedTaskOrder) {
       const existingRunId = this.taskRunLookup.get(taskId)
       if (!existingRunId) continue
       const existingRun = this.db.getWorkflowRun(existingRunId)
@@ -430,16 +516,16 @@ export class PiOrchestrator {
       displayName: input.displayName,
       targetTaskId: input.targetTaskId ?? null,
       groupId: input.groupId,
-      taskOrder: input.taskOrder,
-      currentTaskId: input.taskOrder[0] ?? null,
+      taskOrder: resolvedTaskOrder,
+      currentTaskId: resolvedTaskOrder[0] ?? null,
       currentTaskIndex: 0,
       color: this.db.getNextRunColor(),
     })
 
     this.registerRun(run)
     this.currentRunId = run.id
-    await this.queueRunTasks(input.taskOrder)
-    this.scheduler.enqueueRun(run.id, input.taskOrder)
+    await this.queueRunTasks(resolvedTaskOrder)
+    this.scheduler.enqueueRun(run.id, resolvedTaskOrder)
 
     const enrichedRun = this.enrichWorkflowRun(this.db.getWorkflowRun(run.id))
     if (!enrichedRun) {
@@ -585,6 +671,7 @@ export class PiOrchestrator {
     }
 
     this.broadcast({ type: "execution_complete", payload: { runId } })
+    await this.launchAutoDeployPostRunTasks(run.kind, hasFailures)
   }
 
   private startScheduledTask(taskId: string, runId: string): void {
@@ -785,7 +872,9 @@ export class PiOrchestrator {
 
     const tasks = this.getExecutionGraphTasksWithActiveDependencies(allTasks)
 
-    if (tasks.length === 0) throw new Error("No tasks in backlog")
+    if (tasks.length === 0 && this.getAutoDeployTemplates("before_workflow_start").length === 0) {
+      throw new Error("No tasks in backlog")
+    }
 
     console.log(`[orchestrator] startAll: ${tasks.length} tasks to execute: ${tasks.map(t => `${t.name}(${t.id})`).join(', ')}`)
 

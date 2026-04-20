@@ -689,7 +689,7 @@ function App() {
 
               const { id: _, idx, status, createdAt, updatedAt, completedAt, sessionId, sessionUrl, ...templateData } = template
               try {
-                await tasksStore.createTask({ ...templateData, status: 'backlog' })
+                await tasksStore.createTask({ ...templateData, status: 'backlog', autoDeploy: false, autoDeployCondition: null })
                 uiStore.showToast('Template deployed', 'success')
                 if (shiftHeld) {
                   await tasksStore.deleteTask(id)

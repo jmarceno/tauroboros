@@ -3,7 +3,7 @@
  * Ported from React to SolidJS - Full feature parity
  */
 
-import { Show, For, createMemo, createSignal, createEffect, onMount, onCleanup } from 'solid-js'
+import { Show, createMemo, createSignal, onMount, onCleanup } from 'solid-js'
 import type { Task, BestOfNSummary } from '@/types'
 import type { createDragDropStore } from '@/stores'
 import type { createSessionUsageStore } from '@/stores/sessionUsageStore'
@@ -56,7 +56,6 @@ function getUpdateAgeClass(timestamp: number): string {
 
 export function TaskCard(props: TaskCardProps) {
   let cardRef: HTMLDivElement | undefined
-  const [hasBeenVisible, setHasBeenVisible] = createSignal(false)
   const [isDragging, setIsDragging] = createSignal(false)
 
   // Badges MUST always show for non-backlog, non-template tasks
@@ -74,7 +73,6 @@ export function TaskCard(props: TaskCardProps) {
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
-          setHasBeenVisible(true)
           // Start watching task for usage updates
           props.sessionUsage.startWatchingTask(props.task.id)
           // Load last update from backend
@@ -174,6 +172,13 @@ export function TaskCard(props: TaskCardProps) {
   const isAtReviewLimit = createMemo(() => props.task.reviewCount >= effectiveMaxReviews())
   const hasJsonParseRetries = createMemo(() => props.task.jsonParseRetryCount > 0 && props.task.status === 'review')
   const isNearJsonParseLimit = createMemo(() => props.task.jsonParseRetryCount >= effectiveMaxJsonParseRetries() - 1)
+  const autoDeployConditionLabel = createMemo(() => {
+    if (props.task.autoDeployCondition === 'before_workflow_start') return 'before start'
+    if (props.task.autoDeployCondition === 'after_workflow_end') return 'after end'
+    if (props.task.autoDeployCondition === 'workflow_done') return 'workflow done'
+    if (props.task.autoDeployCondition === 'workflow_failed') return 'workflow failed'
+    return 'unknown'
+  })
 
   // Dependency IDs
   const depIds = createMemo(() => {
@@ -299,6 +304,7 @@ export function TaskCard(props: TaskCardProps) {
         'dragging': isDragging(),
         'selected': Boolean(props.isSelected),
         'highlighted': props.isHighlighted,
+        'auto-deploy-template': props.task.status === 'template' && props.task.autoDeploy === true,
       }}
       data-task-id={props.task.id}
       data-task-status={props.task.status}
@@ -392,6 +398,15 @@ export function TaskCard(props: TaskCardProps) {
             title={`Container Image: ${props.task.containerImage}`}
           >
             🐳 {props.task.containerImage}
+          </span>
+        </Show>
+
+        <Show when={props.task.status === 'template' && props.task.autoDeploy === true}>
+          <span
+            class="task-tag border-accent-success/30 text-accent-success"
+            title={`Auto deploy condition: ${autoDeployConditionLabel()}`}
+          >
+            auto deploy: {autoDeployConditionLabel()}
           </span>
         </Show>
 

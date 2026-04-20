@@ -1,4 +1,5 @@
 import type {
+  AutoDeployCondition,
   BestOfNConfig,
   BestOfNSubstage,
   CreateSessionMessageInput,
@@ -23,6 +24,7 @@ import type {
 } from "../types.ts"
 
 export type {
+  AutoDeployCondition,
   BestOfNConfig,
   BestOfNSubstage,
   CreateSessionMessageInput,
@@ -209,6 +211,8 @@ export interface CreateTaskInput {
   autoApprovePlan?: boolean
   review?: boolean
   autoCommit?: boolean
+  autoDeploy?: boolean
+  autoDeployCondition?: AutoDeployCondition | null
   deleteWorktree?: boolean
   requirements?: string[]
   thinkingLevel?: ThinkingLevel
@@ -240,6 +244,8 @@ export interface UpdateTaskInput {
   autoApprovePlan?: boolean
   review?: boolean
   autoCommit?: boolean
+  autoDeploy?: boolean
+  autoDeployCondition?: AutoDeployCondition | null
   deleteWorktree?: boolean
   requirements?: string[]
   agentOutput?: string

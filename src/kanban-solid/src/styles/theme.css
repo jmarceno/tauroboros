@@ -228,8 +228,16 @@
     @apply p-3 bg-dark-bg border border-dark-border rounded-md cursor-pointer transition-all;
   }
 
+  .task-card.auto-deploy-template {
+    @apply border-accent-success/50 bg-accent-success/10;
+  }
+
   .task-card:hover {
     @apply border-accent-primary translate-x-0.5;
+  }
+
+  .task-card.auto-deploy-template:hover {
+    @apply border-accent-success;
   }
 
   .task-card.selected {

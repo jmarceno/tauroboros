@@ -4,7 +4,7 @@
  */
 
 import { createSignal, createMemo, createEffect, onMount, Show, For, Suspense, lazy } from 'solid-js'
-import type { TaskStatus, CreateTaskDTO, ThinkingLevel, ExecutionStrategy, BestOfNSlot } from '@/types'
+import type { AutoDeployCondition, TaskStatus, CreateTaskDTO, ThinkingLevel, ExecutionStrategy, BestOfNSlot } from '@/types'
 import { ModalWrapper } from '../common/ModalWrapper'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
@@ -51,6 +51,8 @@ export function TaskModal(props: TaskModalProps) {
   const [review, setReview] = createSignal(true)
   const [codeStyleReview, setCodeStyleReview] = createSignal(false)
   const [autoCommit, setAutoCommit] = createSignal(true)
+  const [autoDeploy, setAutoDeploy] = createSignal(false)
+  const [autoDeployCondition, setAutoDeployCondition] = createSignal<AutoDeployCondition>('before_workflow_start')
   const [deleteWorktree, setDeleteWorktree] = createSignal(true)
   const [skipPermissionAsking, setSkipPermissionAsking] = createSignal(true)
   const [requirements, setRequirements] = createSignal<string[]>([])
@@ -75,6 +77,12 @@ export function TaskModal(props: TaskModalProps) {
   const isCreate = () => props.mode === 'create'
   const isEdit = () => props.mode === 'edit'
   const showBonConfig = () => executionStrategy() === 'best_of_n'
+  const allowsAutoDeploy = createMemo(() => {
+    if (isEdit()) {
+      return sourceTask()?.status === 'template'
+    }
+    return isCreate() && props.createStatus === 'template'
+  })
   const isAwaitingSourceTask = createMemo(() => {
     if (isEdit() && props.taskId) return !existingTask()
     if (isDeploy() && props.seedTaskId) return !seedTask()
@@ -115,6 +123,8 @@ export function TaskModal(props: TaskModalProps) {
     setReview(currentTask?.review ?? true)
     setCodeStyleReview(currentTask?.codeStyleReview ?? false)
     setAutoCommit(currentTask?.autoCommit ?? true)
+    setAutoDeploy(currentTask?.autoDeploy ?? false)
+    setAutoDeployCondition(currentTask?.autoDeployCondition ?? 'before_workflow_start')
     setDeleteWorktree(currentTask?.deleteWorktree ?? true)
     setSkipPermissionAsking(currentTask?.skipPermissionAsking ?? true)
     setRequirements(currentTask?.requirements ? [...currentTask.requirements] : [])
@@ -246,6 +256,11 @@ export function TaskModal(props: TaskModalProps) {
       return
     }
 
+    if (allowsAutoDeploy() && autoDeploy() && !autoDeployCondition()) {
+      uiStore.showToast('Select an auto-deploy condition', 'error')
+      return
+    }
+
     if (executionStrategy() === 'best_of_n') {
       if (bonWorkers().length === 0) {
         uiStore.showToast('Add at least one worker slot for Best of N', 'error')
@@ -274,6 +289,8 @@ export function TaskModal(props: TaskModalProps) {
         review: review(),
         codeStyleReview: codeStyleReview(),
         autoCommit: autoCommit(),
+        autoDeploy: allowsAutoDeploy() ? autoDeploy() : false,
+        autoDeployCondition: allowsAutoDeploy() && autoDeploy() ? autoDeployCondition() : null,
         deleteWorktree: deleteWorktree(),
         skipPermissionAsking: skipPermissionAsking(),
         requirements: requirements(),
@@ -692,6 +709,16 @@ export function TaskModal(props: TaskModalProps) {
                 />
                 <span>Auto-commit</span>
               </label>
+              <Show when={allowsAutoDeploy()}>
+                <label class="checkbox-item">
+                  <input
+                    type="checkbox"
+                    checked={autoDeploy()}
+                    onChange={(e) => setAutoDeploy(e.currentTarget.checked)}
+                  />
+                  <span>Auto Deploy</span>
+                </label>
+              </Show>
               <label class="checkbox-item">
                 <input 
                   type="checkbox" 
@@ -709,6 +736,21 @@ export function TaskModal(props: TaskModalProps) {
                 <span>Skip Permission Asking</span>
               </label>
             </div>
+            <Show when={allowsAutoDeploy() && autoDeploy()}>
+              <div class="form-group mt-2">
+                <label>Auto Deploy Condition</label>
+                <select
+                  class="form-select"
+                  value={autoDeployCondition()}
+                  onChange={(e) => setAutoDeployCondition(e.currentTarget.value as AutoDeployCondition)}
+                >
+                  <option value="before_workflow_start">Before workflow start</option>
+                  <option value="after_workflow_end">After workflow end</option>
+                  <option value="workflow_done">Workflow done</option>
+                  <option value="workflow_failed">Workflow failed</option>
+                </select>
+              </div>
+            </Show>
           </Show>
 
           {/* Requirements */}
