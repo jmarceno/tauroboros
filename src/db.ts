@@ -4761,8 +4761,12 @@ export class PiKanbanDB {
       .prepare("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'done'")
       .get() as CountRow
 
-    const failedRow = this.db
+    const failedTaskRow = this.db
       .prepare("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'failed'")
+      .get() as CountRow
+
+    const failedWorkflowRow = this.db
+      .prepare("SELECT COUNT(*) AS cnt FROM workflow_runs WHERE status = 'failed'")
       .get() as CountRow
 
     const avgReviewsRow = this.db
@@ -4775,9 +4779,14 @@ export class PiKanbanDB {
       )
       .get() as AvgReviewsRow
 
+    const failedTaskCount = Number(failedTaskRow.cnt ?? 0)
+    const failedWorkflowCount = Number(failedWorkflowRow.cnt ?? 0)
+
     return {
       completed: Number(completedRow.cnt ?? 0),
-      failed: Number(failedRow.cnt ?? 0),
+      // Prefer task failures when available for backward compatibility,
+      // but surface failed workflows when tasks are auto-archived as done.
+      failed: Math.max(failedTaskCount, failedWorkflowCount),
       averageReviews: Math.round(Number(avgReviewsRow.avg_reviews ?? 0) * 100) / 100,
     }
   }
@@ -4829,13 +4838,42 @@ export class PiKanbanDB {
   }
 
   getAverageTaskDuration(): number {
-    const row = this.db
+    const taskRunCountRow = this.db
+      .prepare(
+        `
+        SELECT COUNT(*) AS cnt
+        FROM task_runs
+        WHERE completed_at IS NOT NULL
+          AND created_at IS NOT NULL
+          AND (status = 'done' OR status = 'failed')
+        `,
+      )
+      .get() as CountRow
+
+    const taskRunCount = Number(taskRunCountRow.cnt ?? 0)
+
+    const row = taskRunCount > 0
+      ? this.db
+        .prepare(
+          `
+          SELECT 
+            COALESCE(AVG(completed_at - created_at), 0) AS avg_duration
+          FROM task_runs
+          WHERE completed_at IS NOT NULL
+            AND created_at IS NOT NULL
+            AND (status = 'done' OR status = 'failed')
+          `,
+        )
+        .get() as AvgDurationRow
+      : this.db
       .prepare(
         `
         SELECT 
           COALESCE(AVG(completed_at - created_at), 0) AS avg_duration
         FROM tasks
-        WHERE completed_at IS NOT NULL AND created_at IS NOT NULL
+        WHERE completed_at IS NOT NULL
+          AND created_at IS NOT NULL
+          AND status = 'done'
         `
       )
       .get() as AvgDurationRow

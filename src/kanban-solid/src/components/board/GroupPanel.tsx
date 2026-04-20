@@ -38,6 +38,8 @@ interface GroupPanelProps {
   dragDrop: ReturnType<typeof createDragDropStore>
   sessionUsage: ReturnType<typeof createSessionUsageStore>
   taskLastUpdate: ReturnType<typeof createTaskLastUpdateStore>
+  isMultiSelecting?: boolean
+  getIsSelected?: (taskId: string) => boolean
   allTasks: Task[]
   options?: Options | null
 }
@@ -475,9 +477,9 @@ export function GroupPanel(props: GroupPanelProps) {
                   sessionUsage={props.sessionUsage}
                   taskLastUpdate={props.taskLastUpdate}
                   tasks={props.allTasks}
-                  options={props.options}
-                  isSelected={false}
-                  isMultiSelecting={false}
+                  options={props.options ?? undefined}
+                  isSelected={props.getIsSelected?.(task.id)}
+                  isMultiSelecting={props.isMultiSelecting}
                   isHighlighted={false}
                   group={{ id: props.group.id, name: props.group.name, color: props.group.color }}
                   showGroupIndicator={true}

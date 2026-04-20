@@ -57,6 +57,7 @@ function getUpdateAgeClass(timestamp: number): string {
 export function TaskCard(props: TaskCardProps) {
   let cardRef: HTMLDivElement | undefined
   const [hasBeenVisible, setHasBeenVisible] = createSignal(false)
+  const [isDragging, setIsDragging] = createSignal(false)
 
   // Badges MUST always show for non-backlog, non-template tasks
   const shouldShowBadges = createMemo(() => 
@@ -223,6 +224,7 @@ export function TaskCard(props: TaskCardProps) {
     const context = props.group ? 'group' : 'column'
 
     props.dragDrop.handleDragStart(props.task.id, props.task.status, context)
+    setIsDragging(true)
     ;(e.currentTarget as HTMLDivElement).classList.add('dragging')
 
     // Set data transfer with context for external handling
@@ -239,6 +241,7 @@ export function TaskCard(props: TaskCardProps) {
 
   const handleDragEnd = (e: DragEvent) => {
     props.dragDrop.handleDragEnd()
+    setIsDragging(false)
     ;(e.currentTarget as HTMLDivElement).classList.remove('dragging')
   }
 
@@ -293,7 +296,8 @@ export function TaskCard(props: TaskCardProps) {
       ref={cardRef}
       class="task-card"
       classList={{
-        'dragging': props.isSelected,
+        'dragging': isDragging(),
+        'selected': Boolean(props.isSelected),
         'highlighted': props.isHighlighted,
       }}
       data-task-id={props.task.id}

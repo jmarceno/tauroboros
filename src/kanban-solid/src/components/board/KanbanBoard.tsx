@@ -263,6 +263,8 @@ export function KanbanBoard(props: KanbanBoardProps) {
                   dragDrop={props.dragDrop}
                   sessionUsage={props.sessionUsage}
                   taskLastUpdate={props.taskLastUpdate}
+                  isMultiSelecting={props.isMultiSelecting}
+                  getIsSelected={props.getIsSelected}
                   allTasks={props.tasks}
                   options={props.options}
                 />

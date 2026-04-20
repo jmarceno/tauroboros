@@ -425,7 +425,7 @@ export function StatsTab() {
                 <svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
-                <span class="text-sm text-dark-text-muted">Failed</span>
+                <span class="text-sm text-dark-text-muted">Failed Workflows</span>
               </div>
               <div class="text-3xl font-semibold text-red-400" data-testid="failed-count">
                 {taskStats().failed}
@@ -487,7 +487,7 @@ export function StatsTab() {
               </svg>
             </div>
             <div>
-              <div class="text-sm text-dark-text-muted">Average Task Duration</div>
+              <div class="text-sm text-dark-text-muted">Average Task Run Duration</div>
               <div class="text-3xl font-semibold text-dark-text" data-testid="avg-duration">
                 {formatDuration(averageDuration())}
               </div>

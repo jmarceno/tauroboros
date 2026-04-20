@@ -10,13 +10,12 @@
  */
 
 import { $ } from "bun"
-import { existsSync } from "fs"
+import { existsSync, rmSync } from "fs"
 import { resolve, join } from "path"
 
 const PROJECT_ROOT = resolve(import.meta.dir, "..")
 const KANBAN_SOLID_DIR = join(PROJECT_ROOT, "src", "kanban-solid")
 const DIST_DIR = join(KANBAN_SOLID_DIR, "dist")
-const GENERATED_ASSETS_FILE = join(PROJECT_ROOT, "src", "server", "generated-assets.ts")
 const BIN_OUTPUT = join(PROJECT_ROOT, "tauroboros")
 
 console.log("🔨 TaurOboros Compile Script")
@@ -33,10 +32,13 @@ async function buildKanban(): Promise<void> {
 
   // Install dependencies
   console.log("  → Installing npm dependencies...")
-  const installResult = await $`cd ${KANBAN_SOLID_DIR} && npm install`.quiet()
+  const installResult = await $`cd ${KANBAN_SOLID_DIR} && npm ci`.quiet()
   if (installResult.exitCode !== 0) {
-    throw new Error(`npm install failed: ${installResult.stderr}`)
+    throw new Error(`npm ci failed: ${installResult.stderr}`)
   }
+
+  // Remove previous build output so every compile run regenerates fresh assets
+  rmSync(DIST_DIR, { recursive: true, force: true })
 
   // Build the frontend
   console.log("  → Building with Vite...")
@@ -100,16 +102,6 @@ async function compileBinary(): Promise<void> {
   console.log(`  📊 Size: ${sizeMB} MB\n`)
 }
 
-// Clean up generated file
-async function cleanup(): Promise<void> {
-  try {
-    await Bun.write(GENERATED_ASSETS_FILE, "// Placeholder - run compile script to regenerate\n")
-    console.log("🧹 Cleaned up generated-assets.ts (set to placeholder)\n")
-  } catch (err) {
-    // Ignore cleanup errors
-  }
-}
-
 // Main execution
 async function main(): Promise<void> {
   const startTime = Date.now()
@@ -136,9 +128,6 @@ async function main(): Promise<void> {
     console.log(`  SERVER_PORT=3790 ./tauroboros   # Run on specific port`)
     console.log(`\nThe binary includes all frontend assets and can be run standalone.`)
     console.log(`Runtime data (database, settings) will be stored in ./.tauroboros/\n`)
-
-    // Optional: Clean up generated file
-    await cleanup()
 
   } catch (error) {
     console.error("\n❌ Compilation failed:")

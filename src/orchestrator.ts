@@ -4,6 +4,7 @@ import { join } from "path"
 import type { InfrastructureSettings } from "./config/settings.ts"
 import { BASE_IMAGES } from "./config/base-images.ts"
 import { buildExecutionVariables, buildPlanningVariables, buildPlanRevisionVariables, buildCommitVariables, buildReviewFixVariables } from "./prompts/index.ts"
+import { PROMPT_CATALOG, joinPrompt, renderPromptTemplate } from "./prompts/catalog.ts"
 import { getLatestTaggedOutput, getPlanExecutionEligibility } from "./task-state.ts"
 import type { PiKanbanDB } from "./db.ts"
 import type { PiSessionKind, PiWorkflowSession } from "./db/types.ts"
@@ -1558,9 +1559,12 @@ export class PiOrchestrator {
 
   private async resumeTaskExecution(task: Task, pausedState: PausedSessionState): Promise<void> {
     const agentOutputSnapshot = pausedState.context?.agentOutputSnapshot ?? task.agentOutput ?? ""
-    const continuePrompt = `Continue from where you left off. You were in the middle of implementing a task. Review what you've done so far and continue with the remaining work.
-
-Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}`
+    const continuePrompt = renderPromptTemplate(
+      joinPrompt(PROMPT_CATALOG.resumeTaskContinuationPromptLines),
+      {
+        agent_output_snapshot: agentOutputSnapshot.slice(-2000) || "Task execution paused",
+      },
+    )
 
     const execution = await this.sessionManager.executePrompt({
       taskId: task.id,
@@ -2445,19 +2449,14 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     console.log(`[orchestrator] Running merge repair for task ${task.name}(${taskId})`)
 
     const mergeOutput = mergeError instanceof WorktreeError ? mergeError.gitOutput : ""
-    const repairPrompt = `A merge conflict occurred when merging branch '${worktreeInfo.branch}' into '${targetBranch}'.
-
-Git output:
-${mergeOutput || mergeError.message}
-
-Your task is to:
-1. Check the current git status to understand the conflicts
-2. Resolve all merge conflicts by choosing the appropriate changes (prefer the task branch changes when in doubt)
-3. Stage the resolved files
-4. Complete the merge by creating a merge commit
-5. Ensure the merge is successful
-
-Run git commands as needed to resolve the conflicts. After resolving, verify with 'git status' that there are no remaining conflicts.`
+    const repairPrompt = renderPromptTemplate(
+      joinPrompt(PROMPT_CATALOG.mergeConflictRepairPromptLines),
+      {
+        worktree_branch: worktreeInfo.branch,
+        target_branch: targetBranch,
+        merge_output: mergeOutput || mergeError.message,
+      },
+    )
 
     try {
       const repair = await this.runSessionPrompt({

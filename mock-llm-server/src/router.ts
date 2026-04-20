@@ -2,14 +2,9 @@ import { FakeListChatModel } from '@langchain/core/utils/testing';
 import { StringOutputParser } from '@langchain/core/output_parsers';
 import { PromptTemplate } from '@langchain/core/prompts';
 import { RunnableSequence } from '@langchain/core/runnables';
+import { PROMPT_CATALOG, joinPrompt } from '../../src/prompts/catalog.ts';
 
-const classificationPrompt = PromptTemplate.fromTemplate(`
-Classify the following message into one of these categories: plan, execute, read, review, default
-
-Message: {message}
-
-Category (one word only):
-`);
+const classificationPrompt = PromptTemplate.fromTemplate(joinPrompt(PROMPT_CATALOG.mockClassificationPromptLines));
 
 const classifierChain = RunnableSequence.from([
   classificationPrompt,

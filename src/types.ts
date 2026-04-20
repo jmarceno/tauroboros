@@ -1,3 +1,5 @@
+import { PROMPT_CATALOG, joinPrompt } from "./prompts/catalog.ts"
+
 export type TaskStatus = "template" | "backlog" | "queued" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
 
 export type TelegramNotificationLevel = "all" | "failures" | "done_and_failures" | "workflow_done_and_failures"
@@ -17,6 +19,26 @@ export type BestOfNSubstage =
   | "final_apply_running"
   | "blocked_for_manual_review"
   | "completed"
+
+export interface BestOfNSlot {
+  model: string
+  count: number
+  taskSuffix?: string | null
+}
+
+export interface BestOfNFinalApplier {
+  model: string
+  taskSuffix?: string | null
+}
+
+export interface BestOfNConfig {
+  workers: BestOfNSlot[]
+  reviewers: BestOfNSlot[]
+  finalApplier: BestOfNFinalApplier
+  selectionMode: SelectionMode
+  minSuccessfulWorkers: number
+  verificationCommand?: string | null
+}
 
 export type RunPhase = "worker" | "reviewer" | "final_applier"
 
@@ -73,28 +95,6 @@ export interface RunQueueStatus {
   queuedTasks: number
   executingTasks: number
   completedTasks: number
-}
-
-export interface BestOfNSlot {
-  model: string
-  count: number
-  taskSuffix?: string
-  thinkingLevel?: ThinkingLevel
-}
-
-export interface BestOfNFinalApplier {
-  model: string
-  taskSuffix?: string
-  thinkingLevel?: ThinkingLevel
-}
-
-export interface BestOfNConfig {
-  workers: BestOfNSlot[]
-  reviewers: BestOfNSlot[]
-  finalApplier: BestOfNFinalApplier
-  minSuccessfulWorkers: number
-  selectionMode: SelectionMode
-  verificationCommand?: string
 }
 
 export interface TaskGroup {
@@ -303,50 +303,9 @@ export interface Options {
   columnSorts?: ColumnSortPreferences
 }
 
-export const DEFAULT_COMMIT_PROMPT = `You are in a worktree on a detached HEAD. When you are finished with the task, commit the working changes onto {{base_ref}}.
+export const DEFAULT_COMMIT_PROMPT = joinPrompt(PROMPT_CATALOG.defaultCommitPromptLines)
 
-- Do not run destructive commands: git reset --hard, git clean -fdx, git worktree remove, rm/mv on repository paths.
-- Do not edit files outside git workflows unless required for conflict resolution.
-- **CRITICAL: Never push changes to remote repositories unless explicitly instructed to do so.**
-- Preserve any pre-existing user uncommitted changes in the base worktree.
-- **CRITICAL: Do NOT delete the worktree. The system will handle worktree cleanup after you report success.**
-
-Steps:
-1. In the current task worktree, stage and create a commit for the pending task changes.
-2. Find where {{base_ref}} is checked out:
-   - Run: git worktree list --porcelain
-   - If branch {{base_ref}} is checked out in path P, use that P.
-   - If not checked out anywhere, use current worktree as P by checking out {{base_ref}} there.
-3. In P, verify current branch is {{base_ref}}.
-4. If P has uncommitted changes, stash them: git -C P stash push -u -m "pre-cherry-pick"
-5. Cherry-pick the task commit into P.
-6. If cherry-pick conflicts, resolve carefully, preserving both the intended task changes and existing user edits.
-7. If a stash was created, restore it with: git -C P stash pop
-8. If stash pop conflicts, resolve them while preserving pre-existing user edits.
-9. Report:
-   - Final commit hash
-   - Final commit message
-   - Whether stash was used
-   - Whether conflicts were resolved
-   - Any remaining manual follow-up needed`
-
-export const DEFAULT_CODE_STYLE_PROMPT = `You are a code style enforcement agent. Review the code in the workspace and apply fixes to ensure compliance.
-
-STANDARD RULES:
-- Follow existing project conventions
-- Use consistent indentation (match existing files)
-- Remove trailing whitespace
-- Ensure consistent quote style
-- Add missing semicolons where required by the language
-- Fix obvious linting issues
-
-APPROACH:
-1. First, read the relevant source files
-2. Identify any style violations
-3. Use the edit tool to fix all issues
-4. Confirm when complete
-
-IMPORTANT: You must actively use the edit tool to make changes. Do not just report issues - fix them.`
+export const DEFAULT_CODE_STYLE_PROMPT = joinPrompt(PROMPT_CATALOG.defaultCodeStylePromptLines)
 
 /**
  * Resolves the code style prompt to use.
