@@ -609,23 +609,35 @@ export interface ContainerImage {
 }
 
 export interface ExecutionGraph {
+  batches: { idx: number; taskIds: string[]; taskNames: string[] }[]
   nodes: ExecutionGraphNode[]
   edges: ExecutionGraphEdge[]
+  totalTasks: number
+  parallelLimit: number
+  warnings?: string[]
+  pendingApprovals?: {
+    id: string
+    name: string
+    status: string
+    awaitingPlanApproval: boolean
+    planRevisionCount?: number
+  }[]
 }
 
 export interface ExecutionGraphNode {
   id: string
-  type: 'task' | 'milestone' | 'decision'
-  label: string
-  status: TaskStatus
-  x?: number
-  y?: number
+  name: string
+  status: string
+  requirements: string[]
+  expandedWorkerRuns?: number
+  expandedReviewerRuns?: number
+  hasFinalApplier?: boolean
+  estimatedRunCount?: number
 }
 
 export interface ExecutionGraphEdge {
   from: string
   to: string
-  label?: string
 }
 
 export interface PlanningSession {

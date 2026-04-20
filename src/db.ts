@@ -1734,6 +1734,21 @@ const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_self_heal_reports_created_at ON self_heal_reports(created_at DESC);`,
     ],
   },
+  {
+    version: 29,
+    description: "Map legacy execution phase values in paused_run_states to current ExecutionPhase enum",
+    statements: [
+      // Old phases from before the plan-mode ExecutionPhase redesign:
+      // "planning"   → "not_started"            (plan not yet finished)
+      // "executing"  → "implementation_pending" (task was mid-execution when paused)
+      // "reviewing"  → "implementation_done"    (execution finished, review pending)
+      // "committing" → "implementation_done"    (about to commit = effectively done)
+      `UPDATE paused_run_states SET execution_phase = 'not_started' WHERE execution_phase = 'planning';`,
+      `UPDATE paused_run_states SET execution_phase = 'implementation_pending' WHERE execution_phase = 'executing';`,
+      `UPDATE paused_run_states SET execution_phase = 'implementation_done' WHERE execution_phase = 'reviewing';`,
+      `UPDATE paused_run_states SET execution_phase = 'implementation_done' WHERE execution_phase = 'committing';`,
+    ],
+  },
 ]
 
 export class PiKanbanDB {
