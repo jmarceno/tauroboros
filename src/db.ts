@@ -2,6 +2,7 @@ import { randomUUID } from "crypto"
 import { Database } from "bun:sqlite"
 import { mkdirSync } from "fs"
 import { dirname } from "path"
+import { Effect, Schema } from "effect"
 import {
   type AutoDeployCondition,
   DEFAULT_COMMIT_PROMPT,
@@ -84,6 +85,15 @@ import type {
 import { renderTemplate } from "./prompts/renderer.ts"
 import { parseModelSelection } from "./runtime/model-utils.ts"
 import { projectPiEventToSessionMessage } from "./runtime/message-projection.ts"
+
+/**
+ * Tagged error for database operations
+ */
+export class DatabaseError extends Schema.TaggedError<DatabaseError>()("DatabaseError", {
+  operation: Schema.String,
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 // Color palette for workflow runs - distinct colors that work well with dark theme
 const RUN_COLORS = [
@@ -4112,7 +4122,6 @@ export class PiKanbanDB {
     return _getDailyUsageTimeSeries(this.db, days)
   }
 
-
 }
 
 const CONTAINER_BUILD_STATUSES: ContainerBuild["status"][] = ["pending", "running", "success", "failed", "cancelled"]
@@ -4180,3 +4189,4 @@ function rowToTaskGroupMember(row: Record<string, unknown>): TaskGroupMember {
     addedAt: Number(row.added_at ?? 0),
   }
 }
+

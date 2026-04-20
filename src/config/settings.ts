@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
-import { Either, Schema } from "effect"
+import { Effect, Either, Schema } from "effect"
 import { BASE_IMAGES } from "./base-images.ts"
 
 export interface SkillsSettings {
@@ -84,6 +84,11 @@ export interface SettingsLoadResult {
   warnings: string[]
   unknownFields: string[]
 }
+
+export class SettingsError extends Schema.TaggedError<SettingsError>()("SettingsError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K]
@@ -319,7 +324,7 @@ function validateAndExtractUnknown(
   }
 }
 
-export function loadInfrastructureSettings(projectRoot: string): SettingsLoadResult {
+function loadSettingsResult(projectRoot: string): SettingsLoadResult {
   const settingsPath = join(projectRoot, ".tauroboros", "settings.json")
   const warnings: string[] = []
 
@@ -368,7 +373,7 @@ export function loadInfrastructureSettings(projectRoot: string): SettingsLoadRes
   }
 }
 
-export function saveInfrastructureSettings(
+function saveSettingsResult(
   projectRoot: string,
   settings: InfrastructureSettings,
 ): void {
@@ -384,7 +389,7 @@ export interface EnsureSettingsOptions {
   preferContainer?: boolean
 }
 
-export function ensureInfrastructureSettings(
+function ensureSettingsResult(
   projectRoot: string,
   options?: EnsureSettingsOptions,
 ): SettingsLoadResult {
@@ -393,10 +398,10 @@ export function ensureInfrastructureSettings(
   let result: SettingsLoadResult
 
   if (existsSync(settingsPath)) {
-    result = loadInfrastructureSettings(projectRoot)
+    result = loadSettingsResult(projectRoot)
 
     // Re-save to ensure file has all defaults and proper formatting
-    saveInfrastructureSettings(projectRoot, result.settings)
+    saveSettingsResult(projectRoot, result.settings)
   } else {
     // Create new with defaults
     const settings = { ...DEFAULT_INFRASTRUCTURE_SETTINGS }
@@ -411,8 +416,50 @@ export function ensureInfrastructureSettings(
       warnings: ["Created new settings.json with default values"],
       unknownFields: [],
     }
-    saveInfrastructureSettings(projectRoot, result.settings)
+    saveSettingsResult(projectRoot, result.settings)
   }
 
   return result
 }
+
+function logSettingsWarnings(result: SettingsLoadResult): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    for (const w of result.warnings) {
+      yield* Effect.logWarning(`[settings] ${w}`)
+    }
+    for (const f of result.unknownFields) {
+      yield* Effect.logWarning(`[settings] Unknown field in settings.json: ${f}`)
+    }
+  })
+}
+
+export const loadSettingsEffect = Effect.fn("loadSettingsEffect")(
+  function* (projectRoot: string) {
+    const result = yield* Effect.try({
+      try: () => loadSettingsResult(projectRoot),
+      catch: (e) => new SettingsError({ message: e instanceof Error ? e.message : String(e), cause: e }),
+    })
+    yield* logSettingsWarnings(result)
+    return result
+  },
+)
+
+export const saveSettingsEffect = Effect.fn("saveSettingsEffect")(
+  function* (projectRoot: string, settings: InfrastructureSettings) {
+    return yield* Effect.try({
+      try: () => saveSettingsResult(projectRoot, settings),
+      catch: (e) => new SettingsError({ message: e instanceof Error ? e.message : String(e), cause: e }),
+    })
+  },
+)
+
+export const ensureSettingsEffect = Effect.fn("ensureSettingsEffect")(
+  function* (projectRoot: string, options?: EnsureSettingsOptions) {
+    const result = yield* Effect.try({
+      try: () => ensureSettingsResult(projectRoot, options),
+      catch: (e) => new SettingsError({ message: e instanceof Error ? e.message : String(e), cause: e }),
+    })
+    yield* logSettingsWarnings(result)
+    return result
+  },
+)

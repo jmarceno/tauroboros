@@ -21,24 +21,24 @@ function isMergeConflictError(error: unknown): boolean {
 
 describe("isMergeConflictError", () => {
   test("detects WorktreeError with MERGE_FAILED code", () => {
-    const error = new WorktreeError("Merge failed", "MERGE_FAILED", "some output")
+    const error = new WorktreeError({ message: "Merge failed", code: "MERGE_FAILED", gitOutput: "some output" })
     expect(isMergeConflictError(error)).toBe(true)
   })
 
   test("detects WorktreeError with CONFLICT in git output", () => {
-    const error = new WorktreeError("Git command failed", "GIT_COMMAND_FAILED", 
-      "CONFLICT (content): Merge conflict in file.txt\nAutomatic merge failed")
+    const error = new WorktreeError({ message: "Git command failed", code: "GIT_COMMAND_FAILED",
+      gitOutput: "CONFLICT (content): Merge conflict in file.txt\nAutomatic merge failed" })
     expect(isMergeConflictError(error)).toBe(true)
   })
 
   test("detects WorktreeError with 'conflict' in git output (lowercase)", () => {
-    const error = new WorktreeError("Git command failed", "GIT_COMMAND_FAILED",
-      "error: merge conflict in file.txt")
+    const error = new WorktreeError({ message: "Git command failed", code: "GIT_COMMAND_FAILED",
+      gitOutput: "error: merge conflict in file.txt" })
     expect(isMergeConflictError(error)).toBe(true)
   })
 
   test("returns false for non-conflict WorktreeError", () => {
-    const error = new WorktreeError("Branch not found", "BRANCH_NOT_FOUND")
+    const error = new WorktreeError({ message: "Branch not found", code: "BRANCH_NOT_FOUND" })
     expect(isMergeConflictError(error)).toBe(false)
   })
 
@@ -65,31 +65,31 @@ describe("isMergeConflictError", () => {
   })
 
   test("handles WorktreeError with undefined gitOutput", () => {
-    const error = new WorktreeError("Merge failed", "MERGE_FAILED")
+    const error = new WorktreeError({ message: "Merge failed", code: "MERGE_FAILED" })
     expect(isMergeConflictError(error)).toBe(true)
   })
 
   test("handles empty gitOutput gracefully", () => {
-    const error = new WorktreeError("Git command failed", "GIT_COMMAND_FAILED", "")
+    const error = new WorktreeError({ message: "Git command failed", code: "GIT_COMMAND_FAILED", gitOutput: "" })
     expect(isMergeConflictError(error)).toBe(false)
   })
 })
 
 describe("WorktreeError", () => {
   test("has correct name", () => {
-    const error = new WorktreeError("Test", "CODE")
+    const error = new WorktreeError({ message: "Test", code: "CODE" })
     expect(error.name).toBe("WorktreeError")
   })
 
   test("preserves code and gitOutput", () => {
-    const error = new WorktreeError("Message", "TEST_CODE", "git output here")
+    const error = new WorktreeError({ message: "Message", code: "TEST_CODE", gitOutput: "git output here" })
     expect(error.code).toBe("TEST_CODE")
     expect(error.gitOutput).toBe("git output here")
     expect(error.message).toBe("Message")
   })
 
   test("is instanceof Error", () => {
-    const error = new WorktreeError("Test", "CODE")
+    const error = new WorktreeError({ message: "Test", code: "CODE" })
     expect(error).toBeInstanceOf(Error)
   })
 })

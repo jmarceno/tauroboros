@@ -1175,7 +1175,7 @@ export class PiOrchestrator {
       const taskId = activeProcess.session.taskId
       if (!taskId || !run.taskOrder.includes(taskId)) continue
       if ("forceKill" in activeProcess.process) {
-        await activeProcess.process.forceKill("SIGKILL")
+        await Effect.runPromise(activeProcess.process.forceKill("SIGKILL"))
       }
       this.activeSessionProcesses.delete(sessionId)
     }
@@ -1655,7 +1655,7 @@ export class PiOrchestrator {
     // Get container ID if using container
     let containerId: string | null = null
     if ("getContainerId" in activeProcess.process && typeof activeProcess.process.getContainerId === "function") {
-      containerId = await activeProcess.process.getContainerId()
+      containerId = await Effect.runPromise(activeProcess.process.getContainerId())
     }
 
     const task = session.taskId ? this.db.getTask(session.taskId) : null
@@ -1691,7 +1691,7 @@ export class PiOrchestrator {
 
     try {
       if ("forceKill" in activeProcess.process) {
-        await activeProcess.process.forceKill("SIGTERM")
+        await Effect.runPromise(activeProcess.process.forceKill("SIGTERM"))
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
@@ -1789,7 +1789,7 @@ export class PiOrchestrator {
     const activeProcess = this.activeSessionProcesses.get(sessionId)
     if (activeProcess) {
       if ("forceKill" in activeProcess.process) {
-        await activeProcess.process.forceKill()
+        await Effect.runPromise(activeProcess.process.forceKill())
       }
       this.activeSessionProcesses.delete(sessionId)
     }

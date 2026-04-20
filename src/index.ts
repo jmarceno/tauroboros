@@ -1,7 +1,7 @@
 import { resolve } from "path"
 import { existsSync } from "fs"
 import { Effect, Schema } from "effect"
-import { ensureInfrastructureSettings, saveInfrastructureSettings, type InfrastructureSettings } from "./config/settings.ts"
+import { ensureSettingsEffect, saveSettingsEffect, type InfrastructureSettings } from "./config/settings.ts"
 import { createPiServerEffect, findProjectRootEffect } from "./server.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
 import { ContainerImageManager } from "./runtime/container-image-manager.ts"
@@ -108,10 +108,11 @@ const checkAndPrepareContainerEffect = Effect.fn("checkAndPrepareContainerEffect
 function createInitialSettings(
   projectRoot: string,
   preferContainer: boolean,
-): { settings: InfrastructureSettings; warnings: string[] } {
-  const result = ensureInfrastructureSettings(projectRoot, { preferContainer })
-
-  return { settings: result.settings, warnings: result.warnings }
+): Effect.Effect<{ settings: InfrastructureSettings; warnings: string[] }, StartupError> {
+  return ensureSettingsEffect(projectRoot, { preferContainer }).pipe(
+    Effect.map((result) => ({ settings: result.settings, warnings: result.warnings })),
+    Effect.mapError((cause) => new StartupError({ message: cause.message })),
+  )
 
 }
 
@@ -122,7 +123,7 @@ const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, a
   if (isFirstStart) {
     if (args.native) {
       console.log("[tauroboros] First run - creating settings with native mode...")
-      return createInitialSettings(projectRoot, false)
+      return yield* createInitialSettings(projectRoot, false)
     }
 
     console.log("[tauroboros] First run detected - setting up container mode...")
@@ -132,12 +133,14 @@ const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, a
         return yield* new StartupError({ message: `${containerCheck.error}\n[tauroboros] To start in native mode instead, run: bun run start -- --native` })
     }
 
-    const created = createInitialSettings(projectRoot, true)
+    const created = yield* createInitialSettings(projectRoot, true)
     console.log("[tauroboros] Settings created with container mode enabled")
     return created
   }
 
-  const result = ensureInfrastructureSettings(projectRoot)
+  const result = yield* ensureSettingsEffect(projectRoot).pipe(
+    Effect.mapError((cause) => new StartupError({ message: cause.message })),
+  )
   const settings = result.settings
 
   if (settings.workflow.container.enabled !== false) {
@@ -210,7 +213,9 @@ const runProgram = Effect.fn("runProgram")(function* () {
 
   if (actualPort !== settings.workflow.server.port) {
     settings.workflow.server.port = actualPort
-    saveInfrastructureSettings(projectRoot, settings)
+    yield* saveSettingsEffect(projectRoot, settings).pipe(
+      Effect.mapError((cause) => new StartupError({ message: cause.message })),
+    )
   }
 
   const shutdown = () => {

@@ -138,6 +138,7 @@ SERVER_PORT=3790 ./tauroboros
 Topics: quick-start, project-setup, tsconfig, basics, services-and-layers, data-modeling, error-handling, config, testing, cli.
 
 Never guess at Effect patterns - check the guide first.
+When migrating something to Effect, completely replace the old way, do not leave code paths or legacy support.
 <!-- effect-solutions:end -->
 
 # How you must behave

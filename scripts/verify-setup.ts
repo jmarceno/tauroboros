@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync } from "fs"
 import { join, resolve } from "path"
+import { Effect } from "effect"
 import {
-  ensureInfrastructureSettings,
-  loadInfrastructureSettings,
+  ensureSettingsEffect,
   type InfrastructureSettings,
 } from "../src/config/settings.ts"
 import { discoverSkills, getProjectRoot } from "./sync-skills.ts"
@@ -127,7 +127,7 @@ export function verifySetup(projectRoot: string = getProjectRoot()): void {
   console.log("✓ Pi settings.json skills configuration is valid")
 
   // Ensure infrastructure settings are initialized
-  const infraResult = ensureInfrastructureSettings(projectRoot)
+  const infraResult = Effect.runSync(ensureSettingsEffect(projectRoot))
   validateInfrastructureSettings(infraResult.settings)
 
   // Report any warnings about unknown fields

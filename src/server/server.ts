@@ -7,7 +7,8 @@ import { discoverPiModels } from "../pi/model-discovery.ts"
 import type { ImageStatusPayload, RunQueueStatus, SlotUtilization, WorkflowRun, WSMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
 import type { PackageDefinition } from "../db/types.ts"
-import { runStartupRecovery } from "../recovery/startup-recovery.ts"
+import { Effect } from "effect"
+import { runStartupRecoveryEffect } from "../recovery/startup-recovery.ts"
 import { ContainerImageManager } from "../runtime/container-image-manager.ts"
 import { PiContainerManager } from "../runtime/container-manager.ts"
 import { SmartRepairService } from "../runtime/smart-repair.ts"
@@ -355,10 +356,10 @@ export class PiKanbanServer {
       }
     }
 
-    await runStartupRecovery({
+    await Effect.runPromise(runStartupRecoveryEffect({
       db: this.db,
       broadcast: (message) => this.broadcast(message),
-    })
+    }))
 
     this.server = Bun.serve({
       port,

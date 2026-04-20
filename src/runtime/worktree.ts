@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "fs"
 import { basename, join, resolve } from "path"
 import { execFileSync } from "child_process"
+import { Cause, Effect, Exit, Schema } from "effect"
 
 export interface WorktreeInfo {
   directory: string
@@ -72,16 +73,11 @@ interface GitCommandResult {
   stdout: string
 }
 
-export class WorktreeError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly gitOutput?: string,
-  ) {
-    super(message)
-    this.name = "WorktreeError"
-  }
-}
+export class WorktreeError extends Schema.TaggedError<WorktreeError>()("WorktreeError", {
+  message: Schema.String,
+  code: Schema.String,
+  gitOutput: Schema.optional(Schema.String),
+}) {}
 
 function normalizeBranchName(value: string | undefined): string | null {
   if (!value) return null
@@ -89,21 +85,32 @@ function normalizeBranchName(value: string | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null
 }
 
+function runGitEffect(args: string[], cwd: string): Effect.Effect<GitCommandResult, WorktreeError> {
+  return Effect.try({
+    try: () => {
+      const stdout = execFileSync("git", args, {
+        cwd,
+        encoding: "utf-8",
+        stdio: "pipe",
+      })
+      return { stdout: stdout.replace(/\s+$/g, "") } as GitCommandResult
+    },
+    catch: (error) => {
+      const err = error as { message?: string; stdout?: Buffer | string; stderr?: Buffer | string }
+      const stdout = typeof err.stdout === "string" ? err.stdout : err.stdout?.toString("utf-8") ?? ""
+      const stderr = typeof err.stderr === "string" ? err.stderr : err.stderr?.toString("utf-8") ?? ""
+      const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n")
+      return new WorktreeError({ message: err.message ?? "git command failed", code: "GIT_COMMAND_FAILED", gitOutput: output || undefined })
+    },
+  })
+}
+
 function runGit(args: string[], cwd: string): GitCommandResult {
-  try {
-    const stdout = execFileSync("git", args, {
-      cwd,
-      encoding: "utf-8",
-      stdio: "pipe",
-    })
-    return { stdout: stdout.replace(/\s+$/g, "") }
-  } catch (error) {
-    const err = error as { message?: string; stdout?: Buffer | string; stderr?: Buffer | string }
-    const stdout = typeof err.stdout === "string" ? err.stdout : err.stdout?.toString("utf-8") ?? ""
-    const stderr = typeof err.stderr === "string" ? err.stderr : err.stderr?.toString("utf-8") ?? ""
-    const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n")
-    throw new WorktreeError(err.message ?? "git command failed", "GIT_COMMAND_FAILED", output || undefined)
+  const exit = Effect.runSyncExit(runGitEffect(args, cwd))
+  if (Exit.isFailure(exit)) {
+    throw Cause.squash(exit.cause)
   }
+  return exit.value
 }
 
 function getRepoRoot(baseDirectory: string): string {
@@ -111,7 +118,7 @@ function getRepoRoot(baseDirectory: string): string {
     return runGit(["rev-parse", "--show-toplevel"], baseDirectory).stdout
   } catch (error) {
     if (error instanceof WorktreeError) {
-      throw new WorktreeError(`Not a git repository: ${baseDirectory}`, "NOT_GIT_REPOSITORY", error.gitOutput)
+      throw new WorktreeError({ message: `Not a git repository: ${baseDirectory}`, code: "NOT_GIT_REPOSITORY", gitOutput: error.gitOutput })
     }
     throw error
   }
@@ -185,10 +192,10 @@ function safeBranchNameFromRef(value: string): string {
 function buildWorktreePath(repoRoot: string, name: string, worktreeBaseDir?: string): string {
   const trimmedName = name.trim()
   if (!trimmedName) {
-    throw new WorktreeError("Worktree name cannot be empty", "INVALID_WORKTREE_NAME")
+    throw new WorktreeError({ message: "Worktree name cannot be empty", code: "INVALID_WORKTREE_NAME" })
   }
   if (trimmedName.includes("/") || trimmedName.includes("\\")) {
-    throw new WorktreeError(`Worktree name must not contain path separators: ${trimmedName}`, "INVALID_WORKTREE_NAME")
+    throw new WorktreeError({ message: `Worktree name must not contain path separators: ${trimmedName}`, code: "INVALID_WORKTREE_NAME" })
   }
   const base = worktreeBaseDir ? resolve(worktreeBaseDir) : join(repoRoot, ".worktrees")
   mkdirSync(base, { recursive: true })
@@ -309,10 +316,10 @@ export async function resolveTargetBranch(options: ResolveTargetBranchOptions): 
   const optionBranch = normalizeBranchName(options.optionBranch)
   if (optionBranch && branchExists(optionBranch, repoRoot)) return optionBranch
 
-  throw new WorktreeError(
-    "No target branch specified. Please configure a branch in task options or global settings.",
-    "TARGET_BRANCH_NOT_FOUND"
-  )
+  throw new WorktreeError({
+    message: "No target branch specified. Please configure a branch in task options or global settings.",
+    code: "TARGET_BRANCH_NOT_FOUND",
+  })
 }
 
 /**
@@ -385,21 +392,21 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<Wo
 
   const name = options.name?.trim()
   if (!name) {
-    throw new WorktreeError("Worktree name cannot be empty", "INVALID_WORKTREE_NAME")
+    throw new WorktreeError({ message: "Worktree name cannot be empty", code: "INVALID_WORKTREE_NAME" })
   }
 
   const branch = normalizeBranchName(options.branch) ?? name
   const baseRef = normalizeBranchName(options.baseRef)
   if (!baseRef) {
-    throw new WorktreeError(
-      "No base branch specified for worktree creation. Please configure a branch in task options or global settings.",
-      "BASE_REF_NOT_SPECIFIED"
-    )
+    throw new WorktreeError({
+      message: "No base branch specified for worktree creation. Please configure a branch in task options or global settings.",
+      code: "BASE_REF_NOT_SPECIFIED",
+    })
   }
   const directory = buildWorktreePath(repoRoot, name, options.worktreeBaseDir)
 
   if (existsSync(directory)) {
-    throw new WorktreeError(`Worktree directory already exists: ${directory}`, "WORKTREE_ALREADY_EXISTS")
+    throw new WorktreeError({ message: `Worktree directory already exists: ${directory}`, code: "WORKTREE_ALREADY_EXISTS" })
   }
 
   const createArgs = branchExists(branch, repoRoot)
@@ -410,7 +417,7 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<Wo
     runGit(createArgs, repoRoot)
   } catch (error) {
     if (error instanceof WorktreeError) {
-      throw new WorktreeError(`Failed to create worktree '${name}': ${error.message}`, "CREATE_WORKTREE_FAILED", error.gitOutput)
+      throw new WorktreeError({ message: `Failed to create worktree '${name}': ${error.message}`, code: "CREATE_WORKTREE_FAILED", gitOutput: error.gitOutput })
     }
     throw error
   }
@@ -443,13 +450,13 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<Wo
 export async function inspectWorktree(directory: string): Promise<WorktreeStatus> {
   const normalizedDirectory = resolve(directory)
   if (!existsSync(normalizedDirectory)) {
-    throw new WorktreeError(`Worktree directory does not exist: ${normalizedDirectory}`, "WORKTREE_NOT_FOUND")
+    throw new WorktreeError({ message: `Worktree directory does not exist: ${normalizedDirectory}`, code: "WORKTREE_NOT_FOUND" })
   }
 
   const worktrees = await listWorktrees(normalizedDirectory)
   const target = worktrees.find((item) => normalizeDirectory(item.directory) === normalizedDirectory)
   if (!target) {
-    throw new WorktreeError(`Directory is not a tracked git worktree: ${normalizedDirectory}`, "NOT_A_WORKTREE")
+    throw new WorktreeError({ message: `Directory is not a tracked git worktree: ${normalizedDirectory}`, code: "NOT_A_WORKTREE" })
   }
 
   const statusOutput = runGit(["status", "--porcelain"], normalizedDirectory).stdout
@@ -482,15 +489,15 @@ export async function mergeWorktree(options: MergeWorktreeOptions): Promise<void
   const branch = normalizeBranchName(options.branch)
   const targetBranch = normalizeBranchName(options.targetBranch)
 
-  if (!branch) throw new WorktreeError("Source branch is required", "INVALID_BRANCH")
-  if (!targetBranch) throw new WorktreeError("Target branch is required", "INVALID_TARGET_BRANCH")
+  if (!branch) throw new WorktreeError({ message: "Source branch is required", code: "INVALID_BRANCH" })
+  if (!targetBranch) throw new WorktreeError({ message: "Target branch is required", code: "INVALID_TARGET_BRANCH" })
 
   const repoRoot = getRepoRoot(worktreeDir)
   if (!branchExists(branch, repoRoot)) {
-    throw new WorktreeError(`Source branch does not exist: ${branch}`, "BRANCH_NOT_FOUND")
+    throw new WorktreeError({ message: `Source branch does not exist: ${branch}`, code: "BRANCH_NOT_FOUND" })
   }
   if (!branchExists(targetBranch, repoRoot)) {
-    throw new WorktreeError(`Target branch does not exist: ${targetBranch}`, "TARGET_BRANCH_NOT_FOUND")
+    throw new WorktreeError({ message: `Target branch does not exist: ${targetBranch}`, code: "TARGET_BRANCH_NOT_FOUND" })
   }
 
   const worktrees = await listWorktrees(repoRoot)
@@ -502,11 +509,11 @@ export async function mergeWorktree(options: MergeWorktreeOptions): Promise<void
       runGit(["checkout", targetBranch], mergeDirectory)
     } catch (error) {
       if (error instanceof WorktreeError) {
-        throw new WorktreeError(
-          `Unable to checkout target branch '${targetBranch}' in ${mergeDirectory}`,
-          "CHECKOUT_TARGET_BRANCH_FAILED",
-          error.gitOutput,
-        )
+        throw new WorktreeError({
+          message: `Unable to checkout target branch '${targetBranch}' in ${mergeDirectory}`,
+          code: "CHECKOUT_TARGET_BRANCH_FAILED",
+          gitOutput: error.gitOutput,
+        })
       }
       throw error
     }
@@ -519,11 +526,11 @@ export async function mergeWorktree(options: MergeWorktreeOptions): Promise<void
     runGit(mergeArgs, mergeDirectory)
   } catch (error) {
     if (error instanceof WorktreeError) {
-      throw new WorktreeError(
-        `Failed to merge '${branch}' into '${targetBranch}'`,
-        "MERGE_FAILED",
-        error.gitOutput,
-      )
+      throw new WorktreeError({
+        message: `Failed to merge '${branch}' into '${targetBranch}'`,
+        code: "MERGE_FAILED",
+        gitOutput: error.gitOutput,
+      })
     }
     throw error
   }
@@ -540,7 +547,7 @@ export async function removeWorktree(directory: string, force = false): Promise<
   const knownWorktrees = await listWorktrees(repoRoot)
   const isKnown = knownWorktrees.some((item) => normalizeDirectory(item.directory) === normalizedDirectory)
   if (!isKnown) {
-    throw new WorktreeError(`Directory is not a tracked git worktree: ${normalizedDirectory}`, "NOT_A_WORKTREE")
+    throw new WorktreeError({ message: `Directory is not a tracked git worktree: ${normalizedDirectory}`, code: "NOT_A_WORKTREE" })
   }
 
   const args = ["worktree", "remove"]
@@ -551,7 +558,7 @@ export async function removeWorktree(directory: string, force = false): Promise<
     runGit(args, repoRoot)
   } catch (error) {
     if (error instanceof WorktreeError) {
-      throw new WorktreeError(`Failed to remove worktree '${normalizedDirectory}'`, "REMOVE_WORKTREE_FAILED", error.gitOutput)
+      throw new WorktreeError({ message: `Failed to remove worktree '${normalizedDirectory}'`, code: "REMOVE_WORKTREE_FAILED", gitOutput: error.gitOutput })
     }
     throw error
   }
@@ -574,7 +581,7 @@ export class WorktreeLifecycle {
   /** Creates task worktree with `task-<taskId>-<random>` naming. */
   async createForTask(taskId: string, branch?: string, baseRef?: string): Promise<WorktreeInfo> {
     const normalizedTaskId = taskId.trim()
-    if (!normalizedTaskId) throw new WorktreeError("taskId cannot be empty", "INVALID_TASK_ID")
+    if (!normalizedTaskId) throw new WorktreeError({ message: "taskId cannot be empty", code: "INVALID_TASK_ID" })
     // Add random suffix to ensure unique worktree names for task reruns
     const randomSuffix = Math.random().toString(36).substring(2, 8)
     const name = `task-${normalizedTaskId}-${randomSuffix}`
@@ -591,8 +598,8 @@ export class WorktreeLifecycle {
   async createForRun(runId: string, prefix: string, baseRef?: string): Promise<WorktreeInfo> {
     const normalizedRunId = runId.trim()
     const normalizedPrefix = prefix.trim()
-    if (!normalizedRunId) throw new WorktreeError("runId cannot be empty", "INVALID_RUN_ID")
-    if (!normalizedPrefix) throw new WorktreeError("prefix cannot be empty", "INVALID_PREFIX")
+    if (!normalizedRunId) throw new WorktreeError({ message: "runId cannot be empty", code: "INVALID_RUN_ID" })
+    if (!normalizedPrefix) throw new WorktreeError({ message: "prefix cannot be empty", code: "INVALID_PREFIX" })
 
     // Add random suffix to ensure unique worktree names for run reruns
     const randomSuffix = Math.random().toString(36).substring(2, 8)
@@ -674,3 +681,4 @@ export class WorktreeLifecycle {
     return match?.[1] ?? null
   }
 }
+

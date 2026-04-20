@@ -111,10 +111,12 @@ export class PiSessionManager {
   ) {}
 
   async executePrompt(input: ExecuteSessionPromptInput): Promise<ExecuteSessionPromptResult> {
-    return await Effect.runPromise(this.executePromptProgram(input))
+    return await Effect.runPromise(this.executePromptProgram(input).pipe(
+      Effect.mapError((e) => new Error(e.message)),
+    ))
   }
 
-  private executePromptProgram(input: ExecuteSessionPromptInput): Effect.Effect<ExecuteSessionPromptResult> {
+  private executePromptProgram(input: ExecuteSessionPromptInput): Effect.Effect<ExecuteSessionPromptResult, SessionManagerExecuteError> {
     const self = this
     return Effect.gen(function* () {
       const sessionId = input.resumedSessionId ?? randomUUID().slice(0, 8)
@@ -122,7 +124,7 @@ export class PiSessionManager {
 
       const resolvedModel = yield* Effect.try({
         try: () => self.resolveModel(input.model, input.sessionKind),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+        catch: (cause) => new SessionManagerExecuteError({ operation: "resolveModel", message: cause instanceof Error ? cause.message : String(cause) }),
       })
 
       let session: PiWorkflowSession
@@ -178,151 +180,170 @@ export class PiSessionManager {
             existingContainerId,
             containerImage: input.containerImage,
           }),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+        catch: (cause) => new SessionManagerExecuteError({ operation: "createProcess", message: cause instanceof Error ? cause.message : String(cause) }),
       })
 
       if (input.onSessionCreated) {
         input.onSessionCreated(process, session)
       }
 
-      let responseText = ""
-      try {
-        if (input.onSessionStart) {
-          input.onSessionStart(session)
-        }
-
-        if (process instanceof ContainerPiProcess) {
-          yield* Effect.tryPromise({
-            try: () => process.start(),
-            catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-          })
-        } else {
-          process.start()
-        }
-
-        if (process instanceof ContainerPiProcess) {
-          console.log("[session-manager] Container process started, sending initial command as readiness check...")
-        } else {
-          yield* Effect.sleep(500)
-        }
-
-        const modelSelection = parseModelSelection(resolvedModel)
-        if (!modelSelection) {
-          return yield* Effect.fail(
-            new Error(`Invalid model format: ${resolvedModel}. Expected 'provider/modelId' (e.g., 'openai/gpt-4')`),
-          )
-        }
-
-        yield* Effect.tryPromise({
-          try: async () => {
-            await process.send(
-              {
-                type: "set_model",
-                provider: modelSelection.provider,
-                modelId: modelSelection.modelId,
-              },
-              60_000,
-            )
-            console.log(`[session-manager] set_model readiness check succeeded: ${resolvedModel}`)
-          },
-          catch: (cause) => {
-            const errMsg = cause instanceof Error ? cause.message : String(cause)
-            if (errMsg.includes("timeout") || errMsg.includes("time out") || errMsg.includes("timed out")) {
-              return new Error(`Container pi agent failed to respond within 60 seconds: ${errMsg}`)
+      // Use acquireRelease to guarantee process cleanup
+      const result = yield* Effect.acquireRelease(
+        Effect.succeed(process),
+        (proc) =>
+          Effect.tryPromise({
+            try: () => proc.close(),
+            catch: () => undefined,
+          }).pipe(Effect.orElse(() => Effect.void)),
+      ).pipe(
+        Effect.flatMap((proc) =>
+          Effect.gen(function* () {
+            if (input.onSessionStart) {
+              input.onSessionStart(session)
             }
-            return new Error(`Failed to set model ${resolvedModel}: ${errMsg}`)
-          },
-        })
 
-        if (input.thinkingLevel && input.thinkingLevel !== "default") {
-          yield* Effect.tryPromise({
-            try: () =>
-              process.send(
-                {
-                  type: "set_thinking_level",
-                  level: input.thinkingLevel,
-                },
-                30_000,
-              ),
-            catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-          })
-        }
+            if (proc instanceof ContainerPiProcess) {
+              yield* Effect.tryPromise({
+                try: () => proc.start(),
+                catch: (cause) => new SessionManagerExecuteError({ operation: "startContainer", message: cause instanceof Error ? cause.message : String(cause) }),
+              })
+            } else {
+              proc.start()
+            }
 
-        session =
-          self.db.updateWorkflowSession(session.id, {
-            status: "active",
-          }) ?? session
+            if (proc instanceof ContainerPiProcess) {
+              console.log("[session-manager] Container process started, sending initial command as readiness check...")
+            } else {
+              yield* Effect.sleep(500)
+            }
 
-        if (input.isResume && input.continuationPrompt) {
-          yield* Effect.tryPromise({
-            try: () =>
-              process.send(
-                {
-                  type: "prompt",
-                  message: input.continuationPrompt,
-                },
-                30_000,
-              ),
-            catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-          })
-        }
+            const modelSelection = parseModelSelection(resolvedModel)
+            if (!modelSelection) {
+              return yield* Effect.fail(
+                new SessionManagerExecuteError({
+                  operation: "parseModel",
+                  message: `Invalid model format: ${resolvedModel}. Expected 'provider/modelId' (e.g., 'openai/gpt-4')`,
+                }),
+              )
+            }
 
-        const events = yield* Effect.tryPromise({
-          try: () => process.promptAndWait(input.promptText, 600_000),
-          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-        })
+            yield* Effect.tryPromise({
+              try: async () => {
+                await proc.send(
+                  {
+                    type: "set_model",
+                    provider: modelSelection.provider,
+                    modelId: modelSelection.modelId,
+                  },
+                  60_000,
+                )
+                console.log(`[session-manager] set_model readiness check succeeded: ${resolvedModel}`)
+              },
+              catch: (cause) => {
+                const errMsg = cause instanceof Error ? cause.message : String(cause)
+                const msg = errMsg.includes("timeout") || errMsg.includes("time out") || errMsg.includes("timed out")
+                  ? `Container pi agent failed to respond within 60 seconds: ${errMsg}`
+                  : `Failed to set model ${resolvedModel}: ${errMsg}`
+                return new SessionManagerExecuteError({ operation: "setModel", message: msg })
+              },
+            })
 
-        for (let i = events.length - 1; i >= 0; i--) {
-          const event = events[i]
-          if (event.type === "message_update") {
-            const msgEvent = event.assistantMessageEvent as Record<string, unknown> | undefined
-            if (msgEvent?.type === "text_complete" || msgEvent?.type === "text") {
-              const text =
-                typeof msgEvent.text === "string"
-                  ? msgEvent.text
-                  : typeof msgEvent.delta === "string"
-                    ? msgEvent.delta
-                    : ""
-              if (text) {
-                responseText = text
-                break
+            if (input.thinkingLevel && input.thinkingLevel !== "default") {
+              yield* Effect.tryPromise({
+                try: () =>
+                  proc.send(
+                    {
+                      type: "set_thinking_level",
+                      level: input.thinkingLevel,
+                    },
+                    30_000,
+                  ),
+                catch: (cause) => new SessionManagerExecuteError({ operation: "setThinkingLevel", message: cause instanceof Error ? cause.message : String(cause) }),
+              })
+            }
+
+            session =
+              self.db.updateWorkflowSession(session.id, {
+                status: "active",
+              }) ?? session
+
+            if (input.isResume && input.continuationPrompt) {
+              yield* Effect.tryPromise({
+                try: () =>
+                  proc.send(
+                    {
+                      type: "prompt",
+                      message: input.continuationPrompt,
+                    },
+                    30_000,
+                  ),
+                catch: (cause) => new SessionManagerExecuteError({ operation: "sendContinuationPrompt", message: cause instanceof Error ? cause.message : String(cause) }),
+              })
+            }
+
+            const events = yield* Effect.tryPromise({
+              try: () => proc.promptAndWait(input.promptText, 600_000),
+              catch: (cause) => new SessionManagerExecuteError({ operation: "promptAndWait", message: cause instanceof Error ? cause.message : String(cause) }),
+            })
+
+            let responseText = ""
+            for (let i = events.length - 1; i >= 0; i--) {
+              const event = events[i]
+              if (event.type === "message_update") {
+                const msgEvent = event.assistantMessageEvent as Record<string, unknown> | undefined
+                if (msgEvent?.type === "text_complete" || msgEvent?.type === "text") {
+                  const text =
+                    typeof msgEvent.text === "string"
+                      ? msgEvent.text
+                      : typeof msgEvent.delta === "string"
+                        ? msgEvent.delta
+                        : ""
+                  if (text) {
+                    responseText = text
+                    break
+                  }
+                }
               }
             }
-          }
-        }
 
-        if (!responseText) {
-          const messagesResult = yield* Effect.tryPromise({
-            try: () => process.send({ type: "get_messages" }, 30_000),
-            catch: () => null,
-          })
-          if (messagesResult && Array.isArray(messagesResult.messages)) {
-            const messages = messagesResult.messages as PiMessage[]
-            const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant")
-            if (lastAssistantMsg) {
-              responseText = extractTextFromPiMessage(lastAssistantMsg)
+            if (!responseText) {
+              const messagesResult = yield* Effect.tryPromise({
+                try: () => proc.send({ type: "get_messages" }, 30_000),
+                catch: () => null,
+              })
+              if (messagesResult && Array.isArray(messagesResult.messages)) {
+                const messages = messagesResult.messages as PiMessage[]
+                const lastAssistantMsg = [...messages].reverse().find((m) => m.role === "assistant")
+                if (lastAssistantMsg) {
+                  responseText = extractTextFromPiMessage(lastAssistantMsg)
+                }
+              }
             }
-          }
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        self.db.updateWorkflowSession(session.id, {
-          status: "failed",
-          errorMessage: message,
-          finishedAt: nowUnix(),
-        })
-        return yield* Effect.fail(error)
-      } finally {
-        yield* Effect.tryPromise({
-          try: () => process.close(),
-          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-        })
-      }
 
-      return {
-        session: self.db.getWorkflowSession(session.id) ?? session,
-        responseText,
-      }
+            return {
+              session: self.db.getWorkflowSession(session.id) ?? session,
+              responseText,
+            }
+          }).pipe(
+            // On any failure, mark session as failed before propagating error
+            Effect.tapError((error) =>
+              Effect.sync(() => {
+                self.db.updateWorkflowSession(session.id, {
+                  status: "failed",
+                  errorMessage: error instanceof SessionManagerExecuteError ? error.message : String(error),
+                  finishedAt: nowUnix(),
+                })
+              }),
+            ),
+          ),
+        ),
+        Effect.mapError((error) =>
+          error ?? new SessionManagerExecuteError({ operation: "executePrompt", message: "Unknown session manager error" }),
+        ),
+        Effect.scoped,
+      )
+
+      return result
     })
   }
 
@@ -340,18 +361,21 @@ export class PiSessionManager {
     if (!pausedSession?.containerId) {
       return Effect.succeed(null)
     }
+    const pausedContainerId = pausedSession.containerId
 
     return Effect.tryPromise({
       try: async () => {
-        const containerInfo = await this.containerManager!.checkContainerById(pausedSession.containerId)
+        const containerInfo = await this.containerManager!.checkContainerById(pausedContainerId)
         if (!containerInfo?.running) {
-          console.log(`[session-manager] Container ${pausedSession.containerId} no longer exists, will create new one`)
+          console.log(`[session-manager] Container ${pausedContainerId} no longer exists, will create new one`)
           return null
         }
-        return pausedSession.containerId
+        return pausedContainerId
       },
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    })
+      catch: () => null as null,
+    }).pipe(
+      Effect.catchAll(() => Effect.succeed(null)),
+    )
   }
 
   /**
@@ -394,15 +418,3 @@ export class PiSessionManager {
   }
 }
 
-export const executePromptEffect = Effect.fn("executePromptEffect")(
-  function* (manager: PiSessionManager, input: ExecuteSessionPromptInput) {
-    return yield* Effect.tryPromise({
-      try: () => manager.executePrompt(input),
-      catch: (cause) =>
-        new SessionManagerExecuteError({
-          operation: "executePrompt",
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    })
-  },
-)

@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto"
 import { join } from "path"
-import { Effect } from "effect"
+import { Effect, Schedule, Duration } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
@@ -139,133 +139,136 @@ export class PlanningSession {
           }) ?? self.session
       }
 
-      try {
-        self.process = yield* Effect.try({
-          try: () =>
-            createPiProcess({
-              db: self.db,
-              session: self.session,
-              containerManager: self.containerManager,
-              onSessionMessage: (msg) => {
-                self.onMessage?.(msg)
-              },
-              forceRuntime,
-              settings: self.settings,
-              systemPrompt,
-              disableAutoSessionMessages: true,
-              piSessionFile,
-            }) as PiRpcProcess,
-          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-        })
-
-        yield* Effect.tryPromise({
-          try: () => Promise.resolve(self.process!.start()),
-          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-        })
-
-        yield* self.waitForProcessReadyEffect(10_000)
-
-        if (model && model !== "default") {
-          const modelSelection = parseModelSelection(model)
-          if (modelSelection) {
-            yield* Effect.tryPromise({
-              try: () =>
-                self.process!.send(
-                  {
-                    type: "set_model",
-                    provider: modelSelection.provider,
-                    modelId: modelSelection.modelId,
-                  },
-                  30_000,
-                ),
-              catch: (modelError) => {
-                console.warn(`[PlanningSession] Failed to set model ${model}:`, modelError)
-                return null
-              },
-            })
-          }
-        }
-
-        if (thinkingLevel && thinkingLevel !== "default") {
-          yield* Effect.tryPromise({
-            try: () =>
-              self.process!.send(
-                {
-                  type: "set_thinking_level",
-                  level: thinkingLevel,
-                },
-                30_000,
-              ),
-            catch: (thinkingError) => {
-              console.warn(`[PlanningSession] Failed to set thinking level ${thinkingLevel}:`, thinkingError)
-              return null
+      const process = yield* Effect.try({
+        try: () =>
+          createPiProcess({
+            db: self.db,
+            session: self.session,
+            containerManager: self.containerManager,
+            onSessionMessage: (msg) => {
+              self.onMessage?.(msg)
             },
-          })
-        }
+            forceRuntime,
+            settings: self.settings,
+            systemPrompt,
+            disableAutoSessionMessages: true,
+            piSessionFile,
+          }) as PiRpcProcess,
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      })
 
-        self.session =
-          self.db.updateWorkflowSession(self.session.id, {
-            status: "active",
-          }) ?? self.session
+      // Use acquireRelease to guarantee cleanup on any failure path
+      yield* Effect.acquireRelease(
+        Effect.succeed(process),
+        (proc) =>
+          Effect.tryPromise({
+            try: () => proc.close(),
+            catch: () => undefined,
+          }).pipe(Effect.orElse(() => Effect.void)),
+      ).pipe(
+        Effect.flatMap((proc) =>
+          Effect.gen(function* () {
+            yield* Effect.tryPromise({
+              try: () => Promise.resolve(proc.start()),
+              catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+            })
 
-        self.isReady = true
-        self.onStatusChange?.(self.session)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (self.process) {
-          yield* Effect.tryPromise({
-            try: () => self.process!.close(),
-            catch: () => null,
-          })
-          self.process = null
-        }
-        self.session =
-          self.db.updateWorkflowSession(self.session.id, {
-            status: "failed",
-            errorMessage: message,
-            finishedAt: nowUnix(),
-          }) ?? self.session
-        self.onStatusChange?.(self.session)
-        return yield* Effect.fail(error instanceof Error ? error : new Error(String(error)))
-      }
+            yield* self.waitForProcessReadyEffect(10_000)
+
+            if (model && model !== "default") {
+              const modelSelection = parseModelSelection(model)
+              if (modelSelection) {
+                yield* Effect.tryPromise({
+                  try: () =>
+                    proc.send(
+                      {
+                        type: "set_model",
+                        provider: modelSelection.provider,
+                        modelId: modelSelection.modelId,
+                      },
+                      30_000,
+                    ),
+                  catch: (modelError) => {
+                    console.warn(`[PlanningSession] Failed to set model ${model}:`, modelError)
+                    return null
+                  },
+                })
+              }
+            }
+
+            if (thinkingLevel && thinkingLevel !== "default") {
+              yield* Effect.tryPromise({
+                try: () =>
+                  proc.send(
+                    {
+                      type: "set_thinking_level",
+                      level: thinkingLevel,
+                    },
+                    30_000,
+                  ),
+                catch: (thinkingError) => {
+                  console.warn(`[PlanningSession] Failed to set thinking level ${thinkingLevel}:`, thinkingError)
+                  return null
+                },
+              })
+            }
+
+            self.process = proc
+            self.session =
+              self.db.updateWorkflowSession(self.session.id, {
+                status: "active",
+              }) ?? self.session
+
+            self.isReady = true
+            self.onStatusChange?.(self.session)
+          }).pipe(
+            Effect.tapError((error) =>
+              Effect.sync(() => {
+                const message = error instanceof Error ? error.message : String(error)
+                self.session =
+                  self.db.updateWorkflowSession(self.session.id, {
+                    status: "failed",
+                    errorMessage: message,
+                    finishedAt: nowUnix(),
+                  }) ?? self.session
+                self.onStatusChange?.(self.session)
+              }),
+            ),
+          ),
+        ),
+        Effect.scoped,
+      )
     })
   }
 
   /**
    * Wait for the Pi process to be ready to accept commands.
-   * Uses exponential backoff polling with a timeout.
+   * Uses exponential backoff via Effect.retry with a total timeout.
    */
   private waitForProcessReadyEffect(timeoutMs: number): Effect.Effect<void, Error> {
     const self = this
-    return Effect.gen(function* () {
-      const startTime = Date.now()
-      const checkInterval = 100
-      let elapsed = 0
-
-      while (elapsed < timeoutMs) {
-        if (!self.process) {
-          return yield* Effect.fail(new Error("Process was closed during startup"))
-        }
-
-        const ready = yield* Effect.tryPromise({
-          try: async () => {
-            await self.process!.send({ type: "get_messages" }, 5_000)
-            return true
-          },
-          catch: () => false,
-        })
-
-        if (ready) {
-          return
-        }
-
-        const waitTime = Math.min(checkInterval * Math.pow(1.5, Math.floor(elapsed / 1000)), 1000)
-        yield* Effect.sleep(waitTime)
-        elapsed = Date.now() - startTime
+    const checkReady = Effect.gen(function* () {
+      if (!self.process) {
+        return yield* Effect.fail(new Error("Process was closed during startup"))
       }
-
-      return yield* Effect.fail(new Error(`Process failed to become ready within ${timeoutMs}ms`))
+      if (self.process.hasExited()) {
+        return yield* Effect.fail(new Error("Pi process exited during startup"))
+      }
+      yield* Effect.tryPromise({
+        try: () => self.process!.send({ type: "get_messages" }, 1_000),
+        catch: () => new Error("not ready"),
+      })
     })
+
+    return checkReady.pipe(
+      Effect.retry(
+        Schedule.exponential(Duration.millis(100), 1.5).pipe(
+          Schedule.upTo(Duration.millis(timeoutMs)),
+          Schedule.recurWhile((_err: Error) => !self.process?.hasExited()),
+        ),
+      ),
+      Effect.mapError(() => new Error(`Process failed to become ready within ${timeoutMs}ms`)),
+    )
   }
 
   /**
@@ -670,94 +673,104 @@ export class PlanningSession {
       self.messageSeq = self.getNextSeqFromDb()
       const piSessionFile = self.session.piSessionFile ?? getSessionFilePath(self.session.id, self.session.cwd)
 
-      try {
-        self.process = yield* Effect.try({
-          try: () =>
-            createPiProcess({
-              db: self.db,
-              session: self.session,
-              containerManager: self.containerManager,
-              onSessionMessage: (msg) => {
-                self.onMessage?.(msg)
-              },
-              forceRuntime,
-              settings: self.settings,
-              systemPrompt,
-              disableAutoSessionMessages: true,
-              piSessionFile,
-            }) as PiRpcProcess,
-          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-        })
-
-        yield* Effect.tryPromise({
-          try: () => Promise.resolve(self.process!.start()),
-          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-        })
-
-        yield* self.waitForProcessReadyEffect(10_000)
-
-        if (model && model !== "default") {
-          const modelSelection = parseModelSelection(model)
-          if (modelSelection) {
-            yield* Effect.tryPromise({
-              try: () =>
-                self.process!.send(
-                  {
-                    type: "set_model",
-                    provider: modelSelection.provider,
-                    modelId: modelSelection.modelId,
-                  },
-                  30_000,
-                ),
-              catch: (modelError) => {
-                console.warn(`[PlanningSession] Failed to set model ${model} during reconnect:`, modelError)
-                return null
-              },
-            })
-          }
-        }
-
-        if (thinkingLevel && thinkingLevel !== "default") {
-          yield* Effect.tryPromise({
-            try: () =>
-              self.process!.send(
-                {
-                  type: "set_thinking_level",
-                  level: thinkingLevel,
-                },
-                30_000,
-              ),
-            catch: (thinkingError) => {
-              console.warn(`[PlanningSession] Failed to set thinking level ${thinkingLevel} during reconnect:`, thinkingError)
-              return null
+      const process = yield* Effect.try({
+        try: () =>
+          createPiProcess({
+            db: self.db,
+            session: self.session,
+            containerManager: self.containerManager,
+            onSessionMessage: (msg) => {
+              self.onMessage?.(msg)
             },
-          })
-        }
+            forceRuntime,
+            settings: self.settings,
+            systemPrompt,
+            disableAutoSessionMessages: true,
+            piSessionFile,
+          }) as PiRpcProcess,
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      })
 
-        self.session =
-          self.db.updateWorkflowSession(self.session.id, {
-            status: "active",
-          }) ?? self.session
+      // Use acquireRelease to guarantee cleanup on any failure path
+      yield* Effect.acquireRelease(
+        Effect.succeed(process),
+        (proc) =>
+          Effect.tryPromise({
+            try: () => proc.close(),
+            catch: () => undefined,
+          }).pipe(Effect.orElse(() => Effect.void)),
+      ).pipe(
+        Effect.flatMap((proc) =>
+          Effect.gen(function* () {
+            yield* Effect.tryPromise({
+              try: () => Promise.resolve(proc.start()),
+              catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+            })
 
-        self.isReady = true
-        self.onStatusChange?.(self.session)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        if (self.process) {
-          yield* Effect.tryPromise({
-            try: () => self.process!.close(),
-            catch: () => null,
-          })
-          self.process = null
-        }
-        self.session =
-          self.db.updateWorkflowSession(self.session.id, {
-            status: "failed",
-            errorMessage: message,
-          }) ?? self.session
-        self.onStatusChange?.(self.session)
-        return yield* Effect.fail(error instanceof Error ? error : new Error(String(error)))
-      }
+            yield* self.waitForProcessReadyEffect(10_000)
+
+            if (model && model !== "default") {
+              const modelSelection = parseModelSelection(model)
+              if (modelSelection) {
+                yield* Effect.tryPromise({
+                  try: () =>
+                    proc.send(
+                      {
+                        type: "set_model",
+                        provider: modelSelection.provider,
+                        modelId: modelSelection.modelId,
+                      },
+                      30_000,
+                    ),
+                  catch: (modelError) => {
+                    console.warn(`[PlanningSession] Failed to set model ${model} during reconnect:`, modelError)
+                    return null
+                  },
+                })
+              }
+            }
+
+            if (thinkingLevel && thinkingLevel !== "default") {
+              yield* Effect.tryPromise({
+                try: () =>
+                  proc.send(
+                    {
+                      type: "set_thinking_level",
+                      level: thinkingLevel,
+                    },
+                    30_000,
+                  ),
+                catch: (thinkingError) => {
+                  console.warn(`[PlanningSession] Failed to set thinking level ${thinkingLevel} during reconnect:`, thinkingError)
+                  return null
+                },
+              })
+            }
+
+            self.process = proc
+            self.session =
+              self.db.updateWorkflowSession(self.session.id, {
+                status: "active",
+              }) ?? self.session
+
+            self.isReady = true
+            self.onStatusChange?.(self.session)
+          }).pipe(
+            Effect.tapError((error) =>
+              Effect.sync(() => {
+                const message = error instanceof Error ? error.message : String(error)
+                self.session =
+                  self.db.updateWorkflowSession(self.session.id, {
+                    status: "failed",
+                    errorMessage: message,
+                  }) ?? self.session
+                self.onStatusChange?.(self.session)
+              }),
+            ),
+          ),
+        ),
+        Effect.scoped,
+      )
     })
   }
 

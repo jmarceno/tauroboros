@@ -1,10 +1,20 @@
 import { spawn, execSync } from "child_process"
 import { randomUUID } from "crypto"
+import { Effect, Schema } from "effect"
 import { ContainerImageManager, type ImageStatusChangeHandler } from "./container-image-manager.ts"
 import { MockServerManager } from "./mock-server-manager.ts"
 import { BASE_IMAGES } from "../config/base-images.ts"
 import * as path from "path"
 import * as fs from "fs"
+
+/**
+ * Tagged error for container operations
+ */
+export class ContainerManagerError extends Schema.TaggedError<ContainerManagerError>()("ContainerManagerError", {
+  operation: Schema.String,
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 export { ContainerImageManager, type ImageStatusChangeHandler }
 
@@ -1133,4 +1143,5 @@ export class PiContainerManager {
       })
     })
   }
+
 }

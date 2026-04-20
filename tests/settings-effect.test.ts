@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 import { Effect } from "effect"
-import { loadInfrastructureSettings } from "../src/config/settings.ts"
+import { loadSettingsEffect } from "../src/config/settings.ts"
 import { runEffectOrThrow } from "./helpers/effect.ts"
 
 describe("settings effect/schema pipeline", () => {
@@ -16,7 +16,7 @@ describe("settings effect/schema pipeline", () => {
     dirs.length = 0
   })
 
-  it("keeps defaults when decode fails and reports warnings", () => {
+  it("keeps defaults when decode fails and reports warnings", async () => {
     const root = mkdtempSync(join(tmpdir(), "tauroboros-settings-"))
     dirs.push(root)
     const settingsDir = join(root, ".tauroboros")
@@ -38,7 +38,7 @@ describe("settings effect/schema pipeline", () => {
       "utf-8",
     )
 
-    const result = loadInfrastructureSettings(root)
+    const result = await runEffectOrThrow(loadSettingsEffect(root))
 
     expect(result.settings.workflow.server.port).toBe(0)
     expect(result.settings.workflow.container.image).toBe("custom/image:latest")
