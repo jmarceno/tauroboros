@@ -92,11 +92,11 @@ export function createPiServer(options: CreateServerOptions = {}): {
       if (!orchestrator) throw new Error("Orchestrator unavailable")
       if (options?.destructive) {
         const result = await orchestrator.destructiveStop(runId)
-        const run = db.getWorkflowRun(runId)
+        const run = db.getWorkflowRun(runId)!
         return { success: true, run, killed: result.killed, cleaned: result.cleaned }
       } else {
         await orchestrator.stopRun(runId)
-        const run = db.getWorkflowRun(runId)
+        const run = db.getWorkflowRun(runId)!
         return { success: true, run }
       }
     },
@@ -107,6 +107,10 @@ export function createPiServer(options: CreateServerOptions = {}): {
     onGetRunQueueStatus: async (runId: string) => {
       if (!orchestrator) throw new Error("Orchestrator unavailable")
       return orchestrator.getRunQueueStatus(runId)
+    },
+    onManualSelfHealRecover: async (taskId: string, reportId: string, action: "restart_task" | "keep_failed") => {
+      if (!orchestrator) throw new Error("Orchestrator unavailable")
+      return orchestrator.manualSelfHealRecover(taskId, reportId, action)
     },
   })
 

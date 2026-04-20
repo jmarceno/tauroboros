@@ -5,6 +5,7 @@ import { dirname } from "path"
 import {
   DEFAULT_COMMIT_PROMPT,
   DEFAULT_CODE_STYLE_PROMPT,
+  type BestOfNConfig,
   type ColumnSortPreferences,
   type CreateSessionMessageInput,
   type ExecutionPhase,
@@ -17,6 +18,7 @@ import {
   type TaskCandidate,
   type TaskRun,
   type TaskStatus,
+  type TelegramNotificationLevel,
   type ThinkingLevel,
   type TimelineEntry,
   type WorkflowRun,
@@ -53,9 +55,11 @@ import type {
   ContainerPackage,
   ContainerBuild,
   CreateContainerPackageInput,
+  CreateSelfHealReportInput,
   WorkflowRunIndicators,
   JsonOutFailEntry,
   CreateWorkflowRunIndicatorsInput,
+  SelfHealReport,
   CreateTaskGroupDTO,
   UpdateTaskGroupDTO,
   TaskGroup,
@@ -117,6 +121,7 @@ const DEFAULT_OPTIONS: Options = {
   telegramChatId: "",
   telegramNotificationLevel: "all",
   maxReviews: 2,
+  maxJsonParseRetries: 5,
   columnSorts: undefined,
 }
 
@@ -412,8 +417,8 @@ function parseJSON<T>(value: unknown): T | null {
   if (typeof value !== "string" || value.length === 0) return null
   try {
     return JSON.parse(value) as T
-  } catch (error) {
-    throw new Error(`Failed to parse JSON: ${error instanceof Error ? error.message : String(error)}`)
+  } catch {
+    return null
   }
 }
 
@@ -649,13 +654,8 @@ const SESSION_MESSAGE_SELECT = `
   LEFT JOIN workflow_sessions ws ON ws.id = sm.session_id
 `
 
-function parseJSON<T>(value: unknown): T | null {
-  if (typeof value !== "string" || value.length === 0) return null
-  return JSON.parse(value) as T
-}
-
 function rowToTask(row: Record<string, unknown>): Task {
-  const bestOfNConfigRaw = parseJSON<Record<string, unknown>>(row.best_of_n_config)
+  const bestOfNConfigRaw = parseJSON<BestOfNConfig>(row.best_of_n_config)
 
   return {
     id: String(row.id),
@@ -702,6 +702,45 @@ function rowToTask(row: Record<string, unknown>): Task {
     containerImage: row.container_image ? String(row.container_image) : undefined,
     codeStyleReview: Number(row.code_style_review ?? 0) === 1,
     groupId: row.group_id ? String(row.group_id) : undefined,
+    selfHealStatus:
+      row.self_heal_status === "investigating"
+        ? "investigating"
+        : row.self_heal_status === "recovering"
+          ? "recovering"
+          : "idle",
+    selfHealMessage: row.self_heal_message ? String(row.self_heal_message) : null,
+    selfHealReportId: row.self_heal_report_id ? String(row.self_heal_report_id) : null,
+  }
+}
+
+function rowToSelfHealReport(row: Record<string, unknown>): SelfHealReport {
+  return {
+    id: String(row.id),
+    runId: String(row.run_id),
+    taskId: String(row.task_id),
+    taskStatus: asTaskStatus(row.task_status),
+    errorMessage: row.error_message ? String(row.error_message) : null,
+    diagnosticsSummary: String(row.diagnostics_summary ?? ""),
+    rootCauses: parseJSON<string[]>(row.root_causes_json) ?? [],
+    proposedSolution: String(row.proposed_solution ?? ""),
+    implementationPlan: parseJSON<string[]>(row.implementation_plan_json) ?? [],
+    recoverable: Number(row.recoverable ?? 0) === 1,
+    recommendedAction: row.recommended_action === "restart_task" ? "restart_task" : "keep_failed",
+    actionRationale: String(row.action_rationale ?? ""),
+    sourceMode:
+      row.source_mode === "local"
+        ? "local"
+        : row.source_mode === "github_clone"
+          ? "github_clone"
+          : "github_metadata_only",
+    sourcePath: row.source_path ? String(row.source_path) : null,
+    githubUrl: String(row.github_url ?? ""),
+    tauroborosVersion: String(row.tauroboros_version ?? ""),
+    dbPath: String(row.db_path ?? ""),
+    dbSchemaJson: parseJSON<Record<string, unknown>>(row.db_schema_json) ?? {},
+    rawResponse: String(row.raw_response ?? ""),
+    createdAt: Number(row.created_at ?? 0),
+    updatedAt: Number(row.updated_at ?? 0),
   }
 }
 
@@ -1657,13 +1696,53 @@ const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_tasks_archived_at ON tasks(archived_at);`,
     ],
   },
+  {
+    version: 28,
+    description: "Add self-healing task state and self-heal reports",
+    statements: [
+      `ALTER TABLE tasks ADD COLUMN self_heal_status TEXT NOT NULL DEFAULT 'idle';`,
+      `ALTER TABLE tasks ADD COLUMN self_heal_message TEXT;`,
+      `ALTER TABLE tasks ADD COLUMN self_heal_report_id TEXT;`,
+      `CREATE INDEX IF NOT EXISTS idx_tasks_self_heal_status ON tasks(self_heal_status);`,
+      `CREATE TABLE IF NOT EXISTS self_heal_reports (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        task_status TEXT NOT NULL,
+        error_message TEXT,
+        diagnostics_summary TEXT NOT NULL,
+        root_causes_json TEXT NOT NULL DEFAULT '[]',
+        proposed_solution TEXT NOT NULL,
+        implementation_plan_json TEXT NOT NULL DEFAULT '[]',
+        recoverable INTEGER NOT NULL DEFAULT 0,
+        recommended_action TEXT NOT NULL,
+        action_rationale TEXT NOT NULL,
+        source_mode TEXT NOT NULL,
+        source_path TEXT,
+        github_url TEXT NOT NULL,
+        tauroboros_version TEXT NOT NULL,
+        db_path TEXT NOT NULL,
+        db_schema_json TEXT NOT NULL,
+        raw_response TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        FOREIGN KEY(run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE,
+        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+      );`,
+      `CREATE INDEX IF NOT EXISTS idx_self_heal_reports_run_id ON self_heal_reports(run_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_self_heal_reports_task_id ON self_heal_reports(task_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_self_heal_reports_created_at ON self_heal_reports(created_at DESC);`,
+    ],
+  },
 ]
 
 export class PiKanbanDB {
   private readonly db: Database
+  private readonly dbPath: string
   private _taskStatusChangeListener: TaskStatusChangeListener | null = null
 
   constructor(dbPath: string) {
+    this.dbPath = dbPath
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = new Database(dbPath, { create: true })
     // Use WAL mode for better concurrency and performance
@@ -1704,6 +1783,36 @@ export class PiKanbanDB {
 
   setTaskStatusChangeListener(listener: TaskStatusChangeListener | null): void {
     this._taskStatusChangeListener = listener
+  }
+
+  getDatabasePath(): string {
+    return this.dbPath
+  }
+
+  getSchemaSnapshot(): Record<string, { sql: string; columns: Array<{ name: string; type: string; notNull: boolean; defaultValue: unknown; pk: boolean }> }> {
+    const tables = this.db
+      .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name ASC")
+      .all() as Array<{ name: string; sql: string | null }>
+
+    const snapshot: Record<string, { sql: string; columns: Array<{ name: string; type: string; notNull: boolean; defaultValue: unknown; pk: boolean }> }> = {}
+    for (const table of tables) {
+      const columns = this.db
+        .prepare(`PRAGMA table_info(${table.name})`)
+        .all() as Array<{ name: string; type: string; notnull: number; dflt_value: unknown; pk: number }>
+
+      snapshot[table.name] = {
+        sql: table.sql ?? "",
+        columns: columns.map((column) => ({
+          name: column.name,
+          type: column.type,
+          notNull: column.notnull === 1,
+          defaultValue: column.dflt_value,
+          pk: column.pk === 1,
+        })),
+      }
+    }
+
+    return snapshot
   }
 
   // ---- tasks ----
@@ -1941,6 +2050,18 @@ export class PiKanbanDB {
     if (input.codeStyleReview !== undefined) {
       sets.push("code_style_review = ?")
       values.push(input.codeStyleReview ? 1 : 0)
+    }
+    if (input.selfHealStatus !== undefined) {
+      sets.push("self_heal_status = ?")
+      values.push(input.selfHealStatus)
+    }
+    if (input.selfHealMessage !== undefined) {
+      sets.push("self_heal_message = ?")
+      values.push(input.selfHealMessage)
+    }
+    if (input.selfHealReportId !== undefined) {
+      sets.push("self_heal_report_id = ?")
+      values.push(input.selfHealReportId)
     }
 
     if (sets.length === 0) return this.getTask(id)
@@ -2375,6 +2496,68 @@ export class PiKanbanDB {
     return rows.map(rowToWorkflowRun)
   }
 
+  createSelfHealReport(input: CreateSelfHealReportInput): SelfHealReport {
+    const now = nowUnix()
+    const id = input.id ?? randomUUID().slice(0, 8)
+    const createdAt = input.createdAt ?? now
+
+    this.db
+      .prepare(`
+        INSERT INTO self_heal_reports (
+          id, run_id, task_id, task_status, error_message,
+          diagnostics_summary, root_causes_json, proposed_solution, implementation_plan_json,
+          recoverable, recommended_action, action_rationale,
+          source_mode, source_path, github_url, tauroboros_version,
+          db_path, db_schema_json, raw_response,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        input.runId,
+        input.taskId,
+        input.taskStatus,
+        input.errorMessage ?? null,
+        input.diagnosticsSummary,
+        JSON.stringify(input.rootCauses),
+        input.proposedSolution,
+        JSON.stringify(input.implementationPlan),
+        input.recoverable ? 1 : 0,
+        input.recommendedAction,
+        input.actionRationale,
+        input.sourceMode,
+        input.sourcePath ?? null,
+        input.githubUrl,
+        input.tauroborosVersion,
+        input.dbPath,
+        JSON.stringify(input.dbSchemaJson),
+        input.rawResponse,
+        createdAt,
+        now,
+      )
+
+    return this.getSelfHealReport(id) as SelfHealReport
+  }
+
+  getSelfHealReport(id: string): SelfHealReport | null {
+    const row = this.db.prepare("SELECT * FROM self_heal_reports WHERE id = ?").get(id) as Record<string, unknown> | null
+    return row ? rowToSelfHealReport(row) : null
+  }
+
+  getSelfHealReportsForRun(runId: string): SelfHealReport[] {
+    const rows = this.db
+      .prepare("SELECT * FROM self_heal_reports WHERE run_id = ? ORDER BY created_at DESC")
+      .all(runId) as Record<string, unknown>[]
+    return rows.map(rowToSelfHealReport)
+  }
+
+  countSelfHealReportsForTaskInRun(runId: string, taskId: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS cnt FROM self_heal_reports WHERE run_id = ? AND task_id = ?")
+      .get(runId, taskId) as { cnt: number }
+    return Number(row?.cnt ?? 0)
+  }
+
   // ---- Archived Tasks ----
 
   getArchivedTasks(): Task[] {
@@ -2411,7 +2594,7 @@ export class PiKanbanDB {
 
     for (const row of runsResult) {
       const runRow = row as Record<string, unknown>
-      const taskOrder = parseJSON<string[]>(runRow.task_order_json, [])
+      const taskOrder = parseJSON<string[]>(runRow.task_order_json) ?? []
       if (taskOrder.length === 0) continue
 
       const placeholders = taskOrder.map(() => "?").join(",")
@@ -2726,7 +2909,7 @@ export class PiKanbanDB {
         const timestamp = projected?.timestamp
           ?? (row.timestamp === null || row.timestamp === undefined ? nowUnix() : Number(row.timestamp))
 
-        update.run(
+        const updateArgs: (string | number | null)[] = [
           seq,
           projected?.messageId ?? (row.message_id ? String(row.message_id) : null),
           timestamp,
@@ -2742,27 +2925,26 @@ export class PiKanbanDB {
           projected?.cacheReadTokens ?? (row.cache_read_tokens === null || row.cache_read_tokens === undefined ? null : Number(row.cache_read_tokens)),
           projected?.cacheWriteTokens ?? (row.cache_write_tokens === null || row.cache_write_tokens === undefined ? null : Number(row.cache_write_tokens)),
           projected?.totalTokens ?? (row.total_tokens === null || row.total_tokens === undefined ? null : Number(row.total_tokens)),
-          projected?.costJson ? JSON.stringify(projected.costJson) : row.cost_json ?? null,
+          projected?.costJson ? JSON.stringify(projected.costJson) : (row.cost_json as string | null) ?? null,
           projected?.costTotal ?? (row.cost_total === null || row.cost_total === undefined ? null : Number(row.cost_total)),
           projected?.toolCallId ?? (row.tool_call_id ? String(row.tool_call_id) : null),
           projected?.toolName ?? (row.tool_name ? String(row.tool_name) : null),
-          projected?.toolArgsJson ? JSON.stringify(projected.toolArgsJson) : row.tool_args_json ?? null,
-          projected?.toolResultJson ? JSON.stringify(projected.toolResultJson) : row.tool_result_json ?? null,
+          projected?.toolArgsJson ? JSON.stringify(projected.toolArgsJson) : (row.tool_args_json as string | null) ?? null,
+          projected?.toolResultJson ? JSON.stringify(projected.toolResultJson) : (row.tool_result_json as string | null) ?? null,
           projected?.toolStatus ?? (row.tool_status ? String(row.tool_status) : null),
           projected?.editDiff ?? (row.edit_diff ? String(row.edit_diff) : null),
           projected?.editFilePath ?? (row.edit_file_path ? String(row.edit_file_path) : null),
           projected?.sessionStatus ?? (row.session_status ? String(row.session_status) : null),
           projected?.workflowPhase ?? (row.workflow_phase ? String(row.workflow_phase) : null),
-          rawEventJson ? JSON.stringify(rawEventJson) : row.raw_event_json ?? null,
+          rawEventJson ? JSON.stringify(rawEventJson) : (row.raw_event_json as string | null) ?? null,
           Number(row.id),
-        )
+        ]
+        update.run(...(updateArgs as Parameters<typeof update.run>))
       }
     })
 
     tx(rows)
   }
-
-  // ---- normalized session messages ----
 
   createSessionMessage(input: CreateSessionMessageInput): SessionMessage {
     const seq = input.seq ?? this.getNextSessionMessageSeq(input.sessionId)
@@ -3788,10 +3970,8 @@ export class PiKanbanDB {
 
     if (!row) return null
 
-    const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(
-      row.context_json,
-      { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
-    )
+    const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(row.context_json)
+      ?? { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
 
     return {
       sessionId: String(row.session_id),
@@ -3846,10 +4026,8 @@ export class PiKanbanDB {
     const rows = this.db.prepare("SELECT * FROM paused_session_states ORDER BY paused_at DESC").all() as Record<string, unknown>[]
 
     return rows.map((row) => {
-      const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(
-        row.context_json,
-        { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
-      )
+      const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(row.context_json)
+        ?? { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
 
       return {
         sessionId: String(row.session_id),
@@ -3903,10 +4081,8 @@ export class PiKanbanDB {
       .all(taskId) as Record<string, unknown>[]
 
     return rows.map((row) => {
-      const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(
-        row.context_json,
-        { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
-      )
+      const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(row.context_json)
+        ?? { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
 
       return {
         sessionId: String(row.session_id),
@@ -3985,7 +4161,7 @@ export class PiKanbanDB {
     currentTaskId: string | null
     targetTaskId: string | null
     pausedAt: number
-    executionPhase: "not_started" | "planning" | "executing" | "reviewing" | "committing"
+    executionPhase: ExecutionPhase
   } | null {
     const row = this.db
       .prepare("SELECT * FROM paused_run_states WHERE run_id = ?")
@@ -4011,8 +4187,8 @@ export class PiKanbanDB {
 
   hasPausedRunState(runId: string): boolean {
     const row = this.db
-      .prepare<{ 1: number }>("SELECT 1 FROM paused_run_states WHERE run_id = ?")
-      .get(runId)
+      .prepare("SELECT 1 FROM paused_run_states WHERE run_id = ?")
+      .get(runId) as { 1: number } | null
     return row !== null
   }
 
@@ -4026,7 +4202,7 @@ export class PiKanbanDB {
     pausedAt: number
     executionPhase: ExecutionPhase
   }> {
-    const rows = this.db.prepare<unknown[], Record<string, unknown>>("SELECT * FROM paused_run_states ORDER BY paused_at DESC").all()
+    const rows = this.db.prepare("SELECT * FROM paused_run_states ORDER BY paused_at DESC").all() as Record<string, unknown>[]
 
     return rows.map((row) => ({
       runId: String(row.run_id),
@@ -4520,7 +4696,7 @@ export class PiKanbanDB {
     const { start, previousStart } = this.getTimeRangeBoundary(range)
 
     const currentRow = this.db
-      .prepare<unknown[], TokenCostRow>(
+      .prepare(
         `
         SELECT 
           COALESCE(SUM(total_tokens), 0) AS total_tokens,
@@ -4529,14 +4705,14 @@ export class PiKanbanDB {
         WHERE timestamp >= ?
         `
       )
-      .get(start)!
+      .get(start) as TokenCostRow
 
     let previousTokens = 0
     let previousCost = 0
 
     if (range !== "lifetime" && previousStart > 0) {
       const previousRow = this.db
-        .prepare<unknown[], TokenCostRow>(
+        .prepare(
           `
           SELECT 
             COALESCE(SUM(total_tokens), 0) AS total_tokens,
@@ -4545,7 +4721,7 @@ export class PiKanbanDB {
           WHERE timestamp >= ? AND timestamp < ?
           `
         )
-        .get(previousStart, start)!
+        .get(previousStart, start) as TokenCostRow
 
       previousTokens = Number(previousRow.total_tokens ?? 0)
       previousCost = Number(previousRow.total_cost ?? 0)
@@ -4567,22 +4743,22 @@ export class PiKanbanDB {
 
   getTaskStats(): TaskStats {
     const completedRow = this.db
-      .prepare<unknown[], CountRow>("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'done'")
-      .get()!
+      .prepare("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'done'")
+      .get() as CountRow
 
     const failedRow = this.db
-      .prepare<unknown[], CountRow>("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'failed'")
-      .get()!
+      .prepare("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'failed'")
+      .get() as CountRow
 
     const avgReviewsRow = this.db
-      .prepare<unknown[], AvgReviewsRow>(
+      .prepare(
         `
         SELECT COALESCE(AVG(review_count), 0) AS avg_reviews
         FROM tasks
         WHERE status = 'done'
         `
       )
-      .get()!
+      .get() as AvgReviewsRow
 
     return {
       completed: Number(completedRow.cnt ?? 0),
@@ -4593,7 +4769,7 @@ export class PiKanbanDB {
 
   getModelUsageByResponsibility(): ModelUsageStats {
     const rows = this.db
-      .prepare<unknown[], ModelUsageRow>(
+      .prepare(
         `
         SELECT 
           session_kind,
@@ -4604,7 +4780,7 @@ export class PiKanbanDB {
         GROUP BY session_kind, model
         `
       )
-      .all()
+      .all() as ModelUsageRow[]
 
     const plan: Array<{ model: string; count: number }> = []
     const execution: Array<{ model: string; count: number }> = []
@@ -4639,7 +4815,7 @@ export class PiKanbanDB {
 
   getAverageTaskDuration(): number {
     const row = this.db
-      .prepare<unknown[], AvgDurationRow>(
+      .prepare(
         `
         SELECT 
           COALESCE(AVG(completed_at - created_at), 0) AS avg_duration
@@ -4647,7 +4823,7 @@ export class PiKanbanDB {
         WHERE completed_at IS NOT NULL AND created_at IS NOT NULL
         `
       )
-      .get()!
+      .get() as AvgDurationRow
 
     // Convert from seconds to minutes for display
     const seconds = Number(row.avg_duration ?? 0)
@@ -4659,7 +4835,7 @@ export class PiKanbanDB {
     const twentyFourHoursAgo = now - SECONDS_IN_DAY
 
     const rows = this.db
-      .prepare<unknown[], HourlyUsageRow>(
+      .prepare(
         `
         SELECT 
           (timestamp / 3600) * 3600 AS hour_bucket,
@@ -4671,7 +4847,7 @@ export class PiKanbanDB {
         ORDER BY hour_bucket ASC
         `
       )
-      .all(twentyFourHoursAgo)
+      .all(twentyFourHoursAgo) as HourlyUsageRow[]
 
     return rows.map((row) => ({
       hour: new Date(row.hour_bucket * 1000).toISOString(),
@@ -4685,7 +4861,7 @@ export class PiKanbanDB {
     const startTime = now - days * SECONDS_IN_DAY
 
     const rows = this.db
-      .prepare<unknown[], DailyUsageRow>(
+      .prepare(
         `
         SELECT 
           date(timestamp, 'unixepoch') AS date_str,
@@ -4697,7 +4873,7 @@ export class PiKanbanDB {
         ORDER BY date_str ASC
         `
       )
-      .all(startTime)
+      .all(startTime) as DailyUsageRow[]
 
     return rows.map((row) => ({
       date: row.date_str,

@@ -130,6 +130,70 @@ describe("PiKanbanDB", () => {
     db.close()
   })
 
+  it("persists self-healing task state and reports", () => {
+    const { db } = createTempDb()
+
+    const task = db.createTask({
+      id: "task-self-heal-1",
+      name: "Self-heal task",
+      prompt: "Investigate failure",
+      status: "failed",
+    })
+
+    expect(task.selfHealStatus).toBe("idle")
+    expect(task.selfHealMessage).toBeNull()
+    expect(task.selfHealReportId).toBeNull()
+
+    const run = db.createWorkflowRun({
+      id: "run-self-heal-1",
+      kind: "single_task",
+      displayName: "Self-heal run",
+      taskOrder: [task.id],
+      currentTaskId: task.id,
+      status: "running",
+    })
+
+    const report = db.createSelfHealReport({
+      runId: run.id,
+      taskId: task.id,
+      taskStatus: "failed",
+      errorMessage: "Boom",
+      diagnosticsSummary: "Likely bad dependency check",
+      rootCauses: ["Dependency state race"],
+      proposedSolution: "Guard scheduler transition with explicit check",
+      implementationPlan: ["Add guard", "Add regression test"],
+      recoverable: true,
+      recommendedAction: "restart_task",
+      actionRationale: "Task can resume without discarding completed work",
+      sourceMode: "local",
+      sourcePath: "/tmp/source",
+      githubUrl: "https://github.com/jmarceno/tauroboros",
+      tauroborosVersion: "0.1.0",
+      dbPath: db.getDatabasePath(),
+      dbSchemaJson: db.getSchemaSnapshot(),
+      rawResponse: "{\"ok\":true}",
+    })
+
+    expect(report.runId).toBe(run.id)
+    expect(report.taskId).toBe(task.id)
+    expect(report.recoverable).toBe(true)
+
+    const reports = db.getSelfHealReportsForRun(run.id)
+    expect(reports.length).toBe(1)
+    expect(reports[0]?.id).toBe(report.id)
+
+    const linked = db.updateTask(task.id, {
+      selfHealStatus: "recovering",
+      selfHealMessage: "Investigating",
+      selfHealReportId: report.id,
+    })
+
+    expect(linked?.selfHealStatus).toBe("recovering")
+    expect(linked?.selfHealReportId).toBe(report.id)
+
+    db.close()
+  })
+
   it("supports normalized session message storage", () => {
     const { db } = createTempDb()
 
@@ -1147,7 +1211,7 @@ describe("PiKanbanDB", () => {
 
         db.createSessionMessage({
           sessionId: "hourly-session",
-          timestamp: now - 5400,
+          timestamp: now - 6900,
           role: "assistant",
           messageType: "assistant_response",
           contentJson: { text: "msg2" },
@@ -1223,7 +1287,7 @@ describe("PiKanbanDB", () => {
 
         db.createSessionMessage({
           sessionId: "daily-session",
-          timestamp: now - 90000,
+          timestamp: now - 87000,
           role: "assistant",
           messageType: "assistant_response",
           contentJson: { text: "msg2" },

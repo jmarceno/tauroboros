@@ -27,6 +27,7 @@ import { WorktreeLifecycle, resolveTargetBranch, listWorktrees, type WorktreeInf
 import type { PiContainerManager } from "./runtime/container-manager.ts"
 import { PiRpcProcess, CollectEventsTimeoutError } from "./runtime/pi-process.ts"
 import { ContainerPiProcess } from "./runtime/container-pi-process.ts"
+import { SelfHealingService } from "./runtime/self-healing.ts"
 import {
   savePausedRunState,
   loadPausedRunState,
@@ -161,9 +162,10 @@ export class PiOrchestrator {
   private readonly scheduler: GlobalScheduler
   private scheduling = false
   private sessionManager: PiSessionManager
-  private readonly reviewRunner: PiReviewSessionRunner
+  private reviewRunner: PiReviewSessionRunner
   private readonly worktree: WorktreeLifecycle
   private containerManager?: PiContainerManager
+  private readonly selfHealingService: SelfHealingService
 
   // Track active processes for pause/stop operations
   private activeSessionProcesses = new Map<string, {
@@ -192,6 +194,7 @@ export class PiOrchestrator {
     this.worktree = new WorktreeLifecycle({ baseDirectory: this.projectRoot })
     this.containerManager = containerManager
     this.scheduler = new GlobalScheduler(Math.max(1, this.db.getOptions().parallelTasks ?? 1))
+    this.selfHealingService = new SelfHealingService(this.db, this.projectRoot, this.settings)
   }
 
   /**
@@ -624,6 +627,15 @@ export class PiOrchestrator {
           await this.refreshRunProgress(runId)
           await this.triggerScheduling()
           return
+        }
+
+        if (latestTask.status === "failed" || latestTask.status === "stuck") {
+          const recovered = await this.maybeSelfHealTask(runId, latestTask)
+          if (recovered) {
+            await this.refreshRunProgress(runId)
+            await this.triggerScheduling()
+            return
+          }
         }
 
         const finalStatus = latestTask.status === "done"
@@ -1115,7 +1127,7 @@ export class PiOrchestrator {
             try {
               console.log(`[orchestrator] Deleting custom container image: ${task.containerImage}`)
               await this.containerManager.deleteImage(task.containerImage)
-              this.db.updateTask(taskId, { containerImage: null })
+              this.db.updateTask(taskId, { containerImage: undefined })
             } catch (error) {
               const msg = error instanceof Error ? error.message : String(error)
               console.warn(`[orchestrator] Failed to delete custom image ${task.containerImage}: ${msg}`)
@@ -1557,7 +1569,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
       worktreeDir: pausedState.worktreeDir,
       branch: pausedState.branch,
       model: pausedState.model,
-      thinkingLevel: pausedState.thinkingLevel,
+      thinkingLevel: pausedState.thinkingLevel as import("./types.ts").ThinkingLevel | undefined,
       promptText: continuePrompt,
       isResume: true,
       resumedSessionId: pausedState.sessionId,
@@ -1817,6 +1829,8 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
     this.db.updateTask(task.id, {
       status: "executing",
       errorMessage: null,
+      selfHealStatus: "idle",
+      selfHealMessage: null,
       ...(isPlanResume ? {} : { agentOutput: "" }),
     })
     this.broadcastTask(task.id)
@@ -1926,7 +1940,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           console.log(`[orchestrator] Task ${task.name}(${task.id}) timed out but was essentially complete: ${completionCheck.reason}`)
           // The work was done, just the agent_end event didn't arrive in time
           // Complete the task normally without running review/commit (they already ran)
-          await this.completeTaskSuccessfully(task, worktreeInfo, options)
+          await this.completeTaskSuccessfully(task, worktreeInfo!, options)
           return
         } else {
           console.log(`[orchestrator] Task ${task.name}(${task.id}) timed out with insufficient progress: ${completionCheck.reason}`)
@@ -1955,7 +1969,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           task.id,
           task,
           options,
-          worktreeInfo,
+          worktreeInfo!,
           targetBranch,
           error instanceof WorktreeError ? error : new Error(String(error)),
         )
@@ -1964,8 +1978,8 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           console.log(`[orchestrator] Merge repair succeeded for task ${task.name}(${task.id}), completing task`)
           try {
             // Try to complete the worktree again (merge should now succeed)
-            await this.worktree.complete(worktreeInfo.directory, {
-              branch: worktreeInfo.branch,
+            await this.worktree.complete(worktreeInfo!.directory, {
+              branch: worktreeInfo!.branch,
               targetBranch,
               shouldMerge: true,
               shouldRemove: task.deleteWorktree !== false,
@@ -1974,7 +1988,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
             this.db.updateTask(task.id, {
               status: "done",
               completedAt: nowUnix(),
-              worktreeDir: task.deleteWorktree !== false ? null : worktreeInfo.directory,
+              worktreeDir: task.deleteWorktree !== false ? null : worktreeInfo!.directory,
               executionPhase: task.planmode ? "implementation_done" : undefined,
             })
             this.broadcastTask(task.id)
@@ -1996,7 +2010,7 @@ Previous context: ${agentOutputSnapshot.slice(-2000) || "Task execution paused"}
           console.error(`[orchestrator] Merge repair failed for task ${task.name}(${task.id})`)
           this.db.updateTask(task.id, {
             status: "stuck",
-            errorMessage: `Merge conflict could not be resolved automatically. Manual intervention required to merge '${worktreeInfo.branch}' into '${targetBranch}'`,
+            errorMessage: `Merge conflict could not be resolved automatically. Manual intervention required to merge '${worktreeInfo!.branch}' into '${targetBranch}'`,
             worktreeDir: worktreeInfo?.directory ?? task.worktreeDir,
           })
           this.broadcastTask(task.id)
@@ -2541,10 +2555,77 @@ Run git commands as needed to resolve the conflicts. After resolving, verify wit
 
     // Clean up tracking after session completes
     if (createdSession) {
-      this.activeSessionProcesses.delete(createdSession.id)
+      this.activeSessionProcesses.delete((createdSession as import("./db/types.ts").PiWorkflowSession).id)
     }
 
     return { session: session.session, responseText: session.responseText }
+  }
+
+  /**
+   * Apply a manual self-heal recovery action from the UI.
+   * This is called when the user explicitly selects a recovery action from a self-heal report.
+   */
+  async manualSelfHealRecover(
+    taskId: string,
+    reportId: string,
+    action: "restart_task" | "keep_failed",
+  ): Promise<{ ok: boolean; message: string }> {
+    const task = this.db.getTask(taskId)
+    if (!task) throw new Error(`Task not found: ${taskId}`)
+
+    const report = this.db.getSelfHealReport(reportId)
+    if (!report) throw new Error(`Self-heal report not found: ${reportId}`)
+    if (report.taskId !== taskId) throw new Error(`Report ${reportId} does not belong to task ${taskId}`)
+
+    const runId = report.runId
+
+    if (action === "restart_task") {
+      const requeued = this.scheduler.requeueExecutingTask(taskId)
+      if (!requeued) {
+        this.scheduler.enqueueTask(runId, taskId)
+      }
+
+      this.db.updateTask(taskId, {
+        status: "queued",
+        errorMessage: null,
+        selfHealStatus: "idle",
+        selfHealMessage: "Manually recovered: task requeued",
+        sessionId: null,
+        sessionUrl: null,
+      })
+      this.broadcastTask(taskId)
+      this.broadcast({
+        type: "self_heal_status",
+        payload: {
+          runId,
+          taskId,
+          status: "recovered",
+          message: "Task manually requeued from self-heal report",
+          reportId,
+        },
+      })
+      await this.refreshRunProgress(runId)
+      await this.triggerScheduling()
+      return { ok: true, message: "Task requeued successfully" }
+    }
+
+    // keep_failed: clear self-heal status so the card returns to normal failed state
+    this.db.updateTask(taskId, {
+      selfHealStatus: "idle",
+      selfHealMessage: null,
+    })
+    this.broadcastTask(taskId)
+    this.broadcast({
+      type: "self_heal_status",
+      payload: {
+        runId,
+        taskId,
+        status: "manual_required",
+        message: "Manual recovery dismissed — task remains failed",
+        reportId,
+      },
+    })
+    return { ok: true, message: "Task kept as failed" }
   }
 
   private broadcastTask(taskId: string): void {
@@ -2552,6 +2633,139 @@ Run git commands as needed to resolve the conflicts. After resolving, verify wit
     if (!updated) return
     console.log(`[orchestrator] broadcastTask: ${updated.name}(${taskId}) status=${updated.status}`)
     this.broadcast({ type: "task_updated", payload: updated })
+  }
+
+  private async maybeSelfHealTask(runId: string, task: Task): Promise<boolean> {
+    const reportCount = this.db.countSelfHealReportsForTaskInRun(runId, task.id)
+    if (reportCount >= 2) {
+      this.db.updateTask(task.id, {
+        selfHealStatus: "idle",
+        selfHealMessage: "Self-healing retry limit reached for this task in this run",
+      })
+      this.broadcastTask(task.id)
+      this.broadcast({
+        type: "self_heal_status",
+        payload: {
+          runId,
+          taskId: task.id,
+          status: "skipped",
+          message: "Self-healing retry limit reached",
+        },
+      })
+      return false
+    }
+
+    const run = this.db.getWorkflowRun(runId)
+    if (!run) {
+      throw new Error(`Run not found for self-heal flow: ${runId}`)
+    }
+
+    const hasOtherActiveTasks =
+      this.scheduler.getExecutingStates(runId).some((state) => state.taskId !== task.id)
+      || this.scheduler.getQueuedTasks(runId).some((queuedTaskId) => queuedTaskId !== task.id)
+
+    this.db.updateTask(task.id, {
+      selfHealStatus: "investigating",
+      selfHealMessage: "Investigating failure and drafting permanent fix...",
+    })
+    this.broadcastTask(task.id)
+    this.broadcast({
+      type: "self_heal_status",
+      payload: {
+        runId,
+        taskId: task.id,
+        status: "investigating",
+        message: "Self-healing investigation started",
+      },
+    })
+
+    try {
+      const result = await this.selfHealingService.investigateFailure({
+        run,
+        task,
+        errorMessage: task.errorMessage ?? "Task failed without explicit error message",
+        hasOtherActiveTasks,
+      })
+
+      this.db.updateTask(task.id, {
+        selfHealStatus: "recovering",
+        selfHealMessage: result.diagnosticsSummary,
+        selfHealReportId: result.reportId,
+      })
+      this.broadcastTask(task.id)
+      this.broadcast({
+        type: "self_heal_status",
+        payload: {
+          runId,
+          taskId: task.id,
+          status: "recovering",
+          message: "Self-healing generated diagnostics and recovery decision",
+          reportId: result.reportId,
+        },
+      })
+
+      if (result.recoverable && result.recommendedAction === "restart_task") {
+        const requeued = this.scheduler.requeueExecutingTask(task.id)
+        if (!requeued) {
+          this.scheduler.enqueueTask(runId, task.id)
+        }
+
+        this.db.updateTask(task.id, {
+          status: "queued",
+          errorMessage: null,
+          selfHealStatus: "idle",
+          selfHealMessage: "Auto-recovered: task requeued",
+          sessionId: null,
+          sessionUrl: null,
+        })
+        this.broadcastTask(task.id)
+        this.broadcast({
+          type: "self_heal_status",
+          payload: {
+            runId,
+            taskId: task.id,
+            status: "recovered",
+            message: "Task requeued after self-healing",
+            reportId: result.reportId,
+          },
+        })
+        return true
+      }
+
+      this.db.updateTask(task.id, {
+        selfHealStatus: "idle",
+        selfHealMessage: `Manual recovery required: ${result.actionRationale}`,
+      })
+      this.broadcastTask(task.id)
+      this.broadcast({
+        type: "self_heal_status",
+        payload: {
+          runId,
+          taskId: task.id,
+          status: "manual_required",
+          message: result.actionRationale,
+          reportId: result.reportId,
+        },
+      })
+      return false
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.db.updateTask(task.id, {
+        selfHealStatus: "idle",
+        selfHealMessage: `Self-healing failed: ${message}`,
+      })
+      this.broadcastTask(task.id)
+      this.broadcast({
+        type: "self_heal_status",
+        payload: {
+          runId,
+          taskId: task.id,
+          status: "error",
+          message,
+        },
+      })
+      return false
+    }
   }
 
   /**

@@ -36,12 +36,13 @@ const TASK_BOOLEAN_FIELDS = ["planmode", "autoApprovePlan", "review", "codeStyle
 
 type RunControlFn = (runId: string) => Promise<unknown>
 type StartFn = () => Promise<unknown>
-type StartSingleFn = (taskId: string) => Promise<unknown>
+type StartSingleFn = (taskId: string) => Promise<WorkflowRun | null>
 type StartGroupFn = (groupId: string) => Promise<WorkflowRun>
 type StopFn = () => Promise<unknown>
 type StopRunFn = (runId: string, options?: { destructive?: boolean }) => Promise<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>
 type GetSlotsFn = () => SlotUtilization
 type GetRunQueueStatusFn = (runId: string) => Promise<RunQueueStatus> | RunQueueStatus
+type ManualSelfHealRecoverFn = (taskId: string, reportId: string, action: "restart_task" | "keep_failed") => Promise<{ ok: boolean; message: string }>
 
 function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean"
@@ -176,6 +177,7 @@ export class PiKanbanServer {
   private readonly onStopRun: StopRunFn | null
   private readonly onGetSlots: GetSlotsFn | null
   private readonly onGetRunQueueStatus: GetRunQueueStatusFn | null
+  private readonly onManualSelfHealRecover: ManualSelfHealRecoverFn | null
   private readonly defaultPort: number
   private readonly smartRepair: SmartRepairService
   private readonly imageManager?: ContainerImageManager
@@ -239,6 +241,7 @@ export class PiKanbanServer {
       onStopRun?: StopRunFn  // Unified stop with destructive option
       onGetSlots?: GetSlotsFn
       onGetRunQueueStatus?: GetRunQueueStatusFn
+      onManualSelfHealRecover?: ManualSelfHealRecoverFn
       settings?: InfrastructureSettings
       projectRoot?: string
     } = {},
@@ -257,6 +260,7 @@ export class PiKanbanServer {
     this.onStopRun = opts.onStopRun ?? null
     this.onGetSlots = opts.onGetSlots ?? null
     this.onGetRunQueueStatus = opts.onGetRunQueueStatus ?? null
+    this.onManualSelfHealRecover = opts.onManualSelfHealRecover ?? null
 
     // Container mode is the default - only disabled when explicitly set to false
     if (opts.settings?.workflow?.container?.enabled !== false) {
@@ -431,7 +435,7 @@ export class PiKanbanServer {
   }
 
   async start(port = this.defaultPort): Promise<number> {
-    if (this.server) return this.server.port
+    if (this.server) return this.server.port ?? this.defaultPort
 
     // Prepare container image if autoPrepare is enabled
     // CRITICAL: If container mode is enabled, image preparation MUST succeed
@@ -485,7 +489,7 @@ export class PiKanbanServer {
         }
 
         if (url.pathname === "/ws") {
-          if (server.upgrade(req)) return undefined
+          if (server.upgrade(req, { data: undefined })) return undefined
           return this.withCors(this.text("Upgrade failed", 500))
         }
 
@@ -505,7 +509,7 @@ export class PiKanbanServer {
       },
     })
 
-    return this.server.port
+    return this.server.port ?? this.defaultPort
   }
 
   stop(): void {
@@ -530,7 +534,7 @@ export class PiKanbanServer {
       try {
         const content = await readEmbeddedFile(filePath)
         const contentType = getContentType(params.file)
-        return new Response(content, { headers: { "Content-Type": contentType } })
+        return new Response(content as unknown as BodyInit, { headers: { "Content-Type": contentType } })
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error)
         return new Response(`Failed to read file: ${errorMessage}`, { status: 500 })
@@ -982,6 +986,52 @@ export class PiKanbanServer {
       }
     })
 
+    this.router.get("/api/runs/:id/self-heal-reports", ({ params, json }) => {
+      const run = this.db.getWorkflowRun(params.id)
+      if (!run) {
+        return json({ error: "Run not found" }, 404)
+      }
+      return json(this.db.getSelfHealReportsForRun(params.id))
+    })
+
+    this.router.get("/api/tasks/:id/self-heal-reports", ({ params, json }) => {
+      const task = this.db.getTask(params.id)
+      if (!task) {
+        return json({ error: "Task not found" }, 404)
+      }
+      const runs = this.db.getWorkflowRuns().filter((run) => run.taskOrder.includes(params.id))
+      const reports = runs.flatMap((run) => this.db.getSelfHealReportsForRun(run.id).filter((report) => report.taskId === params.id))
+      return json(reports)
+    })
+
+    this.router.post("/api/tasks/:id/self-heal-recover", async ({ params, req, json }) => {
+      if (!this.onManualSelfHealRecover) return json({ error: "Manual self-heal recovery not available" }, 503)
+      const task = this.db.getTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
+
+      let body: Record<string, unknown>
+      try {
+        body = await req.json()
+      } catch {
+        return json({ error: "Invalid JSON body" }, 400)
+      }
+
+      const reportId = typeof body.reportId === "string" ? body.reportId.trim() : ""
+      if (!reportId) return json({ error: "reportId is required" }, 400)
+
+      const action = body.action
+      if (action !== "restart_task" && action !== "keep_failed") {
+        return json({ error: "action must be 'restart_task' or 'keep_failed'" }, 400)
+      }
+
+      const report = this.db.getSelfHealReport(reportId)
+      if (!report) return json({ error: "Self-heal report not found" }, 404)
+      if (report.taskId !== params.id) return json({ error: "Report does not belong to this task" }, 400)
+
+      const result = await this.onManualSelfHealRecover(params.id, reportId, action)
+      return json(result)
+    })
+
     this.router.delete("/api/runs/:id", ({ params, json, broadcast }) => {
       const run = this.db.getWorkflowRun(params.id)
       if (!run || run.isArchived) return json({ error: "Run not found" }, 404)
@@ -1112,7 +1162,7 @@ export class PiKanbanServer {
     this.router.post("/api/runs/:id/pause", async ({ params, json, broadcast }) => {
       try {
         if (this.onPauseRun) {
-          const result = await this.onPauseRun(params.id)
+          const result = await this.onPauseRun(params.id) as { success: boolean; run: import("../types.ts").WorkflowRun } | null
           if (result && result.success) {
             broadcast({ type: "run_paused", payload: { runId: params.id } })
             return json({ success: true, run: result.run })
@@ -2176,7 +2226,7 @@ Please confirm when you've created the tasks and group, and provide a summary of
         errorMessage: body.errorMessage,
       })
 
-      const withUrl = { ...updated, sessionUrl: this.sessionUrlFor(updated.id) }
+      const withUrl = { ...updated!, sessionUrl: this.sessionUrlFor(updated!.id) }
       broadcast({ type: "planning_session_updated", payload: withUrl })
       return json(withUrl)
     })
@@ -2450,7 +2500,7 @@ Please confirm when you've created the tasks and group, and provide a summary of
                 status: finalStatus,
                 completedAt: Math.floor(Date.now() / 1000),
                 logs: allLogs,
-                errorMessage: status.errorMessage ?? null,
+                errorMessage: status.errorMessage ?? undefined,
               })
 
               if (status.status === "success") {
@@ -2480,7 +2530,7 @@ Please confirm when you've created the tasks and group, and provide a summary of
           if (result.logs.length > 0) {
             this.db.updateContainerBuild(buildId, {
               logs: result.logs.join("\n"),
-              errorMessage: result.errorMessage ?? null,
+              errorMessage: result.errorMessage ?? undefined,
             })
           }
         }).catch((error) => {

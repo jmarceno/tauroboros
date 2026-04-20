@@ -21,6 +21,8 @@ export type {
   UpdateTaskInput,
   UpdateWorkflowRunInput,
   UpsertPromptTemplateInput,
+  SelfHealReport,
+  CreateSelfHealReportInput,
   ContainerPackage,
   ContainerBuild,
   ContainerConfig,

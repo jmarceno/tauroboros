@@ -397,6 +397,17 @@ export function TaskCard(props: TaskCardProps) {
           </span>
         </Show>
 
+        <Show when={props.task.selfHealStatus !== 'idle'}>
+          <span
+            class={`task-tag ${props.task.selfHealStatus === 'investigating'
+              ? 'border-accent-info/30 text-accent-info animate-pulse'
+              : 'border-accent-warning/30 text-accent-warning'}`}
+            title={props.task.selfHealMessage || 'Self-healing in progress'}
+          >
+            self-healing: {props.task.selfHealStatus}
+          </span>
+        </Show>
+
         <Show when={props.group && props.showGroupIndicator}>
           <span
             class="task-tag flex items-center gap-1"

@@ -27,6 +27,7 @@ export type SelectionMode = "pick_best" | "synthesize" | "pick_or_synthesize"
 export type WorkflowRunKind = "all_tasks" | "single_task" | "workflow_review" | "group_tasks"
 
 export type WorkflowRunStatus = "queued" | "running" | "paused" | "stopping" | "completed" | "failed"
+export type SelfHealStatus = "idle" | "investigating" | "recovering"
 
 export interface RunContext {
   id: string
@@ -157,6 +158,33 @@ export interface Task {
   containerImage?: string
   codeStyleReview: boolean
   groupId?: string
+  selfHealStatus: SelfHealStatus
+  selfHealMessage: string | null
+  selfHealReportId: string | null
+}
+
+export interface SelfHealReport {
+  id: string
+  runId: string
+  taskId: string
+  taskStatus: TaskStatus
+  errorMessage: string | null
+  diagnosticsSummary: string
+  rootCauses: string[]
+  proposedSolution: string
+  implementationPlan: string[]
+  recoverable: boolean
+  recommendedAction: "restart_task" | "keep_failed"
+  actionRationale: string
+  sourceMode: "local" | "github_clone" | "github_metadata_only"
+  sourcePath: string | null
+  githubUrl: string
+  tauroborosVersion: string
+  dbPath: string
+  dbSchemaJson: Record<string, unknown>
+  rawResponse: string
+  createdAt: number
+  updatedAt: number
 }
 
 export interface WorkflowRun {
@@ -386,6 +414,10 @@ export type WSMessageType =
   // Group execution lifecycle events (broadcast when group execution is implemented)
   | "group_execution_started"
   | "group_execution_complete"
+  | "group_task_added"
+  | "group_task_removed"
+  | "container_profile_created"
+  | "self_heal_status"
 
 export interface WSMessage {
   type: WSMessageType
@@ -400,7 +432,7 @@ export interface ImageStatusPayload {
 }
 
 export interface ReviewResult {
-  status: "pass" | "gaps_found" | "blocked"
+  status: "pass" | "gaps_found" | "blocked" | "json_parse_max_retries"
   summary: string
   gaps: string[]
   recommendedPrompt: string

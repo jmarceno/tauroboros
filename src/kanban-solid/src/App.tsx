@@ -40,6 +40,7 @@ import {
   StatsTab,
   ContainersTab,
   ArchivedTasksTab,
+  SelfHealReportsTab,
   TabBar,
   // Modal components
   ApproveModal,
@@ -270,6 +271,32 @@ function App() {
         }, 2000)
       }
     })
+    const unsubSelfHeal = wsStore.on('self_heal_status', (payload) => {
+      const event = payload as {
+        status?: string
+        message?: string
+      }
+
+      if (event.status === 'investigating') {
+        uiStore.showToast(event.message || 'Self-healing investigation started', 'info')
+        return
+      }
+      if (event.status === 'recovering') {
+        uiStore.showToast(event.message || 'Self-healing is preparing recovery', 'info')
+        return
+      }
+      if (event.status === 'recovered') {
+        uiStore.showToast(event.message || 'Self-healing recovered the task', 'success')
+        return
+      }
+      if (event.status === 'manual_required') {
+        uiStore.showToast(event.message || 'Self-healing needs manual follow-up', 'warning')
+        return
+      }
+      if (event.status === 'error') {
+        uiStore.showToast(event.message || 'Self-healing failed', 'error')
+      }
+    })
 
     // Setup planning chat WebSocket handlers
     const unsubPlanningHandlers = planningChatStore.setupWebSocketHandlers()
@@ -281,6 +308,7 @@ function App() {
       unsubRunUpdated()
       unsubGroupUpdated()
       unsubSessionMessage()
+      unsubSelfHeal()
       unsubPlanningHandlers()
     })
   })
@@ -751,6 +779,10 @@ function App() {
 
         <Show when={tabStore.activeTab() === 'stats'}>
           <StatsTab />
+        </Show>
+
+        <Show when={tabStore.activeTab() === 'self-heal'}>
+          <SelfHealReportsTab />
         </Show>
 
         <TabbedLogPanel

@@ -129,7 +129,7 @@ export class PiContainerManager {
   private mockServerManager?: MockServerManager
 
   constructor(
-    imageName = BASE_IMAGES.piAgent,
+    imageName: string = BASE_IMAGES.piAgent,
     imageManager?: ContainerImageManager,
   ) {
     this.imageName = imageName

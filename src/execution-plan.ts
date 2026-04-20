@@ -214,6 +214,7 @@ export interface ExecutionGraph {
   edges: { from: string; to: string }[]
   totalTasks: number
   parallelLimit: number
+  warnings?: string[]
   pendingApprovals?: {
     id: string
     name: string
