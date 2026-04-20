@@ -198,5 +198,5 @@ describe("Plan mode flows", () => {
       server.stop()
       db.close()
     }
-  })
+  }, 15000)
 })

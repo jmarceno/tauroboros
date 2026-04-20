@@ -1613,20 +1613,67 @@ export class PiKanbanServer {
         throw new Error(`Task ${task.id} has invalid planRevisionCount: expected number, got ${typeof task.planRevisionCount}`)
       }
 
-      const updated = this.db.updateTask(task.id, {
-        status: "backlog",
+      const feedback = body.feedback.trim()
+      const nextPlanRevisionCount = task.planRevisionCount + 1
+      const nextAgentOutput = `${task.agentOutput}\n[user-revision-request]\n${feedback}\n`
+
+      const startRevisionRunWhenReady = async (maxAttempts: number, delayMs: number): Promise<WorkflowRun | null> => {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          const activeRun = this.db.getActiveWorkflowRunForTask(task.id)
+          if (activeRun) {
+            await Bun.sleep(delayMs)
+            continue
+          }
+
+          const prepared = this.db.updateTask(task.id, {
+            status: "backlog",
+            awaitingPlanApproval: false,
+            executionPhase: "plan_revision_pending",
+            planRevisionCount: nextPlanRevisionCount,
+            agentOutput: nextAgentOutput,
+          })
+          if (!prepared) {
+            throw new Error(`Task ${task.id} disappeared while queuing a plan revision run`)
+          }
+
+          const normalizedPrepared = normalizeTaskForClient(prepared, sessionUrlFor)
+          broadcast({ type: "task_updated", payload: normalizedPrepared })
+          broadcast({ type: "plan_revision_requested", payload: { taskId: task.id } })
+          return await this.onStartSingle(task.id)
+        }
+
+        return null
+      }
+
+      const run = await startRevisionRunWhenReady(24, 50)
+      if (run) {
+        const taskForResponse = this.db.getTask(task.id)
+        if (!taskForResponse) {
+          throw new Error(`Task ${task.id} not found after scheduling plan revision run`)
+        }
+        return json({ task: normalizeTaskForClient(taskForResponse, sessionUrlFor), run })
+      }
+
+      // If previous run is still unwinding, queue retry in background and return pending state.
+      void (async () => {
+        try {
+          const queuedRun = await startRevisionRunWhenReady(200, 100)
+          if (!queuedRun) {
+            console.error(`[plan-revision] Timed out queuing revision run for ${task.id} after prior run remained active`)
+          }
+        } catch (error) {
+          console.error(`[plan-revision] Failed to queue revision run for ${task.id}:`, error)
+        }
+      })()
+
+      const pendingTask: Task = {
+        ...task,
         awaitingPlanApproval: false,
         executionPhase: "plan_revision_pending",
-        planRevisionCount: task.planRevisionCount + 1,
-        agentOutput: `${task.agentOutput}\n[user-revision-request]\n${body.feedback.trim()}\n`,
-      })
-
-      if (!updated) return json({ error: "Task not found" }, 404)
-      const normalized = normalizeTaskForClient(updated, sessionUrlFor)
-      broadcast({ type: "task_updated", payload: normalized })
-      broadcast({ type: "plan_revision_requested", payload: { taskId: task.id } })
-      const run = await this.onStartSingle(task.id)
-      return json({ task: normalized, run })
+        planRevisionCount: nextPlanRevisionCount,
+        agentOutput: nextAgentOutput,
+      }
+      return json({ task: normalizeTaskForClient(pendingTask, sessionUrlFor), run: null, queued: true })
     })
 
     this.router.post("/api/tasks/:id/request-revision", async ({ params, req, json, sessionUrlFor, broadcast }) => {
@@ -1642,20 +1689,67 @@ export class PiKanbanServer {
         throw new Error(`Task ${task.id} has invalid planRevisionCount: expected number, got ${typeof task.planRevisionCount}`)
       }
 
-      const updated = this.db.updateTask(task.id, {
-        status: "backlog",
+      const feedback = body.feedback.trim()
+      const nextPlanRevisionCount = task.planRevisionCount + 1
+      const nextAgentOutput = `${task.agentOutput}\n[user-revision-request]\n${feedback}\n`
+
+      const startRevisionRunWhenReady = async (maxAttempts: number, delayMs: number): Promise<WorkflowRun | null> => {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          const activeRun = this.db.getActiveWorkflowRunForTask(task.id)
+          if (activeRun) {
+            await Bun.sleep(delayMs)
+            continue
+          }
+
+          const prepared = this.db.updateTask(task.id, {
+            status: "backlog",
+            awaitingPlanApproval: false,
+            executionPhase: "plan_revision_pending",
+            planRevisionCount: nextPlanRevisionCount,
+            agentOutput: nextAgentOutput,
+          })
+          if (!prepared) {
+            throw new Error(`Task ${task.id} disappeared while queuing a plan revision run`)
+          }
+
+          const normalizedPrepared = normalizeTaskForClient(prepared, sessionUrlFor)
+          broadcast({ type: "task_updated", payload: normalizedPrepared })
+          broadcast({ type: "plan_revision_requested", payload: { taskId: task.id } })
+          return await this.onStartSingle(task.id)
+        }
+
+        return null
+      }
+
+      const run = await startRevisionRunWhenReady(24, 50)
+      if (run) {
+        const taskForResponse = this.db.getTask(task.id)
+        if (!taskForResponse) {
+          throw new Error(`Task ${task.id} not found after scheduling plan revision run`)
+        }
+        return json({ task: normalizeTaskForClient(taskForResponse, sessionUrlFor), run })
+      }
+
+      // If previous run is still unwinding, queue retry in background and return pending state.
+      void (async () => {
+        try {
+          const queuedRun = await startRevisionRunWhenReady(200, 100)
+          if (!queuedRun) {
+            console.error(`[plan-revision] Timed out queuing revision run for ${task.id} after prior run remained active`)
+          }
+        } catch (error) {
+          console.error(`[plan-revision] Failed to queue revision run for ${task.id}:`, error)
+        }
+      })()
+
+      const pendingTask: Task = {
+        ...task,
         awaitingPlanApproval: false,
         executionPhase: "plan_revision_pending",
-        planRevisionCount: task.planRevisionCount + 1,
-        agentOutput: `${task.agentOutput}\n[user-revision-request]\n${body.feedback.trim()}\n`,
-      })
-
-      if (!updated) return json({ error: "Task not found" }, 404)
-      const normalized = normalizeTaskForClient(updated, sessionUrlFor)
-      broadcast({ type: "task_updated", payload: normalized })
-      broadcast({ type: "plan_revision_requested", payload: { taskId: task.id } })
-      const run = await this.onStartSingle(task.id)
-      return json({ task: normalized, run })
+        planRevisionCount: nextPlanRevisionCount,
+        agentOutput: nextAgentOutput,
+      }
+      return json({ task: normalizeTaskForClient(pendingTask, sessionUrlFor), run: null, queued: true })
     })
 
     this.router.post("/api/tasks/:id/reset", async ({ params, json, sessionUrlFor, broadcast }) => {

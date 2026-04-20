@@ -1141,8 +1141,8 @@ describe("PiKanbanDB", () => {
           name: "Task 1",
           prompt: "P1",
           status: "backlog",
-          createdAt: now - 3600,
         })
+        db.getRawHandle().prepare("UPDATE tasks SET created_at = ? WHERE id = ?").run(now - 3600, "duration-task-1")
 
         const duration = db.getAverageTaskDuration()
         expect(duration).toBe(0)
@@ -1192,6 +1192,7 @@ describe("PiKanbanDB", () => {
       it("returns hourly data for last 24 hours", () => {
         const { db } = createTempDb()
         const now = Math.floor(Date.now() / 1000)
+        const anchor = now - (now % 3600) - 1800
 
         db.createWorkflowSession({
           id: "hourly-session",
@@ -1201,7 +1202,7 @@ describe("PiKanbanDB", () => {
 
         db.createSessionMessage({
           sessionId: "hourly-session",
-          timestamp: now - 7200,
+          timestamp: anchor - 7200,
           role: "assistant",
           messageType: "assistant_response",
           contentJson: { text: "msg1" },
@@ -1211,7 +1212,7 @@ describe("PiKanbanDB", () => {
 
         db.createSessionMessage({
           sessionId: "hourly-session",
-          timestamp: now - 6900,
+          timestamp: anchor - 6900,
           role: "assistant",
           messageType: "assistant_response",
           contentJson: { text: "msg2" },
@@ -1221,7 +1222,7 @@ describe("PiKanbanDB", () => {
 
         db.createSessionMessage({
           sessionId: "hourly-session",
-          timestamp: now - 18000,
+          timestamp: anchor - 18000,
           role: "assistant",
           messageType: "assistant_response",
           contentJson: { text: "msg3" },
@@ -1231,7 +1232,7 @@ describe("PiKanbanDB", () => {
 
         db.createSessionMessage({
           sessionId: "hourly-session",
-          timestamp: now - 90000,
+          timestamp: anchor - 90000,
           role: "assistant",
           messageType: "assistant_response",
           contentJson: { text: "msg4" },

@@ -230,6 +230,25 @@ export class PiOrchestrator {
     return status === "done" || status === "failed" || status === "stuck"
   }
 
+  private isTaskRunTerminal(task: Task): boolean {
+    if (this.isTaskTerminalStatus(task.status)) {
+      return true
+    }
+
+    // Plan mode pauses at manual approval with status=review; treat this as run-terminal
+    // so the current run can complete and the next plan revision/implementation run can start.
+    if (
+      task.planmode
+      && task.status === "review"
+      && task.awaitingPlanApproval
+      && task.executionPhase === "plan_complete_waiting_approval"
+    ) {
+      return true
+    }
+
+    return false
+  }
+
   private shouldCheckAutoDeploy(kind: WorkflowRun["kind"]): boolean {
     return kind !== "single_task"
   }
@@ -547,8 +566,8 @@ export class PiOrchestrator {
     if (!run) return
 
     const completedCount = run.taskOrder.reduce((count, taskId) => {
-      const status = this.db.getTask(taskId)?.status
-      return status && this.isTaskTerminalStatus(status) ? count + 1 : count
+      const task = this.db.getTask(taskId)
+      return task && this.isTaskRunTerminal(task) ? count + 1 : count
     }, 0)
 
     const currentTaskId = this.scheduler.getExecutingStates(runId)[0]?.taskId
@@ -635,7 +654,7 @@ export class PiOrchestrator {
       throw new Error(`Run ${runId} references missing tasks`)
     }
 
-    if (tasks.some((task) => !this.isTaskTerminalStatus(task.status))) {
+    if (tasks.some((task) => !this.isTaskRunTerminal(task))) {
       await this.refreshRunProgress(runId)
       return
     }
