@@ -797,7 +797,13 @@ export class PiOrchestrator {
       } finally {
         this.activeTaskIds.delete(taskId)
 
-        const latestTask = this.db.getTask(taskId)
+        let latestTask: Task | null
+        try {
+          latestTask = this.db.getTask(taskId)
+        } catch {
+          // DB was closed (e.g. during test teardown) before the background task completed; abort gracefully.
+          return
+        }
         if (!latestTask) {
           await this.triggerScheduling()
           return
