@@ -95,7 +95,6 @@ export function ContainersTab() {
       ])
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to load container data'
-      console.error('Container tab initialization failed:', errorMessage)
       setError(`Failed to load container data: ${errorMessage}`)
     }
   })
@@ -116,7 +115,6 @@ export function ContainersTab() {
         setOriginalDockerfile(data.dockerfile)
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : 'Failed to load Dockerfile'
-        console.error('Failed to load Dockerfile:', errorMessage)
         setError(`Failed to load Dockerfile: ${errorMessage}`)
       }
     }
@@ -144,7 +142,9 @@ export function ContainersTab() {
 
       if (!response.ok) {
         const error = await response.json()
-        throw new Error(error.error || 'Failed to start build')
+        setIsBuilding(false)
+        alert(error.error || 'Failed to start build')
+        return
       }
 
       const data = await response.json()
@@ -168,7 +168,10 @@ export function ContainersTab() {
         })
 
         if (build === undefined) {
-          throw new Error(`Build ${buildId} not found in status response`)
+          setIsBuilding(false)
+          setCurrentBuildId(null)
+          alert(`Build ${buildId} not found in status response`)
+          return
         }
 
         const typedBuild = build as ContainerBuild
@@ -188,7 +191,6 @@ export function ContainersTab() {
         pollTimeout = setTimeout(checkStatus, 2000)
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : 'Build status check failed'
-        console.error('Build polling error:', errorMessage)
         setIsBuilding(false)
         setCurrentBuildId(null)
         setError(`Build polling failed: ${errorMessage}. Build may still be running in the background.`)

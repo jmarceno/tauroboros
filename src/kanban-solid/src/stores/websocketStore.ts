@@ -37,7 +37,6 @@ export function createWebSocketStore() {
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${proto}//${location.host}/ws`
-    console.log('[WebSocket] Connecting to:', wsUrl)
 
     const newWs = new WebSocket(wsUrl)
     wsRef = newWs
@@ -48,37 +47,30 @@ export function createWebSocketStore() {
       const wasReconnect = reconnectAttemptsRef > 0
       reconnectAttemptsRef = 0
       setReconnectAttempts(0)
-      console.log('[WebSocket] Connected')
       if (wasReconnect && reconnectCallback) {
-        console.log('[WebSocket] Triggering state resync after reconnection')
         reconnectCallback()
       }
     }
 
     newWs.onclose = () => {
       setIsConnected(false)
-      console.log('[WebSocket] Disconnected')
       if (intentionalClose) {
         intentionalClose = false
         return
       }
       if (reconnectAttemptsRef < MAX_RECONNECT_ATTEMPTS) {
         const delay = getReconnectDelay()
-        console.log(`[WebSocket] Reconnecting in ${Math.round(delay)}ms (attempt ${reconnectAttemptsRef + 1}/${MAX_RECONNECT_ATTEMPTS})`)
         reconnectTimer = setTimeout(() => {
           reconnectAttemptsRef++
           setReconnectAttempts(reconnectAttemptsRef)
           connect()
         }, delay)
-      } else {
-        console.warn('[WebSocket] Max reconnect attempts reached')
       }
     }
 
     newWs.onmessage = (event) => {
       try {
         const message: WSMessage = JSON.parse(event.data)
-        console.log('[WebSocket] Message received:', message.type)
         const typeHandlers = handlers.get(message.type)
         if (typeHandlers) {
           typeHandlers.forEach(handler => handler(message.payload))

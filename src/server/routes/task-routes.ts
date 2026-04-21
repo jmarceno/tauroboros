@@ -219,7 +219,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     const rawRequirements = Array.isArray(body.requirements) ? body.requirements : []
     const validRequirements = rawRequirements.filter((reqId: string) => {
       if (!allValidTaskIds.has(reqId)) {
-        console.warn(`[server] Task creation: Removing invalid dependency "${reqId}"`)
+        Effect.runSync(Effect.logWarning(`[server] Task creation: Removing invalid dependency "${reqId}"`))
         return false
       }
       return true

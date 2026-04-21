@@ -173,8 +173,8 @@ export function ChatMessage(props: ChatMessageProps) {
           try {
             const result = hljs.highlight(block.content, { language: block.language || 'plaintext' })
             next.set(block.content, result.value)
-          } catch (err) {
-            console.error('Failed to highlight code:', err)
+          } catch {
+            // Failed to highlight code - use plain text
             next.set(block.content, block.content)
           }
         }

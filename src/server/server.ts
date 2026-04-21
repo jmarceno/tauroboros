@@ -331,8 +331,8 @@ export class PiKanbanServer {
         await this.imageManager.prepare()
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        console.error("[server] CRITICAL: Failed to prepare container image:", message)
-        console.error("[server] Container mode is enabled but image preparation failed. Server cannot start.")
+        Effect.runSync(Effect.logError(`[server] CRITICAL: Failed to prepare container image: ${message}`))
+        Effect.runSync(Effect.logError("[server] Container mode is enabled but image preparation failed. Server cannot start."))
         failServerRuntime(
           "start",
           `Container mode is enabled but image preparation failed: ${message}. ` +
@@ -346,8 +346,8 @@ export class PiKanbanServer {
     if (this.settings?.workflow?.container?.enabled !== false && this.containerManager) {
       const setupStatus = await this.containerManager.validateSetup()
       if (!setupStatus.podman) {
-        console.error("[server] CRITICAL: Container mode is enabled but Podman is not available.")
-        console.error("[server] Install Podman or explicitly disable container mode in .tauroboros/settings.json")
+        Effect.runSync(Effect.logError("[server] CRITICAL: Container mode is enabled but Podman is not available."))
+        Effect.runSync(Effect.logError("[server] Install Podman or explicitly disable container mode in .tauroboros/settings.json"))
         failServerRuntime(
           "start",
           "Container mode is enabled but Podman is not available. " +
@@ -355,7 +355,7 @@ export class PiKanbanServer {
         )
       }
       if (!setupStatus.image) {
-        console.error("[server] CRITICAL: Container mode is enabled but container image is not available.")
+        Effect.runSync(Effect.logError("[server] CRITICAL: Container mode is enabled but container image is not available."))
         failServerRuntime(
           "start",
           "Container mode is enabled but container image is not available. " +

@@ -398,7 +398,9 @@ export class PiRpcProcess {
       try {
         proc.kill()
       } catch (err) {
-        console.error(`[pi-process] Error killing process during close:`, err)
+        yield* Effect.logError(`[pi-process] Error killing process during close`).pipe(
+          Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
+        )
       }
 
       const exitCode = yield* Effect.tryPromise({
@@ -447,7 +449,9 @@ export class PiRpcProcess {
         try {
           listener(killEvent)
         } catch (err) {
-          console.error(`[pi-process] Error in event listener during force kill:`, err)
+          yield* Effect.logError(`[pi-process] Error in event listener during force kill`).pipe(
+            Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
+          )
         }
       }
       this.eventListeners.clear()
@@ -460,7 +464,9 @@ export class PiRpcProcess {
           proc.kill(15) // SIGTERM
         }
       } catch (err) {
-        console.error(`[pi-process] Error during force kill:`, err)
+        yield* Effect.logError(`[pi-process] Error during force kill`).pipe(
+          Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
+        )
       }
 
       // Don't wait for exit - force kill is immediate
@@ -587,7 +593,11 @@ export class PiRpcProcess {
       try {
         listener(parsed)
       } catch (err) {
-        console.error(`[pi-process] Error in event listener:`, err)
+        Effect.runSync(
+          Effect.logError(`[pi-process] Error in event listener`).pipe(
+            Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
+          ),
+        )
       }
     }
 

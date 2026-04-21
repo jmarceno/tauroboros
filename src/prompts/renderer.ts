@@ -1,3 +1,4 @@
+import { Effect, Schema } from "effect"
 import type {
   AggregatedReviewResult,
   Options,
@@ -10,6 +11,16 @@ import type {
   PromptTemplate,
   PromptTemplateKey,
 } from "../db/types.ts"
+
+/**
+ * Error for prompt rendering failures
+ */
+export class PromptRenderError extends Schema.TaggedError<PromptRenderError>()("PromptRenderError", {
+  operation: Schema.String,
+  message: Schema.String,
+  key: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 type PromptTemplateStore = {
   getPromptTemplate: (key: PromptTemplateKey | string) => PromptTemplate | null
@@ -36,19 +47,41 @@ export function renderTemplate(template: Pick<PromptTemplate, "templateText">, v
   })
 }
 
+export function renderPromptEffect(
+  db: PromptTemplateStore,
+  key: PromptTemplateKey | string,
+  variables: Record<string, unknown> = {},
+): Effect.Effect<PromptRenderResult, PromptRenderError> {
+  return Effect.gen(function* () {
+    const template = db.getPromptTemplate(key)
+    if (!template) {
+      return yield* new PromptRenderError({
+        operation: "renderPrompt",
+        message: `Prompt template not found or inactive: ${key}`,
+        key,
+      })
+    }
+    return {
+      template,
+      renderedText: renderTemplate(template, variables),
+    }
+  })
+}
+
+/** @deprecated Use renderPromptEffect instead */
 export function renderPrompt(
   db: PromptTemplateStore,
   key: PromptTemplateKey | string,
   variables: Record<string, unknown> = {},
 ): PromptRenderResult {
-  const template = db.getPromptTemplate(key)
-  if (!template) {
-    throw new Error(`Prompt template not found or inactive: ${key}`)
+  const result = Effect.runSync(renderPromptEffect(db, key, variables).pipe(
+    Effect.catchAll((error: PromptRenderError) => Effect.fail(new Error(error.message))),
+    Effect.either,
+  ))
+  if (result._tag === "Left") {
+    throw result.left
   }
-  return {
-    template,
-    renderedText: renderTemplate(template, variables),
-  }
+  return result.right
 }
 
 function asAdditionalContextBlock(extraPrompt?: string): string {

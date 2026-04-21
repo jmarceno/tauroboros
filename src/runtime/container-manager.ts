@@ -196,7 +196,7 @@ export class PiContainerManager {
 
     fs.mkdirSync(piDir, { recursive: true })
     fs.writeFileSync(modelsJsonPath, JSON.stringify(modelsJson, null, 2))
-    console.log(`[container-manager] Generated models.json at ${modelsJsonPath}`)
+    Effect.runSync(Effect.logInfo(`[container-manager] Generated models.json at ${modelsJsonPath}`))
   }
 
   /**
@@ -270,7 +270,7 @@ export class PiContainerManager {
       execSync("podman --version", { stdio: "pipe" })
       return true
     } catch (err) {
-      console.debug(`[container-manager] Podman not available:`, err)
+      Effect.runSync(Effect.logDebug(`[container-manager] Podman not available: ${err instanceof Error ? err.message : String(err)}`))
       return false
     }
   }
@@ -393,7 +393,7 @@ export class PiContainerManager {
       } catch (err) {
         // Container not ready yet, continue polling
         // This is expected during startup polling, so we only log at debug level
-        console.debug(`[container-manager] Container not ready yet during polling:`, err)
+        Effect.runSync(Effect.logDebug(`[container-manager] Container not ready yet during polling: ${err instanceof Error ? err.message : String(err)}`))
       }
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
     }
@@ -439,7 +439,7 @@ export class PiContainerManager {
               try {
                 controller.enqueue(new Uint8Array(data))
               } catch (err) {
-                console.debug(`[container-manager] stdout controller already closed:`, err)
+                Effect.runSync(Effect.logDebug(`[container-manager] stdout controller already closed: ${err instanceof Error ? err.message : String(err)}`))
               }
             }
           })
@@ -450,7 +450,7 @@ export class PiContainerManager {
               try {
                 controller.close()
               } catch (err) {
-                console.debug(`[container-manager] stdout controller already closed on end:`, err)
+                Effect.runSync(Effect.logDebug(`[container-manager] stdout controller already closed on end: ${err instanceof Error ? err.message : String(err)}`))
               }
             }
           })
@@ -461,7 +461,7 @@ export class PiContainerManager {
               try {
                 controller.error(err)
               } catch (closeErr) {
-                console.error(`[container-manager] Failed to error stdout controller:`, closeErr)
+                Effect.runSync(Effect.logError(`[container-manager] Failed to error stdout controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`))
               }
             }
           })
@@ -482,7 +482,7 @@ export class PiContainerManager {
               try {
                 controller.enqueue(new Uint8Array(data))
               } catch (err) {
-                console.debug(`[container-manager] stderr controller already closed:`, err)
+                Effect.runSync(Effect.logDebug(`[container-manager] stderr controller already closed: ${err instanceof Error ? err.message : String(err)}`))
               }
             }
           })
@@ -493,7 +493,7 @@ export class PiContainerManager {
               try {
                 controller.close()
               } catch (err) {
-                console.debug(`[container-manager] stderr controller already closed on end:`, err)
+                Effect.runSync(Effect.logDebug(`[container-manager] stderr controller already closed on end: ${err instanceof Error ? err.message : String(err)}`))
               }
             }
           })
@@ -504,7 +504,7 @@ export class PiContainerManager {
               try {
                 controller.error(err)
               } catch (closeErr) {
-                console.error(`[container-manager] Failed to error stderr controller:`, closeErr)
+                Effect.runSync(Effect.logError(`[container-manager] Failed to error stderr controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`))
               }
             }
           })
@@ -519,7 +519,7 @@ export class PiContainerManager {
             proc.kill()
           }
         } catch (err) {
-          console.debug(`[container-manager] Error killing container (may already be stopped):`, err)
+          Effect.runSync(Effect.logDebug(`[container-manager] Error killing container (may already be stopped): ${err instanceof Error ? err.message : String(err)}`))
         }
         this.containers.delete(config.sessionId)
       },
@@ -570,7 +570,7 @@ export class PiContainerManager {
           }
         }
       } catch (err) {
-        console.debug(`[container-manager] Container ${sessionId} exists in map but inspection failed:`, err)
+        Effect.runSync(Effect.logDebug(`[container-manager] Container ${sessionId} exists in map but inspection failed: ${err instanceof Error ? err.message : String(err)}`))
       }
     }
 
@@ -622,7 +622,7 @@ export class PiContainerManager {
         running: isRunning,
       }
     } catch (err) {
-      console.debug(`[container-manager] Error checking container existence for ${sessionId}:`, err)
+      Effect.runSync(Effect.logDebug(`[container-manager] Error checking container existence for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`))
       return null
     }
   }
@@ -659,7 +659,7 @@ export class PiContainerManager {
         running: state === "running",
       }
     } catch (err) {
-      console.debug(`[container-manager] Error checking container by ID ${containerId}:`, err)
+      Effect.runSync(Effect.logDebug(`[container-manager] Error checking container by ID ${containerId}: ${err instanceof Error ? err.message : String(err)}`))
       return null
     }
   }
@@ -688,12 +688,12 @@ export class PiContainerManager {
     // Verify container exists and is running
     const containerInfo = await this.checkContainerById(containerId)
     if (!containerInfo?.running) {
-      console.log(`[container-manager] Container ${containerId} not running, cannot attach`)
+      Effect.runSync(Effect.logInfo(`[container-manager] Container ${containerId} not running, cannot attach`))
       return null
     }
 
     try {
-      console.log(`[container-manager] Attaching to existing container ${containerId} for session ${sessionId}`)
+      Effect.runSync(Effect.logInfo(`[container-manager] Attaching to existing container ${containerId} for session ${sessionId}`))
 
       // Spawn podman exec to create a new pi rpc session in the existing container
       // The -i flag keeps stdin open, allowing us to send commands
@@ -713,7 +713,7 @@ export class PiContainerManager {
 
       // Verify the exec session is still running by checking the process
       if (!proc.pid) {
-        console.error(`[container-manager] Failed to start podman exec for container ${containerId}`)
+        Effect.runSync(Effect.logError(`[container-manager] Failed to start podman exec for container ${containerId}`))
         return null
       }
 
@@ -751,7 +751,7 @@ export class PiContainerManager {
                 try {
                   controller.enqueue(new Uint8Array(data))
                 } catch (err) {
-                  console.debug(`[container-manager] attach stdout controller already closed:`, err)
+                  Effect.runSync(Effect.logDebug(`[container-manager] attach stdout controller already closed: ${err instanceof Error ? err.message : String(err)}`))
                 }
               }
             })
@@ -762,7 +762,7 @@ export class PiContainerManager {
                 try {
                   controller.close()
                 } catch (err) {
-                  console.debug(`[container-manager] attach stdout controller already closed on end:`, err)
+                  Effect.runSync(Effect.logDebug(`[container-manager] attach stdout controller already closed on end: ${err instanceof Error ? err.message : String(err)}`))
                 }
               }
             })
@@ -773,7 +773,7 @@ export class PiContainerManager {
                 try {
                   controller.error(err)
                 } catch (closeErr) {
-                  console.error(`[container-manager] Failed to error attach stdout controller:`, closeErr)
+                  Effect.runSync(Effect.logError(`[container-manager] Failed to error attach stdout controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`))
                 }
               }
             })
@@ -794,7 +794,7 @@ export class PiContainerManager {
                 try {
                   controller.enqueue(new Uint8Array(data))
                 } catch (err) {
-                  console.debug(`[container-manager] attach stderr controller already closed:`, err)
+                  Effect.runSync(Effect.logDebug(`[container-manager] attach stderr controller already closed: ${err instanceof Error ? err.message : String(err)}`))
                 }
               }
             })
@@ -805,7 +805,7 @@ export class PiContainerManager {
                 try {
                   controller.close()
                 } catch (err) {
-                  console.debug(`[container-manager] attach stderr controller already closed on end:`, err)
+                  Effect.runSync(Effect.logDebug(`[container-manager] attach stderr controller already closed on end: ${err instanceof Error ? err.message : String(err)}`))
                 }
               }
             })
@@ -816,7 +816,7 @@ export class PiContainerManager {
                 try {
                   controller.error(err)
                 } catch (closeErr) {
-                  console.error(`[container-manager] Failed to error attach stderr controller:`, closeErr)
+                  Effect.runSync(Effect.logError(`[container-manager] Failed to error attach stderr controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`))
                 }
               }
             })
@@ -835,10 +835,10 @@ export class PiContainerManager {
                 `pkill -f "pi.*${sessionId}" || true`
               ])
             } catch (err) {
-              console.debug(`[container-manager] pkill command failed (process may already be stopped):`, err)
+              Effect.runSync(Effect.logDebug(`[container-manager] pkill command failed (process may already be stopped): ${err instanceof Error ? err.message : String(err)}`))
             }
           } catch (err) {
-            console.debug(`[container-manager] Error killing attached container process:`, err)
+            Effect.runSync(Effect.logDebug(`[container-manager] Error killing attached container process: ${err instanceof Error ? err.message : String(err)}`))
           }
           this.containers.delete(sessionId)
         },
@@ -858,11 +858,11 @@ export class PiContainerManager {
       // Register in managed containers
       this.containers.set(sessionId, process)
 
-      console.log(`[container-manager] Successfully attached to container ${containerId}`)
+      Effect.runSync(Effect.logInfo(`[container-manager] Successfully attached to container ${containerId}`))
       return process
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      console.error(`[container-manager] Failed to attach to container ${containerId}: ${message}`)
+      Effect.runSync(Effect.logError(`[container-manager] Failed to attach to container ${containerId}: ${message}`))
       return null
     }
   }
@@ -879,7 +879,7 @@ export class PiContainerManager {
       this.containers.delete(sessionId)
       return true
     } catch (err) {
-      console.debug(`[container-manager] Failed to force kill container ${sessionId}:`, err)
+      Effect.runSync(Effect.logDebug(`[container-manager] Failed to force kill container ${sessionId}: ${err instanceof Error ? err.message : String(err)}`))
       return false
     }
   }
@@ -901,7 +901,7 @@ export class PiContainerManager {
       const check = await this.checkContainerExists(sessionId)
       return check?.running ?? false
     } catch (err) {
-      console.debug(`[container-manager] Failed to restart container ${sessionId}:`, err)
+      Effect.runSync(Effect.logDebug(`[container-manager] Failed to restart container ${sessionId}: ${err instanceof Error ? err.message : String(err)}`))
       return false
     }
   }
@@ -921,7 +921,7 @@ export class PiContainerManager {
       this.containers.delete(sessionId)
       return true
     } catch (err) {
-      console.debug(`[container-manager] Failed to remove container ${sessionId}:`, err)
+      Effect.runSync(Effect.logDebug(`[container-manager] Failed to remove container ${sessionId}: ${err instanceof Error ? err.message : String(err)}`))
       return false
     }
   }
@@ -938,7 +938,7 @@ export class PiContainerManager {
     for (let i = 0; i < killResults.length; i++) {
       const result = killResults[i]
       if (result.status === "rejected") {
-        console.error(`[container-manager] Failed to kill container at index ${i}:`, result.reason)
+        Effect.runSync(Effect.logError(`[container-manager] Failed to kill container at index ${i}: ${result.reason}`))
       }
     }
 
@@ -985,7 +985,7 @@ export class PiContainerManager {
 
       return containers
     } catch (err) {
-      console.debug(`[container-manager] Failed to list managed containers:`, err)
+      Effect.runSync(Effect.logDebug(`[container-manager] Failed to list managed containers: ${err instanceof Error ? err.message : String(err)}`))
       return []
     }
   }
@@ -1002,7 +1002,7 @@ export class PiContainerManager {
         await this.execPodman(["kill", info.containerId])
         killed++
       } catch (err) {
-        console.debug(`[container-manager] Failed to kill container ${info.containerId} during emergency stop:`, err)
+        Effect.runSync(Effect.logDebug(`[container-manager] Failed to kill container ${info.containerId} during emergency stop: ${err instanceof Error ? err.message : String(err)}`))
       }
     }
 
@@ -1094,7 +1094,7 @@ export class PiContainerManager {
 
       return result.sort((a, b) => b.createdAt - a.createdAt)
     } catch (err) {
-      console.error("[container-manager] Failed to list images:", err)
+      Effect.runSync(Effect.logError(`[container-manager] Failed to list images: ${err instanceof Error ? err.message : String(err)}`))
       return []
     }
   }

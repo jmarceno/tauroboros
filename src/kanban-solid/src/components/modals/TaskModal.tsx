@@ -164,10 +164,9 @@ export function TaskModal(props: TaskModalProps) {
 
     const errorMessage = tasksStore.error()
     if (errorMessage) {
-      throw new Error(errorMessage)
+      uiStore.showToast(`Task data could not be loaded: ${errorMessage}`, 'error')
+      return
     }
-
-    uiStore.showToast('Task data could not be loaded', 'error')
     props.onClose()
   })
 

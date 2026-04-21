@@ -21,7 +21,8 @@ const VARIANT_CLASSES: Record<ToastVariant, string> = {
 function getVariantClasses(variant: ToastVariant): string {
   const classes = VARIANT_CLASSES[variant]
   if (!classes) {
-    throw new Error(`Invalid toast variant: ${variant}. Expected one of: ${Object.keys(VARIANT_CLASSES).join(', ')}`)
+    // Invalid variant - fallback to info style
+    return VARIANT_CLASSES.info
   }
   return classes
 }

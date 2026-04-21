@@ -1,4 +1,13 @@
+import { Schema } from "effect"
 import { PROMPT_CATALOG, joinPrompt } from "./prompts/catalog.ts"
+
+/**
+ * Tagged error for container image resolution failures
+ */
+export class ContainerImageError extends Schema.TaggedError<ContainerImageError>()("ContainerImageError", {
+  operation: Schema.String,
+  message: Schema.String,
+}) {}
 
 export type TaskStatus = "template" | "backlog" | "queued" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
 export type AutoDeployCondition = "before_workflow_start" | "after_workflow_end" | "workflow_done" | "workflow_failed"
@@ -534,7 +543,10 @@ export function resolveContainerImage(
   if (systemImage) {
     return systemImage
   }
-  throw new Error("No container image available: task has no containerImage set and no system default is configured")
+  throw new ContainerImageError({
+    operation: "resolveContainerImage",
+    message: "No container image available: task has no containerImage set and no system default is configured",
+  })
 }
 
 // ============================================================================

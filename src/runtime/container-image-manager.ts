@@ -1,7 +1,17 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { dirname, join } from "path"
 import { spawn } from "child_process"
+import { Effect, Schema } from "effect"
 import type { PackageDefinition, ContainerConfig, ContainerProfile, PackageValidationResult, ContainerBuildResult, ContainerBuildStatus } from "../db/types.ts"
+
+/**
+ * Tagged error for container image manager operations
+ */
+export class ContainerImageManagerError extends Schema.TaggedError<ContainerImageManagerError>()("ContainerImageManagerError", {
+  operation: Schema.String,
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 // ===== Standalone Container Config Utilities (no ContainerImageManager instance required) =====
 
@@ -185,7 +195,7 @@ export class ContainerImageManager {
    */
   async prepare(): Promise<void> {
     if (this.isClosed) {
-      throw new Error("ContainerImageManager is closed")
+      throw new ContainerImageManagerError({ operation: "prepare", message: "ContainerImageManager is closed" })
     }
 
     // Fast path: if already prepared, return immediately
@@ -199,7 +209,7 @@ export class ContainerImageManager {
       await this.preparingPromise
       // After waiting, the image should be ready
       if (!this.isPrepared) {
-        throw new Error("Container image preparation failed")
+        throw new ContainerImageManagerError({ operation: "prepare", message: "Container image preparation failed" })
       }
       return
     }
@@ -289,11 +299,14 @@ export class ContainerImageManager {
       fullDockerfilePath = sourceDockerfilePath
       dockerfilePathForBuild = dockerfileRelativePath
     } else {
-      throw new Error(`Dockerfile not found at ${extractedDockerfilePath} or ${sourceDockerfilePath}`)
+      throw new ContainerImageManagerError({
+        operation: "buildFromDockerfile",
+        message: `Dockerfile not found at ${extractedDockerfilePath} or ${sourceDockerfilePath}`,
+      })
     }
 
-    console.log(`🔄 Building container image from ${dockerfilePathForBuild}...`)
-    console.log(`   This may take a minute on first run...`)
+    Effect.runSync(Effect.logInfo(`🔄 Building container image from ${dockerfilePathForBuild}...`))
+    Effect.runSync(Effect.logInfo(`   This may take a minute on first run...`))
 
     return new Promise((resolve, reject) => {
       const proc = spawn(
@@ -321,7 +334,7 @@ export class ContainerImageManager {
             lastLine = trimmed
             // Show progress for step completion
             if (trimmed.startsWith("STEP ")) {
-              console.log(`   ${trimmed}`)
+              Effect.runSync(Effect.logInfo(`   ${trimmed}`))
               this.updateStatus("preparing", "Building container image...", undefined)
             }
           }
@@ -335,14 +348,14 @@ export class ContainerImageManager {
         const lines = chunk.split("\n").filter((l) => l.trim())
         for (const line of lines) {
           if (line.includes("error") || line.includes("Error")) {
-            console.error(`   ${line}`)
+            Effect.runSync(Effect.logError(`   ${line}`))
           }
         }
       })
 
       proc.on("close", (code) => {
         if (code === 0) {
-          console.log(`✅ Container image built successfully: ${this.options.imageName}`)
+          Effect.runSync(Effect.logInfo(`✅ Container image built successfully: ${this.options.imageName}`))
           resolve()
         } else {
           reject(new Error(`Failed to build image: ${stderr || stdout || `exit code ${code}`}`))
@@ -362,10 +375,13 @@ export class ContainerImageManager {
   private async pullFromRegistry(): Promise<void> {
     const registryUrl = this.options.registryUrl
     if (!registryUrl) {
-      throw new Error("registryUrl is required when imageSource is 'registry'")
+      throw new ContainerImageManagerError({
+        operation: "pullFromRegistry",
+        message: "registryUrl is required when imageSource is 'registry'",
+      })
     }
 
-    console.log(`🔄 Pulling container image from ${registryUrl}...`)
+    Effect.runSync(Effect.logInfo(`🔄 Pulling container image from ${registryUrl}...`))
 
     return new Promise((resolve, reject) => {
       const proc = spawn("podman", ["pull", registryUrl], {
@@ -384,7 +400,7 @@ export class ContainerImageManager {
         const lines = data.toString().split("\n").filter((l) => l.trim())
         for (const line of lines) {
           if (line.includes("Downloading") || line.includes("Extracting")) {
-            console.log(`   ${line}`)
+            Effect.runSync(Effect.logInfo(`   ${line}`))
           }
         }
       })
@@ -443,9 +459,9 @@ export class ContainerImageManager {
 
     // Console output for server logs
     if (status === "error") {
-      console.error(`❌ ${message}${errorMessage ? `: ${errorMessage}` : ""}`)
+      Effect.runSync(Effect.logError(`❌ ${message}${errorMessage ? `: ${errorMessage}` : ""}`))
     } else if (status === "ready") {
-      console.log(`✅ ${message}`)
+      Effect.runSync(Effect.logInfo(`✅ ${message}`))
     }
   }
 

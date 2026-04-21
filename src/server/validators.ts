@@ -99,20 +99,22 @@ export function validateBestOfNConfig(config: unknown): { valid: boolean; error?
     return { valid: false, error: "selectionMode must be pick_best, synthesize, or pick_or_synthesize" }
   }
 
-  const totalWorkers = cfg.workers.reduce((sum: number, slot: unknown) => {
+  // Calculate total workers with proper error handling
+  let totalWorkers = 0
+  for (const slot of cfg.workers) {
     if (typeof slot !== "object" || slot === null) {
-      throw new Error(`Worker slot must be an object: ${JSON.stringify(slot)}`)
+      return { valid: false, error: `Worker slot must be an object: ${JSON.stringify(slot)}` }
     }
     const slotObj = slot as Record<string, unknown>
     const count = slotObj.count
     if (count === undefined || count === null) {
-      throw new Error(`Worker slot is missing 'count' field: ${JSON.stringify(slot)}`)
+      return { valid: false, error: `Worker slot is missing 'count' field: ${JSON.stringify(slot)}` }
     }
     if (typeof count !== "number") {
-      throw new Error(`Worker slot 'count' must be a number: ${JSON.stringify(slot)}`)
+      return { valid: false, error: `Worker slot 'count' must be a number: ${JSON.stringify(slot)}` }
     }
-    return sum + count
-  }, 0)
+    totalWorkers += count
+  }
 
   if (
     typeof cfg.minSuccessfulWorkers !== "number" ||

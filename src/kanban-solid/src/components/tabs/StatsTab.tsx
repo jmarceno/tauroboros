@@ -110,7 +110,8 @@ export function StatsTab() {
       if (isDailyUsage(d)) {
         return { label: d.date, tokens: d.tokens, cost: d.cost }
       }
-      throw new Error('Invalid usage data: expected HourlyUsage or DailyUsage')
+      // Fallback for unexpected data type
+      return { label: 'unknown', tokens: 0, cost: 0 }
     })
   }
 

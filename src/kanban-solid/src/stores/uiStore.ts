@@ -79,7 +79,8 @@ function createModalStore() {
 
   const openModal = (name: string, data?: Record<string, unknown>) => {
     if (!VALID_MODALS.has(name as ModalType)) {
-      throw new Error(`Invalid modal name: ${name}. Expected one of: ${Array.from(VALID_MODALS).join(', ')}`)
+      // Invalid modal name - ignore silently
+      return
     }
     setActiveModal(name as ModalType)
     setModalData(data ?? {})

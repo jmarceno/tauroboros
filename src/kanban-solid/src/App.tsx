@@ -539,7 +539,10 @@ function App() {
 
   const handleCreateGroup = async (name: string) => {
     const { taskIds } = uiStore.groupCreateModalData()
-    if (taskIds.length === 0) throw new Error('No tasks selected for group creation')
+    if (taskIds.length === 0) {
+      uiStore.showToast('No tasks selected for group creation', 'error')
+      return
+    }
 
     await taskGroupsStore.createGroup(taskIds, name)
     await tasksStore.loadTasks()

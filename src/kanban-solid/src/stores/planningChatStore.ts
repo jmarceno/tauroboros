@@ -372,16 +372,19 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     const session = getSession(sessionId)
 
     if (!session) {
-      throw new Error('Session not found')
+      setError(sessionId, 'Session not found')
+      return
     }
 
     if (!session.session?.id) {
-      throw new Error('No active session')
+      setError(sessionId, 'No active session')
+      return
     }
 
     // Check if already sending (prevents race conditions)
     if (sendingSet.has(sessionId)) {
-      throw new Error('Already sending a message')
+      // Already sending - ignore this request
+      return
     }
 
     // If session is not active, queue the message and trigger reconnect first
@@ -412,25 +415,26 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
   const createTasksFromChat = async (sessionId: string, tasks?: Array<{ name: string; prompt: string; status?: string; requirements?: string[] }>) => {
     const session = getSession(sessionId)
     if (!session?.session?.id) {
-      throw new Error('No active session')
+      return { ok: false, error: 'No active session' }
     }
 
     try {
-      return await runApi(api.planningApi.createTasksFromSession(session.session.id, tasks))
+      const result = await runApi(api.planningApi.createTasksFromSession(session.session.id, tasks))
+      return { ok: true, result }
     } catch (e) {
-      throw e
+      return { ok: false, error: e instanceof Error ? e.message : 'Failed to create tasks' }
     }
   }
 
   const reconnectSession = async (sessionId: string, model?: string, thinkingLevel?: string) => {
     const session = getSession(sessionId)
     if (!session?.session?.id) {
-      throw new Error('No session to reconnect')
+      return { ok: false, error: 'No session to reconnect' }
     }
 
     // Prevent concurrent reconnect attempts
     if (reconnectingSet.has(sessionId)) {
-      throw new Error('Reconnect already in progress')
+      return { ok: false, error: 'Reconnect already in progress' }
     }
 
     reconnectingSet.add(sessionId)
@@ -471,7 +475,7 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
   const setSessionModel = async (sessionId: string, model: string, thinkingLevel?: string) => {
     const session = getSession(sessionId)
     if (!session?.session?.id) {
-      throw new Error('No active session')
+      return { ok: false, error: 'No active session' }
     }
 
     try {
@@ -483,7 +487,7 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
       ))
       return { ok: true, model, thinkingLevel }
     } catch (e) {
-      throw e
+      return { ok: false, error: e instanceof Error ? e.message : 'Failed to set model' }
     }
   }
 

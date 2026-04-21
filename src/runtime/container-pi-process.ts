@@ -141,7 +141,7 @@ export class ContainerPiProcess {
         })
 
         if (containerInfo?.running) {
-          console.log(`[container-pi-process] Attaching to existing container ${this.existingContainerId}`)
+          yield* Effect.logInfo(`[container-pi-process] Attaching to existing container ${this.existingContainerId}`)
           // Try to attach to the existing container to preserve all state
           const attachedProcess = yield* Effect.tryPromise({
             try: () => this.containerManager.attachToContainer(
@@ -157,7 +157,7 @@ export class ContainerPiProcess {
 
           if (attachedProcess) {
             this.containerProcess = attachedProcess
-            console.log(`[container-pi-process] Successfully attached to container ${this.existingContainerId}`)
+            yield* Effect.logInfo(`[container-pi-process] Successfully attached to container ${this.existingContainerId}`)
 
             this.db.updateWorkflowSession(this.session.id, {
               status: "active",
@@ -170,10 +170,10 @@ export class ContainerPiProcess {
             yield* Effect.sleep("1 second")
             return yield* Effect.void
           } else {
-            console.log(`[container-pi-process] Failed to attach to container ${this.existingContainerId}, will create new one`)
+            yield* Effect.logInfo(`[container-pi-process] Failed to attach to container ${this.existingContainerId}, will create new one`)
           }
         } else {
-          console.log(`[container-pi-process] Existing container ${this.existingContainerId} not running, creating new one`)
+          yield* Effect.logInfo(`[container-pi-process] Existing container ${this.existingContainerId} not running, creating new one`)
         }
       }
 
@@ -476,7 +476,9 @@ export class ContainerPiProcess {
         try {
           listener(killEvent)
         } catch (err) {
-          console.error(`[container-pi-process] Error in event listener during force kill:`, err)
+          yield* Effect.logError(`[container-pi-process] Error in event listener during force kill`).pipe(
+            Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
+          )
         }
       }
       this.eventListeners.clear()
@@ -630,7 +632,11 @@ export class ContainerPiProcess {
       try {
         listener(parsed)
       } catch (err) {
-        console.error(`[container-pi-process] Error in event listener:`, err)
+        Effect.runSync(
+          Effect.logError(`[container-pi-process] Error in event listener`).pipe(
+            Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
+          ),
+        )
       }
     }
 

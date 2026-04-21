@@ -129,10 +129,8 @@ function createFocusTrap(
 }
 
 export function GroupPanel(props: GroupPanelProps) {
-  // Validate required group color property
-  if (!props.group.color) {
-    throw new Error(`Group ${props.group.id} is missing required 'color' property`)
-  }
+  // Use default color if group color is missing
+  const groupColor = () => props.group.color || '#6366f1'
 
   // Refs
   let containerRef: HTMLDivElement | undefined
@@ -301,8 +299,8 @@ export function GroupPanel(props: GroupPanelProps) {
       <div
         ref={containerRef}
         class={`group-panel ${isExiting() ? 'group-panel-exit' : 'group-panel-enter'}`}
-        data-group-color={props.group.color}
-        style={{ '--group-color': `${props.group.color}66` }}
+        data-group-color={groupColor()}
+        style={{ '--group-color': `${groupColor()}66` }}
         role="complementary"
         aria-label={`Group panel: ${props.group.name}`}
         aria-expanded={props.isOpen}
@@ -314,7 +312,7 @@ export function GroupPanel(props: GroupPanelProps) {
             {/* Color indicator */}
             <div
               class="group-color-indicator"
-              data-indicator-color={props.group.color}
+              data-indicator-color={groupColor()}
               aria-hidden="true"
             />
             {/* Group name and count */}
@@ -481,7 +479,7 @@ export function GroupPanel(props: GroupPanelProps) {
                   isSelected={props.getIsSelected?.(task.id)}
                   isMultiSelecting={props.isMultiSelecting}
                   isHighlighted={false}
-                  group={{ id: props.group.id, name: props.group.name, color: props.group.color }}
+                  group={{ id: props.group.id, name: props.group.name, color: groupColor() }}
                   showGroupIndicator={true}
                   onOpen={(e) => props.onOpenTask(task.id, e)}
                   onDeploy={(e) => props.onDeployTemplate(task.id, e)}

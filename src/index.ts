@@ -60,7 +60,7 @@ const checkAndPrepareContainerEffect = Effect.fn("checkAndPrepareContainerEffect
 
     if (!setupStatus.imageReady) {
       // Image not found, need to auto-build
-      console.log("[tauroboros] Building container image for first run (this may take a minute)...")
+      yield* Effect.logInfo("[tauroboros] Building container image for first run (this may take a minute)...")
       const cacheDir = resolve(projectRoot, ".tauroboros")
       const imageManager = new ContainerImageManager({
         imageName: BASE_IMAGES.piAgent,
@@ -69,8 +69,7 @@ const checkAndPrepareContainerEffect = Effect.fn("checkAndPrepareContainerEffect
         cacheDir,
         onStatusChange: (event) => {
           if (event.status === "error") {
-            console.error(`[tauroboros] ${event.message}`)
-
+            Effect.runSync(Effect.logError(`[tauroboros] ${event.message}`))
           }
         }
       })
@@ -125,11 +124,11 @@ const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, a
 
   if (isFirstStart) {
     if (args.native) {
-      console.log("[tauroboros] First run - creating settings with native mode...")
+      yield* Effect.logInfo("[tauroboros] First run - creating settings with native mode...")
       return yield* createInitialSettings(projectRoot, false)
     }
 
-    console.log("[tauroboros] First run detected - setting up container mode...")
+    yield* Effect.logInfo("[tauroboros] First run detected - setting up container mode...")
     const containerCheck = yield* checkAndPrepareContainerEffect(projectRoot)
 
     if (!containerCheck.ready) {
@@ -137,7 +136,7 @@ const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, a
     }
 
     const created = yield* createInitialSettings(projectRoot, true)
-    console.log("[tauroboros] Settings created with container mode enabled")
+    yield* Effect.logInfo("[tauroboros] Settings created with container mode enabled")
     return created
   }
 
@@ -147,7 +146,7 @@ const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, a
   const settings = result.settings
 
   if (settings.workflow.container.enabled !== false) {
-    console.log("[tauroboros] Validating container runtime availability...")
+    yield* Effect.logInfo("[tauroboros] Validating container runtime availability...")
 
     if (!PiContainerManager.isAvailable()) {
         return yield* new StartupError({ message: "CRITICAL: Container mode is enabled but Podman is not available.\n[tauroboros] Install Podman or explicitly disable container mode by running with --native flag:\n[tauroboros]   bun run start -- --native\n[tauroboros] Or set workflow.container.enabled to false in .tauroboros/settings.json" })
@@ -167,7 +166,7 @@ const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, a
       })
     }
 
-    console.log("[tauroboros] Container runtime validated successfully")
+    yield* Effect.logInfo("[tauroboros] Container runtime validated successfully")
   }
 
   return result
@@ -203,16 +202,16 @@ const runProgram = Effect.fn("runProgram")(function* () {
   const projectRoot = yield* findProjectRootEffect()
   const extractionResult = extractEmbeddedResources(projectRoot)
   if (extractionResult.mode === "binary") {
-    console.log(`[tauroboros] Extracted ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from binary`)
+    yield* Effect.logInfo(`[tauroboros] Extracted ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from binary`)
   } else if (extractionResult.mode === "source") {
-    console.log(`[tauroboros] Copied ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from source`)
+    yield* Effect.logInfo(`[tauroboros] Copied ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from source`)
   }
 
   const args = parseCliArgs(process.argv.slice(2))
   const { settings, warnings } = yield* loadSettings(projectRoot, args)
 
   for (const warning of warnings) {
-    console.warn(`[tauroboros] ${warning}`)
+    yield* Effect.logWarning(`[tauroboros] ${warning}`)
   }
 
   const dbPath = resolve(projectRoot, settings.workflow.server.dbPath)
@@ -233,11 +232,11 @@ const runProgram = Effect.fn("runProgram")(function* () {
     catch: (cause) => new StartupError({ message: `Failed to start server: ${String(cause)}` }),
   })
 
-  console.log(`[tauroboros] server started on http://0.0.0.0:${actualPort}`)
+  yield* Effect.logInfo(`[tauroboros] server started on http://0.0.0.0:${actualPort}`)
   const devPort = process.env.DEV_PORT?.trim()
   if (devPort) {
-    console.log(`[tauroboros] frontend dev server (hot reload) is expected at http://0.0.0.0:${devPort}`)
-    console.log(`[tauroboros] open the frontend URL above for UI changes; backend API remains on http://0.0.0.0:${actualPort}`)
+    yield* Effect.logInfo(`[tauroboros] frontend dev server (hot reload) is expected at http://0.0.0.0:${devPort}`)
+    yield* Effect.logInfo(`[tauroboros] open the frontend URL above for UI changes; backend API remains on http://0.0.0.0:${actualPort}`)
   }
 
   if (actualPort !== settings.workflow.server.port) {
@@ -256,7 +255,7 @@ void Effect.runPromise(Effect.scoped(runProgram())).catch((error) => {
     : error instanceof Error
       ? error.message
       : String(error)
-  console.error(`[tauroboros] ${message}`)
+  Effect.runSync(Effect.logError(`[tauroboros] ${message}`))
   process.exit(1)
 })
 

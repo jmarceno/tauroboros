@@ -344,11 +344,21 @@ function loadSettingsResult(projectRoot: string): SettingsLoadResult {
       parsed = JSON.parse(raw)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`Invalid JSON in settings file: ${message}`)
+      warnings.push(`Invalid JSON in settings file: ${message}. Using defaults.`)
+      return {
+        settings: { ...DEFAULT_INFRASTRUCTURE_SETTINGS },
+        warnings,
+        unknownFields: [],
+      }
     }
 
     if (!parsed || typeof parsed !== "object") {
-      throw new Error("Settings must be a JSON object")
+      warnings.push("Settings must be a JSON object. Using defaults.")
+      return {
+        settings: { ...DEFAULT_INFRASTRUCTURE_SETTINGS },
+        warnings,
+        unknownFields: [],
+      }
     }
 
     // Validate object shape before field-level decode

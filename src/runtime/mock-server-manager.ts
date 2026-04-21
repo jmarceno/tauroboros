@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from "child_process"
 import * as http from "http"
 import * as path from "path"
+import { Effect } from "effect"
 
 type StartOptions = {
   detached?: boolean
@@ -16,7 +17,7 @@ export class MockServerManager {
 
   async start(mockLlmServerPath?: string, options: StartOptions = {}): Promise<void> {
     if (this.process) {
-      console.log("[MockServerManager] Server already running")
+      Effect.runSync(Effect.logInfo("[MockServerManager] Server already running"))
       return
     }
 
@@ -34,8 +35,8 @@ export class MockServerManager {
       startArgs = ["tsx", "src/index.ts"]
     }
 
-    console.log(`[MockServerManager] Starting mock LLM server on port ${this.port}...`)
-    console.log(`[MockServerManager] Command: ${startCommand} ${startArgs.join(" ")}`)
+    Effect.runSync(Effect.logInfo(`[MockServerManager] Starting mock LLM server on port ${this.port}...`))
+    Effect.runSync(Effect.logInfo(`[MockServerManager] Command: ${startCommand} ${startArgs.join(" ")}`))
 
     return new Promise((resolve, reject) => {
       const detached = options.detached === true
@@ -67,7 +68,7 @@ export class MockServerManager {
           if (res.statusCode === 200) {
             resolved = true
             cleanup()
-            console.log("[MockServerManager] Mock LLM server ready")
+            Effect.runSync(Effect.logInfo("[MockServerManager] Mock LLM server ready"))
             resolve()
           }
         })
@@ -92,11 +93,11 @@ export class MockServerManager {
 
       if (!detached) {
         this.process.stderr?.on("data", (data: Buffer) => {
-          console.log(`[MockServerManager] stderr: ${data.toString().trim()}`)
+          Effect.runSync(Effect.logInfo(`[MockServerManager] stderr: ${data.toString().trim()}`))
         })
 
         this.process.stdout?.on("data", (data: Buffer) => {
-          console.log(`[MockServerManager] stdout: ${data.toString().trim()}`)
+          Effect.runSync(Effect.logInfo(`[MockServerManager] stdout: ${data.toString().trim()}`))
         })
       }
 
@@ -121,11 +122,11 @@ export class MockServerManager {
 
   async stop(): Promise<void> {
     if (this.process) {
-      console.log("[MockServerManager] Stopping mock LLM server...")
+      Effect.runSync(Effect.logInfo("[MockServerManager] Stopping mock LLM server..."))
       this.process.kill("SIGTERM")
       this.process = null
       await new Promise((resolve) => setTimeout(resolve, 1000))
-      console.log("[MockServerManager] Mock LLM server stopped")
+      Effect.runSync(Effect.logInfo("[MockServerManager] Mock LLM server stopped"))
     }
   }
 
