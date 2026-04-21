@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto"
 import { join } from "path"
-import { Duration, Effect, Schema } from "effect"
+import { Duration, Effect, Exit, Schema, Scope } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
@@ -74,6 +74,7 @@ interface StreamingMessageState {
  */
 export class PlanningSession {
   private process: PiRpcProcess | null = null
+  private sessionScope: Scope.CloseableScope | null = null
   private session: PiWorkflowSession
   private db: PiKanbanDB
   private settings?: InfrastructureSettings
@@ -99,6 +100,216 @@ export class PlanningSession {
     this.containerManager = args.containerManager
     this.onMessage = args.onMessage
     this.onStatusChange = args.onStatusChange
+  }
+
+  private closeSessionScope(exit: Exit.Exit<unknown, unknown>): Effect.Effect<void> {
+    return Effect.gen(this, function* () {
+      const scope = this.sessionScope
+      this.sessionScope = null
+      this.process = null
+      this.isReady = false
+      this.streamingState = null
+
+      if (scope) {
+        yield* Scope.close(scope, exit)
+      }
+    })
+  }
+
+  private installStreamingSubscription(process: PiRpcProcess): Effect.Effect<void, never, Scope.Scope> {
+    return process.subscribeEvents((event) => {
+      const eventType = event.type as string
+
+      if (eventType === "message_update") {
+        const msgEvent = event.assistantMessageEvent as Record<string, unknown> | undefined
+        const msgEventType = msgEvent?.type as string
+
+        if (!msgEventType) return
+        if (!msgEvent) return
+        if (!this.streamingState) {
+          this.messageSeq++
+          this.streamingState = {
+            messageId: randomUUID(),
+            seq: this.messageSeq,
+            timestamp: nowUnix(),
+            textBuffer: "",
+            thinkingBuffer: "",
+            hasThinking: false,
+            hasText: false,
+            isComplete: false,
+            persistLock: false,
+          }
+        }
+
+        const state = this.streamingState
+
+        if (msgEventType === "thinking_delta") {
+          const delta = typeof msgEvent.delta === "string" ? msgEvent.delta : ""
+          if (delta) {
+            state.hasThinking = true
+            state.thinkingBuffer += delta
+
+            const thinkingMessage = {
+              id: state.seq,
+              seq: state.seq,
+              messageId: state.messageId,
+              sessionId: this.session.id,
+              taskId: null,
+              taskRunId: null,
+              timestamp: state.timestamp,
+              role: "assistant",
+              eventName: "assistant_thinking",
+              messageType: "thinking",
+              contentJson: {
+                thinking: state.thinkingBuffer,
+                streaming: true,
+                isThinking: true,
+              },
+            } as unknown as SessionMessage
+            this.onMessage?.(thinkingMessage)
+          }
+        }
+
+        if (msgEventType === "text_delta") {
+          const delta = typeof msgEvent.delta === "string" ? msgEvent.delta : ""
+          if (delta) {
+            state.hasText = true
+            state.textBuffer += delta
+
+            const textMessage = {
+              id: state.seq + 1,
+              seq: state.seq + 1,
+              messageId: state.messageId + "-text",
+              sessionId: this.session.id,
+              taskId: null,
+              taskRunId: null,
+              timestamp: state.timestamp,
+              role: "assistant",
+              eventName: "assistant_response",
+              messageType: "assistant_response",
+              contentJson: {
+                text: state.textBuffer,
+                streaming: true,
+                isThinking: false,
+              },
+            } as unknown as SessionMessage
+            this.onMessage?.(textMessage)
+          }
+        }
+
+        if (msgEventType === "text_complete") {
+          if (state.persistLock) {
+            return
+          }
+          if (!state.hasText || !state.textBuffer) {
+            return
+          }
+          state.persistLock = true
+
+          if (state.hasThinking && state.thinkingBuffer && this.checkAndAddRecentMessageId(state.messageId)) {
+            this.messageSeq++
+            const thinkingMessageInput: CreateSessionMessageInput = {
+              sessionId: this.session.id,
+              taskId: null,
+              taskRunId: null,
+              seq: this.messageSeq,
+              messageId: state.messageId,
+              timestamp: state.timestamp,
+              role: "assistant",
+              eventName: "assistant_thinking",
+              messageType: "thinking",
+              contentJson: {
+                thinking: state.thinkingBuffer,
+                streaming: false,
+                isThinking: true,
+              },
+            }
+            const persistedThinking = this.db.createSessionMessage(thinkingMessageInput)
+            this.onMessage?.(persistedThinking)
+          }
+
+          const textMessageId = state.messageId + "-text"
+          if (this.checkAndAddRecentMessageId(textMessageId)) {
+            this.messageSeq++
+            const textMessageInput: CreateSessionMessageInput = {
+              sessionId: this.session.id,
+              taskId: null,
+              taskRunId: null,
+              seq: this.messageSeq,
+              messageId: textMessageId,
+              timestamp: state.timestamp,
+              role: "assistant",
+              eventName: "assistant_response",
+              messageType: "assistant_response",
+              contentJson: {
+                text: state.textBuffer,
+                streaming: false,
+                isThinking: false,
+              },
+            }
+            const persistedText = this.db.createSessionMessage(textMessageInput)
+            this.onMessage?.(persistedText)
+          }
+
+          this.streamingState = null
+        }
+      }
+
+      if (eventType === "agent_end" && this.streamingState) {
+        const state = this.streamingState
+
+        if (!state.persistLock) {
+          state.persistLock = true
+
+          if (state.hasThinking && state.thinkingBuffer && this.checkAndAddRecentMessageId(state.messageId)) {
+            this.messageSeq++
+            const thinkingMessageInput: CreateSessionMessageInput = {
+              sessionId: this.session.id,
+              taskId: null,
+              taskRunId: null,
+              seq: this.messageSeq,
+              messageId: state.messageId,
+              timestamp: state.timestamp,
+              role: "assistant",
+              eventName: "assistant_thinking",
+              messageType: "thinking",
+              contentJson: {
+                thinking: state.thinkingBuffer,
+                streaming: false,
+                isThinking: true,
+              },
+            }
+            const persistedThinking = this.db.createSessionMessage(thinkingMessageInput)
+            this.onMessage?.(persistedThinking)
+          }
+
+          const textMessageId = state.messageId + "-text"
+          if (state.hasText && state.textBuffer && this.checkAndAddRecentMessageId(textMessageId)) {
+            this.messageSeq++
+            const textMessageInput: CreateSessionMessageInput = {
+              sessionId: this.session.id,
+              taskId: null,
+              taskRunId: null,
+              seq: this.messageSeq,
+              messageId: textMessageId,
+              timestamp: state.timestamp,
+              role: "assistant",
+              eventName: "assistant_response",
+              messageType: "assistant_response",
+              contentJson: {
+                text: state.textBuffer,
+                streaming: false,
+                isThinking: false,
+              },
+            }
+            const persistedText = this.db.createSessionMessage(textMessageInput)
+            this.onMessage?.(persistedText)
+          }
+        }
+
+        this.streamingState = null
+      }
+    })
   }
 
   /**
@@ -177,82 +388,85 @@ export class PlanningSession {
         }),
       })
 
-      // Use acquireRelease to guarantee cleanup on any failure path
+      const scope = yield* Scope.make()
       yield* Effect.acquireRelease(
         Effect.succeed(process),
         (proc) => proc.close().pipe(Effect.orDie),
-      ).pipe(
-        Effect.flatMap((proc) =>
-          Effect.gen(function* () {
-            yield* proc.start().pipe(
+      ).pipe(Scope.extend(scope))
+      yield* self.installStreamingSubscription(process).pipe(Scope.extend(scope))
+      self.process = process
+      self.sessionScope = scope
+
+      yield* Effect.gen(function* () {
+        yield* process.start().pipe(
+          Effect.mapError((cause) => new PlanningSessionError({
+            operation: "start",
+            message: cause.message,
+            cause,
+          })),
+        )
+
+        yield* self.waitForProcessReadyEffect(10_000)
+
+        if (model && model !== "default") {
+          const modelSelection = parseModelSelection(model)
+          if (modelSelection) {
+            yield* process.send(
+              {
+                type: "set_model",
+                provider: modelSelection.provider,
+                modelId: modelSelection.modelId,
+              },
+              30_000,
+            ).pipe(
               Effect.mapError((cause) => new PlanningSessionError({
                 operation: "start",
-                message: cause.message,
+                message: `Failed to set model ${model}: ${cause.message}`,
                 cause,
               })),
             )
-
-            self.process = proc
-
-            yield* self.waitForProcessReadyEffect(10_000)
-
-            if (model && model !== "default") {
-              const modelSelection = parseModelSelection(model)
-              if (modelSelection) {
-                yield* proc.send(
-                  {
-                    type: "set_model",
-                    provider: modelSelection.provider,
-                    modelId: modelSelection.modelId,
-                  },
-                  30_000,
-                ).pipe(
-                  Effect.mapError((cause) => new PlanningSessionError({
-                    operation: "start",
-                    message: `Failed to set model ${model}: ${cause.message}`,
-                    cause,
-                  })),
-                )
-              } else {
-                return yield* new PlanningSessionError({
-                  operation: "start",
-                  message: `Invalid model format: ${model}. Expected format: provider/modelId`,
-                })
-              }
-            }
-
-            if (thinkingLevel && thinkingLevel !== "default") {
-              yield* proc.send(
-                {
-                  type: "set_thinking_level",
-                  level: thinkingLevel,
-                },
-                30_000,
-              ).pipe(
-                Effect.mapError((cause) => new PlanningSessionError({
-                  operation: "start",
-                  message: `Failed to set thinking level ${thinkingLevel}: ${cause.message}`,
-                  cause,
-                })),
-              )
-            }
-
-            self.session = yield* Effect.try({
-              try: () =>
-                self.db.updateWorkflowSession(self.session.id, {
-                  status: "active",
-                }) ?? self.session,
-              catch: (cause) => new PlanningSessionError({
-                operation: "start",
-                message: cause instanceof Error ? cause.message : String(cause),
-                cause,
-              }),
+          } else {
+            return yield* new PlanningSessionError({
+              operation: "start",
+              message: `Invalid model format: ${model}. Expected format: provider/modelId`,
             })
+          }
+        }
 
-            self.isReady = true
-            self.onStatusChange?.(self.session)
-          }).pipe(
-            Effect.tapError((error) =>
+        if (thinkingLevel && thinkingLevel !== "default") {
+          yield* process.send(
+            {
+              type: "set_thinking_level",
+              level: thinkingLevel,
+            },
+            30_000,
+          ).pipe(
+            Effect.mapError((cause) => new PlanningSessionError({
+              operation: "start",
+              message: `Failed to set thinking level ${thinkingLevel}: ${cause.message}`,
+              cause,
+            })),
+          )
+        }
+
+        self.session = yield* Effect.try({
+          try: () =>
+            self.db.updateWorkflowSession(self.session.id, {
+              status: "active",
+            }) ?? self.session,
+          catch: (cause) => new PlanningSessionError({
+            operation: "start",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+        })
+
+        self.isReady = true
+        self.onStatusChange?.(self.session)
+      }).pipe(
+        Effect.tapError((error) =>
+          self.closeSessionScope(Exit.fail(error)).pipe(
+            Effect.zipRight(
               Effect.sync(() => {
                 self.session =
                   self.db.updateWorkflowSession(self.session.id, {
@@ -265,7 +479,6 @@ export class PlanningSession {
             ),
           ),
         ),
-        Effect.scoped,
       )
     })
   }
@@ -477,211 +690,6 @@ export class PlanningSession {
           cause,
         })),
       )
-
-      self.collectStreamingEvents()
-    })
-  }
-
-  private collectStreamingEvents(): void {
-    if (!this.process) return
-
-    const unsubscribe = this.process.onEvent((event) => {
-      const eventType = event.type as string
-
-      if (eventType === "message_update") {
-        const msgEvent = event.assistantMessageEvent as Record<string, unknown> | undefined
-        const msgEventType = msgEvent?.type as string
-
-        if (!msgEventType) return
-        if (!msgEvent) return // Guards TS narrowing; msgEvent is defined when msgEventType is
-        if (!this.streamingState) {
-          this.messageSeq++
-          this.streamingState = {
-            messageId: randomUUID(),
-            seq: this.messageSeq,
-            timestamp: nowUnix(),
-            textBuffer: "",
-            thinkingBuffer: "",
-            hasThinking: false,
-            hasText: false,
-            isComplete: false,
-            persistLock: false,
-          }
-        }
-
-        const state = this.streamingState
-
-        if (msgEventType === "thinking_delta") {
-          const delta = typeof msgEvent.delta === "string" ? msgEvent.delta : ""
-          if (delta) {
-            state.hasThinking = true
-            state.thinkingBuffer += delta
-
-            const thinkingMessage = {
-              id: state.seq,
-              seq: state.seq,
-              messageId: state.messageId,
-              sessionId: this.session.id,
-              taskId: null,
-              taskRunId: null,
-              timestamp: state.timestamp,
-              role: "assistant",
-              eventName: "assistant_thinking",
-              messageType: "thinking",
-              contentJson: {
-                thinking: state.thinkingBuffer,
-                streaming: true,
-                isThinking: true
-              },
-            } as unknown as SessionMessage
-            this.onMessage?.(thinkingMessage)
-          }
-        }
-
-        if (msgEventType === "text_delta") {
-          const delta = typeof msgEvent.delta === "string" ? msgEvent.delta : ""
-          if (delta) {
-            state.hasText = true
-            state.textBuffer += delta
-
-            const textMessage = {
-              id: state.seq + 1, // Different ID for text vs thinking
-              seq: state.seq + 1,
-              messageId: state.messageId + "-text",
-              sessionId: this.session.id,
-              taskId: null,
-              taskRunId: null,
-              timestamp: state.timestamp,
-              role: "assistant",
-              eventName: "assistant_response",
-              messageType: "assistant_response",
-              contentJson: {
-                text: state.textBuffer,
-                streaming: true,
-                isThinking: false
-              },
-            } as unknown as SessionMessage
-            this.onMessage?.(textMessage)
-          }
-        }
-
-        if (msgEventType === "text_complete") {
-          if (state.persistLock) {
-            return
-          }
-          if (!state.hasText || !state.textBuffer) {
-            return
-          }
-          state.persistLock = true
-
-          if (state.hasThinking && state.thinkingBuffer && this.checkAndAddRecentMessageId(state.messageId)) {
-            this.messageSeq++
-            const thinkingMessageInput: CreateSessionMessageInput = {
-              sessionId: this.session.id,
-              taskId: null,
-              taskRunId: null,
-              seq: this.messageSeq,
-              messageId: state.messageId,
-              timestamp: state.timestamp,
-              role: "assistant",
-              eventName: "assistant_thinking",
-              messageType: "thinking",
-              contentJson: {
-                thinking: state.thinkingBuffer,
-                streaming: false,
-                isThinking: true
-              },
-            }
-            const persistedThinking = this.db.createSessionMessage(thinkingMessageInput)
-            this.onMessage?.(persistedThinking)
-          }
-
-          const textMessageId = state.messageId + "-text"
-          if (this.checkAndAddRecentMessageId(textMessageId)) {
-            this.messageSeq++
-            const textMessageInput: CreateSessionMessageInput = {
-              sessionId: this.session.id,
-              taskId: null,
-              taskRunId: null,
-              seq: this.messageSeq,
-              messageId: textMessageId,
-              timestamp: state.timestamp,
-              role: "assistant",
-              eventName: "assistant_response",
-              messageType: "assistant_response",
-              contentJson: {
-                text: state.textBuffer,
-                streaming: false,
-                isThinking: false
-              },
-            }
-            const persistedText = this.db.createSessionMessage(textMessageInput)
-            this.onMessage?.(persistedText)
-          }
-
-          this.streamingState = null
-        }
-      }
-
-      if (eventType === "agent_end") {
-        if (this.streamingState) {
-          const state = this.streamingState
-
-          // Only persist if lock was not acquired (meaning text_complete didn't handle it)
-          if (!state.persistLock) {
-            state.persistLock = true
-
-            if (state.hasThinking && state.thinkingBuffer && this.checkAndAddRecentMessageId(state.messageId)) {
-              this.messageSeq++
-              const thinkingMessageInput: CreateSessionMessageInput = {
-                sessionId: this.session.id,
-                taskId: null,
-                taskRunId: null,
-                seq: this.messageSeq,
-                messageId: state.messageId,
-                timestamp: state.timestamp,
-                role: "assistant",
-                eventName: "assistant_thinking",
-                messageType: "thinking",
-                contentJson: {
-                  thinking: state.thinkingBuffer,
-                  streaming: false,
-                  isThinking: true
-                },
-              }
-              const persistedThinking = this.db.createSessionMessage(thinkingMessageInput)
-              this.onMessage?.(persistedThinking)
-            }
-
-            // Then persist any remaining text (if not already persisted and we have content)
-            const textMessageId = state.messageId + "-text"
-            if (state.hasText && state.textBuffer && this.checkAndAddRecentMessageId(textMessageId)) {
-              this.messageSeq++
-              const textMessageInput: CreateSessionMessageInput = {
-                sessionId: this.session.id,
-                taskId: null,
-                taskRunId: null,
-                seq: this.messageSeq,
-                messageId: textMessageId,
-                timestamp: state.timestamp,
-                role: "assistant",
-                eventName: "assistant_response",
-                messageType: "assistant_response",
-                contentJson: {
-                  text: state.textBuffer,
-                  streaming: false,
-                  isThinking: false
-                },
-              }
-              const persistedText = this.db.createSessionMessage(textMessageInput)
-              this.onMessage?.(persistedText)
-            }
-          }
-
-          this.streamingState = null
-        }
-        unsubscribe()
-      }
     })
   }
 
@@ -696,16 +704,7 @@ export class PlanningSession {
         return yield* Effect.void
       }
 
-      yield* self.process.close().pipe(
-        Effect.mapError((cause) => new PlanningSessionError({
-          operation: "close",
-          message: cause.message,
-          cause,
-        })),
-      )
-
-      self.process = null
-      self.isReady = false
+      yield* self.closeSessionScope(Exit.void)
 
       self.session = yield* Effect.try({
         try: () =>
@@ -783,82 +782,85 @@ export class PlanningSession {
         }),
       })
 
-      // Use acquireRelease to guarantee cleanup on any failure path
+      const scope = yield* Scope.make()
       yield* Effect.acquireRelease(
         Effect.succeed(process),
         (proc) => proc.close().pipe(Effect.orDie),
-      ).pipe(
-        Effect.flatMap((proc) =>
-          Effect.gen(function* () {
-            yield* proc.start().pipe(
+      ).pipe(Scope.extend(scope))
+      yield* self.installStreamingSubscription(process).pipe(Scope.extend(scope))
+      self.process = process
+      self.sessionScope = scope
+
+      yield* Effect.gen(function* () {
+        yield* process.start().pipe(
+          Effect.mapError((cause) => new PlanningSessionError({
+            operation: "reconnect",
+            message: cause.message,
+            cause,
+          })),
+        )
+
+        yield* self.waitForProcessReadyEffect(10_000)
+
+        if (model && model !== "default") {
+          const modelSelection = parseModelSelection(model)
+          if (modelSelection) {
+            yield* process.send(
+              {
+                type: "set_model",
+                provider: modelSelection.provider,
+                modelId: modelSelection.modelId,
+              },
+              30_000,
+            ).pipe(
               Effect.mapError((cause) => new PlanningSessionError({
                 operation: "reconnect",
-                message: cause.message,
+                message: `Failed to set model ${model} during reconnect: ${cause.message}`,
                 cause,
               })),
             )
-
-            self.process = proc
-
-            yield* self.waitForProcessReadyEffect(10_000)
-
-            if (model && model !== "default") {
-              const modelSelection = parseModelSelection(model)
-              if (modelSelection) {
-                yield* proc.send(
-                  {
-                    type: "set_model",
-                    provider: modelSelection.provider,
-                    modelId: modelSelection.modelId,
-                  },
-                  30_000,
-                ).pipe(
-                  Effect.mapError((cause) => new PlanningSessionError({
-                    operation: "reconnect",
-                    message: `Failed to set model ${model} during reconnect: ${cause.message}`,
-                    cause,
-                  })),
-                )
-              } else {
-                return yield* new PlanningSessionError({
-                  operation: "reconnect",
-                  message: `Invalid model format: ${model}. Expected format: provider/modelId`,
-                })
-              }
-            }
-
-            if (thinkingLevel && thinkingLevel !== "default") {
-              yield* proc.send(
-                {
-                  type: "set_thinking_level",
-                  level: thinkingLevel,
-                },
-                30_000,
-              ).pipe(
-                Effect.mapError((cause) => new PlanningSessionError({
-                  operation: "reconnect",
-                  message: `Failed to set thinking level ${thinkingLevel} during reconnect: ${cause.message}`,
-                  cause,
-                })),
-              )
-            }
-
-            self.session = yield* Effect.try({
-              try: () =>
-                self.db.updateWorkflowSession(self.session.id, {
-                  status: "active",
-                }) ?? self.session,
-              catch: (cause) => new PlanningSessionError({
-                operation: "reconnect",
-                message: cause instanceof Error ? cause.message : String(cause),
-                cause,
-              }),
+          } else {
+            return yield* new PlanningSessionError({
+              operation: "reconnect",
+              message: `Invalid model format: ${model}. Expected format: provider/modelId`,
             })
+          }
+        }
 
-            self.isReady = true
-            self.onStatusChange?.(self.session)
-          }).pipe(
-            Effect.tapError((error) =>
+        if (thinkingLevel && thinkingLevel !== "default") {
+          yield* process.send(
+            {
+              type: "set_thinking_level",
+              level: thinkingLevel,
+            },
+            30_000,
+          ).pipe(
+            Effect.mapError((cause) => new PlanningSessionError({
+              operation: "reconnect",
+              message: `Failed to set thinking level ${thinkingLevel} during reconnect: ${cause.message}`,
+              cause,
+            })),
+          )
+        }
+
+        self.session = yield* Effect.try({
+          try: () =>
+            self.db.updateWorkflowSession(self.session.id, {
+              status: "active",
+            }) ?? self.session,
+          catch: (cause) => new PlanningSessionError({
+            operation: "reconnect",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+        })
+
+        self.isReady = true
+        self.onStatusChange?.(self.session)
+      }).pipe(
+        Effect.tapError((error) =>
+          self.closeSessionScope(Exit.fail(error)).pipe(
+            Effect.zipRight(
               Effect.sync(() => {
                 self.session =
                   self.db.updateWorkflowSession(self.session.id, {
@@ -870,7 +872,6 @@ export class PlanningSession {
             ),
           ),
         ),
-        Effect.scoped,
       )
     })
   }

@@ -31,6 +31,13 @@ export interface PiServerRuntime {
   orchestrator: PiOrchestrator
 }
 
+interface RuntimeManagers {
+  smartRepair: SmartRepairService
+  planningSessionManager: PlanningSessionManager
+  imageManager?: ContainerImageManager
+  containerManager?: PiContainerManager
+}
+
 export const ProjectRootContext = Context.GenericTag<string>("ProjectRootContext")
 export const CreateServerOptionsContext = Context.GenericTag<CreateServerOptions>("CreateServerOptionsContext")
 export const PiServerRuntimeContext = Context.GenericTag<PiServerRuntime>("PiServerRuntimeContext")
@@ -54,15 +61,10 @@ export function findProjectRoot(): string {
   return cwd
 }
 
-function buildPiServerRuntime(
-  projectRoot: string,
-  options: CreateServerOptions,
-  db: PiKanbanDB,
-  wsHub: WebSocketHub,
-): PiServerRuntime {
-  const smartRepair = new SmartRepairService(db, options.settings)
-  const planningSessionManager = new PlanningSessionManager(db, undefined, options.settings)
-
+function resolveContainerSettings(projectRoot: string, options: CreateServerOptions): {
+  imageManager?: ContainerImageManager
+  containerManager?: PiContainerManager
+} {
   const containerSettings = options.settings?.workflow?.container ?? {
     image: BASE_IMAGES.piAgent,
     imageSource: "dockerfile" as const,
@@ -85,6 +87,18 @@ function buildPiServerRuntime(
   const containerManager = options.settings?.workflow?.container?.enabled === false
     ? undefined
     : new PiContainerManager(containerSettings.image, imageManager)
+
+  return { imageManager, containerManager }
+}
+
+function buildPiServerRuntime(
+  projectRoot: string,
+  options: CreateServerOptions,
+  db: PiKanbanDB,
+  wsHub: WebSocketHub,
+  managers: RuntimeManagers,
+): PiServerRuntime {
+  const { smartRepair, planningSessionManager, imageManager, containerManager } = managers
 
   let server: PiKanbanServer | null = null
   const broadcast = (message: WSMessage): void => {
@@ -153,7 +167,16 @@ export const makePiServerRuntime = Effect.fn("makePiServerRuntime")(
 
     const db = new PiKanbanDB(dbPath)
     const wsHub = new WebSocketHub()
-    return buildPiServerRuntime(projectRoot, options, db, wsHub)
+    const smartRepair = new SmartRepairService(db, options.settings)
+    const { imageManager, containerManager } = resolveContainerSettings(projectRoot, options)
+    const planningSessionManager = new PlanningSessionManager(db, containerManager, options.settings)
+
+    return buildPiServerRuntime(projectRoot, options, db, wsHub, {
+      smartRepair,
+      planningSessionManager,
+      imageManager,
+      containerManager,
+    })
   },
 )
 
@@ -175,8 +198,35 @@ const makeScopedPiServerRuntime = Effect.fn("makeScopedPiServerRuntime")(
       (hub) => Effect.sync(() => hub.close()),
     )
 
+    const smartRepair = new SmartRepairService(db, options.settings)
+    const { imageManager: resolvedImageManager, containerManager: resolvedContainerManager } = resolveContainerSettings(projectRoot, options)
+
+    const imageManager = resolvedImageManager
+      ? yield* Effect.acquireRelease(
+          Effect.succeed(resolvedImageManager),
+          (manager) => Effect.promise(() => manager.close()),
+        )
+      : undefined
+
+    const containerManager = resolvedContainerManager
+      ? yield* Effect.acquireRelease(
+          Effect.succeed(resolvedContainerManager),
+          (manager) => Effect.promise(() => manager.close()),
+        )
+      : undefined
+
+    const planningSessionManager = yield* Effect.acquireRelease(
+      Effect.sync(() => new PlanningSessionManager(db, containerManager, options.settings)),
+      (manager) => manager.closeAllSessions().pipe(Effect.orDie),
+    )
+
     return yield* Effect.acquireRelease(
-      Effect.sync(() => buildPiServerRuntime(projectRoot, options, db, wsHub)),
+      Effect.sync(() => buildPiServerRuntime(projectRoot, options, db, wsHub, {
+        smartRepair,
+        planningSessionManager,
+        imageManager,
+        containerManager,
+      })),
       (runtime) => Effect.sync(() => runtime.server.stop()),
     )
   },

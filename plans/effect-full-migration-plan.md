@@ -178,9 +178,9 @@ Target files for this phase:
 - [x] `src/server/server.ts` - `PiKanbanServer` constructor no longer creates runtime managers and receives injected dependencies from layer assembly
 - [~] `src/orchestrator.ts` - `PiOrchestrator` is now constructed only inside the Effect assembly path, but still receives deps via constructor rather than Effect context
 - [~] `src/db.ts` - `PiKanbanDB` is instantiated only inside `makePiServerRuntime`, but is not yet a scoped context service
-- [ ] `src/runtime/container-manager.ts`
-- [ ] `src/runtime/container-image-manager.ts`
-- [~] `src/runtime/planning-session.ts` - `PlanningSessionManager` receives deps via constructor
+- [~] `src/runtime/container-manager.ts` - Runtime ownership is now centralized via scoped server assembly and explicit `close()` finalization; broader service/layer conversion is still pending
+- [~] `src/runtime/container-image-manager.ts` - Runtime ownership is now centralized via scoped server assembly and explicit `close()` finalization; status broadcasting is still callback-based
+- [~] `src/runtime/planning-session.ts` - `PlanningSessionManager` still receives deps via constructor, but the scoped runtime now constructs it with the real container manager and finalizes it centrally
 - [ ] `src/telegram.ts`
 
 Completion gate:
@@ -203,30 +203,30 @@ Checklist:
 - [~] Convert database lifetime to a scoped service instead of a manually closed class instance. Production server assembly now acquires/releases `PiKanbanDB` with `Effect.acquireRelease` in `src/server.ts`, but the DB is not yet exposed as a scoped context service across the whole backend.
 - [x] Convert Bun server startup and shutdown to a scoped resource with finalizers rather than manual `try/finally` and signal-hook cleanup. `src/index.ts` now runs the program under `Effect.scoped`, uses a scoped signal listener, and relies on scoped runtime finalizers instead of manual `server.stop()` / `db.close()` shutdown callbacks.
 - [~] Convert websocket hub ownership to a scoped service. Production server assembly now acquires/releases `WebSocketHub` with `Effect.acquireRelease` and injects it into `PiKanbanServer`, but it is not yet exposed as a standalone scoped context service.
-- [~] Convert container image manager and container manager ownership to scoped resources. `PiContainerManager` uses `Effect.acquireRelease` for container lifecycle; `ContainerImageManager` uses callbacks for status updates, not scoped resources
-- [~] Convert planning-session manager ownership to a scoped resource. `PlanningSessionManager` uses `Effect.acquireRelease` for session cleanup
-- [~] Convert listener subscription APIs in `src/runtime/pi-process.ts` and `src/runtime/container-pi-process.ts` from plain unsubscribe callbacks to Effect-managed scoped subscriptions. `onEvent()` returns unsubscribe callback; not yet scoped
-- [ ] Replace manual timer lifecycle management with Effect-owned resource lifecycles where the timer is part of business logic.
+- [~] Convert container image manager and container manager ownership to scoped resources. The production server runtime now acquires/releases both managers explicitly and finalizes them through `close()`; `ContainerImageManager` still uses callback-based status updates rather than scoped subscriptions.
+- [x] Convert planning-session manager ownership to a scoped resource. The production server runtime now acquires/releases `PlanningSessionManager`, and each `PlanningSession` keeps its process and streaming subscription inside its own owned scope.
+- [x] Convert listener subscription APIs in `src/runtime/pi-process.ts` and `src/runtime/container-pi-process.ts` from plain unsubscribe callbacks to Effect-managed scoped subscriptions. Both process implementations now expose scoped `subscribeEvents(...)` subscriptions and no longer return raw unsubscribe callbacks.
+- [x] Replace manual timer lifecycle management with Effect-owned resource lifecycles where the timer is part of business logic. RPC send/wait/collect timeouts in both process implementations now use `Effect.timeoutFail(...)` instead of manual `setTimeout` / `clearTimeout` ownership.
 - [~] Remove duplicated manual shutdown logic once the scoped finalizers are in place. The production entrypoint no longer duplicates DB/server shutdown logic; direct test/manual construction paths still own their own explicit cleanup.
 
 Target files for this phase:
 
 - [x] `src/index.ts` - Production runtime now uses `Effect.scoped(createPiServerScopedEffect(...))` and a scoped signal-wait effect instead of manual shutdown callbacks
 - [~] `src/db.ts` - `PiKanbanDB` still exposes `.close()`, but the production server runtime now owns its lifetime through `Effect.acquireRelease` in `src/server.ts`
-- [~] `src/server/server.ts` - `PiKanbanServer` no longer constructs/owns `WebSocketHub`; websocket ownership is injected from the outer scoped runtime, while container managers remain constructor-injected instances for now
+- [~] `src/server/server.ts` - `PiKanbanServer` no longer constructs/owns `WebSocketHub`; websocket, container/image managers, and planning-session manager are now injected from the outer scoped runtime
 - [~] `src/server/websocket.ts` - `WebSocketHub` now has an explicit `close()` finalizer and is acquired/released by the production scoped runtime
-- [~] `src/runtime/pi-process.ts` - `onEvent()` returns unsubscribe callback; `proc` cleanup in `close()` method
-- [~] `src/runtime/container-pi-process.ts` - `onEvent()` returns unsubscribe callback; container lifecycle uses `Effect.acquireRelease` for startup/shutdown
-- [~] `src/runtime/planning-session.ts` - Uses `Effect.acquireRelease` for session process cleanup
+- [x] `src/runtime/pi-process.ts` - Event listeners are now scoped subscriptions via `subscribeEvents(...)`, and command/idle/collect timeouts are owned by Effect timeouts instead of raw timers
+- [x] `src/runtime/container-pi-process.ts` - Event listeners are now scoped subscriptions via `subscribeEvents(...)`, and command/idle/collect timeouts are owned by Effect timeouts instead of raw timers
+- [~] `src/runtime/planning-session.ts` - Session process and streaming subscription now live in a dedicated `Scope.CloseableScope`; manager acquisition still needs to move fully into the outer scoped runtime
 - [~] `src/runtime/session-manager.ts` - Uses `Effect.acquireRelease` for session execution
-- [~] `src/runtime/container-manager.ts` - `PiContainerManager` methods use `Effect.acquireRelease` for container operations
-- [~] `src/runtime/container-image-manager.ts` - `ContainerImageManager` uses callback-based status updates; not scoped
+- [~] `src/runtime/container-manager.ts` - `PiContainerManager` now has explicit runtime finalization via `close()` and is acquired/released by the scoped server runtime; internal Podman operations are still Promise-based
+- [~] `src/runtime/container-image-manager.ts` - `ContainerImageManager` now has explicit runtime finalization via `close()` and is acquired/released by the scoped server runtime; status updates remain callback-based
 
 Completion gate:
 
-- [~] Every long-lived backend resource has one owner and one finalization path. DB, websocket hub, and server lifetime are now owned by the production scoped runtime; container/image/planning resources still need the same treatment.
+- [~] Every long-lived backend resource has one owner and one finalization path. DB, websocket hub, server lifetime, container manager, container image manager, and planning-session manager are now owned by the production scoped runtime; broader context-service cutover is still pending.
 - [~] Manual resource cleanup code that duplicates scope finalizers has been deleted. Production shutdown duplication is removed, but explicit cleanup remains in direct-construction tests and in still-unscoped runtime subsystems.
-- [ ] Listener and timer cleanup is no longer callback-only and untracked.
+- [~] Listener and timer cleanup is no longer callback-only and untracked. Native/container Pi process subscriptions and timeout ownership are now Effect-managed; container/image/runtime-manager ownership still needs the same cutover.
 
 ## Phase 4: Convert Runtime and Orchestration Flow to Effect-Native Concurrency
 
@@ -241,8 +241,8 @@ Checklist:
 
 - [~] Rewrite orchestration control flow so runs, sessions, and background execution are represented as Effect programs rather than Promise-returning methods wrapped by Effect at the boundary. `PiOrchestrator` class methods (`startAll`, `startSingle`, `startGroup`, `stopRun`, `pauseRun`, `resumeRun`) are async methods returning Promises; orchestrator internally uses `Effect.runPromise` for session execution
 - [x] Convert `PiSessionManager` to expose Effect-only operations. All Promise wrapper methods removed, callbacks moved to second parameter.
-- [x] Convert `PlanningSession` and `PlanningSessionManager` to expose Effect-only operations. All Promise wrapper methods removed.
-- [~] Convert `PiRpcProcess` and `ContainerPiProcess` lifecycle control to Effect-owned interruption, timeout, and supervision rather than handwritten `AbortController`, callback, and timer logic. `PiRpcProcess` uses `AbortController` and manual timer management; `ContainerPiProcess` uses Effect for container lifecycle but still has manual process handling
+- [x] Convert `PlanningSession` and `PlanningSessionManager` to expose Effect-only operations. All Promise wrapper methods removed, and `PlanningSession` now keeps its process/subscription ownership in a dedicated Effect scope.
+- [~] Convert `PiRpcProcess` and `ContainerPiProcess` lifecycle control to Effect-owned interruption, timeout, and supervision rather than handwritten `AbortController`, callback, and timer logic. Timeout and listener ownership are now Effect-managed; stream reader cancellation still uses internal `AbortController`-driven loops.
 - [~] Refactor `src/orchestrator.ts` so run-control operations are native Effects, not Promise methods with thin Effect wrappers. `PiOrchestrator` is still a class with async methods; helper functions (`runOrchestratorOperationPromiseEffect`, `runOrchestratorOperationSyncEffect`) bridge Effect and Promise
 - [~] Convert `src/runtime/global-scheduler.ts` and related execution coordination to Effect-native state/concurrency primitives. (`throw new Error` removed; typed `GlobalSchedulerError` in place, state model still mutable class)
 - [ ] Replace manual mutable coordination where it exists solely to compensate for missing structured concurrency.
@@ -252,9 +252,9 @@ Target files for this phase:
 
 - [~] `src/orchestrator.ts` - `PiOrchestrator` class with async methods; uses `Effect.runPromise` for session execution; `runOrchestratorOperationPromiseEffect` bridges Effect/Promise
 - [x] `src/runtime/session-manager.ts` - **COMPLETE** - `executePrompt` now returns `Effect.Effect<ExecuteSessionPromptResult, SessionManagerExecuteError | PiProcessError>`; session startup uses Effect-returning `proc.start()`
-- [x] `src/runtime/planning-session.ts` - **COMPLETE** - All methods (`start`, `sendMessage`, `close`, `reconnect`, `setModel`, `setThinkingLevel`) now return Effects
-- [~] `src/runtime/pi-process.ts` - Uses Effect for `send`, `prompt`, `collectEvents`, `close`, `forceKill`; internal process management still uses manual `AbortController` and `setTimeout`
-- [~] `src/runtime/container-pi-process.ts` - Uses Effect for `send`, `prompt`, `collectEvents`, `close`, `forceKill`; container lifecycle uses Effect; process stdout/stderr capture still manual
+- [x] `src/runtime/planning-session.ts` - **COMPLETE** - All methods (`start`, `sendMessage`, `close`, `reconnect`, `setModel`, `setThinkingLevel`) now return Effects, and session-owned process/subscription resources live in a dedicated scope instead of per-message unsubscribe callbacks
+- [~] `src/runtime/pi-process.ts` - Uses Effect for `send`, `prompt`, `collectEvents`, `close`, `forceKill`; timeout ownership and event subscriptions are Effect-managed, while stream reader cancellation still uses `AbortController`
+- [~] `src/runtime/container-pi-process.ts` - Uses Effect for `send`, `prompt`, `collectEvents`, `close`, `forceKill`; timeout ownership and event subscriptions are Effect-managed, while stream capture remains callback-based over container stdio
 - [~] `src/runtime/global-scheduler.ts` - Raw throws replaced with tagged `GlobalSchedulerError`; API remains sync/mutable class with Map-based state
 - [~] `src/runtime/review-session.ts` - Uses `Effect.runPromise` for session execution
 - [~] `src/runtime/best-of-n.ts` - Uses `Effect.runPromise` for session execution

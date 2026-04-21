@@ -1,6 +1,6 @@
 import { mkdirSync } from "fs"
 import { dirname } from "path"
-import { Effect, Fiber, Schema } from "effect"
+import { Effect, Fiber, Schema, Scope } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
@@ -37,7 +37,6 @@ export type ExtensionUIRequestHandler = (request: {
 type Pending = {
   resolve: (value: Record<string, unknown>) => void
   reject: (error: Error) => void
-  timer: Timer
 }
 
 function parseArgs(value: string): string[] {
@@ -87,7 +86,7 @@ export class PiRpcProcess {
   private proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null
   private requestId = 0
   private readonly pending = new Map<string, Pending>()
-  private eventListeners: PiEventListener[] = []
+  private readonly eventListeners = new Set<PiEventListener>()
   private extensionUIHandler: ExtensionUIRequestHandler | null = null
   private stdoutBuffer = ""
   private stderrBuffer = ""
@@ -183,14 +182,16 @@ export class PiRpcProcess {
   /**
    * Subscribe to agent events
    */
-  onEvent(listener: PiEventListener): () => void {
-    this.eventListeners.push(listener)
-    return () => {
-      const index = this.eventListeners.indexOf(listener)
-      if (index !== -1) {
-        this.eventListeners.splice(index, 1)
-      }
-    }
+  subscribeEvents(listener: PiEventListener): Effect.Effect<void, never, Scope.Scope> {
+    return Effect.acquireRelease(
+      Effect.sync(() => {
+        this.eventListeners.add(listener)
+      }),
+      () =>
+        Effect.sync(() => {
+          this.eventListeners.delete(listener)
+        }),
+    )
   }
 
   /**
@@ -228,32 +229,28 @@ export class PiRpcProcess {
       const writeTimeoutMs = Math.min(5_000, timeoutMs)
       yield* Effect.tryPromise({
         try: async () => {
-          await Promise.race([
-            this.proc!.stdin.write(line),
-            new Promise((_, reject) => {
-              setTimeout(() => reject(new Error(`Stdin write timeout for command ${command.type}`)), writeTimeoutMs)
-            })
-          ])
+          await this.proc!.stdin.write(line)
         },
         catch: (cause) => new PiProcessError({
           operation: "send",
           message: cause instanceof Error ? cause.message : String(cause),
           cause,
         }),
-      })
+      }).pipe(
+        Effect.timeoutFail({
+          duration: writeTimeoutMs,
+          onTimeout: () => new PiProcessError({
+            operation: "send",
+            message: `Stdin write timeout for command ${command.type}`,
+          }),
+        }),
+      )
 
       if (command.type === "prompt" || command.type === "steer" || command.type === "follow_up") {
         this.isIdle = false
       }
 
       return yield* Effect.async<Record<string, unknown>, PiProcessError>((resume) => {
-        const timer = setTimeout(() => {
-          this.pending.delete(id)
-          resume(Effect.fail(new PiProcessError({
-            operation: "send",
-            message: `Pi RPC timeout for command ${command.type}`,
-          })))
-        }, timeoutMs)
         this.pending.set(id, {
           resolve: (value) => resume(Effect.succeed(value)),
           reject: (error) => resume(Effect.fail(new PiProcessError({
@@ -261,9 +258,19 @@ export class PiRpcProcess {
             message: error.message,
             cause: error,
           }))),
-          timer,
         })
-      })
+        return Effect.sync(() => {
+          this.pending.delete(id)
+        })
+      }).pipe(
+        Effect.timeoutFail({
+          duration: timeoutMs,
+          onTimeout: () => new PiProcessError({
+            operation: "send",
+            message: `Pi RPC timeout for command ${command.type}`,
+          }),
+        }),
+      )
     })
   }
 
@@ -284,32 +291,35 @@ export class PiRpcProcess {
         return yield* Effect.void
       }
 
-      return yield* Effect.async<void, PiProcessError>((resume) => {
-        const timer = setTimeout(() => {
-          unsubscribe()
-          resume(Effect.fail(new PiProcessError({
-            operation: "waitForIdle",
-            message: `Timeout waiting for agent to become idle`,
-          })))
-        }, timeoutMs)
-
-        const unsubscribe = this.onEvent((event) => {
-          if (event.type === "agent_end") {
-            this.isIdle = true
-            clearTimeout(timer)
-            unsubscribe()
-            resume(Effect.void)
-          } else if (event.type === "process_killed") {
-            clearTimeout(timer)
-            unsubscribe()
-            const signal = (event as Record<string, unknown>).signal
-            resume(Effect.fail(new PiProcessError({
-              operation: "waitForIdle",
-              message: `Process was killed (${signal || "SIGKILL"}) while waiting for idle`,
-            })))
+      return yield* Effect.scoped(
+        Effect.async<void, PiProcessError>((resume) => {
+          const listener: PiEventListener = (event) => {
+            if (event.type === "agent_end") {
+              this.isIdle = true
+              resume(Effect.void)
+            } else if (event.type === "process_killed") {
+              const signal = (event as Record<string, unknown>).signal
+              resume(Effect.fail(new PiProcessError({
+                operation: "waitForIdle",
+                message: `Process was killed (${signal || "SIGKILL"}) while waiting for idle`,
+              })))
+            }
           }
-        })
-      })
+
+          this.eventListeners.add(listener)
+          return Effect.sync(() => {
+            this.eventListeners.delete(listener)
+          })
+        }).pipe(
+          Effect.timeoutFail({
+            duration: timeoutMs,
+            onTimeout: () => new PiProcessError({
+              operation: "waitForIdle",
+              message: "Timeout waiting for agent to become idle",
+            }),
+          }),
+        ),
+      )
     })
   }
 
@@ -320,34 +330,37 @@ export class PiRpcProcess {
     return Effect.gen(this, function* () {
       const events: Record<string, unknown>[] = []
 
-      return yield* Effect.async<Record<string, unknown>[], PiProcessError | CollectEventsTimeoutError>((resume) => {
-        const timer = setTimeout(() => {
-          unsubscribe()
-          resume(Effect.fail(new CollectEventsTimeoutError({
-            message: `Timeout collecting events after ${timeoutMs}ms (collected ${events.length} events)`,
-            collectedEvents: events,
-            originalTimeoutMs: timeoutMs,
-          })))
-        }, timeoutMs)
-
-        const unsubscribe = this.onEvent((event) => {
-          events.push(event)
-          if (event.type === "agent_end") {
-            this.isIdle = true
-            clearTimeout(timer)
-            unsubscribe()
-            resume(Effect.succeed(events))
-          } else if (event.type === "process_killed") {
-            clearTimeout(timer)
-            unsubscribe()
-            const signal = (event as Record<string, unknown>).signal
-            resume(Effect.fail(new PiProcessError({
-              operation: "collectEvents",
-              message: `Process was killed (${signal || "SIGKILL"}) while collecting events`,
-            })))
+      return yield* Effect.scoped(
+        Effect.async<Record<string, unknown>[], PiProcessError | CollectEventsTimeoutError>((resume) => {
+          const listener: PiEventListener = (event) => {
+            events.push(event)
+            if (event.type === "agent_end") {
+              this.isIdle = true
+              resume(Effect.succeed(events))
+            } else if (event.type === "process_killed") {
+              const signal = (event as Record<string, unknown>).signal
+              resume(Effect.fail(new PiProcessError({
+                operation: "collectEvents",
+                message: `Process was killed (${signal || "SIGKILL"}) while collecting events`,
+              })))
+            }
           }
-        })
-      })
+
+          this.eventListeners.add(listener)
+          return Effect.sync(() => {
+            this.eventListeners.delete(listener)
+          })
+        }).pipe(
+          Effect.timeoutFail({
+            duration: timeoutMs,
+            onTimeout: () => new CollectEventsTimeoutError({
+              message: `Timeout collecting events after ${timeoutMs}ms (collected ${events.length} events)`,
+              collectedEvents: events,
+              originalTimeoutMs: timeoutMs,
+            }),
+          }),
+        ),
+      )
     })
   }
 
@@ -378,7 +391,6 @@ export class PiRpcProcess {
       }
 
       for (const [id, pending] of this.pending.entries()) {
-        clearTimeout(pending.timer)
         pending.reject(new Error(`Pi process closed before RPC response (${id})`))
         this.pending.delete(id)
       }
@@ -425,7 +437,6 @@ export class PiRpcProcess {
 
       // Reject all pending requests immediately
       for (const [id, pending] of this.pending.entries()) {
-        clearTimeout(pending.timer)
         pending.reject(new Error(`Pi process force killed (${id})`))
         this.pending.delete(id)
       }
@@ -439,8 +450,7 @@ export class PiRpcProcess {
           console.error(`[pi-process] Error in event listener during force kill:`, err)
         }
       }
-      // Clear event listeners to prevent memory leaks
-      this.eventListeners = []
+      this.eventListeners.clear()
 
       // Force kill the process
       try {
@@ -525,7 +535,6 @@ export class PiRpcProcess {
     if (isResponse && id && this.pending.has(id)) {
       const pending = this.pending.get(id)!
       this.pending.delete(id)
-      clearTimeout(pending.timer)
 
       if (parsed.success === false) {
         const errorMsg = typeof parsed.error === "string" ? parsed.error : JSON.stringify(parsed.error)

@@ -945,6 +945,14 @@ export class PiContainerManager {
     this.containers.clear()
   }
 
+  async close(): Promise<void> {
+    await this.cleanup()
+
+    if (this.mockServerManager?.isRunning()) {
+      await this.mockServerManager.stop()
+    }
+  }
+
   /**
    * List all managed containers.
    */

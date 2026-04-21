@@ -132,6 +132,7 @@ export class ContainerImageManager {
   private cache: ImageCache | null = null
   private isPrepared = false
   private preparingPromise: Promise<void> | null = null
+  private isClosed = false
 
   constructor(options: ContainerImageManagerOptions) {
     this.options = options
@@ -183,6 +184,10 @@ export class ContainerImageManager {
    * immediately without spawning any subprocess.
    */
   async prepare(): Promise<void> {
+    if (this.isClosed) {
+      throw new Error("ContainerImageManager is closed")
+    }
+
     // Fast path: if already prepared, return immediately
     if (this.isPrepared) {
       this.updateStatus("ready", "Container image is ready")
@@ -206,6 +211,11 @@ export class ContainerImageManager {
     } finally {
       this.preparingPromise = null
     }
+  }
+
+  async close(): Promise<void> {
+    this.isClosed = true
+    this.preparingPromise = null
   }
 
   private async doPrepare(): Promise<void> {
@@ -409,6 +419,10 @@ export class ContainerImageManager {
     progress?: number,
     errorMessage?: string,
   ): void {
+    if (this.isClosed) {
+      return
+    }
+
     this.currentStatus = status
 
     const event: ImageStatusChangeEvent = {
