@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Schema } from "effect"
 import promptCatalog from "./prompt-catalog.json"
 
 type PromptCatalog = {
@@ -26,39 +26,19 @@ export function joinPrompt(lines: string[]): string {
   return lines.join("\n")
 }
 
-export function renderPromptTemplateEffect(template: string, variables: Record<string, string>): Effect.Effect<string, PromptCatalogError> {
-  return Effect.gen(function* () {
-    // Extract all variable keys from template
-    const matches = template.match(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g) ?? []
-    const keys = matches.map(m => m.replace(/\{\{\s*|\s*\}\}/g, ""))
-
-    // Validate all variables are present
-    for (const key of keys) {
-      if (!(key in variables)) {
-        return yield* new PromptCatalogError({
-          operation: "renderPromptTemplate",
-          message: `Missing prompt variable: ${key}`,
-          key,
-        })
-      }
-    }
-
-    // Replace variables
-    const result = template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) => {
-      return variables[key] ?? ""
-    })
-    return result
-  })
-}
-
-/** @deprecated Use renderPromptTemplateEffect instead */
 export function renderPromptTemplate(template: string, variables: Record<string, string>): string {
-  const result = Effect.runSync(renderPromptTemplateEffect(template, variables).pipe(
-    Effect.catchAll((error: PromptCatalogError) => Effect.fail(new Error(error.message))),
-    Effect.either,
-  ))
-  if (result._tag === "Left") {
-    throw result.left
+  const matches = template.match(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g) ?? []
+  const keys = matches.map((match) => match.replace(/\{\{\s*|\s*\}\}/g, ""))
+
+  for (const key of keys) {
+    if (!(key in variables)) {
+      throw new PromptCatalogError({
+        operation: "renderPromptTemplate",
+        message: `Missing prompt variable: ${key}`,
+        key,
+      })
+    }
   }
-  return result.right
+
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key: string) => variables[key] ?? "")
 }

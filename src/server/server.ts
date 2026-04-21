@@ -2,7 +2,7 @@ import { readFileSync, existsSync, mkdirSync } from "fs"
 import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import type { InfrastructureSettings } from "../config/settings.ts"
-import { discoverPiModels } from "../pi/model-discovery.ts"
+import { discoverPiModelsEffect } from "../pi/model-discovery.ts"
 import type { ImageStatusPayload, RunQueueStatus, SlotUtilization, WorkflowRun, WSMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
 import type { PackageDefinition } from "../db/types.ts"
@@ -16,7 +16,7 @@ import { sendTelegramNotificationEffect, sendTelegramWorkflowSummaryEffect, shou
 import { Router } from "./router.ts"
 import type { RequestContext, ServerRouteContext } from "./types.ts"
 import { WebSocketHub } from "./websocket.ts"
-import { readEmbeddedFile, embeddedFileExists, getContentType, getIndexHtml } from "./embedded-files.ts"
+import { readEmbeddedFileEffect, embeddedFileExists, getContentType, getIndexHtml } from "./embedded-files.ts"
 import { VERSION, COMMIT_HASH, DISPLAY_VERSION, IS_COMPILED } from "./version.ts"
 import { isThinkingLevel } from "./validators.ts"
 import { registerTaskRoutes } from "./routes/task-routes.ts"
@@ -321,86 +321,109 @@ export class PiKanbanServer {
     }
   }
 
-  async start(port = this.defaultPort): Promise<number> {
-    if (this.server) return this.server.port ?? this.defaultPort
-
-    // Prepare container image if autoPrepare is enabled
-    // CRITICAL: If container mode is enabled, image preparation MUST succeed
-    if (this.imageManager && this.settings?.workflow?.container?.autoPrepare) {
-      try {
-        await this.imageManager.prepare()
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        Effect.runSync(Effect.logError(`[server] CRITICAL: Failed to prepare container image: ${message}`))
-        Effect.runSync(Effect.logError("[server] Container mode is enabled but image preparation failed. Server cannot start."))
-        failServerRuntime(
-          "start",
-          `Container mode is enabled but image preparation failed: ${message}. ` +
-            `Fix the issue or disable container mode in .tauroboros/settings.json`,
-          error,
-        )
+  startEffect(port = this.defaultPort): Effect.Effect<number, ServerRuntimeError> {
+    return Effect.gen(this, function* () {
+      if (this.server) {
+        return this.server.port ?? this.defaultPort
       }
-    }
 
-    // CRITICAL: Verify container runtime is available when container mode is enabled
-    if (this.settings?.workflow?.container?.enabled !== false && this.containerManager) {
-      const setupStatus = await this.containerManager.validateSetup()
-      if (!setupStatus.podman) {
-        Effect.runSync(Effect.logError("[server] CRITICAL: Container mode is enabled but Podman is not available."))
-        Effect.runSync(Effect.logError("[server] Install Podman or explicitly disable container mode in .tauroboros/settings.json"))
-        failServerRuntime(
-          "start",
-          "Container mode is enabled but Podman is not available. " +
-            "Install Podman or set workflow.container.enabled to false in .tauroboros/settings.json",
-        )
+      if (this.imageManager && this.settings?.workflow?.container?.autoPrepare) {
+        yield* Effect.tryPromise({
+          try: () => this.imageManager!.prepare(),
+          catch: (cause) =>
+            new ServerRuntimeError({
+              operation: "start",
+              message:
+                `Container mode is enabled but image preparation failed: ${cause instanceof Error ? cause.message : String(cause)}. ` +
+                `Fix the issue or disable container mode in .tauroboros/settings.json`,
+              cause,
+            }),
+        })
       }
-      if (!setupStatus.image) {
-        Effect.runSync(Effect.logError("[server] CRITICAL: Container mode is enabled but container image is not available."))
-        failServerRuntime(
-          "start",
-          "Container mode is enabled but container image is not available. " +
-            `Build it with: podman build -t ${this.settings?.workflow?.container?.image} -f docker/pi-agent/Dockerfile .`,
-        )
+
+      if (this.settings?.workflow?.container?.enabled !== false && this.containerManager) {
+        const setupStatus = yield* Effect.tryPromise({
+          try: () => this.containerManager!.validateSetup(),
+          catch: (cause) =>
+            new ServerRuntimeError({
+              operation: "start",
+              message: `Failed to validate container runtime: ${cause instanceof Error ? cause.message : String(cause)}`,
+              cause,
+            }),
+        })
+        if (!setupStatus.podman) {
+          return yield* new ServerRuntimeError({
+            operation: "start",
+            message:
+              "Container mode is enabled but Podman is not available. " +
+              "Install Podman or set workflow.container.enabled to false in .tauroboros/settings.json",
+          })
+        }
+        if (!setupStatus.image) {
+          return yield* new ServerRuntimeError({
+            operation: "start",
+            message:
+              "Container mode is enabled but container image is not available. " +
+              `Build it with: podman build -t ${this.settings?.workflow?.container?.image} -f docker/pi-agent/Dockerfile .`,
+          })
+        }
       }
-    }
 
-    await Effect.runPromise(runStartupRecoveryEffect({
-      db: this.db,
-      broadcast: (message) => this.broadcast(message),
-    }))
+      yield* runStartupRecoveryEffect({
+        db: this.db,
+        broadcast: (message) => this.broadcast(message),
+      }).pipe(
+        Effect.mapError((cause) =>
+          new ServerRuntimeError({
+            operation: "start",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+        ),
+      )
 
-    this.server = Bun.serve({
-      port,
-      hostname: "0.0.0.0",
-      fetch: async (req, server) => {
-        const url = new URL(req.url)
+      this.server = yield* Effect.try({
+        try: () =>
+          Bun.serve({
+            port,
+            hostname: "0.0.0.0",
+            fetch: async (req, server) => {
+              const url = new URL(req.url)
 
-        if (req.method === "OPTIONS") {
-          return this.withCors(this.text("", 204))
-        }
+              if (req.method === "OPTIONS") {
+                return this.withCors(this.text("", 204))
+              }
 
-        if (url.pathname === "/ws") {
-          if (server.upgrade(req, { data: undefined })) return undefined
-          return this.withCors(this.text("Upgrade failed", 500))
-        }
+              if (url.pathname === "/ws") {
+                if (server.upgrade(req, { data: undefined })) return undefined
+                return this.withCors(this.text("Upgrade failed", 500))
+              }
 
-        try {
-          const handled = await this.router.dispatch(req.method, url.pathname, this.baseContext(req))
-          if (handled) return this.withCors(handled)
-          return this.withCors(this.json({ error: "Not found" }, 404))
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          return this.withCors(this.json({ error: message }, 500))
-        }
-      },
-      websocket: {
-        open: (ws) => this.wsHub.addClient(ws),
-        close: (ws) => this.wsHub.removeClient(ws),
-        message: () => {},
-      },
+              try {
+                const handled = await this.router.dispatch(req.method, url.pathname, this.baseContext(req))
+                if (handled) return this.withCors(handled)
+                return this.withCors(this.json({ error: "Not found" }, 404))
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                return this.withCors(this.json({ error: message }, 500))
+              }
+            },
+            websocket: {
+              open: (ws) => this.wsHub.addClient(ws),
+              close: (ws) => this.wsHub.removeClient(ws),
+              message: () => {},
+            },
+          }),
+        catch: (cause) =>
+          new ServerRuntimeError({
+            operation: "start",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      })
+
+      return this.server.port ?? this.defaultPort
     })
-
-    return this.server.port ?? this.defaultPort
   }
 
   stop(): void {
@@ -451,20 +474,31 @@ export class PiKanbanServer {
       return new Response("index.html not found", { status: 404 })
     })
 
-    this.router.get("/assets/:file", async ({ params }) => {
-      const filePath = join(KANBAN_DIST, "assets", params.file)
-      if (!(await embeddedFileExists(filePath))) {
-        return new Response("Not found", { status: 404 })
-      }
-      try {
-        const content = await readEmbeddedFile(filePath)
+    this.router.get("/assets/:file", ({ params }) =>
+      Effect.gen(function* () {
+        const filePath = join(KANBAN_DIST, "assets", params.file)
+        const exists = yield* Effect.tryPromise({
+          try: () => embeddedFileExists(filePath),
+          catch: () => false,
+        })
+        if (!exists) {
+          return new Response("Not found", { status: 404 })
+        }
+
+        const content = yield* readEmbeddedFileEffect(filePath).pipe(
+          Effect.catchAll((error) =>
+            Effect.succeed(new Response(`Failed to read file: ${error.message}`, { status: 500 })),
+          ),
+        )
+
+        if (content instanceof Response) {
+          return content
+        }
+
         const contentType = getContentType(params.file)
         return new Response(content as unknown as BodyInit, { headers: { "Content-Type": contentType } })
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error)
-        return new Response(`Failed to read file: ${errorMessage}`, { status: 500 })
-      }
-    })
+      })
+    )
 
     this.router.get("/healthz", ({ json }) => json({ ok: true, wsClients: this.wsHub.size() }))
 
@@ -555,10 +589,12 @@ export class PiKanbanServer {
       }
     })
 
-    this.router.get("/api/models", async ({ json }) => {
-      const catalog = await discoverPiModels({ maxRetries: 2 })
-      return json(catalog)
-    })
+    this.router.get("/api/models", ({ json }) =>
+      Effect.gen(function* () {
+        const catalog = yield* discoverPiModelsEffect({ maxRetries: 2 })
+        return json(catalog)
+      })
+    )
   }
 
 

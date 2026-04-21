@@ -5,7 +5,7 @@
 
 import { createSignal } from 'solid-js'
 import { useQueryClient } from '@tanstack/solid-query'
-import { Effect } from 'effect'
+import { Effect, Either } from 'effect'
 import { tasksApi, runApiEffect } from '@/api'
 
 const queryKeys = {
@@ -17,6 +17,19 @@ const queryKeys = {
 export function createTaskLastUpdateStore() {
   const queryClient = useQueryClient()
   const [lastUpdates, setLastUpdates] = createSignal<Record<string, number>>({})
+  const [lastUpdateErrors, setLastUpdateErrors] = createSignal<Record<string, string>>({})
+
+  const setLastUpdateError = (taskId: string, message: string | null) => {
+    setLastUpdateErrors(prev => {
+      const next = { ...prev }
+      if (message) {
+        next[taskId] = message
+      } else {
+        delete next[taskId]
+      }
+      return next
+    })
+  }
 
   // Get last update for a task (from local state or query cache)
   const getLastUpdate = (taskId: string): number | null => {
@@ -36,12 +49,26 @@ export function createTaskLastUpdateStore() {
         if (data.lastUpdateAt !== null) {
           setLastUpdates(prev => ({ ...prev, [taskId]: data.lastUpdateAt }))
           queryClient.setQueryData(queryKeys.tasks.lastUpdate(taskId), data.lastUpdateAt)
+          setLastUpdateError(taskId, null)
           return data.lastUpdateAt
         }
 
+        setLastUpdateError(taskId, null)
         return null
       }),
-      Effect.catchAll(() => Effect.succeed(null)),
+      Effect.tapError((error) =>
+        Effect.logError(`[task-last-update-store] Failed to load last update for task ${taskId}: ${error.message}`),
+      ),
+      Effect.either,
+      Effect.flatMap((result) =>
+        Effect.sync(() => {
+          if (Either.isLeft(result)) {
+            setLastUpdateError(taskId, result.left.message)
+            return null
+          }
+          return result.right
+        })
+      ),
     )
 
   const loadLastUpdate = (taskId: string) => runApiEffect(loadLastUpdateEffect(taskId))
@@ -63,5 +90,6 @@ export function createTaskLastUpdateStore() {
     loadLastUpdate,
     updateLastUpdate,
     clearAll,
+    lastUpdateErrors,
   }
 }

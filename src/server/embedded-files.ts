@@ -112,18 +112,6 @@ export function readEmbeddedFileEffect(path: string): Effect.Effect<Uint8Array, 
   })
 }
 
-/** @deprecated Use readEmbeddedFileEffect instead */
-export async function readEmbeddedFile(path: string): Promise<Uint8Array> {
-  const result = await Effect.runPromise(readEmbeddedFileEffect(path).pipe(
-    Effect.catchAll((error: EmbeddedFileError) => Effect.fail(new Error(error.message))),
-    Effect.either,
-  ))
-  if (result._tag === "Left") {
-    throw result.left
-  }
-  return result.right
-}
-
 /**
  * Read a file as text using either embedded assets or filesystem (Effect version)
  */
@@ -170,18 +158,6 @@ export function readEmbeddedTextEffect(path: string): Effect.Effect<string, Embe
       }),
     })
   })
-}
-
-/** @deprecated Use readEmbeddedTextEffect instead */
-export async function readEmbeddedText(path: string): Promise<string> {
-  const result = await Effect.runPromise(readEmbeddedTextEffect(path).pipe(
-    Effect.catchAll((error: EmbeddedFileError) => Effect.fail(new Error(error.message))),
-    Effect.either,
-  ))
-  if (result._tag === "Left") {
-    throw result.left
-  }
-  return result.right
 }
 
 /**

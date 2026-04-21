@@ -1253,10 +1253,7 @@ export class PiKanbanDB {
 
     // Validate and clean requirements before creating
     const rawRequirements = input.requirements ?? []
-    const { cleaned: validatedRequirements, removed } = this.validateAndCleanRequirements(rawRequirements, input.name)
-    if (removed.length > 0) {
-      Effect.runSync(Effect.logInfo(`[db] Task "${input.name}" created with invalid dependencies auto-removed: ${removed.join(', ')}`))
-    }
+    const { cleaned: validatedRequirements } = this.validateAndCleanRequirements(rawRequirements, input.name)
 
     this.db
       .prepare(`
@@ -1377,10 +1374,7 @@ export class PiKanbanDB {
     }
     if (input.requirements !== undefined) {
       // Validate and clean requirements
-      const { cleaned, removed } = this.validateAndCleanRequirements(input.requirements, currentTask?.name)
-      if (removed.length > 0) {
-        Effect.runSync(Effect.logInfo(`[db] Task "${currentTask?.name}" updated with invalid dependencies auto-removed: ${removed.join(', ')}`))
-      }
+      const { cleaned } = this.validateAndCleanRequirements(input.requirements, currentTask?.name)
       sets.push("requirements = ?")
       values.push(JSON.stringify(cleaned))
     }
@@ -1530,10 +1524,6 @@ export class PiKanbanDB {
       } else {
         removed.push(reqId)
       }
-    }
-
-    if (removed.length > 0) {
-      Effect.runSync(Effect.logInfo(`[db] Removed invalid dependencies from task "${taskName ?? 'unknown'}": ${removed.join(', ')}`))
     }
 
     return { cleaned, removed }

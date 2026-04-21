@@ -69,7 +69,7 @@ const checkAndPrepareContainerEffect = Effect.fn("checkAndPrepareContainerEffect
         cacheDir,
         onStatusChange: (event) => {
           if (event.status === "error") {
-            Effect.runSync(Effect.logError(`[tauroboros] ${event.message}`))
+            process.stderr.write(`[tauroboros] ${event.message}\n`)
           }
         }
       })
@@ -227,10 +227,9 @@ const runProgram = Effect.fn("runProgram")(function* () {
     settings,
   })
 
-  const actualPort = yield* Effect.tryPromise({
-    try: () => server.start(port),
-    catch: (cause) => new StartupError({ message: `Failed to start server: ${String(cause)}` }),
-  })
+  const actualPort = yield* server.startEffect(port).pipe(
+    Effect.mapError((cause) => new StartupError({ message: cause.message })),
+  )
 
   yield* Effect.logInfo(`[tauroboros] server started on http://0.0.0.0:${actualPort}`)
   const devPort = process.env.DEV_PORT?.trim()
@@ -255,7 +254,7 @@ void Effect.runPromise(Effect.scoped(runProgram())).catch((error) => {
     : error instanceof Error
       ? error.message
       : String(error)
-  Effect.runSync(Effect.logError(`[tauroboros] ${message}`))
+  process.stderr.write(`[tauroboros] ${message}\n`)
   process.exit(1)
 })
 

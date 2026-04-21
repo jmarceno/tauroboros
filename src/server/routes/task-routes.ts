@@ -2,6 +2,7 @@ import { randomUUID } from "crypto"
 import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
+import type { CreateTaskInput, UpdateTaskInput } from "../../db/types.ts"
 import type { Task, WorkflowRun, WSMessage } from "../../types.ts"
 import type { SmartRepairAction } from "../../runtime/smart-repair.ts"
 import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
@@ -35,6 +36,121 @@ function parseJsonRecord(req: Request): Effect.Effect<Record<string, unknown>, H
       return Effect.fail(badRequestError("Request body must be an object", ErrorCode.INVALID_REQUEST_BODY))
     }),
   )
+}
+
+function parseOptionalStringField(
+  body: Record<string, unknown>,
+  key: string,
+): Effect.Effect<string | undefined, HttpRouteError> {
+  const value = body[key]
+  if (value === undefined) {
+    return Effect.succeed(undefined)
+  }
+  if (typeof value === "string") {
+    return Effect.succeed(value)
+  }
+  return Effect.fail(badRequestError(`${key} must be a string`, ErrorCode.INVALID_REQUEST_BODY, { key }))
+}
+
+function parseOptionalBooleanField(
+  body: Record<string, unknown>,
+  key: string,
+): Effect.Effect<boolean | undefined, HttpRouteError> {
+  const value = body[key]
+  if (value === undefined) {
+    return Effect.succeed(undefined)
+  }
+  if (typeof value === "boolean") {
+    return Effect.succeed(value)
+  }
+  return Effect.fail(badRequestError(`${key} must be a boolean`, ErrorCode.INVALID_REQUEST_BODY, { key }))
+}
+
+function parseOptionalStringArrayField(
+  body: Record<string, unknown>,
+  key: string,
+): Effect.Effect<string[] | undefined, HttpRouteError> {
+  const value = body[key]
+  if (value === undefined) {
+    return Effect.succeed(undefined)
+  }
+  if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
+    return Effect.succeed(value)
+  }
+  return Effect.fail(badRequestError(`${key} must be an array of strings`, ErrorCode.INVALID_REQUEST_BODY, { key }))
+}
+
+function parseTaskInputFields(
+  body: Record<string, unknown>,
+): Effect.Effect<
+  Pick<
+    CreateTaskInput,
+    | "branch"
+    | "planModel"
+    | "executionModel"
+    | "planmode"
+    | "autoApprovePlan"
+    | "review"
+    | "codeStyleReview"
+    | "autoCommit"
+    | "deleteWorktree"
+    | "requirements"
+    | "thinkingLevel"
+    | "planThinkingLevel"
+    | "executionThinkingLevel"
+    | "executionStrategy"
+    | "bestOfNConfig"
+    | "bestOfNSubstage"
+    | "skipPermissionAsking"
+    | "containerImage"
+  >,
+  HttpRouteError
+> {
+  return Effect.gen(function* () {
+    const branch = yield* parseOptionalStringField(body, "branch")
+    const planModel = yield* parseOptionalStringField(body, "planModel")
+    const executionModel = yield* parseOptionalStringField(body, "executionModel")
+    const planmode = yield* parseOptionalBooleanField(body, "planmode")
+    const autoApprovePlan = yield* parseOptionalBooleanField(body, "autoApprovePlan")
+    const review = yield* parseOptionalBooleanField(body, "review")
+    const codeStyleReview = yield* parseOptionalBooleanField(body, "codeStyleReview")
+    const autoCommit = yield* parseOptionalBooleanField(body, "autoCommit")
+    const deleteWorktree = yield* parseOptionalBooleanField(body, "deleteWorktree")
+    const requirements = yield* parseOptionalStringArrayField(body, "requirements")
+    const thinkingLevel = yield* parseOptionalStringField(body, "thinkingLevel")
+    const planThinkingLevel = yield* parseOptionalStringField(body, "planThinkingLevel")
+    const executionThinkingLevel = yield* parseOptionalStringField(body, "executionThinkingLevel")
+    const executionStrategy = yield* parseOptionalStringField(body, "executionStrategy")
+    const bestOfNSubstage = yield* parseOptionalStringField(body, "bestOfNSubstage")
+    const skipPermissionAsking = yield* parseOptionalBooleanField(body, "skipPermissionAsking")
+    const containerImage = yield* parseOptionalStringField(body, "containerImage")
+
+    const bestOfNConfigValue = body.bestOfNConfig
+    if (bestOfNConfigValue !== undefined && bestOfNConfigValue !== null && (typeof bestOfNConfigValue !== "object" || Array.isArray(bestOfNConfigValue))) {
+      return yield* badRequestError("bestOfNConfig must be an object or null", ErrorCode.INVALID_REQUEST_BODY, { key: "bestOfNConfig" })
+    }
+
+    return {
+      branch,
+      planModel,
+      executionModel,
+      planmode,
+      autoApprovePlan,
+      review,
+      codeStyleReview,
+      autoCommit,
+      deleteWorktree,
+      requirements,
+      thinkingLevel: thinkingLevel as CreateTaskInput["thinkingLevel"],
+      planThinkingLevel: planThinkingLevel as CreateTaskInput["planThinkingLevel"],
+      executionThinkingLevel: executionThinkingLevel as CreateTaskInput["executionThinkingLevel"],
+      executionStrategy: executionStrategy as CreateTaskInput["executionStrategy"],
+      bestOfNConfig: bestOfNConfigValue as CreateTaskInput["bestOfNConfig"],
+      bestOfNSubstage: bestOfNSubstage as CreateTaskInput["bestOfNSubstage"],
+      skipPermissionAsking,
+      containerImage,
+    }
+  })
 }
 
 function requireTask(db: { getTask: (taskId: string) => Task | null }, taskId: string): Effect.Effect<Task, HttpRouteError> {
@@ -219,7 +335,6 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     const rawRequirements = Array.isArray(body.requirements) ? body.requirements : []
     const validRequirements = rawRequirements.filter((reqId: string) => {
       if (!allValidTaskIds.has(reqId)) {
-        Effect.runSync(Effect.logWarning(`[server] Task creation: Removing invalid dependency "${reqId}"`))
         return false
       }
       return true
@@ -268,6 +383,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
   router.post("/api/tasks/create-and-wait", ({ req, json, sessionUrlFor, broadcast, db }) =>
     Effect.gen(function* () {
       const body = yield* parseJsonRecord(req)
+      const taskInputFields = yield* parseTaskInputFields(body)
       const invalidBooleanField = getInvalidTaskBooleanField(body)
       if (invalidBooleanField) return json({ error: `Invalid ${invalidBooleanField}. Expected boolean.` }, 400)
       if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
@@ -316,26 +432,26 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
         name: String(body.name ?? "").trim(),
         prompt: String(body.prompt ?? ""),
         status: "backlog",
-        branch: body.branch,
-        planModel: body.planModel,
-        executionModel: body.executionModel,
-        planmode: body.planmode,
-        autoApprovePlan: body.autoApprovePlan,
-        review: body.review,
-        codeStyleReview: body.codeStyleReview,
-        autoCommit: body.autoCommit,
+        branch: taskInputFields.branch,
+        planModel: taskInputFields.planModel,
+        executionModel: taskInputFields.executionModel,
+        planmode: taskInputFields.planmode,
+        autoApprovePlan: taskInputFields.autoApprovePlan,
+        review: taskInputFields.review,
+        codeStyleReview: taskInputFields.codeStyleReview,
+        autoCommit: taskInputFields.autoCommit,
         autoDeploy: false,
         autoDeployCondition: null,
-        deleteWorktree: body.deleteWorktree,
-        requirements: Array.isArray(body.requirements) ? body.requirements : [],
-        thinkingLevel: body.thinkingLevel,
-        planThinkingLevel: body.planThinkingLevel,
-        executionThinkingLevel: body.executionThinkingLevel,
-        executionStrategy: body.executionStrategy,
-        bestOfNConfig: body.bestOfNConfig,
-        bestOfNSubstage: body.bestOfNSubstage,
-        skipPermissionAsking: body.skipPermissionAsking,
-        containerImage: body.containerImage,
+        deleteWorktree: taskInputFields.deleteWorktree,
+        requirements: taskInputFields.requirements ?? [],
+        thinkingLevel: taskInputFields.thinkingLevel,
+        planThinkingLevel: taskInputFields.planThinkingLevel,
+        executionThinkingLevel: taskInputFields.executionThinkingLevel,
+        executionStrategy: taskInputFields.executionStrategy,
+        bestOfNConfig: taskInputFields.bestOfNConfig,
+        bestOfNSubstage: taskInputFields.bestOfNSubstage,
+        skipPermissionAsking: taskInputFields.skipPermissionAsking,
+        containerImage: taskInputFields.containerImage,
       })
 
       const normalized = normalizeTaskForClient(task, sessionUrlFor)

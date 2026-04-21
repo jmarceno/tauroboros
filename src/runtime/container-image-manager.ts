@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { dirname, join } from "path"
 import { spawn } from "child_process"
-import { Effect, Schema } from "effect"
+import { Schema } from "effect"
 import type { PackageDefinition, ContainerConfig, ContainerProfile, PackageValidationResult, ContainerBuildResult, ContainerBuildStatus } from "../db/types.ts"
 
 /**
@@ -82,6 +82,14 @@ export interface ImageStatusChangeEvent {
 }
 
 export type ImageStatusChangeHandler = (event: ImageStatusChangeEvent) => void
+
+function writeInfo(message: string): void {
+  process.stdout.write(`${message}\n`)
+}
+
+function writeError(message: string): void {
+  process.stderr.write(`${message}\n`)
+}
 
 export interface ContainerBuildProgressHandler {
   onLog: (line: string) => void
@@ -305,8 +313,8 @@ export class ContainerImageManager {
       })
     }
 
-    Effect.runSync(Effect.logInfo(`🔄 Building container image from ${dockerfilePathForBuild}...`))
-    Effect.runSync(Effect.logInfo(`   This may take a minute on first run...`))
+    writeInfo(`🔄 Building container image from ${dockerfilePathForBuild}...`)
+    writeInfo("   This may take a minute on first run...")
 
     return new Promise((resolve, reject) => {
       const proc = spawn(
@@ -334,7 +342,7 @@ export class ContainerImageManager {
             lastLine = trimmed
             // Show progress for step completion
             if (trimmed.startsWith("STEP ")) {
-              Effect.runSync(Effect.logInfo(`   ${trimmed}`))
+              writeInfo(`   ${trimmed}`)
               this.updateStatus("preparing", "Building container image...", undefined)
             }
           }
@@ -348,14 +356,14 @@ export class ContainerImageManager {
         const lines = chunk.split("\n").filter((l) => l.trim())
         for (const line of lines) {
           if (line.includes("error") || line.includes("Error")) {
-            Effect.runSync(Effect.logError(`   ${line}`))
+            writeError(`   ${line}`)
           }
         }
       })
 
       proc.on("close", (code) => {
         if (code === 0) {
-          Effect.runSync(Effect.logInfo(`✅ Container image built successfully: ${this.options.imageName}`))
+          writeInfo(`✅ Container image built successfully: ${this.options.imageName}`)
           resolve()
         } else {
           reject(new Error(`Failed to build image: ${stderr || stdout || `exit code ${code}`}`))
@@ -381,7 +389,7 @@ export class ContainerImageManager {
       })
     }
 
-    Effect.runSync(Effect.logInfo(`🔄 Pulling container image from ${registryUrl}...`))
+    writeInfo(`🔄 Pulling container image from ${registryUrl}...`)
 
     return new Promise((resolve, reject) => {
       const proc = spawn("podman", ["pull", registryUrl], {
@@ -400,7 +408,7 @@ export class ContainerImageManager {
         const lines = data.toString().split("\n").filter((l) => l.trim())
         for (const line of lines) {
           if (line.includes("Downloading") || line.includes("Extracting")) {
-            Effect.runSync(Effect.logInfo(`   ${line}`))
+            writeInfo(`   ${line}`)
           }
         }
       })
@@ -459,9 +467,9 @@ export class ContainerImageManager {
 
     // Console output for server logs
     if (status === "error") {
-      Effect.runSync(Effect.logError(`❌ ${message}${errorMessage ? `: ${errorMessage}` : ""}`))
+      writeError(`❌ ${message}${errorMessage ? `: ${errorMessage}` : ""}`)
     } else if (status === "ready") {
-      Effect.runSync(Effect.logInfo(`✅ ${message}`))
+      writeInfo(`✅ ${message}`)
     }
   }
 

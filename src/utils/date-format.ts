@@ -4,7 +4,7 @@
  * for user-visible output (e.g., Telegram notifications).
  */
 
-import { Effect, Schema } from "effect"
+import { Schema } from "effect"
 import { getServerTimezone, getTimezoneAbbreviation } from "./timezone.ts"
 
 /**
@@ -18,51 +18,36 @@ export class DateFormatError extends Schema.TaggedError<DateFormatError>()("Date
 
 /**
  * Converts a timestamp (Unix epoch in seconds) or Date to a Date object.
- * Returns Effect with DateFormatError on invalid input.
  */
-function toDateEffect(input: number | Date): Effect.Effect<Date, DateFormatError> {
-  return Effect.gen(function* () {
-    if (input instanceof Date) {
-      if (Number.isNaN(input.getTime())) {
-        return yield* new DateFormatError({
-          operation: "toDate",
-          message: "Invalid date object provided",
-          input,
-        })
-      }
-      return input
-    }
-
-    if (typeof input !== "number" || !Number.isFinite(input)) {
-      return yield* new DateFormatError({
-        operation: "toDate",
-        message: "Timestamp must be a number",
-        input,
-      })
-    }
-
-    const date = new Date(input * 1000)
-    if (Number.isNaN(date.getTime())) {
-      return yield* new DateFormatError({
-        operation: "toDate",
-        message: `Invalid timestamp: ${input}`,
-        input,
-      })
-    }
-    return date
-  })
-}
-
-/** @deprecated Use toDateEffect instead */
 function toDate(input: number | Date): Date {
-  const result = Effect.runSync(toDateEffect(input).pipe(
-    Effect.catchAll((error: DateFormatError) => Effect.fail(new Error(error.message))),
-    Effect.either,
-  ))
-  if (result._tag === "Left") {
-    throw result.left
+  if (input instanceof Date) {
+    if (Number.isNaN(input.getTime())) {
+      throw new DateFormatError({
+        operation: "toDate",
+        message: "Invalid date object provided",
+        input,
+      })
+    }
+    return input
   }
-  return result.right
+
+  if (typeof input !== "number" || !Number.isFinite(input)) {
+    throw new DateFormatError({
+      operation: "toDate",
+      message: "Timestamp must be a number",
+      input,
+    })
+  }
+
+  const date = new Date(input * 1000)
+  if (Number.isNaN(date.getTime())) {
+    throw new DateFormatError({
+      operation: "toDate",
+      message: `Invalid timestamp: ${input}`,
+      input,
+    })
+  }
+  return date
 }
 
 /**

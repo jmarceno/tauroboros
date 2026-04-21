@@ -196,18 +196,6 @@ function runPiModelCommandEffect(
   })
 }
 
-/** @deprecated Use runPiModelCommandEffect instead */
-async function runPiModelCommand(timeoutMs = 5000): Promise<NormalizedModelCatalog> {
-  const result = await Effect.runPromise(runPiModelCommandEffect(timeoutMs).pipe(
-    Effect.catchAll((error: ModelDiscoveryError) => Effect.fail(new Error(error.message))),
-    Effect.either,
-  ))
-  if (result._tag === "Left") {
-    throw result.left
-  }
-  return result.right
-}
-
 export function discoverPiModelsEffect(
   options: { forceRefresh?: boolean; ttlMs?: number; maxRetries?: number; commandTimeoutMs?: number } = {}
 ): Effect.Effect<NormalizedModelCatalog, never> {
@@ -256,9 +244,3 @@ export function discoverPiModelsEffect(
   })
 }
 
-/** @deprecated Use discoverPiModelsEffect instead */
-export async function discoverPiModels(
-  options: { forceRefresh?: boolean; ttlMs?: number; maxRetries?: number; commandTimeoutMs?: number } = {}
-): Promise<NormalizedModelCatalog> {
-  return Effect.runPromise(discoverPiModelsEffect(options))
-}

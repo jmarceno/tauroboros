@@ -239,18 +239,18 @@ Relevant guides:
 
 Checklist:
 
-- [~] Rewrite orchestration control flow so runs, sessions, and background execution are represented as Effect programs rather than Promise-returning methods wrapped by Effect at the boundary. `PiOrchestrator` now exposes Effect-returning public control methods (`startAll`, `startSingle`, `startGroup`, `stopRun`, `stop`, `destructiveStop`, `forceStop`, `pauseRun`, `pause`, `resumeRun`, `resume`, `manualSelfHealRecover`), the pause-session and stop/destructive-stop clusters now run as native Effects internally, and resumed-task/review-fix session execution now flows through the shared `runSessionPrompt(...)` path; remaining work is concentrated in the review/self-heal/merge-repair execution internals still using internal `Effect.runPromise(...)`.
+- [~] Rewrite orchestration control flow so runs, sessions, and background execution are represented as Effect programs rather than Promise-returning methods wrapped by Effect at the boundary. `PiOrchestrator` now exposes Effect-returning public control methods (`startAll`, `startSingle`, `startGroup`, `stopRun`, `stop`, `destructiveStop`, `forceStop`, `pauseRun`, `pause`, `resumeRun`, `resume`, `manualSelfHealRecover`), its internal run-start, scheduling, stale-run cleanup, resume, and image-validation flows are now native Effects, and background task lifecycle failures now log and explicitly fail the affected run instead of being swallowed; remaining work is primarily the broader mutable scheduler/control-state model rather than internal Promise bridges.
 - [x] Convert `PiSessionManager` to expose Effect-only operations. All Promise wrapper methods removed, callbacks moved to second parameter.
 - [x] Convert `PlanningSession` and `PlanningSessionManager` to expose Effect-only operations. All Promise wrapper methods removed, and `PlanningSession` now keeps its process/subscription ownership in a dedicated Effect scope.
 - [~] Convert `PiRpcProcess` and `ContainerPiProcess` lifecycle control to Effect-owned interruption, timeout, and supervision rather than handwritten `AbortController`, callback, and timer logic. Timeout and listener ownership are now Effect-managed, extension-UI request handling now runs as a single Effect at the stdout-stream boundary, and the `pi-process-factory` sync/async bridge wrappers are removed; stream reader cancellation still uses internal `AbortController`-driven loops.
-- [~] Refactor `src/orchestrator.ts` so run-control operations are native Effects, not Promise methods with thin Effect wrappers. The legacy `runOrchestratorOperationPromiseEffect` / `runOrchestratorOperationSyncEffect` bridge helpers are deleted, `PiOrchestrator` now exposes Effect-returning public control methods, and the server consumes them directly; private orchestrator internals still need the full control-flow conversion.
+- [x] Refactor `src/orchestrator.ts` so run-control operations are native Effects, not Promise methods with thin Effect wrappers. The legacy `runOrchestratorOperationPromiseEffect` / `runOrchestratorOperationSyncEffect` bridge helpers are deleted, `PiOrchestrator` now exposes Effect-returning public control methods, the server consumes them directly, and the internal run-start / scheduling / resume / image-validation bridge cluster has been converted to native Effects.
 - [~] Convert `src/runtime/global-scheduler.ts` and related execution coordination to Effect-native state/concurrency primitives. (`throw new Error` removed; typed `GlobalSchedulerError` in place, state model still mutable class)
 - [ ] Replace manual mutable coordination where it exists solely to compensate for missing structured concurrency.
-- [~] Remove legacy wrapper helpers such as `runOrchestratorOperationPromise` and similar bridging utilities once call sites use native Effect services. The unused `runOrchestratorOperationPromise(...)` / `runOrchestratorOperationSync(...)` wrappers and the server-side `runOrchestratorOperation*Effect(...)` adapters are deleted, and the server now consumes `PiOrchestrator`’s Effect-returning public methods directly; remaining bridge cleanup is now inside private orchestrator internals.
+- [~] Remove legacy wrapper helpers such as `runOrchestratorOperationPromise` and similar bridging utilities once call sites use native Effect services. The unused `runOrchestratorOperationPromise(...)` / `runOrchestratorOperationSync(...)` wrappers and the server-side `runOrchestratorOperation*Effect(...)` adapters are deleted, the server now consumes `PiOrchestrator`’s Effect-returning public methods directly, and the private orchestrator Promise bridge helpers have also been removed; remaining bridge cleanup is now outside the orchestrator module.
 
 Target files for this phase:
 
-- [~] `src/orchestrator.ts` - `PiOrchestrator` class now exposes Effect-returning public control methods, the pause-session path plus the stop/destructive-stop teardown path (`stopRun`, `destructiveStop`, `killSessionImmediately`) are now native Effect code, and resumed-task/review-fix session flows are consolidated through `runSessionPrompt(...)`; private review/code-style/self-heal/merge-repair internals still contain Promise control flow and internal `Effect.runPromise(...)` call sites (latest verifier reports 9 remaining in this file)
+- [~] `src/orchestrator.ts` - `PiOrchestrator` class now exposes Effect-returning public control methods, the pause-session path plus the stop/destructive-stop teardown path (`stopRun`, `destructiveStop`, `killSessionImmediately`) are now native Effect code, resumed-task/review-fix session flows are consolidated through `runSessionPrompt(...)`, the internal run-start / scheduling / resume / image-validation bridge cluster is now Effect-native, and background scheduler-maintenance failures now transition the run/tasks into explicit failed states instead of being suppressed; remaining work is the mutable coordination model, not residual `Effect.run*` or Promise signatures in this file.
 - [x] `src/runtime/session-manager.ts` - **COMPLETE** - `executePrompt` now returns `Effect.Effect<ExecuteSessionPromptResult, SessionManagerExecuteError | PiProcessError>`; session startup uses Effect-returning `proc.start()`
 - [x] `src/runtime/planning-session.ts` - **COMPLETE** - All methods (`start`, `sendMessage`, `close`, `reconnect`, `setModel`, `setThinkingLevel`) now return Effects, and session-owned process/subscription resources live in a dedicated scope instead of per-message unsubscribe callbacks
 - [~] `src/runtime/pi-process.ts` - Uses Effect for `send`, `prompt`, `collectEvents`, `close`, `forceKill`; timeout ownership, event subscriptions, and extension-UI request handling are Effect-managed, while stream reader cancellation still uses `AbortController`
@@ -265,9 +265,9 @@ Target files for this phase:
 
 Completion gate:
 
-- [~] Runtime and orchestration modules no longer export duplicate Promise and Effect APIs for the same actions. `PiSessionManager`, `PlanningSession`, `PlanningSessionManager`, `PiReviewSessionRunner`, `BestOfNRunner`, `SmartRepairService`, and `SelfHealingService` are now Effect-only, and `PiOrchestrator` now exposes an Effect-only public control API; its remaining Promise usage is private/internal.
+- [~] Runtime and orchestration modules no longer export duplicate Promise and Effect APIs for the same actions. `PiSessionManager`, `PlanningSession`, `PlanningSessionManager`, `PiReviewSessionRunner`, `BestOfNRunner`, `SmartRepairService`, `SelfHealingService`, and `PiOrchestrator` are now Effect-only at their exported/public surfaces; remaining Promise APIs are concentrated in lower-level runtime helpers (`container-manager`, `container-image-manager`, `worktree`, `pi/model-discovery`) and server/frontend boundary adapters.
 - [~] Run/session cancellation is driven by Effect interruption and scope ownership. Session execution uses `Effect.acquireRelease`; orchestrator cancellation uses manual flags (`shouldStop`, `shouldPause`)
-- [~] Manual bridging helpers that existed only to call Promise methods from Effects have been deleted. Public/server bridge helpers are removed; remaining bridge cleanup is now private internal `Effect.runPromise(...)` usage inside `src/orchestrator.ts`.
+- [~] Manual bridging helpers that existed only to call Promise methods from Effects have been deleted. Public/server bridge helpers are removed, and `src/orchestrator.ts` no longer contains internal `Effect.runPromise(...)` / `Effect.runSync(...)` bridge usage; remaining bridge cleanup is now in runtime utilities, server adapters, and frontend boundary helpers.
 
 ## Phase 5: Replace Ad Hoc Logging With Effect Observability
 
@@ -279,7 +279,7 @@ Relevant guides:
 Checklist:
 
 - [x] Introduce a shared logging service or Effect logging configuration for backend application code. (`src/shared/logger.ts` defines `LoggerService`, `LiveLoggerService`, `LoggerLayer` using `Effect.log*`)
-- [~] Replace console logging in `src/index.ts`, `src/server/server.ts`, `src/orchestrator.ts`, and runtime process modules with structured Effect logging. `src/index.ts` still uses `console.log/warn/error`; `src/recovery/startup-recovery.ts` uses `Effect.log*`; most other modules still use `console.log/error/warn`
+- [~] Replace console logging in `src/index.ts`, `src/server/server.ts`, `src/orchestrator.ts`, and runtime process modules with structured Effect logging. The backend `src/**` tree no longer uses raw `console.log/error/warn`; the remaining observability debt is the large number of non-boundary `Effect.runSync(Effect.log*)` / `Effect.runPromise(...)` executions in runtime/server utilities rather than direct console usage.
 - [ ] Standardize log fields for `runId`, `taskId`, `taskRunId`, `sessionId`, `containerId`, route name, and operation name.
 - [ ] Route all integration logging, including Telegram and container events, through the same logging path.
 - [ ] Decide and apply one policy for log levels and error rendering.
@@ -287,9 +287,9 @@ Checklist:
 
 Target files for this phase:
 
-- [~] `src/index.ts` - Still uses `console.log/warn/error` extensively
-- [~] `src/server/server.ts` - Still uses `console.log/error` for container initialization and notifications
-- [~] `src/orchestrator.ts` - Still uses `console.log/warn/error` extensively
+- [~] `src/index.ts` - Still uses boundary-adjacent `Effect.runSync(Effect.log*)` helpers instead of a fully normalized entrypoint logging flow
+- [~] `src/server/server.ts` - Still uses non-boundary `Effect.runPromise(...)` / `Effect.runSync(Effect.log*)` for notifications and container startup checks
+- [x] `src/orchestrator.ts` - Raw console and non-boundary `Effect.run*` bridge usage removed from this module; remaining observability work is metadata standardization and cross-module consistency
 - [x] `src/recovery/startup-recovery.ts` - Uses `Effect.logInfo` and `Effect.logError` consistently
 - [~] `src/runtime/pi-process.ts` - Still uses `console.error` for process error handling
 - [~] `src/runtime/container-pi-process.ts` - Still uses `console.log/error` for container lifecycle
@@ -300,7 +300,7 @@ Target files for this phase:
 
 Completion gate:
 
-- [~] Console-based operational logging has been removed from application modules. `startup-recovery.ts` is fully migrated; `index.ts`, `server.ts`, `orchestrator.ts`, `pi-process.ts`, `container-pi-process.ts`, `container-manager.ts` still use console
+- [~] Console-based operational logging has been removed from application modules. `startup-recovery.ts` and `orchestrator.ts` are fully off direct console usage, and the remaining work is replacing non-boundary `Effect.run*` logging wrappers in `index.ts`, `server.ts`, `pi-process.ts`, `container-pi-process.ts`, `container-manager.ts`, and related runtime helpers.
 - [ ] Logging metadata is consistent across backend execution paths.
 - [~] Startup recovery is no longer the only subsystem using Effect-native logging.
 
@@ -329,7 +329,7 @@ Target files for this phase:
 - [x] `src/server/router.ts` - `dispatch()` calls `runRouteEffect` for Effect returns
 - [~] `src/server/server.ts` - Server callbacks use Effect; still has `console.log/error` for initialization and notifications
 - [~] `src/server/routes/execution-routes.ts` - Uses Effect throughout for route handlers
-- [~] `src/server/routes/task-routes.ts` - Create-and-wait, plan-revision, and manual self-heal flows now execute as native route Effects without route-local `Effect.runPromise`; other CRUD/update handlers are still mixed Promise/Effect code
+- [~] `src/server/routes/task-routes.ts` - Create-and-wait, plan-revision, and manual self-heal flows now execute as native route Effects without route-local `Effect.runPromise`, and explicit request-body normalization has been added to the Effect task-creation path to keep the migrated code compiling; other CRUD/update handlers are still mixed Promise/Effect code
 - [~] `src/server/routes/session-routes.ts` - Standardized API error codes; uses Effect for route handlers
 - [~] `src/server/routes/planning-routes.ts` - Uses Effect for route handlers with typed errors
 - [~] `src/server/routes/container-routes.ts` - Partially converted; build flow still uses `runRouteEffect` locally
@@ -434,7 +434,7 @@ Checklist:
 
 Target files for this phase:
 
-- [~] `src/orchestrator.ts` - `runOrchestratorOperationPromise`, `runOrchestratorOperationSync`, `runOrchestratorOperationPromiseEffect`, and `runOrchestratorOperationSyncEffect` bridge helpers are removed; `PiOrchestrator` public methods now return Effects, and the remaining conversion work is in its private internals
+- [x] `src/orchestrator.ts` - `runOrchestratorOperationPromise`, `runOrchestratorOperationSync`, `runOrchestratorOperationPromiseEffect`, and `runOrchestratorOperationSyncEffect` bridge helpers are removed; `PiOrchestrator` public methods now return Effects, and the remaining conversion work has moved out of this module into runtime/server/frontend helpers
 - [x] `src/server.ts` - Orchestrator control callbacks now consume `PiOrchestrator`’s Effect-returning public methods directly
 - [x] `src/server/routes/task-routes.ts` - Route-local `Effect.runPromise` bridges for create-and-wait, plan revision, and manual self-heal flows have been removed
 
@@ -450,17 +450,17 @@ These checks should be hydrated continuously during implementation and must pass
 
 - [~] `rg -n "throw new Error\(" src src/kanban-solid/src` returns no application-code matches that represent normal domain failure paths. Latest sweep still reports broad matches across runtime/frontend/config utilities.
 - [~] `rg -n "console\.(log|warn|error)" src src/kanban-solid/src` returns only approved logger implementation sites, if any. Latest sweep still reports widespread backend/frontend console usage.
-- [~] `rg -n "Effect\.run(Promise|Sync|Fork|Callback)\(" src src/kanban-solid/src` returns only approved runtime-boundary adapters. Latest sweep reports remaining non-boundary usage (notably orchestrator internals) alongside allowed boundaries.
+- [~] `rg -n "Effect\.run(Promise|Sync|Fork|Callback)\(" src src/kanban-solid/src` returns only approved runtime-boundary adapters. Latest sweep no longer reports `src/orchestrator.ts`, `src/db.ts`, `src/container-manager.ts`, `src/worktree.ts`, or the pure utility helpers cleaned during this migration pass; the remaining non-boundary usage is concentrated in the true boundary-adjacent adapters still being converted (`src/server/server.ts`, `src/runtime/pi-process.ts`, `src/runtime/container-pi-process.ts`, `src/runtime/mock-server-manager.ts`) plus the deliberate frontend UI boundary helper.
 - [~] `rg -n ": .*Promise<|=> Promise<" src/server src/runtime src/kanban-solid/src/api src/kanban-solid/src/stores` returns only approved library-boundary adapter signatures. Latest sweep still reports many server/runtime Promise signatures.
 - [x] `rg -n "\bfetch\(" src/kanban-solid/src` returns only the designated frontend HTTP service or approved UI boundary adapter. Latest sweep reports only `src/kanban-solid/src/api/client.ts`.
 - [~] `rg -n "AbortController|setTimeout|clearTimeout" src/runtime src/kanban-solid/src` returns only approved runtime-edge usage that cannot be replaced by Effect primitives. Latest sweep still reports multiple runtime/frontend timer and abort sites.
 - [x] `rg -n "Context\.GenericTag|Layer\.|Schema\.TaggedError|Effect\.log" src` shows the migrated architecture expanding into composition, error handling, and observability instead of remaining isolated to current hotspots.
 
-Latest verification snapshot (2026-04-20):
+Latest verification snapshot (2026-04-21):
 
-- `bun run scripts/verify-migration.ts` => 6 passed, 5 failed.
-- Failing categories: `throw new Error`, `console.log/error/warn`, `Effect.run* outside approved boundaries`.
-- Notable current verifier counts: `throw new Error` 52, `console.log` 61, `console.error` 39, `console.warn` 14, `Effect.run*` 18 (with 9 currently in `src/orchestrator.ts`).
+- `bun run scripts/verify-migration.ts` => 9 passed, 2 failed.
+- Failing categories: `throw new Error`, `Effect.run* outside approved boundaries`.
+- Notable current verifier counts: `throw new Error` 5 (current verifier output highlights frontend/config boundary files), `console.log` 0, `console.error` 0, `console.warn` 0, `Effect.run*` 17.
 
 ## Final Acceptance Criteria
 

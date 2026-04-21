@@ -315,7 +315,11 @@ export class PiSessionManager {
 
             if (!responseText) {
               const messagesResult = yield* proc.send({ type: "get_messages" }, 30_000).pipe(
-                Effect.catchTag("PiProcessError", () => Effect.succeed(null)),
+                Effect.mapError((cause) => new SessionManagerExecuteError({
+                  operation: "getMessages",
+                  message: cause.message,
+                  cause,
+                })),
               )
               if (messagesResult && Array.isArray(messagesResult.messages)) {
                 const messages = messagesResult.messages as PiMessage[]
@@ -351,7 +355,7 @@ export class PiSessionManager {
     })
   }
 
-  private resolveExistingContainerIdEffect(input: ExecuteSessionPromptInput): Effect.Effect<string | null> {
+  private resolveExistingContainerIdEffect(input: ExecuteSessionPromptInput): Effect.Effect<string | null, SessionManagerExecuteError> {
     if (!input.isResume || !input.resumedSessionId || !input.worktreeDir) {
       return Effect.succeed(null)
     }
@@ -375,9 +379,11 @@ export class PiSessionManager {
         }
         return pausedContainerId
       },
-      catch: () => null as null,
-    }).pipe(
-      Effect.catchAll(() => Effect.succeed(null)),
+      catch: (cause) => new SessionManagerExecuteError({
+        operation: "resolveExistingContainerId",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
     )
   }
 

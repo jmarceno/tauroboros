@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Schema } from "effect"
 import type { Database } from "bun:sqlite"
 import type { StatsTimeRange, UsageStats, TaskStats, ModelUsageStats, HourlyUsage, DailyUsage } from "./types.ts"
 
@@ -52,37 +52,23 @@ interface DailyUsageRow {
   cost: number | null
 }
 
-function getTimeRangeBoundaryEffect(range: StatsTimeRange): Effect.Effect<{ start: number; previousStart: number }, StatsRepositoryError> {
-  return Effect.gen(function* () {
-    const now = nowUnix()
-    switch (range) {
-      case "24h":
-        return { start: now - SECONDS_IN_DAY, previousStart: now - 2 * SECONDS_IN_DAY }
-      case "7d":
-        return { start: now - 7 * SECONDS_IN_DAY, previousStart: now - 14 * SECONDS_IN_DAY }
-      case "30d":
-        return { start: now - 30 * SECONDS_IN_DAY, previousStart: now - 60 * SECONDS_IN_DAY }
-      case "lifetime":
-        return { start: 0, previousStart: 0 }
-      default:
-        return yield* new StatsRepositoryError({
-          operation: "getTimeRangeBoundary",
-          message: `Invalid time range: ${JSON.stringify(range)}. Expected "24h", "7d", "30d", or "lifetime".",
-        })
-    }
-  })
-}
-
-/** @deprecated Use getTimeRangeBoundaryEffect instead */
 function getTimeRangeBoundary(range: StatsTimeRange): { start: number; previousStart: number } {
-  const result = Effect.runSync(getTimeRangeBoundaryEffect(range).pipe(
-    Effect.catchAll((error: StatsRepositoryError) => Effect.fail(new Error(error.message))),
-    Effect.either,
-  ))
-  if (result._tag === "Left") {
-    throw result.left
+  const now = nowUnix()
+  switch (range) {
+    case "24h":
+      return { start: now - SECONDS_IN_DAY, previousStart: now - 2 * SECONDS_IN_DAY }
+    case "7d":
+      return { start: now - 7 * SECONDS_IN_DAY, previousStart: now - 14 * SECONDS_IN_DAY }
+    case "30d":
+      return { start: now - 30 * SECONDS_IN_DAY, previousStart: now - 60 * SECONDS_IN_DAY }
+    case "lifetime":
+      return { start: 0, previousStart: 0 }
+    default:
+      throw new StatsRepositoryError({
+        operation: "getTimeRangeBoundary",
+        message: `Invalid time range: ${JSON.stringify(range)}. Expected "24h", "7d", "30d", or "lifetime".`,
+      })
   }
-  return result.right
 }
 
 function getSessionKindResponsibility(kind: string): "plan" | "execution" | "review" | "other" {

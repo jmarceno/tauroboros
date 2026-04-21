@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync } from "fs"
 import { basename, join, resolve } from "path"
 import { execFileSync } from "child_process"
-import { Cause, Effect, Exit, Schema } from "effect"
+import { Schema } from "effect"
 
 export interface WorktreeInfo {
   directory: string
@@ -85,32 +85,25 @@ function normalizeBranchName(value: string | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null
 }
 
-function runGitEffect(args: string[], cwd: string): Effect.Effect<GitCommandResult, WorktreeError> {
-  return Effect.try({
-    try: () => {
-      const stdout = execFileSync("git", args, {
-        cwd,
-        encoding: "utf-8",
-        stdio: "pipe",
-      })
-      return { stdout: stdout.replace(/\s+$/g, "") } as GitCommandResult
-    },
-    catch: (error) => {
-      const err = error as { message?: string; stdout?: Buffer | string; stderr?: Buffer | string }
-      const stdout = typeof err.stdout === "string" ? err.stdout : err.stdout?.toString("utf-8") ?? ""
-      const stderr = typeof err.stderr === "string" ? err.stderr : err.stderr?.toString("utf-8") ?? ""
-      const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n")
-      return new WorktreeError({ message: err.message ?? "git command failed", code: "GIT_COMMAND_FAILED", gitOutput: output || undefined })
-    },
-  })
-}
-
 function runGit(args: string[], cwd: string): GitCommandResult {
-  const exit = Effect.runSyncExit(runGitEffect(args, cwd))
-  if (Exit.isFailure(exit)) {
-    throw Cause.squash(exit.cause)
+  try {
+    const stdout = execFileSync("git", args, {
+      cwd,
+      encoding: "utf-8",
+      stdio: "pipe",
+    })
+    return { stdout: stdout.replace(/\s+$/g, "") }
+  } catch (error) {
+    const err = error as { message?: string; stdout?: Buffer | string; stderr?: Buffer | string }
+    const stdout = typeof err.stdout === "string" ? err.stdout : err.stdout?.toString("utf-8") ?? ""
+    const stderr = typeof err.stderr === "string" ? err.stderr : err.stderr?.toString("utf-8") ?? ""
+    const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n")
+    throw new WorktreeError({
+      message: err.message ?? "git command failed",
+      code: "GIT_COMMAND_FAILED",
+      gitOutput: output || undefined,
+    })
   }
-  return exit.value
 }
 
 function getRepoRoot(baseDirectory: string): string {
