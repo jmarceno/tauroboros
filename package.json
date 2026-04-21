@@ -19,6 +19,7 @@
     "test:e2e:debug": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --debug",
     "test:e2e:headed": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --headed",
     "test:e2e:real": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && TEST_TYPE=real-workflow USE_MOCK_LLM=true bunx playwright test tests/e2e/real-workflow.spec.ts",
+    "test:effect-migration": "bun run scripts/verify-migration.ts && bun test tests/effect-http-boundary.test.ts tests/frontend-store-boundaries.test.ts",
     "skills:sync": "bun run scripts/sync-skills.ts",
     "skills:install": "bun run scripts/sync-skills.ts --clean",
     "skills:verify": "bun run scripts/verify-setup.ts",

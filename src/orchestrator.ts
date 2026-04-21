@@ -185,8 +185,8 @@ function failOrchestratorOperation(operation: string, message: string): never {
 }
 
 type ContainerImageOperations = {
-  checkImageExists(imageName: string): Promise<boolean>
-  deleteImage(imageName: string): Promise<{ success: boolean; error?: string }>
+  checkImageExists(imageName: string): Effect.Effect<boolean, unknown>
+  deleteImage(imageName: string): Effect.Effect<{ success: boolean; error?: string }, unknown>
 }
 
 export class PiOrchestrator {
@@ -1309,12 +1309,13 @@ export class PiOrchestrator {
    * Emergency stop - kill all containers immediately.
    */
   emergencyStop(): Effect.Effect<number, OrchestratorOperationError> {
-    return this.wrapOperation("emergencyStop", Effect.tryPromise({
-      try: async () => {
-        if (!this.containerManager) return 0
-        return await this.containerManager.emergencyStop()
-      },
-      catch: (cause) => this.toOperationError("emergencyStop", cause),
+    return this.wrapOperation("emergencyStop", Effect.gen(this, function* () {
+      if (!this.containerManager) {
+        return 0
+      }
+      return yield* this.containerManager.emergencyStop().pipe(
+        Effect.mapError((cause) => this.toOperationError("emergencyStop", cause)),
+      )
     }))
   }
 
@@ -1350,10 +1351,9 @@ export class PiOrchestrator {
         const task = this.db.getTask(taskId)
         if (task?.sessionId) {
           try {
-            yield* Effect.tryPromise({
-              try: () => this.containerManager!.forceKillContainer(task.sessionId!),
-              catch: (cause) => this.toOperationError("destructiveStop", cause),
-            })
+            yield* this.containerManager!.forceKillContainer(task.sessionId!).pipe(
+              Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)),
+            )
           } catch (error) {
             const msg = error instanceof Error ? error.message : String(error)
             yield* Effect.logWarning(`[orchestrator] Failed to kill container for session ${task.sessionId}: ${msg}`)
@@ -1361,10 +1361,9 @@ export class PiOrchestrator {
         }
       }
       // Also do emergency stop as a fallback
-      result.killed += yield* Effect.tryPromise({
-        try: () => this.containerManager!.emergencyStop(),
-        catch: (cause) => this.toOperationError("destructiveStop", cause),
-      })
+      result.killed += yield* this.containerManager!.emergencyStop().pipe(
+        Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)),
+      )
     }
 
     // 3. Delete all worktrees for this run's tasks
@@ -1373,15 +1372,12 @@ export class PiOrchestrator {
       if (task?.worktreeDir && existsSync(task.worktreeDir)) {
         try {
           yield* Effect.logInfo(`[orchestrator] Removing worktree: ${task.worktreeDir}`)
-          yield* Effect.tryPromise({
-            try: () => this.worktree.complete(task.worktreeDir!, {
-              branch: "",
-              targetBranch: "",
-              shouldMerge: false,
-              shouldRemove: true,
-            }),
-            catch: (cause) => this.toOperationError("destructiveStop", cause),
-          })
+          yield* this.worktree.complete(task.worktreeDir!, {
+            branch: "",
+            targetBranch: "",
+            shouldMerge: false,
+            shouldRemove: true,
+          }).pipe(Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)))
           this.db.updateTask(taskId, { worktreeDir: null })
           result.cleaned++
         } catch (error) {
@@ -1404,10 +1400,9 @@ export class PiOrchestrator {
             try {
               yield* Effect.logInfo(`[orchestrator] Deleting custom container image: ${task.containerImage}`)
               const containerManager = this.getContainerImageOperations("destructiveStop")
-              yield* Effect.tryPromise({
-                try: () => containerManager.deleteImage(task.containerImage!),
-                catch: (cause) => this.toOperationError("destructiveStop", cause),
-              })
+              yield* containerManager.deleteImage(task.containerImage!).pipe(
+                Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)),
+              )
               this.db.updateTask(taskId, { containerImage: undefined })
             } catch (error) {
               const msg = error instanceof Error ? error.message : String(error)
@@ -1466,7 +1461,7 @@ export class PiOrchestrator {
     this.unregisterRun(runId)
 
     // Clear any persisted pause state
-    clearGlobalPausedRunState()
+    clearGlobalPausedRunState(runId, this.db)
     clearAllPausedSessionStates(this.db)
 
     this.broadcast({ type: "execution_stopped", payload: { runId, destructive: true } })
@@ -1670,17 +1665,13 @@ export class PiOrchestrator {
         const targetRunId = runId || this.currentRunId
 
         if (!targetRunId) {
-          const pausedRuns = listPausedRunStates(this.db)
+          const pausedRuns = yield* listPausedRunStates(this.db).pipe(
+            Effect.mapError((cause) => this.toOperationError("resume", cause)),
+          )
           if (pausedRuns.length > 0) {
             const mostRecent = pausedRuns[0]
             if (mostRecent) {
               return yield* this.resumeFromPauseStateEffect(mostRecent)
-            }
-          }
-          if (hasPausedRunState()) {
-            const pauseState = loadPausedRunState()
-            if (pauseState) {
-              return yield* this.resumeFromPauseStateEffect(pauseState)
             }
           }
           return null
@@ -1706,7 +1697,7 @@ export class PiOrchestrator {
         }
       }
 
-      clearGlobalPausedRunState()
+      clearGlobalPausedRunState(pauseState.runId, this.db)
 
       this.currentRunId = pauseState.runId
       this.isPaused = false
@@ -1726,19 +1717,21 @@ export class PiOrchestrator {
   /**
    * Check if there's a paused run that can be resumed.
    */
-  hasPausedRun(): boolean {
-    return listPausedRunStates(this.db).length > 0 || hasPausedRunState()
+  hasPausedRun(): Effect.Effect<boolean, OrchestratorOperationError> {
+    return listPausedRunStates(this.db).pipe(
+      Effect.map((pausedRuns) => pausedRuns.length > 0),
+      Effect.mapError((cause) => this.toOperationError("hasPausedRun", cause)),
+    )
   }
 
   /**
    * Get the paused run state if available.
    */
-  getPausedRunState(): PausedRunState | null {
-    const pausedRuns = listPausedRunStates(this.db)
-    if (pausedRuns.length > 0) {
-      return pausedRuns[0] ?? null
-    }
-    return loadPausedRunState()
+  getPausedRunState(): Effect.Effect<PausedRunState | null, OrchestratorOperationError> {
+    return listPausedRunStates(this.db).pipe(
+      Effect.map((pausedRuns) => pausedRuns[0] ?? null),
+      Effect.mapError((cause) => this.toOperationError("getPausedRunState", cause)),
+    )
   }
 
   /**
@@ -1920,17 +1913,16 @@ export class PiOrchestrator {
       // Execute main task logic with error handling and cleanup
       const executeMain = Effect.gen(this, function* () {
         if (task.worktreeDir && existsSync(task.worktreeDir)) {
-          const worktrees = yield* Effect.tryPromise({
-            try: () => listWorktrees(this.projectRoot),
-            catch: (error) => {
+          const worktrees = yield* listWorktrees(this.projectRoot).pipe(
+            Effect.mapError((error) => {
               const msg = error instanceof Error ? error.message : String(error)
               return new OrchestratorOperationError({
                 operation: "executeTask.verifyWorktree",
                 message: `Failed to verify worktree ${task.worktreeDir}: ${msg}`,
                 cause: error,
               })
-            },
-          })
+            }),
+          )
           const existingWorktree = worktrees.find(w => w.directory === task.worktreeDir)
           if (existingWorktree) {
             worktreeInfo = existingWorktree
@@ -1938,29 +1930,28 @@ export class PiOrchestrator {
         }
 
         if (!worktreeInfo) {
-          const targetBranch = yield* Effect.tryPromise({
-            try: () =>
-              resolveTargetBranch({
-                baseDirectory: this.projectRoot,
-                taskBranch: task.branch,
-                optionBranch: options.branch,
-              }),
-            catch: (error) =>
+          const targetBranch = yield* resolveTargetBranch({
+            baseDirectory: this.projectRoot,
+            taskBranch: task.branch,
+            optionBranch: options.branch,
+          }).pipe(
+            Effect.mapError((error) =>
               new OrchestratorOperationError({
                 operation: "executeTask.resolveTargetBranch",
                 message: error instanceof Error ? error.message : String(error),
                 cause: error,
               }),
-          })
-          worktreeInfo = yield* Effect.tryPromise({
-            try: () => this.worktree.createForTask(task.id, undefined, targetBranch),
-            catch: (error) =>
+            ),
+          )
+          worktreeInfo = yield* this.worktree.createForTask(task.id, undefined, targetBranch).pipe(
+            Effect.mapError((error) =>
               new OrchestratorOperationError({
                 operation: "executeTask.createWorktree",
                 message: error instanceof Error ? error.message : String(error),
                 cause: error,
               }),
-          })
+            ),
+          )
           this.db.updateTask(task.id, { worktreeDir: worktreeInfo.directory })
         }
         this.activeWorktreeInfo = worktreeInfo
@@ -1971,7 +1962,11 @@ export class PiOrchestrator {
           yield* this.runPreExecutionCommand(task.id, command, worktreeInfo.directory)
         }
 
-        const pausedSession = task.sessionId ? loadPausedSessionState(this.db, task.sessionId) : null
+        const pausedSession = task.sessionId
+          ? yield* loadPausedSessionState(this.db, task.sessionId).pipe(
+              Effect.mapError((cause) => this.toOperationError("executeTask.loadPausedSessionState", cause)),
+            )
+          : null
         if (pausedSession) {
           yield* this.resumeTaskExecution(task, pausedSession)
           clearPausedSessionState(this.db, pausedSession.sessionId)
@@ -2000,36 +1995,34 @@ export class PiOrchestrator {
           yield* this.runCommitPrompt(task.id, task, options, worktreeInfo)
         }
 
-        const targetBranch = yield* Effect.tryPromise({
-          try: () =>
-            resolveTargetBranch({
-              baseDirectory: this.projectRoot,
-              taskBranch: task.branch,
-              optionBranch: options.branch,
-            }),
-          catch: (error) =>
+        const targetBranch = yield* resolveTargetBranch({
+          baseDirectory: this.projectRoot,
+          taskBranch: task.branch,
+          optionBranch: options.branch,
+        }).pipe(
+          Effect.mapError((error) =>
             new OrchestratorOperationError({
               operation: "executeTask.resolveTargetBranch.final",
               message: error instanceof Error ? error.message : String(error),
               cause: error,
             }),
-        })
+          ),
+        )
 
-        yield* Effect.tryPromise({
-          try: () =>
-            this.worktree.complete(worktreeInfo!.directory, {
-              branch: worktreeInfo!.branch,
-              targetBranch,
-              shouldMerge: true,
-              shouldRemove: task.deleteWorktree !== false,
-            }),
-          catch: (error) =>
+        yield* this.worktree.complete(worktreeInfo!.directory, {
+          branch: worktreeInfo!.branch,
+          targetBranch,
+          shouldMerge: true,
+          shouldRemove: task.deleteWorktree !== false,
+        }).pipe(
+          Effect.mapError((error) =>
             new OrchestratorOperationError({
               operation: "executeTask.completeWorktree",
               message: error instanceof Error ? error.message : String(error),
               cause: error,
             }),
-        })
+          ),
+        )
 
         this.db.updateTask(task.id, {
           status: "done",
@@ -2119,20 +2112,19 @@ export class PiOrchestrator {
         `[orchestrator] Merge conflict detected for task ${task.name}(${task.id}), attempting repair`,
       )
 
-      const targetBranch = yield* Effect.tryPromise({
-        try: () =>
-          resolveTargetBranch({
-            baseDirectory: this.projectRoot,
-            taskBranch: task.branch,
-            optionBranch: options.branch,
-          }),
-        catch: (err) =>
+      const targetBranch = yield* resolveTargetBranch({
+        baseDirectory: this.projectRoot,
+        taskBranch: task.branch,
+        optionBranch: options.branch,
+      }).pipe(
+        Effect.mapError((err) =>
           new OrchestratorOperationError({
             operation: "handleMergeConflict.resolveTargetBranch",
             message: err instanceof Error ? err.message : String(err),
             cause: err,
           }),
-      })
+        ),
+      )
 
       const repairSuccess = yield* this.runMergeRepairPrompt(
         task.id,
@@ -2148,23 +2140,22 @@ export class PiOrchestrator {
           `[orchestrator] Merge repair succeeded for task ${task.name}(${task.id}), completing task`,
         )
 
-        const completeResult = yield* Effect.tryPromise({
-          try: () =>
-            this.worktree.complete(worktreeInfo.directory, {
-              branch: worktreeInfo.branch,
-              targetBranch,
-              shouldMerge: true,
-              shouldRemove: task.deleteWorktree !== false,
-            }),
-          catch: (err) => {
+        const completeResult = yield* this.worktree.complete(worktreeInfo.directory, {
+          branch: worktreeInfo.branch,
+          targetBranch,
+          shouldMerge: true,
+          shouldRemove: task.deleteWorktree !== false,
+        }).pipe(
+          Effect.mapError((err) => {
             const message = err instanceof Error ? err.message : String(err)
             return new OrchestratorOperationError({
               operation: "handleMergeConflict.completeWorktree",
               message,
               cause: err,
             })
-          },
-        }).pipe(Effect.either)
+          }),
+          Effect.either,
+        )
 
         if (Either.isLeft(completeResult)) {
           const message = completeResult.left.message
@@ -2592,14 +2583,11 @@ export class PiOrchestrator {
 
   private runCommitPrompt(taskId: string, task: Task, options: Options, worktreeInfo: WorktreeInfo): Effect.Effect<void, OrchestratorOperationError | SessionManagerExecuteError | PiProcessError> {
     return Effect.gen(this, function* () {
-      const targetBranch = yield* Effect.tryPromise({
-        try: () => resolveTargetBranch({
-          baseDirectory: this.projectRoot,
-          taskBranch: task.branch,
-          optionBranch: options.branch,
-        }),
-        catch: (error) => this.toOperationError("runCommitPrompt", error),
-      })
+      const targetBranch = yield* resolveTargetBranch({
+        baseDirectory: this.projectRoot,
+        taskBranch: task.branch,
+        optionBranch: options.branch,
+      }).pipe(Effect.mapError((error) => this.toOperationError("runCommitPrompt", error)))
       const commitPrompt = this.db.renderPrompt("commit", buildCommitVariables(targetBranch, task.deleteWorktree !== false))
 
       const commit = yield* this.runSessionPrompt({
@@ -2663,10 +2651,9 @@ export class PiOrchestrator {
       }
 
       // Verify the merge was resolved by checking git status
-      const status = yield* Effect.tryPromise({
-        try: () => this.worktree.inspect(worktreeInfo.directory),
-        catch: (error) => this.toOperationError("runMergeRepairPrompt", error),
-      })
+      const status = yield* this.worktree.inspect(worktreeInfo.directory).pipe(
+        Effect.mapError((error) => this.toOperationError("runMergeRepairPrompt", error)),
+      )
 
       if (status.stagedFiles.length > 0 || status.modifiedFiles.length > 0) {
         // There are still uncommitted changes - try to commit them
@@ -3059,36 +3046,34 @@ export class PiOrchestrator {
     options: Options,
   ): Effect.Effect<void, OrchestratorOperationError, never> {
     return Effect.gen(this, function* () {
-      const targetBranch = yield* Effect.tryPromise({
-        try: () =>
-          resolveTargetBranch({
-            baseDirectory: this.projectRoot,
-            taskBranch: task.branch,
-            optionBranch: options.branch,
-          }),
-        catch: (error) =>
+      const targetBranch = yield* resolveTargetBranch({
+        baseDirectory: this.projectRoot,
+        taskBranch: task.branch,
+        optionBranch: options.branch,
+      }).pipe(
+        Effect.mapError((error) =>
           new OrchestratorOperationError({
             operation: "completeTaskSuccessfully.resolveTargetBranch",
             message: error instanceof Error ? error.message : String(error),
             cause: error,
           }),
-      })
+        ),
+      )
 
-      yield* Effect.tryPromise({
-        try: () =>
-          this.worktree.complete(worktreeInfo.directory, {
-            branch: worktreeInfo.branch,
-            targetBranch,
-            shouldMerge: true,
-            shouldRemove: task.deleteWorktree !== false,
-          }),
-        catch: (error) =>
+      yield* this.worktree.complete(worktreeInfo.directory, {
+        branch: worktreeInfo.branch,
+        targetBranch,
+        shouldMerge: true,
+        shouldRemove: task.deleteWorktree !== false,
+      }).pipe(
+        Effect.mapError((error) =>
           new OrchestratorOperationError({
             operation: "completeTaskSuccessfully.completeWorktree",
             message: error instanceof Error ? error.message : String(error),
             cause: error,
           }),
-      })
+        ),
+      )
 
       this.db.updateTask(task.id, {
         status: "done",
@@ -3187,10 +3172,9 @@ export class PiOrchestrator {
   private checkImageExistsEffect(imageName: string): Effect.Effect<boolean, OrchestratorOperationError> {
     if (this.containerManager) {
       const containerManager = this.getContainerImageOperations("checkImageExists")
-      return Effect.tryPromise({
-        try: () => containerManager.checkImageExists(imageName),
-        catch: (cause) => this.toOperationError("checkImageExists", cause),
-      })
+      return containerManager.checkImageExists(imageName).pipe(
+        Effect.mapError((cause) => this.toOperationError("checkImageExists", cause)),
+      )
     }
 
     return Effect.tryPromise({

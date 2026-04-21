@@ -1,7 +1,11 @@
 import { Effect } from "effect"
 import type { InfrastructureSettings } from "../src/config/settings.ts"
 import { BASE_IMAGES } from "../src/config/base-images.ts"
-import { createPiServerEffect, type CreateServerOptions } from "../src/server.ts"
+import { createPiServerEffect, type CreateServerOptions, type PiKanbanServer } from "../src/server.ts"
+
+type TestPiKanbanServer = PiKanbanServer & {
+  start: (port?: number) => Promise<number>
+}
 
 export function createTestSettings(): InfrastructureSettings {
   return {
@@ -37,5 +41,13 @@ export function createTestSettings(): InfrastructureSettings {
 }
 
 export function createPiServer(options: CreateServerOptions = {}) {
-  return Effect.runSync(createPiServerEffect(options))
+  const runtime = Effect.runSync(createPiServerEffect(options))
+  const server = Object.assign(runtime.server, {
+    start: (port?: number) => Effect.runPromise(Effect.scoped(runtime.server.startEffect(port))),
+  }) as TestPiKanbanServer
+
+  return {
+    ...runtime,
+    server,
+  }
 }

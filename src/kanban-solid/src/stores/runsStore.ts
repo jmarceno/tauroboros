@@ -5,7 +5,8 @@
 
 import { createMemo } from 'solid-js'
 import { createQuery, useQueryClient, createMutation } from '@tanstack/solid-query'
-import type { WorkflowRun, Task } from '@/types'
+import { Effect } from 'effect'
+import type { WorkflowRun } from '@/types'
 import * as api from '@/api'
 
 const queryKeys = {
@@ -18,7 +19,6 @@ const queryKeys = {
 export function createRunsStore() {
   const queryClient = useQueryClient()
   const runApi = api.runApiEffect
-  const setTasksRef = (_tasks: Task[]) => {}
 
   // Query
   const runsQuery = createQuery(() => ({
@@ -77,9 +77,7 @@ export function createRunsStore() {
   }
 
   // Actions
-  const loadRuns = async () => {
-    await queryClient.invalidateQueries({ queryKey: queryKeys.runs.lists() })
-  }
+  const loadRuns = () => runApi(Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.runs.lists() })))
 
   const updateRunFromWebSocket = (run: WorkflowRun) => {
     queryClient.setQueryData(queryKeys.runs.lists(), (old: WorkflowRun[] | undefined) => {
@@ -104,39 +102,39 @@ export function createRunsStore() {
   // Mutations
   const pauseRunMutation = createMutation(() => ({
     mutationFn: (id: string) => runApi(api.runsApi.pause(id)),
-    onSuccess: () => loadRuns(),
+    onSuccess: () => {
+      void loadRuns()
+    },
   }))
 
   const resumeRunMutation = createMutation(() => ({
     mutationFn: (id: string) => runApi(api.runsApi.resume(id)),
-    onSuccess: () => loadRuns(),
+    onSuccess: () => {
+      void loadRuns()
+    },
   }))
 
   const stopRunMutation = createMutation(() => ({
     mutationFn: (id: string) => runApi(api.runsApi.stop(id)),
-    onSuccess: () => loadRuns(),
+    onSuccess: () => {
+      void loadRuns()
+    },
   }))
 
   const archiveRunMutation = createMutation(() => ({
     mutationFn: (id: string) => runApi(api.runsApi.archive(id)),
-    onSuccess: () => loadRuns(),
+    onSuccess: () => {
+      void loadRuns()
+    },
   }))
 
-  const pauseRun = async (id: string) => {
-    return await pauseRunMutation.mutateAsync(id)
-  }
+  const pauseRun = (id: string) => pauseRunMutation.mutateAsync(id)
 
-  const resumeRun = async (id: string) => {
-    return await resumeRunMutation.mutateAsync(id)
-  }
+  const resumeRun = (id: string) => resumeRunMutation.mutateAsync(id)
 
-  const stopRun = async (id: string) => {
-    return await stopRunMutation.mutateAsync(id)
-  }
+  const stopRun = (id: string) => stopRunMutation.mutateAsync(id)
 
-  const archiveRun = async (id: string) => {
-    await archiveRunMutation.mutateAsync(id)
-  }
+  const archiveRun = (id: string) => archiveRunMutation.mutateAsync(id)
 
   return {
     runs,
@@ -146,7 +144,6 @@ export function createRunsStore() {
     consumedRunSlots,
     isLoading,
     error,
-    setTasksRef,
     isStaleRun,
     getTaskRunLock,
     isTaskMutationLocked,

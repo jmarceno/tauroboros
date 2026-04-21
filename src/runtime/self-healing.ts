@@ -129,7 +129,14 @@ export class SelfHealingService {
         ),
       )
 
-      const parsed = parseStrictJsonObject(session.responseText, "Self-heal diagnostics response")
+      const parsed = yield* Effect.try({
+        try: () => parseStrictJsonObject(session.responseText, "Self-heal diagnostics response"),
+        catch: (cause) => new SelfHealingError({
+          operation: "parseDiagnosticsResponse",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
 
       const diagnosticsSummary =
         typeof parsed.diagnosticsSummary === "string" && parsed.diagnosticsSummary.trim().length > 0

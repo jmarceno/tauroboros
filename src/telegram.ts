@@ -40,6 +40,10 @@ export interface NotificationContext {
   hasFailures?: boolean
 }
 
+function failTelegram(operation: string, message: string, cause?: unknown): never {
+  throw new TelegramError({ operation, message, cause })
+}
+
 /**
  * Determines whether a notification should be sent based on the notification level.
  * 
@@ -73,23 +77,24 @@ export function shouldSendNotification(
       return newStatus === "failed" || newStatus === "stuck"
     
     default:
-      // Unknown level - treat as 'all' for backwards compatibility
-      return true
+      return failTelegram("shouldSendNotification", `Unsupported telegram notification level: ${String(level)}`)
   }
 }
 
-const STATUS_EMOJI: Record<string, string> = {
+const STATUS_EMOJI: Record<TaskStatus, string> = {
   template: "📄",
   backlog: "📌",
+  queued: "⏳",
   executing: "▶️",
   review: "🧩",
+  "code-style": "🧹",
   done: "✅",
   failed: "❌",
   stuck: "🚫",
 }
 
-function buildMessage(taskName: string, oldStatus: string, newStatus: string): string {
-  const emoji = STATUS_EMOJI[newStatus] ?? "💬"
+function buildMessage(taskName: string, oldStatus: TaskStatus, newStatus: TaskStatus): string {
+  const emoji = STATUS_EMOJI[newStatus]
   const time = formatTimestampForNotification()
   return [
     `${emoji} *Task State Update*`,
@@ -161,15 +166,16 @@ function sendTelegramMessageEffect(
           })
         }
 
-        let messageId: number | undefined
-        try {
-          const data = await response.json() as TelegramApiResponse
-          messageId = data.result?.message_id
-        } catch {
-          // JSON parsing failed - notification was still sent successfully
+        const data = await response.json() as TelegramApiResponse
+        if (!data.ok) {
+          throw new TelegramError({
+            operation: "send",
+            message: "Telegram API returned ok=false for sendMessage",
+            cause: data,
+          })
         }
 
-        return { success: true, messageId } as TelegramSendResult
+        return { success: true, messageId: data.result?.message_id } as TelegramSendResult
       },
       catch: (cause) =>
         new TelegramError({
@@ -184,8 +190,8 @@ function sendTelegramMessageEffect(
 export function sendTelegramNotificationEffect(
   config: TelegramConfig,
   taskName: string,
-  oldStatus: string,
-  newStatus: string,
+  oldStatus: TaskStatus,
+  newStatus: TaskStatus,
 ): Effect.Effect<TelegramSendResult, TelegramError> {
   const message = buildMessage(taskName, oldStatus, newStatus)
   return sendTelegramMessageEffect(config, message)

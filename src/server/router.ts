@@ -1,4 +1,3 @@
-import { Effect } from "effect"
 import type { RequestContext, RouteHandler, RouteParams } from "./types.ts"
 import { runRouteEffect } from "./route-interpreter.ts"
 
@@ -67,12 +66,7 @@ export class Router {
         params[route.paramNames[i]] = decodeURIComponent(match[i + 1] ?? "")
       }
 
-      const result = await route.handler({ ...baseContext, params })
-      if (Effect.isEffect(result)) {
-        return await runRouteEffect(result)
-      }
-
-      return result
+      return await runRouteEffect(route.handler({ ...baseContext, params }))
     }
 
     return null

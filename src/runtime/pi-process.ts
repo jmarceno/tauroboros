@@ -36,7 +36,7 @@ export type ExtensionUIRequestHandler = (request: {
 
 type Pending = {
   resolve: (value: Record<string, unknown>) => void
-  reject: (error: Error) => void
+  reject: (error: PiProcessError) => void
 }
 
 function parseArgs(value: string): string[] {
@@ -92,6 +92,8 @@ export class PiRpcProcess {
   private stderrBuffer = ""
   private isIdle = true
   private abortController: AbortController | null = null
+  private stdoutFiber: Fiber.Fiber<void, never> | null = null
+  private stderrFiber: Fiber.Fiber<void, never> | null = null
   private messageStreamer: MessageStreamer | null = null
 
   constructor(args: {
@@ -174,8 +176,24 @@ export class PiRpcProcess {
 
       this.abortController = new AbortController()
 
-      this.captureStdout()
-      this.captureStderr()
+      this.stdoutFiber = yield* this.captureStdoutEffect().pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logError(`[pi-process] Stdout capture failed`)
+            yield* Effect.logError(cause)
+          }),
+        ),
+        Effect.forkDaemon,
+      )
+      this.stderrFiber = yield* this.captureStderrEffect().pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logError(`[pi-process] Stderr capture failed`)
+            yield* Effect.logError(cause)
+          }),
+        ),
+        Effect.forkDaemon,
+      )
     })
   }
 
@@ -390,8 +408,13 @@ export class PiRpcProcess {
         this.abortController = null
       }
 
+      yield* this.interruptCaptureFibers()
+
       for (const [id, pending] of this.pending.entries()) {
-        pending.reject(new Error(`Pi process closed before RPC response (${id})`))
+        pending.reject(new PiProcessError({
+          operation: "close",
+          message: `Pi process closed before RPC response (${id})`,
+        }))
         this.pending.delete(id)
       }
 
@@ -437,9 +460,14 @@ export class PiRpcProcess {
         this.abortController = null
       }
 
+      yield* this.interruptCaptureFibers()
+
       // Reject all pending requests immediately
       for (const [id, pending] of this.pending.entries()) {
-        pending.reject(new Error(`Pi process force killed (${id})`))
+        pending.reject(new PiProcessError({
+          operation: "forceKill",
+          message: `Pi process force killed (${id})`,
+        }))
         this.pending.delete(id)
       }
 
@@ -487,55 +515,62 @@ export class PiRpcProcess {
     return this.proc
   }
 
-  private captureStdout(): void {
-    if (!this.proc || !this.abortController) return
+  private interruptCaptureFibers(): Effect.Effect<void, never> {
+    return Effect.gen(this, function* () {
+      if (this.stdoutFiber) {
+        yield* Fiber.interrupt(this.stdoutFiber)
+        this.stdoutFiber = null
+      }
+      if (this.stderrFiber) {
+        yield* Fiber.interrupt(this.stderrFiber)
+        this.stderrFiber = null
+      }
+    })
+  }
+
+  private captureStdoutEffect(): Effect.Effect<void, PiProcessError> {
+    if (!this.proc || !this.abortController) return Effect.void
 
     const reader = this.proc.stdout.getReader()
     const decoder = new TextDecoder()
     const signal = this.abortController.signal
 
-    const loop = async () => {
+    return Effect.gen(this, function* () {
       try {
         while (!signal.aborted) {
-          const { done, value } = await reader.read()
+          const { done, value } = yield* Effect.tryPromise({
+            try: () => reader.read(),
+            catch: (cause) => new PiProcessError({
+              operation: "captureStdout",
+              message: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+          })
           if (done || signal.aborted) break
           this.stdoutBuffer += decoder.decode(value, { stream: true })
-          this.consumeStdoutLines()
+          yield* this.consumeStdoutLinesEffect()
         }
         if (this.stdoutBuffer.trim() && !signal.aborted) {
-          this.handleStdoutLine(this.stdoutBuffer.trim())
+          yield* this.handleStdoutLineEffect(this.stdoutBuffer.trim())
           this.stdoutBuffer = ""
         }
       } finally {
         reader.releaseLock()
       }
-    }
-
-    void loop()
+    })
   }
 
-  private consumeStdoutLines(): void {
+  private consumeStdoutLinesEffect(): Effect.Effect<void, never> {
+    return Effect.gen(this, function* () {
     while (true) {
       const newlineIdx = this.stdoutBuffer.indexOf("\n")
       if (newlineIdx < 0) break
       const line = this.stdoutBuffer.slice(0, newlineIdx).trim()
       this.stdoutBuffer = this.stdoutBuffer.slice(newlineIdx + 1)
       if (!line) continue
-      this.handleStdoutLine(line)
+      yield* this.handleStdoutLineEffect(line)
     }
-  }
-
-  private handleStdoutLine(line: string): void {
-    void Effect.runPromise(
-      this.handleStdoutLineEffect(line).pipe(
-        Effect.catchAllCause((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logError(`[pi-process] Failed to handle stdout line`)
-            yield* Effect.logError(cause)
-          })
-        )
-      )
-    )
+    })
   }
 
   private handleStdoutLineEffect(line: string): Effect.Effect<void, never> {
@@ -558,7 +593,11 @@ export class PiRpcProcess {
 
       if (parsed.success === false) {
         const errorMsg = typeof parsed.error === "string" ? parsed.error : JSON.stringify(parsed.error)
-        pending.reject(new Error(errorMsg))
+        pending.reject(new PiProcessError({
+          operation: "handleStdoutLine",
+          message: errorMsg,
+          cause: parsed.error,
+        }))
       } else {
         pending.resolve(asRecord(parsed.data))
       }
@@ -593,10 +632,8 @@ export class PiRpcProcess {
       try {
         listener(parsed)
       } catch (err) {
-        Effect.runSync(
-          Effect.logError(`[pi-process] Error in event listener`).pipe(
-            Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
-          ),
+        yield* Effect.logError(`[pi-process] Error in event listener`).pipe(
+          Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
         )
       }
     }
@@ -635,17 +672,24 @@ export class PiRpcProcess {
     })
   }
 
-  private captureStderr(): void {
-    if (!this.proc || !this.abortController) return
+  private captureStderrEffect(): Effect.Effect<void, PiProcessError> {
+    if (!this.proc || !this.abortController) return Effect.void
 
     const reader = this.proc.stderr.getReader()
     const decoder = new TextDecoder()
     const signal = this.abortController.signal
 
-    const loop = async () => {
+    return Effect.gen(this, function* () {
       try {
         while (!signal.aborted) {
-          const { done, value } = await reader.read()
+          const { done, value } = yield* Effect.tryPromise({
+            try: () => reader.read(),
+            catch: (cause) => new PiProcessError({
+              operation: "captureStderr",
+              message: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+          })
           if (done || signal.aborted) break
           this.stderrBuffer += decoder.decode(value, { stream: true })
           this.consumeStderrLines()
@@ -657,9 +701,7 @@ export class PiRpcProcess {
       } finally {
         reader.releaseLock()
       }
-    }
-
-    void loop()
+    })
   }
 
   private consumeStderrLines(): void {

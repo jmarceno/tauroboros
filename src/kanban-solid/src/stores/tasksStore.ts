@@ -5,6 +5,7 @@
 
 import { createMemo } from 'solid-js'
 import { createQuery, useQueryClient, createMutation } from '@tanstack/solid-query'
+import { Effect } from 'effect'
 import type { Task, TaskStatus, BestOfNSummary, ColumnSortPreferences, ColumnSortOption, UpdateTaskDTO } from '@/types'
 import * as api from '@/api'
 
@@ -119,9 +120,10 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   })
 
   // Actions
-  const loadTasks = async () => {
-    await queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
-  }
+  const invalidateTasksList = () =>
+    runApi(Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })))
+
+  const loadTasks = () => invalidateTasksList()
 
   const getTaskById = (id: string) => tasks().find(t => t.id === id)
   const getTaskName = (id: string) => getTaskById(id)?.name || id
@@ -131,7 +133,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
     mutationFn: (data: Parameters<typeof api.tasksApi.create>[0]) => runApi(api.tasksApi.create(data)),
     onSuccess: (task) => {
       upsertTaskInListCache(task)
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
@@ -139,7 +141,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
     mutationFn: ({ id, data }: { id: string; data: UpdateTaskDTO }) => runApi(api.tasksApi.update(id, data)),
     onSuccess: (task) => {
       upsertTaskInListCache(task)
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
@@ -147,84 +149,81 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
     mutationFn: (id: string) => runApi(api.tasksApi.delete(id)),
     onSuccess: (_, id) => {
       removeTaskFromListCache(id)
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
   const resetTaskMutation = createMutation(() => ({
     mutationFn: (id: string) => runApi(api.tasksApi.reset(id)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
   const resetTaskToGroupMutation = createMutation(() => ({
     mutationFn: (id: string) => runApi(api.tasksApi.resetToGroup(id)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
   const moveTaskToGroupMutation = createMutation(() => ({
     mutationFn: ({ id, groupId }: { id: string; groupId: string | null }) => runApi(api.tasksApi.moveToGroup(id, groupId)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
   const approvePlanMutation = createMutation(() => ({
     mutationFn: ({ id, message }: { id: string; message?: string }) => runApi(api.tasksApi.approvePlan(id, message)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
   const requestPlanRevisionMutation = createMutation(() => ({
     mutationFn: ({ id, feedback }: { id: string; feedback: string }) => runApi(api.tasksApi.requestPlanRevision(id, feedback)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
   const repairTaskMutation = createMutation(() => ({
     mutationFn: ({ id, action, options }: { id: string; action: string; options?: Record<string, unknown> }) => runApi(api.tasksApi.repair(id, action, options)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
   const startSingleTaskMutation = createMutation(() => ({
     mutationFn: (id: string) => runApi(api.tasksApi.startSingle(id)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
   const archiveAllDoneMutation = createMutation(() => ({
     mutationFn: () => runApi(api.tasksApi.archiveAllDone()),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
   const batchUpdateTasksMutation = createMutation(() => ({
     mutationFn: ({ ids, data }: { ids: string[]; data: UpdateTaskDTO }) => 
-      Promise.all(ids.map((id) => runApi(api.tasksApi.update(id, data)))),
+      runApi(Effect.forEach(ids, (id) => api.tasksApi.update(id, data), { concurrency: 'unbounded' })),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
   const restoreTaskMutation = createMutation(() => ({
-    mutationFn: async ({ id, groupId }: { id: string; groupId?: string }) => {
-      if (groupId) {
-        return await runApi(api.tasksApi.moveToGroup(id, groupId))
-      }
-      const result = await runApi(api.tasksApi.resetToGroup(id))
-      return result.task
-    },
+    mutationFn: ({ id, groupId }: { id: string; groupId?: string }) =>
+      groupId
+        ? runApi(api.tasksApi.moveToGroup(id, groupId))
+        : runApi(api.tasksApi.resetToGroup(id).pipe(Effect.map((result) => result.task))),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
@@ -232,72 +231,46 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
     mutationFn: ({ taskId, candidateId }: { taskId: string; candidateId: string }) => 
       runApi(api.tasksApi.selectCandidate(taskId, candidateId)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })
+      void invalidateTasksList()
     },
   }))
 
   // Wrappers
-  const createTask = async (data: Parameters<typeof api.tasksApi.create>[0]) => {
-    return await createTaskMutation.mutateAsync(data)
-  }
+  const createTask = (data: Parameters<typeof api.tasksApi.create>[0]) => createTaskMutation.mutateAsync(data)
 
-  const updateTask = async (id: string, data: UpdateTaskDTO) => {
-    return await updateTaskMutation.mutateAsync({ id, data })
-  }
+  const updateTask = (id: string, data: UpdateTaskDTO) => updateTaskMutation.mutateAsync({ id, data })
 
-  const deleteTask = async (id: string) => {
-    return await deleteTaskMutation.mutateAsync(id)
-  }
+  const deleteTask = (id: string) => deleteTaskMutation.mutateAsync(id)
 
-  const resetTask = async (id: string) => {
-    return await resetTaskMutation.mutateAsync(id)
-  }
+  const resetTask = (id: string) => resetTaskMutation.mutateAsync(id)
 
-  const resetTaskToGroup = async (id: string) => {
-    return await resetTaskToGroupMutation.mutateAsync(id)
-  }
+  const resetTaskToGroup = (id: string) => resetTaskToGroupMutation.mutateAsync(id)
 
-  const moveTaskToGroup = async (id: string, groupId: string | null) => {
-    return await moveTaskToGroupMutation.mutateAsync({ id, groupId })
-  }
+  const moveTaskToGroup = (id: string, groupId: string | null) => moveTaskToGroupMutation.mutateAsync({ id, groupId })
 
-  const approvePlan = async (id: string, message?: string) => {
-    return await approvePlanMutation.mutateAsync({ id, message })
-  }
+  const approvePlan = (id: string, message?: string) => approvePlanMutation.mutateAsync({ id, message })
 
-  const requestPlanRevision = async (id: string, feedback: string) => {
-    return await requestPlanRevisionMutation.mutateAsync({ id, feedback })
-  }
+  const requestPlanRevision = (id: string, feedback: string) => requestPlanRevisionMutation.mutateAsync({ id, feedback })
 
-  const repairTask = async (id: string, action: string, options?: Record<string, unknown>) => {
-    return await repairTaskMutation.mutateAsync({ id, action, options })
-  }
+  const repairTask = (id: string, action: string, options?: Record<string, unknown>) => repairTaskMutation.mutateAsync({ id, action, options })
 
-  const startSingleTask = async (id: string) => {
-    return await startSingleTaskMutation.mutateAsync(id)
-  }
+  const startSingleTask = (id: string) => startSingleTaskMutation.mutateAsync(id)
 
-  const archiveAllDone = async () => {
-    return await archiveAllDoneMutation.mutateAsync()
-  }
+  const archiveAllDone = () => archiveAllDoneMutation.mutateAsync()
 
-  const batchUpdateTasks = async (ids: string[], data: UpdateTaskDTO) => {
-    return await batchUpdateTasksMutation.mutateAsync({ ids, data })
-  }
+  const batchUpdateTasks = (ids: string[], data: UpdateTaskDTO) => batchUpdateTasksMutation.mutateAsync({ ids, data })
 
-  const restoreTask = async (id: string, groupId?: string) => {
-    return await restoreTaskMutation.mutateAsync({ id, groupId })
-  }
+  const restoreTask = (id: string, groupId?: string) => restoreTaskMutation.mutateAsync({ id, groupId })
 
-  const selectWinnerSession = async (taskId: string, candidateId: string) => {
-    return await selectWinnerSessionMutation.mutateAsync({ taskId, candidateId })
-  }
+  const selectWinnerSession = (taskId: string, candidateId: string) => selectWinnerSessionMutation.mutateAsync({ taskId, candidateId })
 
-  const refreshBonSummaries = async (taskIds?: string[]) => {
+  const refreshBonSummaries = (taskIds?: string[]) => {
     const targetIds = taskIds ?? bonTaskIds()
     if (targetIds.length > 0) {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.bonSummaries(targetIds) })
+      return runApi(Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.bonSummaries(targetIds) })))
     }
+
+    return Promise.resolve()
   }
 
   const removeBonSummary = (id: string) => {

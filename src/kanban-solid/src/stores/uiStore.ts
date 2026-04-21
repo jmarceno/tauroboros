@@ -4,6 +4,7 @@
  */
 
 import { createSignal, createMemo } from 'solid-js'
+import { sleepMs } from '@/api'
 import type { Toast, LogEntry, ToastVariant } from '@/types'
 
 // Modal Types
@@ -16,6 +17,7 @@ function createToastStore() {
   const [toasts, setToasts] = createSignal<Toast[]>([])
   const [logs, setLogs] = createSignal<LogEntry[]>([])
   let nextToastId = 1
+  const toastTokens = new Map<number, number>()
 
   const showToast = (message: string, variant: ToastVariant = 'info', duration = 3000): number => {
     const id = nextToastId++
@@ -27,12 +29,21 @@ function createToastStore() {
     const ts = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
     setLogs(prev => [...prev, { ts, message, variant }])
     
-    // Auto-remove
-    setTimeout(() => removeToast(id), duration)
+    // Auto-remove with token guard so manual removal cancels pending timer work.
+    const token = (toastTokens.get(id) ?? 0) + 1
+    toastTokens.set(id, token)
+    sleepMs(duration)
+      .then(() => {
+        if (toastTokens.get(id) === token) {
+          removeToast(id)
+        }
+      })
+      .catch(() => undefined)
     return id
   }
 
   const removeToast = (id: number) => {
+    toastTokens.delete(id)
     setToasts(prev => prev.filter(t => t.id !== id))
   }
 

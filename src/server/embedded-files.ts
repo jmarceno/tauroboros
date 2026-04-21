@@ -163,19 +163,26 @@ export function readEmbeddedTextEffect(path: string): Effect.Effect<string, Embe
 /**
  * Check if an embedded file exists (in memory or filesystem)
  */
-export async function embeddedFileExists(path: string): Promise<boolean> {
-  // First check embedded assets
-  if (generatedAssets) {
-    const key = extractAssetKey(path)
-    if (key) {
-      const asset = generatedAssets.getEmbeddedAsset(key)
-      if (asset) return true
-    }
-  }
+export function embeddedFileExistsEffect(path: string): Effect.Effect<boolean, EmbeddedFileError> {
+  return Effect.tryPromise({
+    try: async () => {
+      if (generatedAssets) {
+        const key = extractAssetKey(path)
+        if (key) {
+          const asset = generatedAssets.getEmbeddedAsset(key)
+          if (asset) return true
+        }
+      }
 
-  // Fallback to filesystem
-  const file = Bun.file(path)
-  return await file.exists()
+      return await Bun.file(path).exists()
+    },
+    catch: (cause) => new EmbeddedFileError({
+      operation: "embeddedFileExists",
+      message: `Failed to check embedded file existence: ${path}`,
+      path,
+      cause,
+    }),
+  })
 }
 
 /**
@@ -204,18 +211,37 @@ export function getContentType(filename: string): string {
 /**
  * Get index.html content
  */
-export async function getIndexHtml(): Promise<string | undefined> {
-  // First try embedded assets
-  if (generatedAssets) {
-    return generatedAssets.getIndexHtml()
-  }
+export function getIndexHtmlEffect(): Effect.Effect<string | undefined, EmbeddedFileError> {
+  return Effect.gen(function* () {
+    if (generatedAssets) {
+      return generatedAssets.getIndexHtml()
+    }
 
-  // Fallback to filesystem
-  try {
-    return await Bun.file(KANBAN_INDEX).text()
-  } catch {
-    return undefined
-  }
+    const file = Bun.file(KANBAN_INDEX)
+    const exists = yield* Effect.tryPromise({
+      try: () => file.exists(),
+      catch: (cause) => new EmbeddedFileError({
+        operation: "getIndexHtml",
+        message: "Failed to check index.html existence",
+        path: KANBAN_INDEX,
+        cause,
+      }),
+    })
+
+    if (!exists) {
+      return undefined
+    }
+
+    return yield* Effect.tryPromise({
+      try: () => file.text(),
+      catch: (cause) => new EmbeddedFileError({
+        operation: "getIndexHtml",
+        message: "Failed to load index.html",
+        path: KANBAN_INDEX,
+        cause,
+      }),
+    })
+  })
 }
 
 /**

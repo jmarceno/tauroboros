@@ -126,6 +126,10 @@ export function runApiEffect<A, E>(effect: Effect.Effect<A, E>): Promise<A> {
   return Effect.runPromise(effect)
 }
 
+export function sleepMs(durationMs: number): Promise<void> {
+  return runApiEffect(Effect.sleep(`${durationMs} millis`)).then(() => undefined)
+}
+
 export const apiClient = {
   get: <T>(path: string) => apiRequest<T>(path),
   post: <T>(path: string, body?: unknown) => apiRequest<T>(path, {

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { dirname, join } from "path"
 import { spawn } from "child_process"
-import { Schema } from "effect"
+import { Effect, Fiber, Schema } from "effect"
 import type { PackageDefinition, ContainerConfig, ContainerProfile, PackageValidationResult, ContainerBuildResult, ContainerBuildStatus } from "../db/types.ts"
 
 /**
@@ -149,7 +149,7 @@ export class ContainerImageManager {
   private currentStatus: ImageStatus = "not_present"
   private cache: ImageCache | null = null
   private isPrepared = false
-  private preparingPromise: Promise<void> | null = null
+  private preparingFiber: Fiber.RuntimeFiber<void, ContainerImageManagerError> | null = null
   private isClosed = false
 
   constructor(options: ContainerImageManagerOptions) {
@@ -183,7 +183,18 @@ export class ContainerImageManager {
   /**
    * Check if the image exists in Podman.
    */
-  async checkImageExists(): Promise<boolean> {
+  checkImageExists(): Effect.Effect<boolean, ContainerImageManagerError> {
+    return Effect.tryPromise({
+      try: () => this.checkImageExistsInternal(),
+      catch: (cause) => new ContainerImageManagerError({
+        operation: "checkImageExists",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async checkImageExistsInternal(): Promise<boolean> {
     try {
       await this.execPodman(["image", "exists", this.options.imageName])
       return true
@@ -201,39 +212,56 @@ export class ContainerImageManager {
    * readiness. Once successfully prepared, subsequent calls return
    * immediately without spawning any subprocess.
    */
-  async prepare(): Promise<void> {
-    if (this.isClosed) {
-      throw new ContainerImageManagerError({ operation: "prepare", message: "ContainerImageManager is closed" })
-    }
-
-    // Fast path: if already prepared, return immediately
-    if (this.isPrepared) {
-      this.updateStatus("ready", "Container image is ready")
-      return
-    }
-
-    // If another prepare() is already running, wait for it
-    if (this.preparingPromise) {
-      await this.preparingPromise
-      // After waiting, the image should be ready
-      if (!this.isPrepared) {
-        throw new ContainerImageManagerError({ operation: "prepare", message: "Container image preparation failed" })
+  prepare(): Effect.Effect<void, ContainerImageManagerError> {
+    return Effect.gen(this, function* () {
+      if (this.isClosed) {
+        return yield* new ContainerImageManagerError({ operation: "prepare", message: "ContainerImageManager is closed" })
       }
-      return
-    }
 
-    // We're the first caller - start preparation
-    this.preparingPromise = this.doPrepare()
-    try {
-      await this.preparingPromise
-    } finally {
-      this.preparingPromise = null
-    }
+      if (this.isPrepared) {
+        this.updateStatus("ready", "Container image is ready")
+        return
+      }
+
+      if (this.preparingFiber) {
+        yield* Fiber.join(this.preparingFiber)
+        if (!this.isPrepared) {
+          return yield* new ContainerImageManagerError({ operation: "prepare", message: "Container image preparation failed" })
+        }
+        return
+      }
+
+      const fiber = yield* this.doPrepareEffect().pipe(Effect.forkDaemon)
+
+      this.preparingFiber = fiber
+
+      try {
+        yield* Fiber.join(fiber)
+      } finally {
+        this.preparingFiber = null
+      }
+    })
   }
 
-  async close(): Promise<void> {
-    this.isClosed = true
-    this.preparingPromise = null
+  private doPrepareEffect(): Effect.Effect<void, ContainerImageManagerError> {
+    return Effect.tryPromise({
+      try: () => this.doPrepare(),
+      catch: (cause) =>
+        cause instanceof ContainerImageManagerError
+          ? cause
+          : new ContainerImageManagerError({
+              operation: "doPrepare",
+              message: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+    })
+  }
+
+  close(): Effect.Effect<void, never> {
+    return Effect.sync(() => {
+      this.isClosed = true
+      this.preparingFiber = null
+    })
   }
 
   private async doPrepare(): Promise<void> {
@@ -605,7 +633,18 @@ export class ContainerImageManager {
   /**
    * Validate packages exist in Alpine repos using apk search
    */
-  async validatePackages(packages: string[]): Promise<PackageValidationResult> {
+  validatePackages(packages: string[]): Effect.Effect<PackageValidationResult, ContainerImageManagerError> {
+    return Effect.tryPromise({
+      try: () => this.validatePackagesInternal(packages),
+      catch: (cause) => new ContainerImageManagerError({
+        operation: "validatePackages",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async validatePackagesInternal(packages: string[]): Promise<PackageValidationResult> {
     const valid: string[] = []
     const invalid: string[] = []
     const suggestions: Record<string, string[]> = {}
@@ -648,7 +687,22 @@ export class ContainerImageManager {
   /**
    * Build a custom image with the generated Dockerfile
    */
-  async buildCustomImage(
+  buildCustomImage(
+    config: ContainerConfig,
+    imageTag: string,
+    progressHandler?: ContainerBuildProgressHandler
+  ): Effect.Effect<ContainerBuildResult, ContainerImageManagerError> {
+    return Effect.tryPromise({
+      try: () => this.buildCustomImageInternal(config, imageTag, progressHandler),
+      catch: (cause) => new ContainerImageManagerError({
+        operation: "buildCustomImage",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async buildCustomImageInternal(
     config: ContainerConfig,
     imageTag: string,
     progressHandler?: ContainerBuildProgressHandler
@@ -730,7 +784,22 @@ export class ContainerImageManager {
   /**
    * Build a custom image from raw Dockerfile content
    */
-  async buildFromDockerfileContent(
+  buildFromDockerfileContent(
+    dockerfileContent: string,
+    imageTag: string,
+    progressHandler?: ContainerBuildProgressHandler
+  ): Effect.Effect<ContainerBuildResult, ContainerImageManagerError> {
+    return Effect.tryPromise({
+      try: () => this.buildFromDockerfileContentInternal(dockerfileContent, imageTag, progressHandler),
+      catch: (cause) => new ContainerImageManagerError({
+        operation: "buildFromDockerfileContent",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async buildFromDockerfileContentInternal(
     dockerfileContent: string,
     imageTag: string,
     progressHandler?: ContainerBuildProgressHandler

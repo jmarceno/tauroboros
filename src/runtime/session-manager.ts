@@ -360,29 +360,35 @@ export class PiSessionManager {
       return Effect.succeed(null)
     }
 
-    const pauseState = loadPausedRunState()
-    if (!pauseState || !this.containerManager) {
+    if (!this.containerManager) {
       return Effect.succeed(null)
     }
 
-    const pausedSession = pauseState.sessions.find((session) => session.sessionId === input.resumedSessionId)
-    if (!pausedSession?.containerId) {
-      return Effect.succeed(null)
-    }
-    const pausedContainerId = pausedSession.containerId
-
-    return Effect.tryPromise({
-      try: async () => {
-        const containerInfo = await this.containerManager!.checkContainerById(pausedContainerId)
-        if (!containerInfo?.running) {
-          return null
-        }
-        return pausedContainerId
-      },
-      catch: (cause) => new SessionManagerExecuteError({
+    return listPausedRunStates(this.db).pipe(
+      Effect.map((pauseStates) =>
+        pauseStates
+          .flatMap((pauseState) => pauseState.sessions)
+          .find((session) => session.sessionId === input.resumedSessionId) ?? null,
+      ),
+      Effect.mapError((cause) => new SessionManagerExecuteError({
         operation: "resolveExistingContainerId",
-        message: cause instanceof Error ? cause.message : String(cause),
+        message: cause.message,
         cause,
+      })),
+      Effect.flatMap((pausedSession) => {
+        if (!pausedSession?.containerId) {
+          return Effect.succeed(null)
+        }
+
+        const pausedContainerId = pausedSession.containerId
+        return this.containerManager!.checkContainerById(pausedContainerId).pipe(
+          Effect.map((containerInfo) => (containerInfo?.running ? pausedContainerId : null)),
+          Effect.mapError((cause) => new SessionManagerExecuteError({
+            operation: "resolveExistingContainerId",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          })),
+        )
       }),
     )
   }

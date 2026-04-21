@@ -59,6 +59,7 @@ import {
   TaskSessionsModal,
   ChatContainer,
 } from '@/components'
+import { sleepMs } from '@/api'
 
 import type { Task, TaskGroup, TaskStatus } from '@/types'
 import { validateTaskDrop, validateGroupDrop } from '@/utils/dropValidation'
@@ -224,8 +225,6 @@ function App() {
       loadContainerStatus(),
     ])
 
-    runsStore.setTasksRef(tasksStore.tasks())
-
     const hasPaused = await workflowControl.checkPausedState()
     if (hasPaused) {
       uiStore.showToast('Found paused workflow. Click Resume to continue.', 'info')
@@ -248,6 +247,8 @@ function App() {
 
   // WebSocket handlers
   createEffect(() => {
+    let sessionRefreshToken = 0
+
     const unsubTaskCreated = wsStore.on('task_created', () => tasksStore.loadTasks())
     const unsubTaskUpdated = wsStore.on('task_updated', () => tasksStore.loadTasks())
     const unsubTaskDeleted = wsStore.on('task_deleted', () => tasksStore.loadTasks())
@@ -262,10 +263,14 @@ function App() {
     const unsubSessionMessage = wsStore.on('session_message_created', (payload) => {
       const msg = payload as { sessionId?: string }
       if (msg.sessionId) {
-        // Debounce the refresh to avoid flickering
-        setTimeout(() => {
-          sessionUsage.loadSessionUsage(msg.sessionId!, true)
-        }, 2000)
+        const token = ++sessionRefreshToken
+        sleepMs(2000)
+          .then(() => {
+            if (token === sessionRefreshToken) {
+              void sessionUsage.loadSessionUsage(msg.sessionId!, true)
+            }
+          })
+          .catch(() => undefined)
       }
     })
     const unsubSelfHeal = wsStore.on('self_heal_status', (payload) => {
@@ -299,6 +304,7 @@ function App() {
     const unsubPlanningHandlers = planningChatStore.setupWebSocketHandlers()
 
     onCleanup(() => {
+      sessionRefreshToken += 1
       unsubTaskCreated()
       unsubTaskUpdated()
       unsubTaskDeleted()
@@ -330,35 +336,46 @@ function App() {
 
   // Auto-sync interval
   createEffect(() => {
-    let syncInterval: ReturnType<typeof setInterval> | null = null
+    let syncLoopActive = true
     let syncErrorCount = 0
     const MAX_SYNC_ERRORS = 5
 
-    if (wsStore.isConnected()) {
-      syncInterval = setInterval(() => {
-        Promise.all([
-          tasksStore.loadTasks(),
-          runsStore.loadRuns()
-        ]).catch((e) => {
+    const runAutoSync = async () => {
+      while (syncLoopActive) {
+        await sleepMs(30000)
+        if (!syncLoopActive) {
+          return
+        }
+
+        try {
+          await Promise.all([
+            tasksStore.loadTasks(),
+            runsStore.loadRuns(),
+          ])
+          syncErrorCount = 0
+        } catch (e) {
           syncErrorCount += 1
           const errorMessage = e instanceof Error ? e.message : String(e)
           uiStore.addLog(`Sync failed (${syncErrorCount}/${MAX_SYNC_ERRORS}): ${errorMessage}`, 'error')
-          
+
           if (syncErrorCount >= MAX_SYNC_ERRORS) {
             uiStore.showToast(`Auto-sync disabled after ${MAX_SYNC_ERRORS} consecutive failures. Check connection.`, 'error')
-            if (syncInterval) {
-              clearInterval(syncInterval)
-              syncInterval = null
-            }
+            syncLoopActive = false
+            return
           }
-        })
-      }, 30000)
+        }
+      }
+    }
+
+    if (wsStore.isConnected()) {
+      runAutoSync().catch((e) => {
+        const errorMessage = e instanceof Error ? e.message : String(e)
+        uiStore.addLog(`Auto-sync loop failed: ${errorMessage}`, 'error')
+      })
     }
 
     onCleanup(() => {
-      if (syncInterval) {
-        clearInterval(syncInterval)
-      }
+      syncLoopActive = false
     })
   })
 

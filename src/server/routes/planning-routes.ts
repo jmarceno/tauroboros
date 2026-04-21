@@ -8,7 +8,7 @@ import type { SessionMessage } from "../../types.ts"
 import type { Task } from "../../types.ts"
 import type { ContextAttachment } from "../../runtime/planning-session.ts"
 import { isThinkingLevel, normalizeTaskForClient } from "../validators.ts"
-import { HttpRouteError, runRouteEffect } from "../route-interpreter.ts"
+import { HttpRouteError, internalRouteError } from "../route-interpreter.ts"
 
 function validateTasksPayload(
   tasks: unknown,
@@ -97,57 +97,67 @@ function validateTasksPayload(
 }
 
 export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext): void {
-  router.get("/api/planning/prompt", ({ json, db }) => {
-    const prompt = db.getPlanningPrompt("default")
-    if (!prompt) return json({ error: "Planning prompt not found" }, 404)
-    return json(prompt)
-  })
+  router.get("/api/planning/prompt", ({ json, db }) =>
+    Effect.sync(() => {
+      const prompt = db.getPlanningPrompt("default")
+      if (!prompt) return json({ error: "Planning prompt not found" }, 404)
+      return json(prompt)
+    }),
+  )
 
-  router.get("/api/planning/prompts", ({ json, db }) => {
-    return json(db.getAllPlanningPrompts())
-  })
+  router.get("/api/planning/prompts", ({ json, db }) => Effect.sync(() => json(db.getAllPlanningPrompts())))
 
-  router.put("/api/planning/prompt", async ({ req, json, broadcast, db }) => {
-    const body = await req.json()
-    const existing = db.getPlanningPrompt(body.key ?? "default")
-    if (!existing) return json({ error: "Planning prompt not found" }, 404)
+  router.put("/api/planning/prompt", ({ req, json, broadcast, db }) =>
+    Effect.tryPromise({
+      try: async () => {
+        const body = await req.json()
+        const existing = db.getPlanningPrompt((body as Record<string, unknown>).key as string ?? "default")
+        if (!existing) return json({ error: "Planning prompt not found" }, 404)
 
-    const updated = db.updatePlanningPrompt(existing.id, {
-      name: body.name,
-      description: body.description,
-      promptText: body.promptText,
-      isActive: body.isActive,
-    })
+        const updated = db.updatePlanningPrompt(existing.id, {
+          name: (body as Record<string, unknown>).name,
+          description: (body as Record<string, unknown>).description,
+          promptText: (body as Record<string, unknown>).promptText,
+          isActive: (body as Record<string, unknown>).isActive,
+        })
 
-    broadcast({ type: "planning_prompt_updated", payload: updated })
-    return json(updated)
-  })
+        broadcast({ type: "planning_prompt_updated", payload: updated })
+        return json(updated)
+      },
+      catch: (cause) => internalRouteError(cause instanceof Error ? cause.message : String(cause), ErrorCode.INTERNAL_SERVER_ERROR, cause),
+    }),
+  )
 
-  router.get("/api/planning/prompt/:key/versions", ({ params, json, db }) => {
-    return json(db.getPlanningPromptVersions(params.key))
-  })
+  router.get("/api/planning/prompt/:key/versions", ({ params, json, db }) => Effect.sync(() => json(db.getPlanningPromptVersions(params.key))))
 
-  router.get("/api/planning/sessions", ({ json, sessionUrlFor, db }) => {
-    const sessions = db.getPlanningSessions()
-    return json(sessions.map((s) => ({ ...s, sessionUrl: sessionUrlFor(s.id) })))
-  })
+  router.get("/api/planning/sessions", ({ json, sessionUrlFor, db }) =>
+    Effect.sync(() => {
+      const sessions = db.getPlanningSessions()
+      return json(sessions.map((s) => ({ ...s, sessionUrl: sessionUrlFor(s.id) })))
+    }),
+  )
 
-  router.get("/api/planning/sessions/active", ({ json, sessionUrlFor, db }) => {
-    const sessions = db.getActivePlanningSessions()
-    return json(sessions.map((s) => ({ ...s, sessionUrl: sessionUrlFor(s.id) })))
-  })
+  router.get("/api/planning/sessions/active", ({ json, sessionUrlFor, db }) =>
+    Effect.sync(() => {
+      const sessions = db.getActivePlanningSessions()
+      return json(sessions.map((s) => ({ ...s, sessionUrl: sessionUrlFor(s.id) })))
+    }),
+  )
 
-  router.post("/api/planning/sessions", async ({ req, json, broadcast, sessionUrlFor, db }) => {
-    const body = await req.json()
-    const sessionKind = body.sessionKind ?? "planning"
-    const promptKey = sessionKind === "container_config" ? "container_config" : "default"
-    const planningPrompt = db.getPlanningPrompt(promptKey)
-    if (!planningPrompt) {
-      return json(createApiError("Planning prompt not configured", ErrorCode.PLANNING_PROMPT_NOT_CONFIGURED), 500)
-    }
+  router.post("/api/planning/sessions", ({ req, json, broadcast, sessionUrlFor, db }) =>
+    Effect.gen(function* () {
+      const body = (yield* Effect.tryPromise({
+        try: () => req.json() as Promise<Record<string, unknown>>,
+        catch: (cause) => internalRouteError(cause instanceof Error ? cause.message : String(cause), ErrorCode.INVALID_JSON_BODY, cause),
+      })) as Record<string, unknown>
+      const sessionKind = (body.sessionKind as string | undefined) ?? "planning"
+      const promptKey = sessionKind === "container_config" ? "container_config" : "default"
+      const planningPrompt = db.getPlanningPrompt(promptKey)
+      if (!planningPrompt) {
+        return json(createApiError("Planning prompt not configured", ErrorCode.PLANNING_PROMPT_NOT_CONFIGURED), 500)
+      }
 
-    return runRouteEffect(
-      ctx.planningSessionManager.createSession({
+      return yield* ctx.planningSessionManager.createSession({
         cwd: body.cwd ?? process.cwd(),
         systemPrompt: planningPrompt.promptText,
         model: body.model ?? "default",
@@ -173,26 +183,29 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
             status: 500,
             cause: error,
           }))),
-      ),
-    )
-  })
+      )
+    }),
+  )
 
-  router.post("/api/planning/sessions/:id/messages", async ({ params, req, json, db }) => {
-    const session = db.getWorkflowSession(params.id)
-    if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
-    if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
-      return json(createApiError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION), 400)
-    }
+  router.post("/api/planning/sessions/:id/messages", ({ params, req, json, db }) =>
+    Effect.gen(function* () {
+      const session = db.getWorkflowSession(params.id)
+      if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+        return json(createApiError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION), 400)
+      }
 
-    const body = await req.json()
-    const planningSession = ctx.planningSessionManager.getSession(params.id)
+      const body = (yield* Effect.tryPromise({
+        try: () => req.json() as Promise<Record<string, unknown>>,
+        catch: (cause) => internalRouteError(cause instanceof Error ? cause.message : String(cause), ErrorCode.INVALID_JSON_BODY, cause),
+      })) as Record<string, unknown>
+      const planningSession = ctx.planningSessionManager.getSession(params.id)
 
-    if (!planningSession) {
-      return json(createApiError("Planning session not active", ErrorCode.PLANNING_SESSION_NOT_ACTIVE), 400)
-    }
+      if (!planningSession) {
+        return json(createApiError("Planning session not active", ErrorCode.PLANNING_SESSION_NOT_ACTIVE), 400)
+      }
 
-    return runRouteEffect(
-      planningSession.sendMessage({
+      return yield* planningSession.sendMessage({
         content: body.content,
         contextAttachments: body.contextAttachments as ContextAttachment[] | undefined,
       }).pipe(
@@ -204,11 +217,12 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
             status: 500,
             cause: error,
           }))),
-      ),
-    )
-  })
+      )
+    }),
+  )
 
-  router.post("/api/planning/sessions/:id/reconnect", async ({ params, req, json, broadcast, sessionUrlFor, db }) => {
+  router.post("/api/planning/sessions/:id/reconnect", ({ params, req, json, broadcast, sessionUrlFor, db }) =>
+    Effect.gen(function* () {
     const session = db.getWorkflowSession(params.id)
     if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
     if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
@@ -221,14 +235,16 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       return json({ ...session, sessionUrl: sessionUrlFor(session.id) })
     }
 
-    const body = await req.json()
+    const body = (yield* Effect.tryPromise({
+      try: () => req.json() as Promise<Record<string, unknown>>,
+      catch: (cause) => internalRouteError(cause instanceof Error ? cause.message : String(cause), ErrorCode.INVALID_JSON_BODY, cause),
+    })) as Record<string, unknown>
     const planningPrompt = db.getPlanningPrompt("default")
     if (!planningPrompt) {
       return json(createApiError("Planning prompt not configured", ErrorCode.PLANNING_PROMPT_NOT_CONFIGURED), 500)
     }
 
-    return runRouteEffect(
-      ctx.planningSessionManager.reconnectSession(params.id, {
+    return yield* ctx.planningSessionManager.reconnectSession(params.id, {
         systemPrompt: planningPrompt.promptText,
         model: body.model ?? session.model ?? "default",
         thinkingLevel: body.thinkingLevel ?? session.thinkingLevel ?? "default",
@@ -252,18 +268,22 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
             status: 500,
             cause: error,
           }))),
-      ),
-    )
-  })
+      )
+    }),
+  )
 
-  router.post("/api/planning/sessions/:id/model", async ({ params, req, json, broadcast, sessionUrlFor, db }) => {
+  router.post("/api/planning/sessions/:id/model", ({ params, req, json, broadcast, sessionUrlFor, db }) =>
+    Effect.gen(function* () {
     const session = db.getWorkflowSession(params.id)
     if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
     if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
       return json(createApiError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION), 400)
     }
 
-    const body = await req.json()
+    const body = (yield* Effect.tryPromise({
+      try: () => req.json() as Promise<Record<string, unknown>>,
+      catch: (cause) => internalRouteError(cause instanceof Error ? cause.message : String(cause), ErrorCode.INVALID_JSON_BODY, cause),
+    })) as Record<string, unknown>
 
     if (body.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
       return json(
@@ -283,8 +303,7 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
         ? planningSession.setThinkingLevel(body.thinkingLevel)
         : Effect.void
 
-    return runRouteEffect(
-      Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
         yield* planningSession.setModel(body.model)
         yield* setThinkingLevelEffect
         const updated = db.getWorkflowSession(params.id)
@@ -301,20 +320,24 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
             status: 500,
             cause: error,
           }))),
-      ),
-    )
-  })
+      )
+    }),
+  )
 
   router.post(
     "/api/planning/sessions/:id/create-tasks",
-    async ({ params, req, json, broadcast, sessionUrlFor, db }) => {
+    ({ params, req, json, broadcast, sessionUrlFor, db }) =>
+      Effect.gen(function* () {
       const session = db.getWorkflowSession(params.id)
       if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)
       if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
         return json(createApiError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION), 400)
       }
 
-      const body = await req.json()
+      const body = (yield* Effect.tryPromise({
+        try: () => req.json() as Promise<Record<string, unknown>>,
+        catch: (cause) => internalRouteError(cause instanceof Error ? cause.message : String(cause), ErrorCode.INVALID_JSON_BODY, cause),
+      })) as Record<string, unknown>
 
       const serverPort = ctx.getPort()
       const planningSession = ctx.planningSessionManager.getSession(params.id)
@@ -326,8 +349,7 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
         server_port: String(serverPort),
       })
 
-      return runRouteEffect(
-        Effect.gen(function* () {
+      return yield* Effect.gen(function* () {
           yield* planningSession.sendMessage({ content: taskSetupPrompt })
 
           const validatedTasks = yield* validateTasksPayload(body.tasks)
@@ -364,44 +386,50 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
               status: 500,
               cause: error,
             }))),
-        ),
-      )
-    },
+          )
+        }),
   )
 
-  router.get("/api/planning/sessions/:id", ({ params, json, sessionUrlFor, db }) => {
-    const session = db.getWorkflowSession(params.id)
-    if (!session) return json({ error: "Session not found" }, 404)
-    if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
-      return json({ error: "Not a planning session" }, 400)
-    return json({ ...session, sessionUrl: sessionUrlFor(session.id) })
-  })
+    router.get("/api/planning/sessions/:id", ({ params, json, sessionUrlFor, db }) =>
+      Effect.sync(() => {
+        const session = db.getWorkflowSession(params.id)
+        if (!session) return json({ error: "Session not found" }, 404)
+        if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
+          return json({ error: "Not a planning session" }, 400)
+        return json({ ...session, sessionUrl: sessionUrlFor(session.id) })
+      }),
+    )
 
-  router.patch("/api/planning/sessions/:id", async ({ params, req, json, broadcast, sessionUrlFor, db }) => {
-    const session = db.getWorkflowSession(params.id)
-    if (!session) return json({ error: "Session not found" }, 404)
-    if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
-      return json({ error: "Not a planning session" }, 400)
+    router.patch("/api/planning/sessions/:id", ({ params, req, json, broadcast, sessionUrlFor, db }) =>
+      Effect.tryPromise({
+        try: async () => {
+          const session = db.getWorkflowSession(params.id)
+          if (!session) return json({ error: "Session not found" }, 404)
+          if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
+            return json({ error: "Not a planning session" }, 400)
 
-    const body = await req.json()
-    const updated = db.updateWorkflowSession(params.id, {
-      status: body.status,
-      errorMessage: body.errorMessage,
-    })
+          const body = (await req.json()) as Record<string, unknown>
+          const updated = db.updateWorkflowSession(params.id, {
+            status: body.status,
+            errorMessage: body.errorMessage,
+          })
 
-    const withUrl = { ...updated!, sessionUrl: sessionUrlFor(updated!.id) }
-    broadcast({ type: "planning_session_updated", payload: withUrl })
-    return json(withUrl)
-  })
+          const withUrl = { ...updated!, sessionUrl: sessionUrlFor(updated!.id) }
+          broadcast({ type: "planning_session_updated", payload: withUrl })
+          return json(withUrl)
+        },
+        catch: (cause) => internalRouteError(cause instanceof Error ? cause.message : String(cause), ErrorCode.INTERNAL_SERVER_ERROR, cause),
+      }),
+    )
 
-  router.post("/api/planning/sessions/:id/close", async ({ params, json, broadcast, db }) => {
-    const session = db.getWorkflowSession(params.id)
-    if (!session) return json({ error: "Session not found" }, 404)
-    if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
-      return json({ error: "Not a planning session" }, 400)
+    router.post("/api/planning/sessions/:id/close", ({ params, json, broadcast, db }) =>
+      Effect.gen(function* () {
+        const session = db.getWorkflowSession(params.id)
+        if (!session) return json({ error: "Session not found" }, 404)
+        if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
+          return json({ error: "Not a planning session" }, 400)
 
-    return runRouteEffect(
-      ctx.planningSessionManager.closeSession(params.id).pipe(
+        return yield* ctx.planningSessionManager.closeSession(params.id).pipe(
         Effect.map(() => {
           const updated = db.updateWorkflowSession(params.id, {
             status: "completed",
@@ -418,27 +446,31 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
             status: 500,
             cause: error,
           }))),
-      ),
-    )
-  })
+      )
+    }),
+  )
 
-  router.get("/api/planning/sessions/:id/messages", ({ params, url, json, db }) => {
-    const session = db.getWorkflowSession(params.id)
-    if (!session) return json({ error: "Session not found" }, 404)
-    if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
-      return json({ error: "Not a planning session" }, 400)
+  router.get("/api/planning/sessions/:id/messages", ({ params, url, json, db }) =>
+    Effect.sync(() => {
+      const session = db.getWorkflowSession(params.id)
+      if (!session) return json({ error: "Session not found" }, 404)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
+        return json({ error: "Not a planning session" }, 400)
 
-    const limit = Number(url.searchParams.get("limit") ?? 500)
-    const offset = Number(url.searchParams.get("offset") ?? 0)
-    return json(db.getSessionMessages(params.id, { limit, offset }))
-  })
+      const limit = Number(url.searchParams.get("limit") ?? 500)
+      const offset = Number(url.searchParams.get("offset") ?? 0)
+      return json(db.getSessionMessages(params.id, { limit, offset }))
+    }),
+  )
 
-  router.get("/api/planning/sessions/:id/timeline", ({ params, json, db }) => {
-    const session = db.getWorkflowSession(params.id)
-    if (!session) return json({ error: "Session not found" }, 404)
-    if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
-      return json({ error: "Not a planning session" }, 400)
+  router.get("/api/planning/sessions/:id/timeline", ({ params, json, db }) =>
+    Effect.sync(() => {
+      const session = db.getWorkflowSession(params.id)
+      if (!session) return json({ error: "Session not found" }, 404)
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
+        return json({ error: "Not a planning session" }, 400)
 
-    return json(db.getSessionTimelineEntries(params.id))
-  })
+      return json(db.getSessionTimelineEntries(params.id))
+    }),
+  )
 }

@@ -14,6 +14,12 @@ import { existsSync } from "fs"
 
 const SRC_DIR = "src"
 const FRONTEND_DIR = "src/kanban-solid/src"
+const MIGRATED_FRONTEND_STORES = [
+  `${FRONTEND_DIR}/stores/tasksStore.ts`,
+  `${FRONTEND_DIR}/stores/runsStore.ts`,
+  `${FRONTEND_DIR}/stores/optionsStore.ts`,
+  `${FRONTEND_DIR}/stores/websocketStore.ts`,
+].join(" ")
 
 interface CheckResult {
   readonly name: string
@@ -206,6 +212,27 @@ function main(): void {
       `${FRONTEND_DIR}/api ${FRONTEND_DIR}/stores`,
       0,
       ["api/client.ts"]
+    ),
+
+    checkPattern(
+      "frontend async wrappers in migrated stores",
+      "const\\s+\\w+\\s*=\\s+async\\s*\\(",
+      MIGRATED_FRONTEND_STORES,
+      0,
+    ),
+
+    checkPattern(
+      "Promise.all in migrated task store",
+      "Promise\\.all\\(",
+      `${FRONTEND_DIR}/stores/tasksStore.ts`,
+      0,
+    ),
+
+    checkPattern(
+      "sleepMs usage in websocket store",
+      "sleepMs\\(",
+      `${FRONTEND_DIR}/stores/websocketStore.ts`,
+      0,
     ),
 
     // Migration signal metrics

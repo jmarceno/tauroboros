@@ -89,8 +89,8 @@ export const runStartupRecoveryEffect = Effect.fn("runStartupRecoveryEffect")(
     yield* Effect.logInfo(`[startup-recovery] Marked orphaned session ${session.id} as failed`)
   }
 
-  const pausedRuns = listPausedRunStates(db)
-  const pausedSessions = listPausedSessions(db)
+  const pausedRuns = yield* listPausedRunStates(db)
+  const pausedSessions = yield* listPausedSessions(db)
 
   if (pausedRuns.length > 0 || pausedSessions.length > 0) {
     yield* Effect.logInfo(`[startup-recovery] Found ${pausedRuns.length} paused run(s) and ${pausedSessions.length} paused session(s) in database`)
@@ -106,29 +106,6 @@ export const runStartupRecoveryEffect = Effect.fn("runStartupRecoveryEffect")(
         }
       } else if (run && (run.status === "queued" || run.status === "running" || run.status === "stopping")) {
         yield* Effect.logInfo(`[startup-recovery] Run ${run.id} was active but pause state exists - marking as paused`)
-        db.updateWorkflowRun(run.id, {
-          status: "paused",
-          pauseRequested: true,
-        })
-        broadcast({ type: "run_paused", payload: { runId: run.id } })
-      }
-    }
-  }
-
-  // Check for legacy file-based paused state
-  if (hasPausedRunState()) {
-    const pauseState = loadPausedRunState()
-    if (pauseState) {
-      const run = db.getWorkflowRun(pauseState.runId)
-      if (run && run.status === "paused") {
-        yield* Effect.logInfo(`[startup-recovery] Found file-based paused run ${run.id} that can be resumed`)
-        for (const session of pauseState.sessions) {
-          if (session.containerId) {
-            yield* Effect.logInfo(`[startup-recovery] Session ${session.sessionId} was using container ${session.containerId} (may need restart)`)
-          }
-        }
-      } else if (run && (run.status === "queued" || run.status === "running" || run.status === "stopping")) {
-        yield* Effect.logInfo(`[startup-recovery] Run ${run.id} was active but file-based pause state exists - marking as paused`)
         db.updateWorkflowRun(run.id, {
           status: "paused",
           pauseRequested: true,

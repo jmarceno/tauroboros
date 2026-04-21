@@ -57,27 +57,41 @@ function summaryText(value: string, maxLength: number): string {
 function toReviewerOutput(text: string): ReviewerOutput {
   const parsed = parseStrictJsonObject(text, "Best-of-n reviewer response")
 
-  const status = parsed.status === "pass" || parsed.status === "needs_manual_review"
-    ? parsed.status
-    : "needs_manual_review"
+  const status = parsed.status
+  if (status !== "pass" && status !== "needs_manual_review") {
+    failBestOfN("toReviewerOutput", `Reviewer response must include status=pass|needs_manual_review, got: ${String(status)}`)
+  }
 
-  const bestCandidateIds = Array.isArray(parsed.bestCandidateIds)
-    ? parsed.bestCandidateIds.map((item) => String(item)).filter(Boolean)
-    : []
+  if (!Array.isArray(parsed.bestCandidateIds)) {
+    failBestOfN("toReviewerOutput", "Reviewer response must include bestCandidateIds as an array")
+  }
+  const bestCandidateIds = parsed.bestCandidateIds.map((item) => String(item)).filter(Boolean)
 
-  const gaps = Array.isArray(parsed.gaps)
-    ? parsed.gaps.map((item) => String(item)).filter(Boolean)
-    : []
+  if (!Array.isArray(parsed.gaps)) {
+    failBestOfN("toReviewerOutput", "Reviewer response must include gaps as an array")
+  }
+  const gaps = parsed.gaps.map((item) => String(item)).filter(Boolean)
 
-  const recommendedFinalStrategy = parsed.recommendedFinalStrategy === "pick_best"
-    || parsed.recommendedFinalStrategy === "synthesize"
-    || parsed.recommendedFinalStrategy === "pick_or_synthesize"
-    ? parsed.recommendedFinalStrategy
-    : "synthesize"
+  const recommendedFinalStrategy = parsed.recommendedFinalStrategy
+  if (
+    recommendedFinalStrategy !== "pick_best"
+    && recommendedFinalStrategy !== "synthesize"
+    && recommendedFinalStrategy !== "pick_or_synthesize"
+  ) {
+    failBestOfN(
+      "toReviewerOutput",
+      `Reviewer response must include recommendedFinalStrategy=pick_best|synthesize|pick_or_synthesize, got: ${String(recommendedFinalStrategy)}`,
+    )
+  }
+
+  const summary = trimText(parsed.summary)
+  if (!summary) {
+    failBestOfN("toReviewerOutput", "Reviewer response must include a non-empty summary")
+  }
 
   return {
     status,
-    summary: trimText(parsed.summary) || "No summary provided",
+    summary,
     bestCandidateIds,
     gaps,
     recommendedFinalStrategy,
@@ -174,19 +188,18 @@ export class BestOfNRunner {
         })
       }
 
-      const targetBranch = yield* Effect.tryPromise({
-        try: () => resolveTargetBranch({
-          baseDirectory: self.deps.projectRoot,
-          taskBranch: task.branch,
-          optionBranch: options.branch,
-        }),
-        catch: (cause) => new BestOfNError({
+      const targetBranch = yield* resolveTargetBranch({
+        baseDirectory: self.deps.projectRoot,
+        taskBranch: task.branch,
+        optionBranch: options.branch,
+      }).pipe(
+        Effect.mapError((cause) => new BestOfNError({
           operation: "resolveTargetBranch",
           message: cause instanceof Error ? cause.message : String(cause),
           taskId: task.id,
           cause,
-        }),
-      })
+        })),
+      )
 
       self.deps.db.updateTask(task.id, {
         status: "executing",
@@ -327,15 +340,14 @@ export class BestOfNRunner {
         self.deps.db.updateTaskRun(workerRun.id, { status: "running" })
         self.broadcastRun(workerRun.id)
 
-        const worktreeInfo = yield* Effect.tryPromise({
-          try: () => self.deps.worktree.createForRun(workerRun.id, "bon-worker", targetBranch),
-          catch: (cause) => new BestOfNError({
+        const worktreeInfo = yield* self.deps.worktree.createForRun(workerRun.id, "bon-worker", targetBranch).pipe(
+          Effect.mapError((cause) => new BestOfNError({
             operation: "runWorker.createWorktree",
             message: cause instanceof Error ? cause.message : String(cause),
             taskId,
             cause,
-          }),
-        })
+          })),
+        )
         worktreeDir = worktreeInfo.directory
         self.deps.db.updateTaskRun(workerRun.id, { worktreeDir })
         self.broadcastRun(workerRun.id)
@@ -385,24 +397,22 @@ export class BestOfNRunner {
           worktreeDir,
         )
 
-        const changedFiles = yield* Effect.tryPromise({
-          try: () => getChangedFiles(worktreeDir),
-          catch: (cause) => new BestOfNError({
+        const changedFiles = yield* getChangedFiles(worktreeDir).pipe(
+          Effect.mapError((cause) => new BestOfNError({
             operation: "runWorker.getChangedFiles",
             message: cause instanceof Error ? cause.message : String(cause),
             taskId,
             cause,
-          }),
-        })
-        const diff = yield* Effect.tryPromise({
-          try: () => getDiffStats(worktreeDir),
-          catch: (cause) => new BestOfNError({
+          })),
+        )
+        const diff = yield* getDiffStats(worktreeDir).pipe(
+          Effect.mapError((cause) => new BestOfNError({
             operation: "runWorker.getDiffStats",
             message: cause instanceof Error ? cause.message : String(cause),
             taskId,
             cause,
-          }),
-        })
+          })),
+        )
         const diffStatsJson: Record<string, number> = {}
         for (const [filePath, stat] of Object.entries(diff.fileStats)) {
           diffStatsJson[filePath] = stat.insertions + stat.deletions
@@ -443,15 +453,12 @@ export class BestOfNRunner {
         self.broadcastRun(workerRun.id)
       } finally {
         if (worktreeDir && task.deleteWorktree !== false) {
-          yield* Effect.tryPromise({
-            try: () => self.deps.worktree.complete(worktreeDir, {
-              branch: "",
-              targetBranch: "",
-              shouldMerge: false,
-              shouldRemove: true,
-            }),
-            catch: () => undefined,
-          })
+          yield* self.deps.worktree.complete(worktreeDir, {
+            branch: "",
+            targetBranch: "",
+            shouldMerge: false,
+            shouldRemove: true,
+          }).pipe(Effect.catchTag("WorktreeError", () => Effect.void))
         }
       }
     })
@@ -543,15 +550,14 @@ export class BestOfNRunner {
         self.deps.db.updateTaskRun(finalRun.id, { status: "running" })
         self.broadcastRun(finalRun.id)
 
-        const worktreeInfo = yield* Effect.tryPromise({
-          try: () => self.deps.worktree.createForRun(finalRun.id, "bon-final", targetBranch),
-          catch: (cause) => new BestOfNError({
+        const worktreeInfo = yield* self.deps.worktree.createForRun(finalRun.id, "bon-final", targetBranch).pipe(
+          Effect.mapError((cause) => new BestOfNError({
             operation: "runFinalApplier.createWorktree",
             message: cause instanceof Error ? cause.message : String(cause),
             taskId,
             cause,
-          }),
-        })
+          })),
+        )
         worktreeDir = worktreeInfo.directory
         self.deps.db.updateTaskRun(finalRun.id, { worktreeDir })
         self.broadcastRun(finalRun.id)
@@ -625,20 +631,19 @@ export class BestOfNRunner {
           }
         }
 
-        yield* Effect.tryPromise({
-          try: () => self.deps.worktree.complete(worktreeDir, {
-            branch: worktreeInfo.branch,
-            targetBranch,
-            shouldMerge: true,
-            shouldRemove: task.deleteWorktree !== false,
-          }),
-          catch: (cause) => new BestOfNError({
+        yield* self.deps.worktree.complete(worktreeDir, {
+          branch: worktreeInfo.branch,
+          targetBranch,
+          shouldMerge: true,
+          shouldRemove: task.deleteWorktree !== false,
+        }).pipe(
+          Effect.mapError((cause) => new BestOfNError({
             operation: "runFinalApplier.completeWorktree",
             message: cause instanceof Error ? cause.message : String(cause),
             taskId,
             cause,
-          }),
-        })
+          })),
+        )
 
         const summary = trimText(response.responseText) || summaryText(outputChunks.join("\n"), 1000)
         self.deps.db.updateTaskRun(finalRun.id, {

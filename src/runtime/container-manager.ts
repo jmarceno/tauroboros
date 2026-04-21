@@ -2,7 +2,7 @@ import { spawn, execSync } from "child_process"
 import { randomUUID } from "crypto"
 import { Effect, Schema } from "effect"
 import { ContainerImageManager, type ImageStatusChangeHandler } from "./container-image-manager.ts"
-import { MockServerManager } from "./mock-server-manager.ts"
+import { MockServerManager, MockServerManagerError } from "./mock-server-manager.ts"
 import { BASE_IMAGES } from "../config/base-images.ts"
 import * as path from "path"
 import * as fs from "fs"
@@ -166,21 +166,34 @@ export class PiContainerManager {
     return this.mockServerManager
   }
 
-  async startMockServerIfNeeded(config: ContainerConfig): Promise<number | null> {
-    if (!config.useMockLLM) {
-      return null
-    }
+  private startMockServerIfNeeded(config: ContainerConfig): Effect.Effect<number | null, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      if (!config.useMockLLM) {
+        return null
+      }
 
-    const port = process.env.MOCK_LLM_PORT ? parseInt(process.env.MOCK_LLM_PORT, 10) : 9999
-    if (this.mockServerManager) {
+      const port = process.env.MOCK_LLM_PORT ? parseInt(process.env.MOCK_LLM_PORT, 10) : 9999
+      if (!this.mockServerManager) {
+        return yield* new ContainerManagerError({
+          operation: "startMockServerIfNeeded",
+          message: "Mock LLM was requested but no MockServerManager is configured",
+        })
+      }
+
       const mockLlmServerPath = path.join(process.cwd(), 'mock-llm-server')
-      await this.mockServerManager.start(mockLlmServerPath)
-    }
+      yield* this.mockServerManager.start(mockLlmServerPath).pipe(
+        Effect.mapError((cause) => new ContainerManagerError({
+          operation: "startMockServerIfNeeded",
+          message: cause instanceof MockServerManagerError ? cause.message : String(cause),
+          cause,
+        })),
+      )
 
-    return port
+      return port
+    })
   }
 
-  async generateModelsJson(containerId: string, mockPort: number, repoRoot: string, useHostNetwork: boolean = false): Promise<void> {
+  private async generateModelsJson(containerId: string, mockPort: number, repoRoot: string, useHostNetwork: boolean = false): Promise<void> {
     const modelsJson = {
       providers: {
         fake: {
@@ -234,14 +247,13 @@ export class PiContainerManager {
     const self = this
     return Effect.gen(function* () {
       if (self.imageManager) {
-        yield* Effect.tryPromise({
-          try: () => self.imageManager!.prepare(),
-          catch: (cause) => new ContainerManagerError({
+        yield* self.imageManager.prepare().pipe(
+          Effect.mapError((cause) => new ContainerManagerError({
             operation: "ensureImageReady",
             message: `Failed to prepare image: ${cause instanceof Error ? cause.message : String(cause)}`,
             cause,
-          }),
-        })
+          })),
+        )
       } else {
         const exists = yield* Effect.promise(() =>
           self.execPodman(["image", "exists", self.imageName]).then(
@@ -290,17 +302,55 @@ export class PiContainerManager {
   /**
    * Create and start a new container for a pi agent session.
    */
-  async createContainer(config: ContainerConfig): Promise<ContainerProcess> {
+  createContainer(config: ContainerConfig): Effect.Effect<ContainerProcess, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      const imageName = config.imageName || this.imageName
+
+      yield* Effect.try({
+        try: () => {
+          this.verifyImageReady()
+        },
+        catch: (cause) =>
+          cause instanceof ContainerManagerError
+            ? cause
+            : new ContainerManagerError({
+                operation: "createContainer",
+                message: cause instanceof Error ? cause.message : String(cause),
+                cause,
+              }),
+      })
+
+      const mockPort = yield* this.startMockServerIfNeeded(config)
+      if (mockPort !== null) {
+        yield* Effect.tryPromise({
+          try: () => this.generateModelsJson(imageName, mockPort, config.repoRoot),
+          catch: (cause) =>
+            cause instanceof ContainerManagerError
+              ? cause
+              : new ContainerManagerError({
+                  operation: "createContainer",
+                  message: cause instanceof Error ? cause.message : String(cause),
+                  cause,
+                }),
+        })
+      }
+
+      return yield* Effect.tryPromise({
+        try: () => this.createContainerInternal(config),
+        catch: (cause) =>
+          cause instanceof ContainerManagerError
+            ? cause
+            : new ContainerManagerError({
+                operation: "createContainer",
+                message: cause instanceof Error ? cause.message : String(cause),
+                cause,
+              }),
+      })
+    })
+  }
+
+  private async createContainerInternal(config: ContainerConfig): Promise<ContainerProcess> {
     const imageName = config.imageName || this.imageName
-
-    // Verify image was prepared at server startup - no fallback build during task execution
-    this.verifyImageReady()
-
-    // Start mock LLM server if needed and generate models.json
-    const mockPort = await this.startMockServerIfNeeded(config)
-    if (mockPort !== null) {
-      await this.generateModelsJson(imageName, mockPort, config.repoRoot)
-    }
 
     // Use host network when mock LLM is enabled so container can reach mock server on localhost
     const networkMode = config.useMockLLM ? "host" : (config.networkMode || "bridge")
@@ -551,7 +601,18 @@ export class PiContainerManager {
   /**
    * Kill a container by session ID.
    */
-  async killContainer(sessionId: string): Promise<void> {
+  killContainer(sessionId: string): Effect.Effect<void, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.killContainerInternal(sessionId),
+      catch: (cause) => new ContainerManagerError({
+        operation: "killContainer",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async killContainerInternal(sessionId: string): Promise<void> {
     const process = this.containers.get(sessionId)
     if (process) {
       await process.kill()
@@ -562,7 +623,23 @@ export class PiContainerManager {
    * Check if a container exists and is running by session ID.
    * Returns the container info if found and running, null otherwise.
    */
-  async checkContainerExists(sessionId: string): Promise<{
+  checkContainerExists(sessionId: string): Effect.Effect<{
+    containerId: string
+    containerName: string
+    status: string
+    running: boolean
+  } | null, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.checkContainerExistsInternal(sessionId),
+      catch: (cause) => new ContainerManagerError({
+        operation: "checkContainerExists",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async checkContainerExistsInternal(sessionId: string): Promise<{
     containerId: string
     containerName: string
     status: string
@@ -643,7 +720,22 @@ export class PiContainerManager {
    * Check if a container exists and is running by container ID.
    * This is used for resume operations when we only have the container ID.
    */
-  async checkContainerById(containerId: string): Promise<{
+  checkContainerById(containerId: string): Effect.Effect<{
+    containerId: string
+    status: string
+    running: boolean
+  } | null, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.checkContainerByIdInternal(containerId),
+      catch: (cause) => new ContainerManagerError({
+        operation: "checkContainerById",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async checkContainerByIdInternal(containerId: string): Promise<{
     containerId: string
     status: string
     running: boolean
@@ -696,9 +788,20 @@ export class PiContainerManager {
    * @param sessionId - The session ID for tracking this attachment
    * @returns ContainerProcess if successful, null if container not running or attach failed
    */
-  async attachToContainer(containerId: string, sessionId: string): Promise<ContainerProcess | null> {
+  attachToContainer(containerId: string, sessionId: string): Effect.Effect<ContainerProcess | null, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.attachToContainerInternal(containerId, sessionId),
+      catch: (cause) => new ContainerManagerError({
+        operation: "attachToContainer",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async attachToContainerInternal(containerId: string, sessionId: string): Promise<ContainerProcess | null> {
     // Verify container exists and is running
-    const containerInfo = await this.checkContainerById(containerId)
+    const containerInfo = await this.checkContainerByIdInternal(containerId)
     if (!containerInfo?.running) {
       writeInfo(`[container-manager] Container ${containerId} not running, cannot attach`)
       return null
@@ -857,7 +960,7 @@ export class PiContainerManager {
 
         inspect: async () => {
           // Check if the container is still running
-          const info = await this.checkContainerById(containerId)
+          const info = await this.checkContainerByIdInternal(containerId)
           return {
             State: {
               Status: info?.status || "unknown",
@@ -873,8 +976,8 @@ export class PiContainerManager {
       writeInfo(`[container-manager] Successfully attached to container ${containerId}`)
       return process
     } catch (error) {
-      writeError(`[container-manager] Failed to list images: ${err instanceof Error ? err.message : String(err)}`)
-      writeError(`[container-manager] Failed to attach to container ${containerId}: ${message}`)
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      writeError(`[container-manager] Failed to attach to container ${containerId}: ${errorMessage}`)
       return null
     }
   }
@@ -883,7 +986,18 @@ export class PiContainerManager {
    * Force kill a container (SIGKILL).
    * Used for emergency stop and destructive operations.
    */
-  async forceKillContainer(sessionId: string): Promise<boolean> {
+  forceKillContainer(sessionId: string): Effect.Effect<boolean, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.forceKillContainerInternal(sessionId),
+      catch: (cause) => new ContainerManagerError({
+        operation: "forceKillContainer",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async forceKillContainerInternal(sessionId: string): Promise<boolean> {
     const containerName = `tauroboros-${sessionId}`
     try {
       // Send SIGKILL instead of graceful stop
@@ -900,7 +1014,18 @@ export class PiContainerManager {
    * Restart a container that exists but is not running.
    * Returns true if successful, false otherwise.
    */
-  async restartContainer(sessionId: string): Promise<boolean> {
+  restartContainer(sessionId: string): Effect.Effect<boolean, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.restartContainerInternal(sessionId),
+      catch: (cause) => new ContainerManagerError({
+        operation: "restartContainer",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async restartContainerInternal(sessionId: string): Promise<boolean> {
     const containerName = `tauroboros-${sessionId}`
     try {
       // First try to start the existing container
@@ -910,7 +1035,7 @@ export class PiContainerManager {
       await new Promise((resolve) => setTimeout(resolve, 2000))
 
       // Verify it's running
-      const check = await this.checkContainerExists(sessionId)
+      const check = await this.checkContainerExistsInternal(sessionId)
       return check?.running ?? false
     } catch (err) {
       writeDebug(`[container-manager] Failed to restart container ${sessionId}: ${err instanceof Error ? err.message : String(err)}`)
@@ -921,7 +1046,18 @@ export class PiContainerManager {
   /**
    * Remove a container by session ID (forcefully if needed).
    */
-  async removeContainer(sessionId: string, force = false): Promise<boolean> {
+  removeContainer(sessionId: string, force = false): Effect.Effect<boolean, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.removeContainerInternal(sessionId, force),
+      catch: (cause) => new ContainerManagerError({
+        operation: "removeContainer",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async removeContainerInternal(sessionId: string, force = false): Promise<boolean> {
     const containerName = `tauroboros-${sessionId}`
     try {
       const args = ["rm"]
@@ -941,7 +1077,18 @@ export class PiContainerManager {
   /**
    * Clean up all managed containers.
    */
-  async cleanup(): Promise<void> {
+  cleanup(): Effect.Effect<void, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.cleanupInternal(),
+      catch: (cause) => new ContainerManagerError({
+        operation: "cleanup",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async cleanupInternal(): Promise<void> {
     const killResults = await Promise.allSettled(
       Array.from(this.containers.values()).map((proc) => proc.kill())
     )
@@ -957,18 +1104,47 @@ export class PiContainerManager {
     this.containers.clear()
   }
 
-  async close(): Promise<void> {
-    await this.cleanup()
+  close(): Effect.Effect<void, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      yield* Effect.tryPromise({
+        try: () => this.cleanupInternal(),
+        catch: (cause) => new ContainerManagerError({
+          operation: "close",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
 
-    if (this.mockServerManager?.isRunning()) {
-      await this.mockServerManager.stop()
-    }
+      if (this.mockServerManager?.isRunning()) {
+        yield* this.mockServerManager.stop().pipe(
+          Effect.mapError((cause) => new ContainerManagerError({
+            operation: "close",
+            message: cause instanceof MockServerManagerError ? cause.message : String(cause),
+            cause,
+          })),
+        )
+      }
+    })
   }
 
   /**
    * List all managed containers.
    */
-  async listManagedContainers(): Promise<
+  listManagedContainers(): Effect.Effect<
+    { sessionId: string; containerId: string; status: string }[],
+    ContainerManagerError
+  > {
+    return Effect.tryPromise({
+      try: () => this.listManagedContainersInternal(),
+      catch: (cause) => new ContainerManagerError({
+        operation: "listManagedContainers",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async listManagedContainersInternal(): Promise<
     { sessionId: string; containerId: string; status: string }[]
   > {
     try {
@@ -1005,8 +1181,19 @@ export class PiContainerManager {
   /**
    * Emergency stop - kill all tauroboros containers.
    */
-  async emergencyStop(): Promise<number> {
-    const containers = await this.listManagedContainers()
+  emergencyStop(): Effect.Effect<number, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.emergencyStopInternal(),
+      catch: (cause) => new ContainerManagerError({
+        operation: "emergencyStop",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async emergencyStopInternal(): Promise<number> {
+    const containers = await this.listManagedContainersInternal()
     let killed = 0
 
     for (const info of containers) {
@@ -1025,9 +1212,24 @@ export class PiContainerManager {
   /**
    * Check if podman and the image are available.
    */
-  async validateSetup(): Promise<{
+  validateSetup(): Effect.Effect<{
     podman: boolean
-        writeError(`[container-manager] Failed to list images: ${err instanceof Error ? err.message : String(err)}`)
+    image: boolean
+    errors: string[]
+  }, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.validateSetupInternal(),
+      catch: (cause) => new ContainerManagerError({
+        operation: "validateSetup",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async validateSetupInternal(): Promise<{
+    podman: boolean
+    image: boolean
     errors: string[]
   }> {
     const errors: string[] = []
@@ -1058,7 +1260,18 @@ export class PiContainerManager {
   /**
    * Check if a specific image exists in Podman.
    */
-  async checkImageExists(imageName: string): Promise<boolean> {
+  checkImageExists(imageName: string): Effect.Effect<boolean, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.checkImageExistsInternal(imageName),
+      catch: (cause) => new ContainerManagerError({
+        operation: "checkImageExists",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async checkImageExistsInternal(imageName: string): Promise<boolean> {
     try {
       await this.execPodman(["image", "exists", imageName])
       return true
@@ -1070,7 +1283,22 @@ export class PiContainerManager {
   /**
    * List all available pi-agent images from Podman.
    */
-  async listImages(): Promise<Array<{
+  listImages(): Effect.Effect<Array<{
+    tag: string
+    createdAt: number
+    size: string
+  }>, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.listImagesInternal(),
+      catch: (cause) => new ContainerManagerError({
+        operation: "listImages",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async listImagesInternal(): Promise<Array<{
     tag: string
     createdAt: number
     size: string
@@ -1114,7 +1342,18 @@ export class PiContainerManager {
   /**
    * Delete an image by tag.
    */
-  async deleteImage(imageName: string): Promise<{ success: boolean; error?: string }> {
+  deleteImage(imageName: string): Effect.Effect<{ success: boolean; error?: string }, ContainerManagerError> {
+    return Effect.tryPromise({
+      try: () => this.deleteImageInternal(imageName),
+      catch: (cause) => new ContainerManagerError({
+        operation: "deleteImage",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+    })
+  }
+
+  private async deleteImageInternal(imageName: string): Promise<{ success: boolean; error?: string }> {
     try {
       await this.execPodman(["rmi", imageName])
       return { success: true }

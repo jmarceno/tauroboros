@@ -2,6 +2,13 @@ import type { UserConfig } from "vite"
 import solid from "vite-plugin-solid"
 import { resolve } from "path"
 
+class ViteConfigError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ViteConfigError"
+  }
+}
+
 // Dev mode requires explicit backend port - dynamic port (0) not supported in dev mode
 const SERVER_PORT = process.env.SERVER_PORT || "3789"
 const DEV_PORT = process.env.DEV_PORT || "5174"
@@ -9,7 +16,7 @@ const DEV_PORT = process.env.DEV_PORT || "5174"
 // Only check SERVER_PORT for dev mode (when not building)
 const isDev = process.env.NODE_ENV !== "production" && !process.argv.includes("build")
 if (isDev && (!SERVER_PORT || SERVER_PORT === "0")) {
-  throw new Error(
+  throw new ViteConfigError(
     "Dev mode requires an explicit SERVER_PORT. " +
     "Run with: SERVER_PORT=3789 bun run dev"
   )

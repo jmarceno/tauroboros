@@ -5,6 +5,7 @@
 
 import { createSignal, createMemo } from 'solid-js'
 import { createQuery, useQueryClient, createMutation } from '@tanstack/solid-query'
+import { Effect } from 'effect'
 import type { Options } from '@/types'
 import * as api from '@/api'
 
@@ -28,47 +29,37 @@ export function createOptionsStore() {
   const error = () => optionsQuery.error?.message || null
 
   // Actions
-  const loadOptions = async () => {
-    await queryClient.invalidateQueries({ queryKey: queryKeys.options })
-  }
+  const loadOptions = () => runApi(Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.options })))
 
   // Mutations
   const updateOptionsMutation = createMutation(() => ({
     mutationFn: (data: Partial<Options>) => runApi(api.optionsApi.update(data)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.options })
+      void loadOptions()
     },
   }))
 
   const startExecutionMutation = createMutation(() => ({
     mutationFn: () => runApi(api.optionsApi.startExecution()),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.options })
+      void loadOptions()
     },
   }))
 
   const stopExecutionMutation = createMutation(() => ({
     mutationFn: () => runApi(api.optionsApi.stopExecution()),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.options })
+      void loadOptions()
     },
   }))
 
-  const saveOptions = async (data: Partial<Options>) => {
-    return await updateOptionsMutation.mutateAsync(data)
-  }
+  const saveOptions = (data: Partial<Options>) => updateOptionsMutation.mutateAsync(data)
 
-  const updateOptions = async (data: Partial<Options>) => {
-    return await updateOptionsMutation.mutateAsync(data)
-  }
+  const updateOptions = (data: Partial<Options>) => updateOptionsMutation.mutateAsync(data)
 
-  const startExecution = async () => {
-    return await startExecutionMutation.mutateAsync()
-  }
+  const startExecution = () => startExecutionMutation.mutateAsync()
 
-  const stopExecution = async () => {
-    return await stopExecutionMutation.mutateAsync()
-  }
+  const stopExecution = () => stopExecutionMutation.mutateAsync()
 
   return {
     options,

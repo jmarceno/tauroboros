@@ -4,6 +4,8 @@
  */
 
 import { createSignal, onMount, onCleanup } from 'solid-js'
+import { Effect } from 'effect'
+import { runApiEffect } from '@/api'
 import type { WSMessage, WSMessageType } from '@/types'
 
 type MessageHandler = (payload: unknown) => void
@@ -14,11 +16,12 @@ export function createWebSocketStore() {
   const [reconnectAttempts, setReconnectAttempts] = createSignal(0)
 
   const handlers = new Map<WSMessageType, Set<MessageHandler>>()
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let reconnectCallback: (() => void) | null = null
   let intentionalClose = false
   let wsRef: WebSocket | null = null
   let reconnectAttemptsRef = 0
+  let reconnectToken = 0
+  let reconnectInFlight = false
 
   const MAX_RECONNECT_ATTEMPTS = 50
   const INITIAL_RECONNECT_DELAY = 1000
@@ -29,10 +32,48 @@ export function createWebSocketStore() {
     return delay + Math.random() * 1000
   }
 
+  const reconnectEffect = (tokenAtStart: number): Effect.Effect<void, never> =>
+    Effect.gen(function* () {
+      while (!intentionalClose && tokenAtStart === reconnectToken && reconnectAttemptsRef < MAX_RECONNECT_ATTEMPTS) {
+        const delayMs = Math.max(1, Math.floor(getReconnectDelay()))
+        yield* Effect.sleep(`${delayMs} millis`)
+
+        if (intentionalClose || tokenAtStart !== reconnectToken) {
+          return
+        }
+
+        reconnectAttemptsRef++
+        setReconnectAttempts(reconnectAttemptsRef)
+        connect()
+        return
+      }
+    })
+
+  const scheduleReconnect = () => {
+    if (reconnectInFlight) {
+      return
+    }
+
+    reconnectInFlight = true
+    const tokenAtStart = reconnectToken
+
+    void runApiEffect(
+      reconnectEffect(tokenAtStart).pipe(
+        Effect.catchAll(() => Effect.void),
+      ),
+    ).finally(() => {
+      reconnectInFlight = false
+    })
+  }
+
   const connect = () => {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer)
-      reconnectTimer = null
+    reconnectToken++
+    reconnectInFlight = false
+
+    // Ensure one live websocket instance at a time.
+    if (wsRef) {
+      wsRef.onclose = null
+      wsRef.close()
     }
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -58,14 +99,7 @@ export function createWebSocketStore() {
         intentionalClose = false
         return
       }
-      if (reconnectAttemptsRef < MAX_RECONNECT_ATTEMPTS) {
-        const delay = getReconnectDelay()
-        reconnectTimer = setTimeout(() => {
-          reconnectAttemptsRef++
-          setReconnectAttempts(reconnectAttemptsRef)
-          connect()
-        }, delay)
-      }
+      scheduleReconnect()
     }
 
     newWs.onmessage = (event) => {
@@ -87,15 +121,12 @@ export function createWebSocketStore() {
 
   const disconnect = () => {
     intentionalClose = true
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
+    reconnectToken++
+    reconnectInFlight = false
     wsRef?.close()
     wsRef = null
     setWs(null)
     setIsConnected(false)
-    intentionalClose = false
   }
 
   const on = (type: WSMessageType, handler: MessageHandler) => {
@@ -120,13 +151,12 @@ export function createWebSocketStore() {
 
   // Cleanup on unmount
   onCleanup(() => {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
     intentionalClose = true
+    reconnectToken++
+    reconnectInFlight = false
     wsRef?.close()
     wsRef = null
+    setWs(null)
   })
 
   return {

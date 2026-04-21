@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
+import { Effect } from "effect"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiKanbanServer } from "../src/server/server.ts"
 import { WebSocketHub } from "../src/server/websocket.ts"
@@ -34,7 +35,7 @@ describe("Archived Tasks API", () => {
       planningSessionManager,
       wsHub,
     })
-    port = await server.start(0)
+    port = await Effect.runPromise(Effect.scoped(server.startEffect(0)))
   })
 
   afterEach(() => {

@@ -3,10 +3,10 @@ import { dirname, join } from "path"
 import { fileURLToPath } from "url"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import { discoverPiModelsEffect } from "../pi/model-discovery.ts"
-import type { ImageStatusPayload, RunQueueStatus, SlotUtilization, WorkflowRun, WSMessage } from "../types.ts"
+import type { ImageStatusPayload, RunQueueStatus, SlotUtilization, TaskStatus, WorkflowRun, WSMessage } from "../types.ts"
 import { PiKanbanDB } from "../db.ts"
 import type { PackageDefinition } from "../db/types.ts"
-import { Effect, Schema } from "effect"
+import { Effect, Queue, Schema } from "effect"
 import { runStartupRecoveryEffect } from "../recovery/startup-recovery.ts"
 import { ContainerImageManager } from "../runtime/container-image-manager.ts"
 import { PiContainerManager } from "../runtime/container-manager.ts"
@@ -16,7 +16,7 @@ import { sendTelegramNotificationEffect, sendTelegramWorkflowSummaryEffect, shou
 import { Router } from "./router.ts"
 import type { RequestContext, ServerRouteContext } from "./types.ts"
 import { WebSocketHub } from "./websocket.ts"
-import { readEmbeddedFileEffect, embeddedFileExists, getContentType, getIndexHtml } from "./embedded-files.ts"
+import { readEmbeddedFileEffect, embeddedFileExistsEffect, getContentType, getIndexHtmlEffect } from "./embedded-files.ts"
 import { VERSION, COMMIT_HASH, DISPLAY_VERSION, IS_COMPILED } from "./version.ts"
 import { isThinkingLevel } from "./validators.ts"
 import { registerTaskRoutes } from "./routes/task-routes.ts"
@@ -38,6 +38,27 @@ function failServerRuntime(operation: string, message: string, cause?: unknown):
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+type NotificationJob =
+  | {
+      readonly _tag: "task-status"
+      readonly botToken: string
+      readonly chatId: string
+      readonly taskName: string
+      readonly oldStatus: TaskStatus
+      readonly newStatus: TaskStatus
+    }
+  | {
+      readonly _tag: "workflow-summary"
+      readonly botToken: string
+      readonly chatId: string
+      readonly runName: string
+      readonly totalTasks: number
+      readonly completedTasks: number
+      readonly failedTasks: number
+      readonly stuckTasks: number
+    }
+  | { readonly _tag: "shutdown" }
 
 // Static file serving paths - SolidJS kanban
 const KANBAN_DIST = join(__dirname, "..", "kanban-solid", "dist")
@@ -77,6 +98,8 @@ export class PiKanbanServer {
   private readonly settings?: InfrastructureSettings
   private readonly projectRoot: string
   private readonly planningSessionManager: PlanningSessionManager
+  private notificationQueue: Queue.Queue<NotificationJob> | null = null
+  private pendingNotifications: NotificationJob[] = []
   private _currentRunId: string | null = null
 
   getImageManager(): ContainerImageManager | null {
@@ -174,7 +197,7 @@ export class PiKanbanServer {
     this.planningSessionManager = opts.planningSessionManager
 
     // Register Telegram notification listener for task status changes
-    this.db.setTaskStatusChangeListener((taskId: string, oldStatus: string, newStatus: string) => {
+    this.db.setTaskStatusChangeListener((taskId: string, oldStatus: TaskStatus, newStatus: TaskStatus) => {
       const task = this.db.getTask(taskId)
       if (!task) return
       const options = this.db.getOptions()
@@ -184,40 +207,24 @@ export class PiKanbanServer {
       const context: NotificationContext = {
         isWorkflowDone: this.db.hasRunningWorkflows(),
       }
-      
-      // Validate status values before passing to shouldSendNotification
-      const validStatuses = ["template", "backlog", "queued", "executing", "review", "code-style", "done", "failed", "stuck"] as const
-      if (!validStatuses.includes(oldStatus as typeof validStatuses[number]) || 
-          !validStatuses.includes(newStatus as typeof validStatuses[number])) {
-        return
-      }
-      
+
       if (!shouldSendNotification(
-        options.telegramNotificationLevel, 
-        oldStatus as typeof validStatuses[number], 
-        newStatus as typeof validStatuses[number], 
+        options.telegramNotificationLevel,
+        oldStatus,
+        newStatus,
         context
       )) {
         return
       }
 
-      void Effect.runPromise(
-        sendTelegramNotificationEffect(
-          { botToken: options.telegramBotToken, chatId: options.telegramChatId },
-          task.name,
-          oldStatus,
-          newStatus,
-        ).pipe(
-          Effect.tap((msg) =>
-            msg.success && msg.messageId
-              ? Effect.logDebug(`[telegram] notification sent for "${task.name}" (${oldStatus} -> ${newStatus})`)
-              : Effect.void,
-          ),
-          Effect.catchAll((err) =>
-            Effect.logError(`[telegram] notification failed: ${err.message}`),
-          ),
-        ),
-      )
+      this.enqueueNotification({
+        _tag: "task-status",
+        botToken: options.telegramBotToken,
+        chatId: options.telegramChatId,
+        taskName: task.name,
+        oldStatus,
+        newStatus,
+      })
     })
 
     this.registerRoutes()
@@ -293,25 +300,16 @@ export class PiKanbanServer {
               }
             }
             
-            void Effect.runPromise(
-              sendTelegramWorkflowSummaryEffect(
-                { botToken: options.telegramBotToken, chatId: options.telegramChatId },
-                run.displayName || "Workflow",
-                run.taskOrder?.length ?? 0,
-                completed,
-                failed,
-                stuck,
-              ).pipe(
-                Effect.tap((msg) =>
-                  msg.success && msg.messageId
-                    ? Effect.logDebug(`[telegram] workflow summary sent for "${run.displayName || "Workflow"}" (${completed}/${run.taskOrder?.length ?? 0} done, ${failed} failed, ${stuck} stuck)`)
-                    : Effect.void,
-                ),
-                Effect.catchAll((err) =>
-                  Effect.logError(`[telegram] workflow summary notification failed: ${err.message}`),
-                ),
-              ),
-            )
+            this.enqueueNotification({
+              _tag: "workflow-summary",
+              botToken: options.telegramBotToken,
+              chatId: options.telegramChatId,
+              runName: run.displayName || "Workflow",
+              totalTasks: run.taskOrder?.length ?? 0,
+              completedTasks: completed,
+              failedTasks: failed,
+              stuckTasks: stuck,
+            })
           }
         }
         if (this._currentRunId === completedRunId) {
@@ -327,10 +325,11 @@ export class PiKanbanServer {
         return this.server.port ?? this.defaultPort
       }
 
+      yield* this.startNotificationWorkerEffect()
+
       if (this.imageManager && this.settings?.workflow?.container?.autoPrepare) {
-        yield* Effect.tryPromise({
-          try: () => this.imageManager!.prepare(),
-          catch: (cause) =>
+        yield* this.imageManager.prepare().pipe(
+          Effect.mapError((cause) =>
             new ServerRuntimeError({
               operation: "start",
               message:
@@ -338,19 +337,20 @@ export class PiKanbanServer {
                 `Fix the issue or disable container mode in .tauroboros/settings.json`,
               cause,
             }),
-        })
+          ),
+        )
       }
 
       if (this.settings?.workflow?.container?.enabled !== false && this.containerManager) {
-        const setupStatus = yield* Effect.tryPromise({
-          try: () => this.containerManager!.validateSetup(),
-          catch: (cause) =>
+        const setupStatus = yield* this.containerManager.validateSetup().pipe(
+          Effect.mapError((cause) =>
             new ServerRuntimeError({
               operation: "start",
               message: `Failed to validate container runtime: ${cause instanceof Error ? cause.message : String(cause)}`,
               cause,
             }),
-        })
+          ),
+        )
         if (!setupStatus.podman) {
           return yield* new ServerRuntimeError({
             operation: "start",
@@ -430,6 +430,90 @@ export class PiKanbanServer {
     this.db.setTaskStatusChangeListener(null)
     this.server?.stop()
     this.server = null
+    if (this.notificationQueue) {
+      Queue.unsafeOffer(this.notificationQueue, { _tag: "shutdown" })
+      this.notificationQueue = null
+    }
+    this.pendingNotifications = []
+  }
+
+  private enqueueNotification(job: NotificationJob): void {
+    if (this.notificationQueue) {
+      Queue.unsafeOffer(this.notificationQueue, job)
+      return
+    }
+
+    this.pendingNotifications.push(job)
+  }
+
+  private processNotificationJobEffect(job: NotificationJob): Effect.Effect<void, never> {
+    switch (job._tag) {
+      case "task-status":
+        return sendTelegramNotificationEffect(
+          { botToken: job.botToken, chatId: job.chatId },
+          job.taskName,
+          job.oldStatus,
+          job.newStatus,
+        ).pipe(
+          Effect.tap((msg) =>
+            msg.success && msg.messageId
+              ? Effect.logDebug(`[telegram] notification sent for "${job.taskName}" (${job.oldStatus} -> ${job.newStatus})`)
+              : Effect.void,
+          ),
+          Effect.catchAll((err) => Effect.logError(`[telegram] notification failed: ${err.message}`)),
+          Effect.asVoid,
+        )
+      case "workflow-summary":
+        return sendTelegramWorkflowSummaryEffect(
+          { botToken: job.botToken, chatId: job.chatId },
+          job.runName,
+          job.totalTasks,
+          job.completedTasks,
+          job.failedTasks,
+          job.stuckTasks,
+        ).pipe(
+          Effect.tap((msg) =>
+            msg.success && msg.messageId
+              ? Effect.logDebug(
+                  `[telegram] workflow summary sent for "${job.runName}" (${job.completedTasks}/${job.totalTasks} done, ${job.failedTasks} failed, ${job.stuckTasks} stuck)`,
+                )
+              : Effect.void,
+          ),
+          Effect.catchAll((err) =>
+            Effect.logError(`[telegram] workflow summary notification failed: ${err.message}`),
+          ),
+          Effect.asVoid,
+        )
+      case "shutdown":
+        return Effect.void
+    }
+  }
+
+  private startNotificationWorkerEffect(): Effect.Effect<void, never> {
+    if (this.notificationQueue) {
+      return Effect.void
+    }
+
+    return Effect.scoped(
+      Effect.gen(this, function* () {
+        const queue = yield* Queue.unbounded<NotificationJob>()
+        this.notificationQueue = queue
+
+        for (const job of this.pendingNotifications.splice(0)) {
+          Queue.unsafeOffer(queue, job)
+        }
+
+        yield* Effect.gen(this, function* () {
+          while (true) {
+            const job = yield* Queue.take(queue)
+            if (job._tag === "shutdown") {
+              return
+            }
+            yield* this.processNotificationJobEffect(job)
+          }
+        }).pipe(Effect.forkScoped)
+      }),
+    )
   }
 
   private registerRoutes(): void {
@@ -466,128 +550,147 @@ export class PiKanbanServer {
     registerTaskGroupRoutes(this.router, ctx)
     registerStatsRoutes(this.router, ctx)
 
-    this.router.get("/", async () => {
-      const content = await getIndexHtml()
-      if (content) {
-        return new Response(content, { headers: { "Content-Type": "text/html" } })
-      }
-      return new Response("index.html not found", { status: 404 })
-    })
+    this.router.get("/", () =>
+      getIndexHtmlEffect().pipe(
+        Effect.map((content) =>
+          content
+            ? new Response(content, { headers: { "Content-Type": "text/html" } })
+            : new Response("index.html not found", { status: 404 }),
+        ),
+        Effect.catchAll((error) =>
+          Effect.succeed(
+            new Response(`Failed to serve index.html: ${error.message}`, { status: 500 }),
+          ),
+        ),
+      )
+    )
 
     this.router.get("/assets/:file", ({ params }) =>
       Effect.gen(function* () {
         const filePath = join(KANBAN_DIST, "assets", params.file)
-        const exists = yield* Effect.tryPromise({
-          try: () => embeddedFileExists(filePath),
-          catch: () => false,
-        })
+        const exists = yield* embeddedFileExistsEffect(filePath).pipe(
+          Effect.catchAll(() => Effect.succeed(false)),
+        )
         if (!exists) {
           return new Response("Not found", { status: 404 })
         }
 
-        const content = yield* readEmbeddedFileEffect(filePath).pipe(
-          Effect.catchAll((error) =>
-            Effect.succeed(new Response(`Failed to read file: ${error.message}`, { status: 500 })),
-          ),
-        )
-
-        if (content instanceof Response) {
-          return content
+        const contentResult = yield* readEmbeddedFileEffect(filePath).pipe(Effect.either)
+        if (contentResult._tag === "Left") {
+          return new Response(`Failed to serve asset: ${contentResult.left.message}`, { status: 500 })
         }
+        const content = contentResult.right
 
         const contentType = getContentType(params.file)
         return new Response(content as unknown as BodyInit, { headers: { "Content-Type": contentType } })
       })
     )
 
-    this.router.get("/healthz", ({ json }) => json({ ok: true, wsClients: this.wsHub.size() }))
+    this.router.get("/healthz", ({ json }) => Effect.sync(() => json({ ok: true, wsClients: this.wsHub.size() })))
 
-    this.router.get("/api/container/image-status", ({ json }) => {
-      if (!this.imageManager) {
+    this.router.get("/api/container/image-status", ({ json }) =>
+      Effect.sync(() => {
+        if (!this.imageManager) {
+          return json({
+            enabled: false,
+            status: "not_present",
+            message: "Container mode is not enabled",
+          })
+        }
+
+        const cache = this.imageManager.getCache()
         return json({
-          enabled: false,
-          status: "not_present",
-          message: "Container mode is not enabled",
+          enabled: true,
+          status: this.imageManager.getStatus(),
+          imageName: this.settings?.workflow?.container?.image,
+          ...cache,
         })
-      }
-
-      const cache = this.imageManager.getCache()
-      return json({
-        enabled: true,
-        status: this.imageManager.getStatus(),
-        imageName: this.settings?.workflow?.container?.image,
-        ...cache,
-      })
-    })
-
-    this.router.get("/api/options", ({ json, db }) => json(db.getOptions()))
-
-    this.router.get("/api/version", ({ json }) =>
-      json({
-        version: VERSION,
-        commit: COMMIT_HASH,
-        displayVersion: DISPLAY_VERSION,
-        isCompiled: IS_COMPILED,
       }),
     )
 
-    this.router.put("/api/options", async ({ req, json, broadcast, db }) => {
-      const body = await req.json()
-      if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
-        return json({ error: "Invalid thinkingLevel. Allowed values: default, low, medium, high" }, 400)
-      }
-      if (body?.planThinkingLevel !== undefined && !isThinkingLevel(body.planThinkingLevel)) {
-        return json({ error: "Invalid planThinkingLevel. Allowed values: default, low, medium, high" }, 400)
-      }
-      if (body?.executionThinkingLevel !== undefined && !isThinkingLevel(body.executionThinkingLevel)) {
-        return json({ error: "Invalid executionThinkingLevel. Allowed values: default, low, medium, high" }, 400)
-      }
-      if (body?.reviewThinkingLevel !== undefined && !isThinkingLevel(body.reviewThinkingLevel)) {
-        return json({ error: "Invalid reviewThinkingLevel. Allowed values: default, low, medium, high" }, 400)
-      }
-      if (body?.repairThinkingLevel !== undefined && !isThinkingLevel(body.repairThinkingLevel)) {
-        return json({ error: "Invalid repairThinkingLevel. Allowed values: default, low, medium, high" }, 400)
-      }
-      if (body?.maxJsonParseRetries !== undefined) {
-        const retries = Number(body.maxJsonParseRetries)
-        if (isNaN(retries) || retries < 1 || retries > 20) {
-          return json({ error: "Invalid maxJsonParseRetries. Must be a number between 1 and 20" }, 400)
-        }
-      }
-      const options = db.updateOptions(body)
-      broadcast({ type: "options_updated", payload: options })
-      return json(options)
-    })
+    this.router.get("/api/options", ({ json, db }) => Effect.sync(() => json(db.getOptions())))
 
-    this.router.get("/api/branches", ({ json }) => {
-      try {
-        const branchOutput = Bun.spawnSync({
-          cmd: ["git", "branch", "--format=%(refname:short)"],
-          stdout: "pipe",
-          stderr: "pipe",
-          cwd: this.projectRoot,
-        })
-        const currentOutput = Bun.spawnSync({
-          cmd: ["git", "branch", "--show-current"],
-          stdout: "pipe",
-          stderr: "pipe",
-          cwd: this.projectRoot,
-        })
-        if (branchOutput.exitCode !== 0 || currentOutput.exitCode !== 0) {
-          return json({ branches: [], current: null, error: "Failed to list git branches" })
+    this.router.get("/api/version", ({ json }) =>
+      Effect.sync(() =>
+        json({
+          version: VERSION,
+          commit: COMMIT_HASH,
+          displayVersion: DISPLAY_VERSION,
+          isCompiled: IS_COMPILED,
+        }),
+      ),
+    )
+
+    this.router.put("/api/options", ({ req, json, broadcast, db }) =>
+      Effect.gen(function* () {
+        const body = (yield* Effect.tryPromise({
+          try: () => req.json() as Promise<Record<string, unknown>>,
+          catch: (cause) =>
+            new ServerRuntimeError({
+              operation: "registerRoutes.options",
+              message: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+        })) as Record<string, unknown>
+
+        if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
+          return json({ error: "Invalid thinkingLevel. Allowed values: default, low, medium, high" }, 400)
         }
-        const branches = new TextDecoder()
-          .decode(branchOutput.stdout)
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean)
-        const current = new TextDecoder().decode(currentOutput.stdout).trim() || null
-        if (current && !branches.includes(current)) branches.unshift(current)
-        return json({ branches, current })
-      } catch (error) {
-        return json({ branches: [], current: null, error: error instanceof Error ? error.message : String(error) })
-      }
-    })
+        if (body?.planThinkingLevel !== undefined && !isThinkingLevel(body.planThinkingLevel)) {
+          return json({ error: "Invalid planThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+        }
+        if (body?.executionThinkingLevel !== undefined && !isThinkingLevel(body.executionThinkingLevel)) {
+          return json({ error: "Invalid executionThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+        }
+        if (body?.reviewThinkingLevel !== undefined && !isThinkingLevel(body.reviewThinkingLevel)) {
+          return json({ error: "Invalid reviewThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+        }
+        if (body?.repairThinkingLevel !== undefined && !isThinkingLevel(body.repairThinkingLevel)) {
+          return json({ error: "Invalid repairThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+        }
+        if (body?.maxJsonParseRetries !== undefined) {
+          const retries = Number(body.maxJsonParseRetries)
+          if (isNaN(retries) || retries < 1 || retries > 20) {
+            return json({ error: "Invalid maxJsonParseRetries. Must be a number between 1 and 20" }, 400)
+          }
+        }
+        const options = db.updateOptions(body)
+        broadcast({ type: "options_updated", payload: options })
+        return json(options)
+      }),
+    )
+
+    this.router.get("/api/branches", ({ json }) =>
+      Effect.sync(() => {
+        try {
+          const branchOutput = Bun.spawnSync({
+            cmd: ["git", "branch", "--format=%(refname:short)"],
+            stdout: "pipe",
+            stderr: "pipe",
+            cwd: this.projectRoot,
+          })
+          const currentOutput = Bun.spawnSync({
+            cmd: ["git", "branch", "--show-current"],
+            stdout: "pipe",
+            stderr: "pipe",
+            cwd: this.projectRoot,
+          })
+          if (branchOutput.exitCode !== 0 || currentOutput.exitCode !== 0) {
+            return json({ branches: [], current: null, error: "Failed to list git branches" })
+          }
+          const branches = new TextDecoder()
+            .decode(branchOutput.stdout)
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)
+          const current = new TextDecoder().decode(currentOutput.stdout).trim() || null
+          if (current && !branches.includes(current)) branches.unshift(current)
+          return json({ branches, current })
+        } catch (error) {
+          return json({ branches: [], current: null, error: error instanceof Error ? error.message : String(error) })
+        }
+      }),
+    )
 
     this.router.get("/api/models", ({ json }) =>
       Effect.gen(function* () {
@@ -598,42 +701,70 @@ export class PiKanbanServer {
   }
 
 
-  private async getPodmanImages(): Promise<Array<{ tag: string; createdAt: number; size: string }>> {
-    const proc = Bun.spawn(["podman", "images", "--format", "json", "--filter", "reference=*pi-agent*"], {
-      stdout: "pipe",
-      stderr: "pipe",
+  private getPodmanImages(): Effect.Effect<Array<{ tag: string; createdAt: number; size: string }>, ServerRuntimeError> {
+    return Effect.gen(function* () {
+      const proc = Bun.spawn(["podman", "images", "--format", "json", "--filter", "reference=*pi-agent*"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const stdout = yield* Effect.tryPromise({
+        try: () => new Response(proc.stdout).text(),
+        catch: (cause) => new ServerRuntimeError({
+          operation: "getPodmanImages",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
+      yield* Effect.tryPromise({
+        try: () => proc.exited,
+        catch: (cause) => new ServerRuntimeError({
+          operation: "getPodmanImages",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
+
+      const images = yield* Effect.try({
+        try: () => JSON.parse(stdout) as Array<{ Names?: string[]; CreatedAt?: string; Size?: string }>,
+        catch: (cause) => new ServerRuntimeError({
+          operation: "getPodmanImages",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
+
+      const result: Array<{ tag: string; createdAt: number; size: string }> = []
+
+      for (const img of images) {
+        if (!Array.isArray(img.Names)) {
+          return yield* new ServerRuntimeError({
+            operation: "getPodmanImages",
+            message: `Invalid podman image data: 'Names' must be an array, got ${typeof img.Names}`,
+          })
+        }
+        for (const tag of img.Names) {
+          if (!img.CreatedAt) {
+            return yield* new ServerRuntimeError({
+              operation: "getPodmanImages",
+              message: `Invalid podman image data: 'CreatedAt' is required for image '${tag}'`,
+            })
+          }
+          if (!img.Size) {
+            return yield* new ServerRuntimeError({
+              operation: "getPodmanImages",
+              message: `Invalid podman image data: 'Size' is required for image '${tag}'`,
+            })
+          }
+          result.push({
+            tag,
+            createdAt: new Date(img.CreatedAt).getTime(),
+            size: img.Size,
+          })
+        }
+      }
+
+      return result
     })
-    const stdout = await new Response(proc.stdout).text()
-    await proc.exited
-
-    const images = JSON.parse(stdout) as Array<{
-      Names?: string[]
-      CreatedAt?: string
-      Size?: string
-    }>
-
-    const result: Array<{ tag: string; createdAt: number; size: string }> = []
-
-    for (const img of images) {
-      if (!Array.isArray(img.Names)) {
-        failServerRuntime("getPodmanImages", `Invalid podman image data: 'Names' must be an array, got ${typeof img.Names}`)
-      }
-      for (const tag of img.Names) {
-        if (!img.CreatedAt) {
-          failServerRuntime("getPodmanImages", `Invalid podman image data: 'CreatedAt' is required for image '${tag}'`)
-        }
-        if (!img.Size) {
-          failServerRuntime("getPodmanImages", `Invalid podman image data: 'Size' is required for image '${tag}'`)
-        }
-        result.push({
-          tag,
-          createdAt: new Date(img.CreatedAt).getTime(),
-          size: img.Size,
-        })
-      }
-    }
-
-    return result
   }
 
   private hashPackages(packages: PackageDefinition[]): string {
@@ -653,27 +784,32 @@ export class PiKanbanServer {
    * Checks both container_builds table and podman.
    * @throws Error if tag is empty/whitespace or if validation fails
    */
-  private async validateContainerImage(tag: string): Promise<boolean> {
-    if (!tag || tag.trim() === "") {
-      failServerRuntime("validateContainerImage", "Cannot validate container image: tag is empty or whitespace-only")
-    }
+  private validateContainerImage(tag: string): Effect.Effect<boolean, ServerRuntimeError> {
+    return Effect.gen(this, function* () {
+      if (!tag || tag.trim() === "") {
+        return yield* new ServerRuntimeError({
+          operation: "validateContainerImage",
+          message: "Cannot validate container image: tag is empty or whitespace-only",
+        })
+      }
 
-    // Check container_builds table
-    const builds = this.db.getContainerBuilds(100)
-    const existsInBuilds = builds.some(b => b.imageTag === tag && b.status === "success")
-    if (existsInBuilds) return true
+      const builds = this.db.getContainerBuilds(100)
+      const existsInBuilds = builds.some(b => b.imageTag === tag && b.status === "success")
+      if (existsInBuilds) return true
 
-    // Check podman if available
-    try {
       const proc = Bun.spawn(["podman", "image", "exists", tag], {
         stdout: "pipe",
         stderr: "pipe",
       })
-      const exitCode = await proc.exited
+      const exitCode = yield* Effect.tryPromise({
+        try: () => proc.exited,
+        catch: (cause) => new ServerRuntimeError({
+          operation: "validateContainerImage",
+          message: `Failed to validate container image '${tag}' via podman: ${cause instanceof Error ? cause.message : String(cause)}`,
+          cause,
+        }),
+      })
       return exitCode === 0
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      failServerRuntime("validateContainerImage", `Failed to validate container image '${tag}' via podman: ${errorMessage}`, error)
-    }
+    })
   }
 }

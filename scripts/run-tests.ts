@@ -21,6 +21,18 @@ if (unitTestFiles.length === 0) {
 
 console.log(`Running ${unitTestFiles.length} unit test files...`)
 
+console.log("Running Effect migration verifier...")
+const verifyProc = Bun.spawn({
+  cmd: ["bun", "run", "scripts/verify-migration.ts", "--strict"],
+  stdio: ["inherit", "inherit", "inherit"],
+  cwd: process.cwd(),
+})
+
+const verifyExitCode = await verifyProc.exited
+if (verifyExitCode !== 0) {
+  process.exit(verifyExitCode)
+}
+
 // Run bun test with explicit file paths
 const proc = Bun.spawn({
   cmd: ["bun", "test", ...unitTestFiles],

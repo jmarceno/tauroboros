@@ -1,6 +1,6 @@
 import fs from "fs"
 import path from "path"
-import { Effect, Schema } from "effect"
+import { Effect, Fiber, Schema } from "effect"
 
 type NormalizedModel = {
   id: string
@@ -143,7 +143,7 @@ function runPiModelCommandEffect(
     })
 
     // Cancel timeout if command completed
-    yield* Effect.fork(Effect.interruptFiber(timeoutFiber))
+    yield* Fiber.interruptFork(timeoutFiber)
 
     const [stdoutText, stderrText, exitCode] = result
 

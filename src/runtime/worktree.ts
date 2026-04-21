@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync } from "fs"
 import { basename, join, resolve } from "path"
 import { execFileSync } from "child_process"
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 
 export interface WorktreeInfo {
   directory: string
@@ -78,6 +78,19 @@ export class WorktreeError extends Schema.TaggedError<WorktreeError>()("Worktree
   code: Schema.String,
   gitOutput: Schema.optional(Schema.String),
 }) {}
+
+function tryWorktree<A>(operation: string, thunk: () => A): Effect.Effect<A, WorktreeError> {
+  return Effect.try({
+    try: thunk,
+    catch: (cause) =>
+      cause instanceof WorktreeError
+        ? cause
+        : new WorktreeError({
+            message: cause instanceof Error ? cause.message : String(cause),
+            code: operation,
+          }),
+  })
+}
 
 function normalizeBranchName(value: string | undefined): string | null {
   if (!value) return null
@@ -299,262 +312,295 @@ export function getRemoteDefaultBranch(directory?: string): string | null {
  * Resolves merge target branch. NO FALLBACKS - user must explicitly select a branch.
  * Checks taskBranch first, then optionBranch. Throws if neither is valid.
  */
-export async function resolveTargetBranch(options: ResolveTargetBranchOptions): Promise<string> {
-  const baseDirectory = options.baseDirectory ? resolve(options.baseDirectory) : process.cwd()
-  const repoRoot = getRepoRoot(baseDirectory)
+export function resolveTargetBranch(options: ResolveTargetBranchOptions): Effect.Effect<string, WorktreeError> {
+  return tryWorktree("RESOLVE_TARGET_BRANCH_FAILED", () => {
+    const baseDirectory = options.baseDirectory ? resolve(options.baseDirectory) : process.cwd()
+    const repoRoot = getRepoRoot(baseDirectory)
 
-  const taskBranch = normalizeBranchName(options.taskBranch)
-  if (taskBranch && branchExists(taskBranch, repoRoot)) return taskBranch
+    const taskBranch = normalizeBranchName(options.taskBranch)
+    if (taskBranch && branchExists(taskBranch, repoRoot)) return taskBranch
 
-  const optionBranch = normalizeBranchName(options.optionBranch)
-  if (optionBranch && branchExists(optionBranch, repoRoot)) return optionBranch
+    const optionBranch = normalizeBranchName(options.optionBranch)
+    if (optionBranch && branchExists(optionBranch, repoRoot)) return optionBranch
 
-  throw new WorktreeError({
-    message: "No target branch specified. Please configure a branch in task options or global settings.",
-    code: "TARGET_BRANCH_NOT_FOUND",
+    throw new WorktreeError({
+      message: "No target branch specified. Please configure a branch in task options or global settings.",
+      code: "TARGET_BRANCH_NOT_FOUND",
+    })
   })
 }
 
 /**
  * Lists all file paths changed in a worktree (staged + unstaged + untracked).
  */
-export async function getChangedFiles(directory: string): Promise<string[]> {
-  const normalized = resolve(directory)
-  const statusOutput = runGit(["status", "--porcelain"], normalized).stdout
-  const parsed = parsePorcelainStatus(statusOutput)
-  return Array.from(new Set([...parsed.modifiedFiles, ...parsed.stagedFiles, ...parsed.untrackedFiles]))
+export function getChangedFiles(directory: string): Effect.Effect<string[], WorktreeError> {
+  return tryWorktree("GET_CHANGED_FILES_FAILED", () => {
+    const normalized = resolve(directory)
+    const statusOutput = runGit(["status", "--porcelain"], normalized).stdout
+    const parsed = parsePorcelainStatus(statusOutput)
+    return Array.from(new Set([...parsed.modifiedFiles, ...parsed.stagedFiles, ...parsed.untrackedFiles]))
+  })
 }
 
 /**
  * Collects aggregate and per-file diff stats for a worktree.
  */
-export async function getDiffStats(directory: string): Promise<DiffStats> {
-  const normalized = resolve(directory)
-  const output = runGit(["diff", "--numstat", "HEAD"], normalized).stdout
-  const fileStats: Record<string, { insertions: number; deletions: number }> = {}
-  let filesChanged = 0
-  let insertions = 0
-  let deletions = 0
+export function getDiffStats(directory: string): Effect.Effect<DiffStats, WorktreeError> {
+  return tryWorktree("GET_DIFF_STATS_FAILED", () => {
+    const normalized = resolve(directory)
+    const output = runGit(["diff", "--numstat", "HEAD"], normalized).stdout
+    const fileStats: Record<string, { insertions: number; deletions: number }> = {}
+    let filesChanged = 0
+    let insertions = 0
+    let deletions = 0
 
-  for (const rawLine of output.split("\n")) {
-    const line = rawLine.trim()
-    if (!line) continue
+    for (const rawLine of output.split("\n")) {
+      const line = rawLine.trim()
+      if (!line) continue
 
-    const [insRaw, delRaw, ...pathParts] = line.split("\t")
-    const filePath = pathParts.join("\t").trim()
-    if (!filePath) continue
+      const [insRaw, delRaw, ...pathParts] = line.split("\t")
+      const filePath = pathParts.join("\t").trim()
+      if (!filePath) continue
 
-    const ins = insRaw === "-" ? 0 : Number(insRaw)
-    const del = delRaw === "-" ? 0 : Number(delRaw)
-    const insertionCount = Number.isFinite(ins) ? ins : 0
-    const deletionCount = Number.isFinite(del) ? del : 0
+      const ins = insRaw === "-" ? 0 : Number(insRaw)
+      const del = delRaw === "-" ? 0 : Number(delRaw)
+      const insertionCount = Number.isFinite(ins) ? ins : 0
+      const deletionCount = Number.isFinite(del) ? del : 0
 
-    filesChanged += 1
-    insertions += insertionCount
-    deletions += deletionCount
-    fileStats[filePath] = { insertions: insertionCount, deletions: deletionCount }
-  }
+      filesChanged += 1
+      insertions += insertionCount
+      deletions += deletionCount
+      fileStats[filePath] = { insertions: insertionCount, deletions: deletionCount }
+    }
 
-  return { filesChanged, insertions, deletions, fileStats }
+    return { filesChanged, insertions, deletions, fileStats }
+  })
 }
 
 /**
  * Lists worktrees from the current repository.
  */
-export async function listWorktrees(baseDirectory?: string): Promise<WorktreeInfo[]> {
-  const base = baseDirectory ? resolve(baseDirectory) : process.cwd()
-  const repoRoot = getRepoRoot(base)
-  const output = runGit(["worktree", "list", "--porcelain"], repoRoot).stdout
-  const parsed = parseWorktreeList(output)
-  if (parsed.length === 0) return []
+export function listWorktrees(baseDirectory?: string): Effect.Effect<WorktreeInfo[], WorktreeError> {
+  return tryWorktree("LIST_WORKTREES_FAILED", () => {
+    const base = baseDirectory ? resolve(baseDirectory) : process.cwd()
+    const repoRoot = getRepoRoot(base)
+    const output = runGit(["worktree", "list", "--porcelain"], repoRoot).stdout
+    const parsed = parseWorktreeList(output)
+    if (parsed.length === 0) return []
 
-  const main = getMainWorktreeDirectory(repoRoot)
-  return parsed.map((item) => ({
-    ...item,
-    isMain: normalizeDirectory(item.directory) === normalizeDirectory(main),
-    baseRef: item.baseRef || item.branch,
-  }))
+    const main = getMainWorktreeDirectory(repoRoot)
+    return parsed.map((item) => ({
+      ...item,
+      isMain: normalizeDirectory(item.directory) === normalizeDirectory(main),
+      baseRef: item.baseRef || item.branch,
+    }))
+  })
 }
 
 /**
  * Creates a git worktree and returns its parsed details.
  */
-export async function createWorktree(options: CreateWorktreeOptions): Promise<WorktreeInfo> {
-  const baseDirectory = options.baseDirectory ? resolve(options.baseDirectory) : process.cwd()
-  const repoRoot = getRepoRoot(baseDirectory)
+export function createWorktree(options: CreateWorktreeOptions): Effect.Effect<WorktreeInfo, WorktreeError> {
+  return Effect.gen(function* () {
+    const prepared = yield* tryWorktree("CREATE_WORKTREE_PREPARE_FAILED", () => {
+      const baseDirectory = options.baseDirectory ? resolve(options.baseDirectory) : process.cwd()
+      const repoRoot = getRepoRoot(baseDirectory)
 
-  const name = options.name?.trim()
-  if (!name) {
-    throw new WorktreeError({ message: "Worktree name cannot be empty", code: "INVALID_WORKTREE_NAME" })
-  }
+      const name = options.name?.trim()
+      if (!name) {
+        throw new WorktreeError({ message: "Worktree name cannot be empty", code: "INVALID_WORKTREE_NAME" })
+      }
 
-  const branch = normalizeBranchName(options.branch) ?? name
-  const baseRef = normalizeBranchName(options.baseRef)
-  if (!baseRef) {
-    throw new WorktreeError({
-      message: "No base branch specified for worktree creation. Please configure a branch in task options or global settings.",
-      code: "BASE_REF_NOT_SPECIFIED",
+      const branch = normalizeBranchName(options.branch) ?? name
+      const baseRef = normalizeBranchName(options.baseRef)
+      if (!baseRef) {
+        throw new WorktreeError({
+          message: "No base branch specified for worktree creation. Please configure a branch in task options or global settings.",
+          code: "BASE_REF_NOT_SPECIFIED",
+        })
+      }
+
+      const directory = buildWorktreePath(repoRoot, name, options.worktreeBaseDir)
+      if (existsSync(directory)) {
+        throw new WorktreeError({ message: `Worktree directory already exists: ${directory}`, code: "WORKTREE_ALREADY_EXISTS" })
+      }
+
+      const createArgs = branchExists(branch, repoRoot)
+        ? ["worktree", "add", directory, branch]
+        : ["worktree", "add", "-b", branch, directory, baseRef]
+
+      try {
+        runGit(createArgs, repoRoot)
+      } catch (error) {
+        if (error instanceof WorktreeError) {
+          throw new WorktreeError({ message: `Failed to create worktree '${name}': ${error.message}`, code: "CREATE_WORKTREE_FAILED", gitOutput: error.gitOutput })
+        }
+        throw error
+      }
+
+      return { repoRoot, directory, branch, baseRef }
     })
-  }
-  const directory = buildWorktreePath(repoRoot, name, options.worktreeBaseDir)
 
-  if (existsSync(directory)) {
-    throw new WorktreeError({ message: `Worktree directory already exists: ${directory}`, code: "WORKTREE_ALREADY_EXISTS" })
-  }
-
-  const createArgs = branchExists(branch, repoRoot)
-    ? ["worktree", "add", directory, branch]
-    : ["worktree", "add", "-b", branch, directory, baseRef]
-
-  try {
-    runGit(createArgs, repoRoot)
-  } catch (error) {
-    if (error instanceof WorktreeError) {
-      throw new WorktreeError({ message: `Failed to create worktree '${name}': ${error.message}`, code: "CREATE_WORKTREE_FAILED", gitOutput: error.gitOutput })
+    const listed = yield* listWorktrees(prepared.repoRoot)
+    const normalizedDir = normalizeDirectory(prepared.directory)
+    const info = listed.find((item) => normalizeDirectory(item.directory) === normalizedDir)
+    if (info) {
+      return {
+        ...info,
+        baseRef: prepared.baseRef,
+        branch: info.branch || prepared.branch,
+      }
     }
-    throw error
-  }
 
-  const listed = await listWorktrees(repoRoot)
-  const normalizedDir = normalizeDirectory(directory)
-  const info = listed.find((item) => normalizeDirectory(item.directory) === normalizedDir)
-  if (info) {
+    const head = yield* tryWorktree("CREATE_WORKTREE_HEAD_FAILED", () => runGit(["rev-parse", "HEAD"], prepared.directory).stdout)
     return {
-      ...info,
-      baseRef,
-      branch: info.branch || branch,
+      directory: prepared.directory,
+      branch: prepared.branch,
+      baseRef: prepared.baseRef,
+      isMain: false,
+      isBare: false,
+      head,
     }
-  }
-
-  const head = runGit(["rev-parse", "HEAD"], directory).stdout
-  return {
-    directory,
-    branch,
-    baseRef,
-    isMain: false,
-    isBare: false,
-    head,
-  }
+  })
 }
 
 /**
  * Returns git status and branch metadata for a specific worktree path.
  */
-export async function inspectWorktree(directory: string): Promise<WorktreeStatus> {
-  const normalizedDirectory = resolve(directory)
-  if (!existsSync(normalizedDirectory)) {
-    throw new WorktreeError({ message: `Worktree directory does not exist: ${normalizedDirectory}`, code: "WORKTREE_NOT_FOUND" })
-  }
+export function inspectWorktree(directory: string): Effect.Effect<WorktreeStatus, WorktreeError> {
+  return Effect.gen(function* () {
+    const normalizedDirectory = resolve(directory)
+    yield* tryWorktree("INSPECT_WORKTREE_VALIDATE_FAILED", () => {
+      if (!existsSync(normalizedDirectory)) {
+        throw new WorktreeError({ message: `Worktree directory does not exist: ${normalizedDirectory}`, code: "WORKTREE_NOT_FOUND" })
+      }
+    })
 
-  const worktrees = await listWorktrees(normalizedDirectory)
-  const target = worktrees.find((item) => normalizeDirectory(item.directory) === normalizedDirectory)
-  if (!target) {
-    throw new WorktreeError({ message: `Directory is not a tracked git worktree: ${normalizedDirectory}`, code: "NOT_A_WORKTREE" })
-  }
+    const worktrees = yield* listWorktrees(normalizedDirectory)
+    const target = worktrees.find((item) => normalizeDirectory(item.directory) === normalizedDirectory)
+    if (!target) {
+      return yield* new WorktreeError({ message: `Directory is not a tracked git worktree: ${normalizedDirectory}`, code: "NOT_A_WORKTREE" })
+    }
 
-  const statusOutput = runGit(["status", "--porcelain"], normalizedDirectory).stdout
-  const parsed = parsePorcelainStatus(statusOutput)
+    const statusOutput = yield* tryWorktree("INSPECT_WORKTREE_STATUS_FAILED", () => runGit(["status", "--porcelain"], normalizedDirectory).stdout)
+    const parsed = parsePorcelainStatus(statusOutput)
 
-  let aheadBehind: { ahead: number; behind: number } | null = null
-  try {
-    const output = runGit(["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], normalizedDirectory).stdout
-    aheadBehind = parseAheadBehind(output)
-  } catch {
-    aheadBehind = null
-  }
+    const aheadBehind = yield* tryWorktree(
+      "INSPECT_WORKTREE_AHEAD_BEHIND_FAILED",
+      () => parseAheadBehind(runGit(["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], normalizedDirectory).stdout),
+    ).pipe(Effect.catchTag("WorktreeError", () => Effect.succeed(null)))
 
-  return {
-    directory: normalizedDirectory,
-    branch: target.branch,
-    isClean: parsed.modifiedFiles.length === 0 && parsed.stagedFiles.length === 0 && parsed.untrackedFiles.length === 0,
-    modifiedFiles: parsed.modifiedFiles,
-    stagedFiles: parsed.stagedFiles,
-    untrackedFiles: parsed.untrackedFiles,
-    aheadBehind,
-  }
+    return {
+      directory: normalizedDirectory,
+      branch: target.branch,
+      isClean: parsed.modifiedFiles.length === 0 && parsed.stagedFiles.length === 0 && parsed.untrackedFiles.length === 0,
+      modifiedFiles: parsed.modifiedFiles,
+      stagedFiles: parsed.stagedFiles,
+      untrackedFiles: parsed.untrackedFiles,
+      aheadBehind,
+    }
+  })
 }
 
 /**
  * Merges a worktree branch back into the target branch.
  */
-export async function mergeWorktree(options: MergeWorktreeOptions): Promise<void> {
-  const worktreeDir = resolve(options.worktreeDir)
-  const branch = normalizeBranchName(options.branch)
-  const targetBranch = normalizeBranchName(options.targetBranch)
+export function mergeWorktree(options: MergeWorktreeOptions): Effect.Effect<void, WorktreeError> {
+  return Effect.gen(function* () {
+    const prepared = yield* tryWorktree("MERGE_WORKTREE_PREPARE_FAILED", () => {
+      const worktreeDir = resolve(options.worktreeDir)
+      const branch = normalizeBranchName(options.branch)
+      const targetBranch = normalizeBranchName(options.targetBranch)
 
-  if (!branch) throw new WorktreeError({ message: "Source branch is required", code: "INVALID_BRANCH" })
-  if (!targetBranch) throw new WorktreeError({ message: "Target branch is required", code: "INVALID_TARGET_BRANCH" })
+      if (!branch) throw new WorktreeError({ message: "Source branch is required", code: "INVALID_BRANCH" })
+      if (!targetBranch) throw new WorktreeError({ message: "Target branch is required", code: "INVALID_TARGET_BRANCH" })
 
-  const repoRoot = getRepoRoot(worktreeDir)
-  if (!branchExists(branch, repoRoot)) {
-    throw new WorktreeError({ message: `Source branch does not exist: ${branch}`, code: "BRANCH_NOT_FOUND" })
-  }
-  if (!branchExists(targetBranch, repoRoot)) {
-    throw new WorktreeError({ message: `Target branch does not exist: ${targetBranch}`, code: "TARGET_BRANCH_NOT_FOUND" })
-  }
-
-  const worktrees = await listWorktrees(repoRoot)
-  const targetWorktree = worktrees.find((item) => item.branch === targetBranch)
-  const mergeDirectory = targetWorktree?.directory ?? worktreeDir
-
-  if (!targetWorktree) {
-    try {
-      runGit(["checkout", targetBranch], mergeDirectory)
-    } catch (error) {
-      if (error instanceof WorktreeError) {
-        throw new WorktreeError({
-          message: `Unable to checkout target branch '${targetBranch}' in ${mergeDirectory}`,
-          code: "CHECKOUT_TARGET_BRANCH_FAILED",
-          gitOutput: error.gitOutput,
-        })
+      const repoRoot = getRepoRoot(worktreeDir)
+      if (!branchExists(branch, repoRoot)) {
+        throw new WorktreeError({ message: `Source branch does not exist: ${branch}`, code: "BRANCH_NOT_FOUND" })
       }
-      throw error
-    }
-  }
+      if (!branchExists(targetBranch, repoRoot)) {
+        throw new WorktreeError({ message: `Target branch does not exist: ${targetBranch}`, code: "TARGET_BRANCH_NOT_FOUND" })
+      }
 
-  const mergeArgs = ["merge", branch]
-  if (options.noEdit !== false) mergeArgs.push("--no-edit")
+      return { worktreeDir, branch, targetBranch, repoRoot }
+    })
 
-  try {
-    runGit(mergeArgs, mergeDirectory)
-  } catch (error) {
-    if (error instanceof WorktreeError) {
-      throw new WorktreeError({
-        message: `Failed to merge '${branch}' into '${targetBranch}'`,
-        code: "MERGE_FAILED",
-        gitOutput: error.gitOutput,
+    const worktrees = yield* listWorktrees(prepared.repoRoot)
+    const targetWorktree = worktrees.find((item) => item.branch === prepared.targetBranch)
+    const mergeDirectory = targetWorktree?.directory ?? prepared.worktreeDir
+
+    if (!targetWorktree) {
+      yield* tryWorktree("CHECKOUT_TARGET_BRANCH_FAILED", () => {
+        try {
+          runGit(["checkout", prepared.targetBranch], mergeDirectory)
+        } catch (error) {
+          if (error instanceof WorktreeError) {
+            throw new WorktreeError({
+              message: `Unable to checkout target branch '${prepared.targetBranch}' in ${mergeDirectory}`,
+              code: "CHECKOUT_TARGET_BRANCH_FAILED",
+              gitOutput: error.gitOutput,
+            })
+          }
+          throw error
+        }
       })
     }
-    throw error
-  }
+
+    const mergeArgs = ["merge", prepared.branch]
+    if (options.noEdit !== false) mergeArgs.push("--no-edit")
+
+    yield* tryWorktree("MERGE_FAILED", () => {
+      try {
+        runGit(mergeArgs, mergeDirectory)
+      } catch (error) {
+        if (error instanceof WorktreeError) {
+          throw new WorktreeError({
+            message: `Failed to merge '${prepared.branch}' into '${prepared.targetBranch}'`,
+            code: "MERGE_FAILED",
+            gitOutput: error.gitOutput,
+          })
+        }
+        throw error
+      }
+    })
+  })
 }
 
 /**
  * Removes a git worktree. Non-existing directories are treated as no-op.
  */
-export async function removeWorktree(directory: string, force = false): Promise<void> {
-  const normalizedDirectory = resolve(directory)
-  if (!existsSync(normalizedDirectory)) return
+export function removeWorktree(directory: string, force = false): Effect.Effect<void, WorktreeError> {
+  return Effect.gen(function* () {
+    const normalizedDirectory = resolve(directory)
+    yield* tryWorktree("REMOVE_WORKTREE_VALIDATE_FAILED", () => {
+      if (!existsSync(normalizedDirectory)) {
+        throw new WorktreeError({ message: `Worktree directory does not exist: ${normalizedDirectory}`, code: "WORKTREE_NOT_FOUND" })
+      }
+    })
 
-  const repoRoot = getRepoRoot(normalizedDirectory)
-  const knownWorktrees = await listWorktrees(repoRoot)
-  const isKnown = knownWorktrees.some((item) => normalizeDirectory(item.directory) === normalizedDirectory)
-  if (!isKnown) {
-    throw new WorktreeError({ message: `Directory is not a tracked git worktree: ${normalizedDirectory}`, code: "NOT_A_WORKTREE" })
-  }
-
-  const args = ["worktree", "remove"]
-  if (force) args.push("--force")
-  args.push(normalizedDirectory)
-
-  try {
-    runGit(args, repoRoot)
-  } catch (error) {
-    if (error instanceof WorktreeError) {
-      throw new WorktreeError({ message: `Failed to remove worktree '${normalizedDirectory}'`, code: "REMOVE_WORKTREE_FAILED", gitOutput: error.gitOutput })
+    const repoRoot = getRepoRoot(normalizedDirectory)
+    const knownWorktrees = yield* listWorktrees(repoRoot)
+    const isKnown = knownWorktrees.some((item) => normalizeDirectory(item.directory) === normalizedDirectory)
+    if (!isKnown) {
+      return yield* new WorktreeError({ message: `Directory is not a tracked git worktree: ${normalizedDirectory}`, code: "NOT_A_WORKTREE" })
     }
-    throw error
-  }
+
+    const args = ["worktree", "remove"]
+    if (force) args.push("--force")
+    args.push(normalizedDirectory)
+
+    yield* tryWorktree("REMOVE_WORKTREE_FAILED", () => {
+      try {
+        runGit(args, repoRoot)
+      } catch (error) {
+        if (error instanceof WorktreeError) {
+          throw new WorktreeError({ message: `Failed to remove worktree '${normalizedDirectory}'`, code: "REMOVE_WORKTREE_FAILED", gitOutput: error.gitOutput })
+        }
+        throw error
+      }
+    })
+  })
 }
 
 /**
@@ -572,7 +618,7 @@ export class WorktreeLifecycle {
   }
 
   /** Creates task worktree with `task-<taskId>-<random>` naming. */
-  async createForTask(taskId: string, branch?: string, baseRef?: string): Promise<WorktreeInfo> {
+  createForTask(taskId: string, branch?: string, baseRef?: string): Effect.Effect<WorktreeInfo, WorktreeError> {
     const normalizedTaskId = taskId.trim()
     if (!normalizedTaskId) throw new WorktreeError({ message: "taskId cannot be empty", code: "INVALID_TASK_ID" })
     // Add random suffix to ensure unique worktree names for task reruns
@@ -588,7 +634,7 @@ export class WorktreeLifecycle {
   }
 
   /** Creates run worktree with `<prefix>-<runId>-<random>` naming. */
-  async createForRun(runId: string, prefix: string, baseRef?: string): Promise<WorktreeInfo> {
+  createForRun(runId: string, prefix: string, baseRef?: string): Effect.Effect<WorktreeInfo, WorktreeError> {
     const normalizedRunId = runId.trim()
     const normalizedPrefix = prefix.trim()
     if (!normalizedRunId) throw new WorktreeError({ message: "runId cannot be empty", code: "INVALID_RUN_ID" })
@@ -608,59 +654,55 @@ export class WorktreeLifecycle {
   /**
    * Completes worktree lifecycle with optional merge and cleanup.
    */
-  async complete(worktreeDir: string, options: CompleteWorktreeOptions): Promise<CompleteWorktreeResult> {
-    let merged = false
-    let removed = false
+  complete(worktreeDir: string, options: CompleteWorktreeOptions): Effect.Effect<CompleteWorktreeResult, WorktreeError> {
+    return Effect.gen(this, function* () {
+      let merged = false
+      let removed = false
 
-    if (options.shouldMerge) {
-      await mergeWorktree({
-        worktreeDir,
-        branch: options.branch,
-        targetBranch: options.targetBranch,
-      })
-      merged = true
-    }
+      if (options.shouldMerge) {
+        yield* mergeWorktree({
+          worktreeDir,
+          branch: options.branch,
+          targetBranch: options.targetBranch,
+        })
+        merged = true
+      }
 
-    const shouldKeep = this.keepWorktrees || !options.shouldRemove
-    if (!shouldKeep) {
-      await removeWorktree(worktreeDir, true)
-      removed = true
-    }
+      const shouldKeep = this.keepWorktrees || !options.shouldRemove
+      if (!shouldKeep) {
+        yield* removeWorktree(worktreeDir, true)
+        removed = true
+      }
 
-    return {
-      merged,
-      removed,
-      kept: shouldKeep,
-    }
+      return {
+        merged,
+        removed,
+        kept: shouldKeep,
+      }
+    })
   }
 
   /**
    * Removes non-main worktrees that match the optional basename prefix.
    */
-  async cleanupOrphaned(prefixFilter?: string): Promise<string[]> {
-    const normalizedPrefix = prefixFilter?.trim()
-    const worktrees = await listWorktrees(this.baseDirectory)
-    const candidates = worktrees.filter((worktree) => {
-      if (worktree.isMain) return false
-      if (!normalizedPrefix) return true
-      return basename(worktree.directory).startsWith(normalizedPrefix)
+  cleanupOrphaned(prefixFilter?: string): Effect.Effect<string[], WorktreeError> {
+    return Effect.gen(this, function* () {
+      const normalizedPrefix = prefixFilter?.trim()
+      const worktrees = yield* listWorktrees(this.baseDirectory)
+      const candidates = worktrees.filter((worktree) => {
+        if (worktree.isMain) return false
+        if (!normalizedPrefix) return true
+        return basename(worktree.directory).startsWith(normalizedPrefix)
+      })
+
+      return yield* Effect.forEach(candidates, (item) =>
+        removeWorktree(item.directory, true).pipe(Effect.as(item.directory)),
+      )
     })
-
-    const removed: string[] = []
-    for (const item of candidates) {
-      try {
-        await removeWorktree(item.directory, true)
-        removed.push(item.directory)
-      } catch {
-        // best effort cleanup, keep processing remaining worktrees
-      }
-    }
-
-    return removed
   }
 
   /** Proxies inspect operation. */
-  async inspect(worktreeDir: string): Promise<WorktreeStatus> {
+  inspect(worktreeDir: string): Effect.Effect<WorktreeStatus, WorktreeError> {
     return inspectWorktree(worktreeDir)
   }
 

@@ -46,10 +46,8 @@ const checkAndPrepareContainerEffect = Effect.fn("checkAndPrepareContainerEffect
 
     // Check if image exists
     const manager = new PiContainerManager()
-    const setupStatus = yield* Effect.tryPromise({
-      try: () => manager.validateSetup(),
-      catch: (cause) => new StartupError({ message: `Failed to validate container setup: ${String(cause)}` }),
-    }).pipe(
+    const setupStatus = yield* manager.validateSetup().pipe(
+      Effect.mapError((cause) => new StartupError({ message: `Failed to validate container setup: ${String(cause)}` })),
       Effect.map((status) => ({
         ready: status.podman && status.image,
         podmanAvailable: status.podman,
@@ -74,20 +72,16 @@ const checkAndPrepareContainerEffect = Effect.fn("checkAndPrepareContainerEffect
         }
       })
 
-      return yield* Effect.tryPromise({
-        try: async () => {
-          await imageManager.prepare()
-          return {
-            ready: true,
-            podmanAvailable: true,
-            imageReady: true,
-          } as const satisfies ContainerSetupStatus
-        },
-        catch: (error) => {
+      return yield* imageManager.prepare().pipe(
+        Effect.map(() => ({
+          ready: true,
+          podmanAvailable: true,
+          imageReady: true,
+        } as const satisfies ContainerSetupStatus)),
+        Effect.mapError((error) => {
           const message = error instanceof Error ? error.message : String(error)
           return new StartupError({ message: `Failed to build container image: ${message}` })
-        },
-      }).pipe(
+        }),
         Effect.catchTag("StartupError", (error) =>
           Effect.succeed({
             ready: false,

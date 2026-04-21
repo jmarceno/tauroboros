@@ -25,7 +25,7 @@ export interface RequestContext {
   sessionUrlFor: (sessionId: string) => string
 }
 
-export type RouteHandler = (ctx: RequestContext) => Promise<Response> | Response | Effect.Effect<Response, HttpRouteError>
+export type RouteHandler = (ctx: RequestContext) => Effect.Effect<Response, HttpRouteError>
 
 // Server callback function types
 type OrchestratorRouteEffect<A> = Effect.Effect<A, OrchestratorOperationError>
@@ -66,10 +66,10 @@ export interface ServerRouteContext {
   onManualSelfHealRecover: ManualSelfHealRecoverFn | null
   imageManager?: ContainerImageManager
   containerManager?: PiContainerManager
-  validateContainerImage: (tag: string) => Promise<boolean>
+  validateContainerImage: (tag: string) => Effect.Effect<boolean, unknown>
   getContainerProfilesPath: () => string
   getDockerfilePath: (subpath?: string) => string
-  getPodmanImages: () => Promise<Array<{ tag: string; createdAt: number; size: string }>>
+  getPodmanImages: () => Effect.Effect<Array<{ tag: string; createdAt: number; size: string }>, unknown>
   hashPackages: (packages: PackageDefinition[]) => string
   planningSessionManager: PlanningSessionManager
   smartRepair: SmartRepairService

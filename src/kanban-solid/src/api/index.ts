@@ -2,7 +2,7 @@
  * API Index - Exports for all API modules
  */
 
-export { apiClient, apiRequest, runApiEffect, ApiClientError } from './client'
+export { apiClient, apiRequest, runApiEffect, sleepMs, ApiClientError } from './client'
 export { tasksApi, fetchBestOfNSummaries, fetchSessionUsages } from "./tasks"
 export { runsApi } from "./runs"
 export { optionsApi } from "./options"

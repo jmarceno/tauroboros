@@ -3,9 +3,9 @@
  * Ported from React to SolidJS
  */
 
-import { createSignal, createEffect, onMount } from 'solid-js'
+import { createSignal, createEffect, onMount, onCleanup } from 'solid-js'
 import { createQuery, useQueryClient } from '@tanstack/solid-query'
-import { containersApi, runApiEffect, tasksApi, type ContainerBuild, type ContainerProfile, type ContainerStatus } from '@/api'
+import { containersApi, runApiEffect, sleepMs, tasksApi, type ContainerBuild, type ContainerProfile, type ContainerStatus } from '@/api'
 import { uiStore } from '@/stores'
 import type { ContainerImage, Task } from '@/types'
 import { formatLocalDateTime } from '@/utils/date'
@@ -121,7 +121,11 @@ export function ContainersTab() {
     loadDockerfile()
   })
 
-  let pollTimeout: ReturnType<typeof setTimeout> | null = null
+  let pollToken = 0
+
+  onCleanup(() => {
+    pollToken += 1
+  })
 
   const startBuild = async () => {
     if (hasRunningWorkflows()) {
@@ -129,35 +133,35 @@ export function ContainersTab() {
       return
     }
 
-        const data = await runApiEffect(containersApi.build({
+    if (!canBuild()) {
+      return
+    }
 
-    if (pollTimeout) {
-          }))
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          profileId: selectedProfileId() || 'custom',
-          dockerfile: customDockerfile(),
-        }),
-      })
+    const token = ++pollToken
+    setIsBuilding(true)
+    setError(null)
 
-      if (!response.ok) {
-        const error = await response.json()
-        setIsBuilding(false)
-        alert(error.error || 'Failed to start build')
+    try {
+      const data = await runApiEffect(containersApi.build({
+        profileId: selectedProfileId() || 'custom',
+        dockerfile: customDockerfile(),
+      }))
+
+      setCurrentBuildId(data.buildId)
+      await pollBuildStatus(data.buildId, token)
+    } catch (e) {
+      if (token !== pollToken) {
         return
       }
-
-      const data = await response.json()
-      setCurrentBuildId(data.buildId)
-      pollBuildStatus(data.buildId)
-    } catch (e) {
       setIsBuilding(false)
-      alert(e instanceof Error ? e.message : 'Failed to start build')
+      const errorMessage = e instanceof Error ? e.message : 'Failed to start build'
+      setError(errorMessage)
+      alert(errorMessage)
     }
   }
 
-  const pollBuildStatus = async (buildId: number) => {
-    const checkStatus = async () => {
+  const pollBuildStatus = async (buildId: number, token: number) => {
+    while (token === pollToken) {
       try {
         const data = await runApiEffect(containersApi.getBuilds(1))
 
@@ -178,7 +182,7 @@ export function ContainersTab() {
         if (typedBuild.status !== 'running' && typedBuild.status !== 'pending') {
           setIsBuilding(false)
           setCurrentBuildId(null)
-          loadBuilds()
+          await loadBuilds()
 
           if (typedBuild.status === 'success') {
             alert(`Build completed successfully: ${typedBuild.imageTag}`)
@@ -188,16 +192,18 @@ export function ContainersTab() {
           return
         }
 
-        pollTimeout = setTimeout(checkStatus, 2000)
+        await sleepMs(2000)
       } catch (e) {
+        if (token !== pollToken) {
+          return
+        }
         const errorMessage = e instanceof Error ? e.message : 'Build status check failed'
         setIsBuilding(false)
         setCurrentBuildId(null)
         setError(`Build polling failed: ${errorMessage}. Build may still be running in the background.`)
+        return
       }
     }
-
-    checkStatus()
   }
 
   const openSaveProfileModal = () => {

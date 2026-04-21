@@ -58,7 +58,7 @@ export class ContainerPiProcess {
     string,
     {
       resolve: (value: Record<string, unknown>) => void
-      reject: (error: Error) => void
+      reject: (error: PiProcessError) => void
     }
   >()
   private readonly eventListeners = new Set<PiEventListener>()
@@ -67,6 +67,8 @@ export class ContainerPiProcess {
   private stderrBuffer = ""
   private isIdle = true
   private abortController: AbortController | null = null
+  private stdoutFiber: Fiber.Fiber<void, never> | null = null
+  private stderrFiber: Fiber.Fiber<void, never> | null = null
   private existingContainerId: string | null = null
   private containerImage: string | null = null
   private messageStreamer: MessageStreamer | null = null
@@ -131,29 +133,27 @@ export class ContainerPiProcess {
 
       // Check if we have an existing container to reuse (for resume operations)
       if (this.existingContainerId) {
-        const containerInfo = yield* Effect.tryPromise({
-          try: () => this.containerManager.checkContainerById(this.existingContainerId!),
-          catch: (cause) => new PiProcessError({
+        const containerInfo = yield* this.containerManager.checkContainerById(this.existingContainerId!).pipe(
+          Effect.mapError((cause) => new PiProcessError({
             operation: "start",
             message: cause instanceof Error ? cause.message : String(cause),
             cause,
-          }),
-        })
+          })),
+        )
 
         if (containerInfo?.running) {
           yield* Effect.logInfo(`[container-pi-process] Attaching to existing container ${this.existingContainerId}`)
           // Try to attach to the existing container to preserve all state
-          const attachedProcess = yield* Effect.tryPromise({
-            try: () => this.containerManager.attachToContainer(
-              this.existingContainerId!,
-              this.session.id
-            ),
-            catch: (cause) => new PiProcessError({
+          const attachedProcess = yield* this.containerManager.attachToContainer(
+            this.existingContainerId!,
+            this.session.id,
+          ).pipe(
+            Effect.mapError((cause) => new PiProcessError({
               operation: "start",
               message: cause instanceof Error ? cause.message : String(cause),
               cause,
-            }),
-          })
+            })),
+          )
 
           if (attachedProcess) {
             this.containerProcess = attachedProcess
@@ -164,8 +164,24 @@ export class ContainerPiProcess {
             })
 
             this.abortController = new AbortController()
-            this.captureStdout()
-            this.captureStderr()
+            this.stdoutFiber = yield* this.captureStdoutEffect().pipe(
+              Effect.catchAllCause((cause) =>
+                Effect.gen(function* () {
+                  yield* Effect.logError(`[container-pi-process] Stdout capture failed`)
+                  yield* Effect.logError(cause)
+                }),
+              ),
+              Effect.forkDaemon,
+            )
+            this.stderrFiber = yield* this.captureStderrEffect().pipe(
+              Effect.catchAllCause((cause) =>
+                Effect.gen(function* () {
+                  yield* Effect.logError(`[container-pi-process] Stderr capture failed`)
+                  yield* Effect.logError(cause)
+                }),
+              ),
+              Effect.forkDaemon,
+            )
 
             yield* Effect.sleep("1 second")
             return yield* Effect.void
@@ -189,14 +205,13 @@ export class ContainerPiProcess {
         mountPodmanSocket: containerSettings?.mountPodmanSocket ?? false,
       }
 
-      this.containerProcess = yield* Effect.tryPromise({
-        try: () => this.containerManager.createContainer(containerConfig),
-        catch: (cause) => new PiProcessError({
+      this.containerProcess = yield* this.containerManager.createContainer(containerConfig).pipe(
+        Effect.mapError((cause) => new PiProcessError({
           operation: "start",
           message: cause instanceof Error ? cause.message : String(cause),
           cause,
-        }),
-      })
+        })),
+      )
 
       this.db.updateWorkflowSession(this.session.id, {
         status: "active",
@@ -204,8 +219,24 @@ export class ContainerPiProcess {
 
       this.abortController = new AbortController()
 
-      this.captureStdout()
-      this.captureStderr()
+      this.stdoutFiber = yield* this.captureStdoutEffect().pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logError(`[container-pi-process] Stdout capture failed`)
+            yield* Effect.logError(cause)
+          }),
+        ),
+        Effect.forkDaemon,
+      )
+      this.stderrFiber = yield* this.captureStderrEffect().pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logError(`[container-pi-process] Stderr capture failed`)
+            yield* Effect.logError(cause)
+          }),
+        ),
+        Effect.forkDaemon,
+      )
     })
   }
 
@@ -415,11 +446,14 @@ export class ContainerPiProcess {
         this.abortController = null
       }
 
+      yield* this.interruptCaptureFibers()
+
       // Reject all pending requests
       for (const [id, pending] of this.pending.entries()) {
-        pending.reject(
-          new Error(`Container process closed before RPC response (${id})`),
-        )
+        pending.reject(new PiProcessError({
+          operation: "close",
+          message: `Container process closed before RPC response (${id})`,
+        }))
         this.pending.delete(id)
       }
 
@@ -464,9 +498,14 @@ export class ContainerPiProcess {
         this.abortController = null
       }
 
+      yield* this.interruptCaptureFibers()
+
       // Reject all pending requests immediately
       for (const [id, pending] of this.pending.entries()) {
-        pending.reject(new Error(`Container process force killed (${id})`))
+        pending.reject(new PiProcessError({
+          operation: "forceKill",
+          message: `Container process force killed (${id})`,
+        }))
         this.pending.delete(id)
       }
 
@@ -518,55 +557,62 @@ export class ContainerPiProcess {
     return Effect.sync(() => this.containerProcess?.containerId ?? null)
   }
 
-  private captureStdout(): void {
-    if (!this.containerProcess || !this.abortController) return
+  private interruptCaptureFibers(): Effect.Effect<void, never> {
+    return Effect.gen(this, function* () {
+      if (this.stdoutFiber) {
+        yield* Fiber.interrupt(this.stdoutFiber)
+        this.stdoutFiber = null
+      }
+      if (this.stderrFiber) {
+        yield* Fiber.interrupt(this.stderrFiber)
+        this.stderrFiber = null
+      }
+    })
+  }
+
+  private captureStdoutEffect(): Effect.Effect<void, PiProcessError> {
+    if (!this.containerProcess || !this.abortController) return Effect.void
 
     const reader = this.containerProcess.stdout.getReader()
     const decoder = new TextDecoder()
     const signal = this.abortController.signal
 
-    const loop = async () => {
+    return Effect.gen(this, function* () {
       try {
         while (!signal.aborted) {
-          const { done, value } = await reader.read()
+          const { done, value } = yield* Effect.tryPromise({
+            try: () => reader.read(),
+            catch: (cause) => new PiProcessError({
+              operation: "captureStdout",
+              message: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+          })
           if (done || signal.aborted) break
           this.stdoutBuffer += decoder.decode(value, { stream: true })
-          this.consumeStdoutLines()
+          yield* this.consumeStdoutLinesEffect()
         }
         if (this.stdoutBuffer.trim() && !signal.aborted) {
-          this.handleStdoutLine(this.stdoutBuffer.trim())
+          yield* this.handleStdoutLineEffect(this.stdoutBuffer.trim())
           this.stdoutBuffer = ""
         }
       } finally {
         reader.releaseLock()
       }
-    }
-
-    void loop()
+    })
   }
 
-  private consumeStdoutLines(): void {
+  private consumeStdoutLinesEffect(): Effect.Effect<void, never> {
+    return Effect.gen(this, function* () {
     while (true) {
       const newlineIdx = this.stdoutBuffer.indexOf("\n")
       if (newlineIdx < 0) break
       const line = this.stdoutBuffer.slice(0, newlineIdx).trim()
       this.stdoutBuffer = this.stdoutBuffer.slice(newlineIdx + 1)
       if (!line) continue
-      this.handleStdoutLine(line)
+      yield* this.handleStdoutLineEffect(line)
     }
-  }
-
-  private handleStdoutLine(line: string): void {
-    void Effect.runPromise(
-      this.handleStdoutLineEffect(line).pipe(
-        Effect.catchAllCause((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logError(`[container-pi-process] Failed to handle stdout line`)
-            yield* Effect.logError(cause)
-          })
-        )
-      )
-    )
+    })
   }
 
   private handleStdoutLineEffect(line: string): Effect.Effect<void, never> {
@@ -594,7 +640,11 @@ export class ContainerPiProcess {
           typeof response.error === "string"
             ? response.error
             : JSON.stringify(response.error)
-        pending.reject(new Error(errorMsg))
+        pending.reject(new PiProcessError({
+          operation: "handleStdoutLine",
+          message: errorMsg,
+          cause: response.error,
+        }))
       } else {
         pending.resolve(asRecord(response.data))
       }
@@ -632,10 +682,8 @@ export class ContainerPiProcess {
       try {
         listener(parsed)
       } catch (err) {
-        Effect.runSync(
-          Effect.logError(`[container-pi-process] Error in event listener`).pipe(
-            Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
-          ),
+        yield* Effect.logError(`[container-pi-process] Error in event listener`).pipe(
+          Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
         )
       }
     }
@@ -674,17 +722,24 @@ export class ContainerPiProcess {
     })
   }
 
-  private captureStderr(): void {
-    if (!this.containerProcess || !this.abortController) return
+  private captureStderrEffect(): Effect.Effect<void, PiProcessError> {
+    if (!this.containerProcess || !this.abortController) return Effect.void
 
     const reader = this.containerProcess.stderr.getReader()
     const decoder = new TextDecoder()
     const signal = this.abortController.signal
 
-    const loop = async () => {
+    return Effect.gen(this, function* () {
       try {
         while (!signal.aborted) {
-          const { done, value } = await reader.read()
+          const { done, value } = yield* Effect.tryPromise({
+            try: () => reader.read(),
+            catch: (cause) => new PiProcessError({
+              operation: "captureStderr",
+              message: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+          })
           if (done || signal.aborted) break
           this.stderrBuffer += decoder.decode(value, { stream: true })
           this.consumeStderrLines()
@@ -695,9 +750,7 @@ export class ContainerPiProcess {
       } finally {
         reader.releaseLock()
       }
-    }
-
-    void loop()
+    })
   }
 
   private consumeStderrLines(): void {

@@ -1,5 +1,7 @@
 This is a TypeScript project using **Bun** for the backend runtime and Solid JS for frontend.
 
+This codebase is pure Effect and everything must follow Effects best practices.
+
 The "TaurOboros" project is an AI-powered workflow orchestration system that:
 - Uses Pi AI agents via RPC protocol for task execution
 - Features a kanban-style task board (template, backlog, executing, review, done)

@@ -272,13 +272,16 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       )
     })
 
-  router.get("/api/tasks", ({ json, sessionUrlFor, db }) => {
-    const tasks = db.getTasks().map((task) => normalizeTaskForClient(task, sessionUrlFor))
-    return json(tasks)
-  })
+  router.get("/api/tasks", ({ json, sessionUrlFor, db }) =>
+    Effect.sync(() => {
+      const tasks = db.getTasks().map((task) => normalizeTaskForClient(task, sessionUrlFor))
+      return json(tasks)
+    }),
+  )
 
-  router.post("/api/tasks", async ({ req, json, sessionUrlFor, broadcast, db }) => {
-    const body = await req.json()
+  router.post("/api/tasks", ({ req, json, sessionUrlFor, broadcast, db }) =>
+    Effect.gen(function* () {
+    const body = yield* parseJsonRecord(req)
     const invalidBooleanField = getInvalidTaskBooleanField(body)
     if (invalidBooleanField) return json({ error: `Invalid ${invalidBooleanField}. Expected boolean.` }, 400)
     if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
@@ -325,7 +328,14 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     }
 
     if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
-      const imageExists = await ctx.validateContainerImage(String(body.containerImage))
+      const imageExists = yield* Effect.tryPromise({
+        try: () => ctx.validateContainerImage(String(body.containerImage)),
+        catch: (error) => internalRouteError(
+          `Failed to validate container image '${String(body.containerImage)}'`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+          error,
+        ),
+      })
       if (!imageExists) {
         return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
       }
@@ -378,7 +388,8 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       )
     }
     return json(normalized, 201)
-  })
+    }),
+  )
 
   router.post("/api/tasks/create-and-wait", ({ req, json, sessionUrlFor, broadcast, db }) =>
     Effect.gen(function* () {
@@ -515,41 +526,48 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     }),
   )
 
-  router.put("/api/tasks/reorder", async ({ req, json, broadcast, db }) => {
-    const body = await req.json()
-    if (!body?.id || typeof body.newIdx !== "number") return json({ error: "id and newIdx are required" }, 400)
-    db.reorderTask(String(body.id), Number(body.newIdx))
-    broadcast({ type: "task_reordered", payload: {} })
-    return json({ ok: true })
-  })
+  router.put("/api/tasks/reorder", ({ req, json, broadcast, db }) =>
+    Effect.gen(function* () {
+      const body = yield* parseJsonRecord(req)
+      if (!body?.id || typeof body.newIdx !== "number") return json({ error: "id and newIdx are required" }, 400)
+      db.reorderTask(String(body.id), Number(body.newIdx))
+      broadcast({ type: "task_reordered", payload: {} })
+      return json({ ok: true })
+    }),
+  )
 
-  router.delete("/api/tasks/done/all", ({ json, broadcast, db }) => {
-    const doneTasks = db.getTasksByStatus("done")
-    let archived = 0
-    let deleted = 0
+  router.delete("/api/tasks/done/all", ({ json, broadcast, db }) =>
+    Effect.sync(() => {
+      const doneTasks = db.getTasksByStatus("done")
+      let archived = 0
+      let deleted = 0
 
-    for (const task of doneTasks) {
-      if (db.hasTaskExecutionHistory(task.id)) {
-        db.archiveTask(task.id)
-        broadcast({ type: "task_archived", payload: { id: task.id } })
-        archived++
-      } else {
-        db.hardDeleteTask(task.id)
-        broadcast({ type: "task_deleted", payload: { id: task.id } })
-        deleted++
+      for (const task of doneTasks) {
+        if (db.hasTaskExecutionHistory(task.id)) {
+          db.archiveTask(task.id)
+          broadcast({ type: "task_archived", payload: { id: task.id } })
+          archived++
+        } else {
+          db.hardDeleteTask(task.id)
+          broadcast({ type: "task_deleted", payload: { id: task.id } })
+          deleted++
+        }
       }
-    }
 
-    return json({ archived, deleted })
-  })
+      return json({ archived, deleted })
+    }),
+  )
 
-  router.get("/api/tasks/:id", ({ params, json, sessionUrlFor, db }) => {
-    const task = db.getTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
-    return json(normalizeTaskForClient(task, sessionUrlFor))
-  })
+  router.get("/api/tasks/:id", ({ params, json, sessionUrlFor, db }) =>
+    Effect.sync(() => {
+      const task = db.getTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
+      return json(normalizeTaskForClient(task, sessionUrlFor))
+    }),
+  )
 
-  router.patch("/api/tasks/:id", async ({ params, req, json, sessionUrlFor, broadcast, db }) => {
+  router.patch("/api/tasks/:id", ({ params, req, json, sessionUrlFor, broadcast, db }) =>
+    Effect.gen(function* () {
     const existing = db.getTask(params.id)
     if (!existing) return json({ error: "Task not found" }, 404)
 
@@ -561,7 +579,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       )
     }
 
-    const body = await req.json()
+    const body = yield* parseJsonRecord(req)
     const invalidBooleanField = getInvalidTaskBooleanField(body)
     if (invalidBooleanField) return json({ error: `Invalid ${invalidBooleanField}. Expected boolean.` }, 400)
     if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
@@ -626,7 +644,14 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     }
 
     if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
-      const imageExists = await ctx.validateContainerImage(String(body.containerImage))
+      const imageExists = yield* Effect.tryPromise({
+        try: () => ctx.validateContainerImage(String(body.containerImage)),
+        catch: (error) => internalRouteError(
+          `Failed to validate container image '${String(body.containerImage)}'`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+          error,
+        ),
+      })
       if (!imageExists) {
         return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
       }
@@ -658,47 +683,56 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     const normalized = normalizeTaskForClient(task, sessionUrlFor)
     broadcast({ type: "task_updated", payload: normalized })
     return json(normalized)
-  })
+    }),
+  )
 
-  router.delete("/api/tasks/:id", ({ params, json, broadcast, db }) => {
-    const existing = db.getTask(params.id)
-    if (!existing) return json({ error: "Task not found" }, 404)
+  router.delete("/api/tasks/:id", ({ params, json, broadcast, db }) =>
+    Effect.sync(() => {
+      const existing = db.getTask(params.id)
+      if (!existing) return json({ error: "Task not found" }, 404)
 
-    const activeRun = db.getActiveWorkflowRunForTask(params.id)
-    if (activeRun) {
-      return json(
-        { error: `Cannot modify task "${existing.name}" while it is executing in run ${activeRun.id}.` },
-        409,
-      )
-    }
+      const activeRun = db.getActiveWorkflowRunForTask(params.id)
+      if (activeRun) {
+        return json(
+          { error: `Cannot modify task "${existing.name}" while it is executing in run ${activeRun.id}.` },
+          409,
+        )
+      }
 
-    if (db.hasTaskExecutionHistory(params.id)) {
-      db.archiveTask(params.id)
-      broadcast({ type: "task_archived", payload: { id: params.id } })
-      return json({ id: params.id, archived: true })
-    }
+      if (db.hasTaskExecutionHistory(params.id)) {
+        db.archiveTask(params.id)
+        broadcast({ type: "task_archived", payload: { id: params.id } })
+        return json({ id: params.id, archived: true })
+      }
 
-    db.hardDeleteTask(params.id)
-    broadcast({ type: "task_deleted", payload: { id: params.id } })
-    return new Response(null, { status: 204 })
-  })
+      db.hardDeleteTask(params.id)
+      broadcast({ type: "task_deleted", payload: { id: params.id } })
+      return new Response(null, { status: 204 })
+    }),
+  )
 
-  router.get("/api/tasks/:id/runs", ({ params, json, sessionUrlFor, db }) => {
-    const task = db.getTask(params.id) ?? db.getArchivedTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
-    return json(db.getTaskRuns(params.id).map((run) => normalizeTaskRunForClient(run, sessionUrlFor)))
-  })
+  router.get("/api/tasks/:id/runs", ({ params, json, sessionUrlFor, db }) =>
+    Effect.sync(() => {
+      const task = db.getTask(params.id) ?? db.getArchivedTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
+      return json(db.getTaskRuns(params.id).map((run) => normalizeTaskRunForClient(run, sessionUrlFor)))
+    }),
+  )
 
-  router.get("/api/tasks/:id/sessions", ({ params, json, db }) => {
-    const task = db.getTask(params.id) ?? db.getArchivedTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
-    return json(db.getWorkflowSessionsByTask(params.id))
-  })
+  router.get("/api/tasks/:id/sessions", ({ params, json, db }) =>
+    Effect.sync(() => {
+      const task = db.getTask(params.id) ?? db.getArchivedTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
+      return json(db.getWorkflowSessionsByTask(params.id))
+    }),
+  )
 
-  router.get("/api/tasks/:id/candidates", ({ params, json, db }) => {
-    if (!db.getTask(params.id)) return json({ error: "Task not found" }, 404)
-    return json(db.getTaskCandidates(params.id))
-  })
+  router.get("/api/tasks/:id/candidates", ({ params, json, db }) =>
+    Effect.sync(() => {
+      if (!db.getTask(params.id)) return json({ error: "Task not found" }, 404)
+      return json(db.getTaskCandidates(params.id))
+    }),
+  )
 
   router.get("/api/tasks/:id/best-of-n-summary", ({ params, json, db }) =>
     Effect.gen(function* () {
@@ -790,17 +824,19 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     }),
   )
 
-  router.get("/api/tasks/:id/review-status", ({ params, json, db }) => {
-    const task = db.getTask(params.id)
-    if (!task) return json({ error: "Task not found" }, 404)
-    const options = db.getOptions()
-    return json({
-      taskId: task.id,
-      reviewCount: task.reviewCount,
-      maxReviewRuns: options.maxReviews,
-      maxReviewRunsOverride: task.maxReviewRunsOverride,
-    })
-  })
+  router.get("/api/tasks/:id/review-status", ({ params, json, db }) =>
+    Effect.sync(() => {
+      const task = db.getTask(params.id)
+      if (!task) return json({ error: "Task not found" }, 404)
+      const options = db.getOptions()
+      return json({
+        taskId: task.id,
+        reviewCount: task.reviewCount,
+        maxReviewRuns: options.maxReviews,
+        maxReviewRunsOverride: task.maxReviewRunsOverride,
+      })
+    }),
+  )
 
   router.post("/api/tasks/:id/approve-plan", ({ params, req, json, sessionUrlFor, broadcast, db }) =>
     Effect.gen(function* () {
@@ -836,7 +872,8 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     buildPlanRevisionResponse(params.id, req, json, sessionUrlFor, broadcast, db),
   )
 
-  router.post("/api/tasks/:id/reset", async ({ params, json, sessionUrlFor, broadcast, db }) => {
+  router.post("/api/tasks/:id/reset", ({ params, json, sessionUrlFor, broadcast, db }) =>
+    Effect.sync(() => {
     const task = db.getTask(params.id)
     if (!task) return json({ error: "Task not found" }, 404)
 
@@ -872,9 +909,11 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     }
 
     return json({ task: normalized, wasInGroup: false })
-  })
+    }),
+  )
 
-  router.post("/api/tasks/:id/reset-to-group", async ({ params, json, sessionUrlFor, broadcast, db }) => {
+  router.post("/api/tasks/:id/reset-to-group", ({ params, json, sessionUrlFor, broadcast, db }) =>
+    Effect.sync(() => {
     const task = db.getTask(params.id)
     if (!task) return json({ error: "Task not found" }, 404)
 
@@ -917,7 +956,8 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     broadcast({ type: "task_group_members_added", payload: { groupId, taskIds: [task.id] } })
 
     return json({ task: normalized, group, restoredToGroup: true })
-  })
+    }),
+  )
 
   router.post("/api/tasks/:id/move-to-group", ({ params, req, json, sessionUrlFor, broadcast, db }) =>
     Effect.gen(function* () {

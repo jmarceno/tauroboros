@@ -111,16 +111,14 @@ export const isContainerRuntimeAvailableEffect = Effect.fn("isContainerRuntimeAv
       return false
     }
 
-    const status = yield* Effect.tryPromise({
-      try: async () => {
-        return await containerManager.validateSetup()
-      },
-      catch: (cause) =>
+    const status = yield* containerManager.validateSetup().pipe(
+      Effect.mapError((cause) =>
         new PiProcessFactoryError({
           operation: "isContainerRuntimeAvailable",
           message: cause instanceof Error ? cause.message : String(cause),
         }),
-    })
+      ),
+    )
 
     return status.podman && status.image
   },
@@ -131,14 +129,14 @@ export const validateContainerSetupEffect = Effect.fn("validateContainerSetupEff
     containerManager: PiContainerManager,
     settings?: InfrastructureSettings,
   ) {
-    const status = yield* Effect.tryPromise({
-      try: () => containerManager.validateSetup(),
-      catch: (cause) =>
+    const status = yield* containerManager.validateSetup().pipe(
+      Effect.mapError((cause) =>
         new PiProcessFactoryError({
           operation: "validateContainerSetup",
           message: cause instanceof Error ? cause.message : String(cause),
         }),
-    })
+      ),
+    )
     const configuredRuntime = getConfiguredRuntime(settings)
 
     const issues: string[] = [...status.errors]
