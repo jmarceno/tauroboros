@@ -7,7 +7,7 @@ import type { PiWorkflowSession } from "../db/types.ts"
 import type { CreateSessionMessageInput, SessionMessage } from "../types.ts"
 import { PiProcessError, PiRpcProcess } from "./pi-process.ts"
 import type { PiContainerManager } from "./container-manager.ts"
-import { createPiProcess, type PiRuntimeMode } from "./pi-process-factory.ts"
+import { createPiProcessEffect, type PiRuntimeMode } from "./pi-process-factory.ts"
 import { parseModelSelection } from "./model-utils.ts"
 
 function nowUnix(): number {
@@ -366,27 +366,25 @@ export class PlanningSession {
         })
       }
 
-      const process = yield* Effect.try({
-        try: () =>
-          createPiProcess({
-            db: self.db,
-            session: self.session,
-            containerManager: self.containerManager,
-            onSessionMessage: (msg) => {
-              self.onMessage?.(msg)
-            },
-            forceRuntime,
-            settings: self.settings,
-            systemPrompt,
-            disableAutoSessionMessages: true,
-            piSessionFile,
-          }) as PiRpcProcess,
-        catch: (cause) => new PlanningSessionError({
+      const process = (yield* createPiProcessEffect({
+        db: self.db,
+        session: self.session,
+        containerManager: self.containerManager,
+        onSessionMessage: (msg) => {
+          self.onMessage?.(msg)
+        },
+        forceRuntime,
+        settings: self.settings,
+        systemPrompt,
+        disableAutoSessionMessages: true,
+        piSessionFile,
+      }).pipe(
+        Effect.mapError((cause) => new PlanningSessionError({
           operation: "start",
           message: cause instanceof Error ? cause.message : String(cause),
           cause,
-        }),
-      })
+        })),
+      )) as PiRpcProcess
 
       const scope = yield* Scope.make()
       yield* Effect.acquireRelease(
@@ -760,27 +758,25 @@ export class PlanningSession {
       self.messageSeq = self.getNextSeqFromDb()
       const piSessionFile = self.session.piSessionFile ?? getSessionFilePath(self.session.id, self.session.cwd)
 
-      const process = yield* Effect.try({
-        try: () =>
-          createPiProcess({
-            db: self.db,
-            session: self.session,
-            containerManager: self.containerManager,
-            onSessionMessage: (msg) => {
-              self.onMessage?.(msg)
-            },
-            forceRuntime,
-            settings: self.settings,
-            systemPrompt,
-            disableAutoSessionMessages: true,
-            piSessionFile,
-          }) as PiRpcProcess,
-        catch: (cause) => new PlanningSessionError({
+      const process = (yield* createPiProcessEffect({
+        db: self.db,
+        session: self.session,
+        containerManager: self.containerManager,
+        onSessionMessage: (msg) => {
+          self.onMessage?.(msg)
+        },
+        forceRuntime,
+        settings: self.settings,
+        systemPrompt,
+        disableAutoSessionMessages: true,
+        piSessionFile,
+      }).pipe(
+        Effect.mapError((cause) => new PlanningSessionError({
           operation: "reconnect",
           message: cause instanceof Error ? cause.message : String(cause),
           cause,
-        }),
-      })
+        })),
+      )) as PiRpcProcess
 
       const scope = yield* Scope.make()
       yield* Effect.acquireRelease(

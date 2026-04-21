@@ -8,7 +8,7 @@ import type { SmartRepairService } from "../runtime/smart-repair.ts"
 import type { PlanningSessionManager } from "../runtime/planning-session.ts"
 import type { PackageDefinition } from "../db/types.ts"
 import type { HttpRouteError } from "./route-interpreter.ts"
-import type { OrchestratorOperationError, OrchestratorUnavailableError } from "../orchestrator.ts"
+import type { OrchestratorOperationError } from "../orchestrator.ts"
 
 export interface RouteParams {
   [key: string]: string
@@ -28,7 +28,7 @@ export interface RequestContext {
 export type RouteHandler = (ctx: RequestContext) => Promise<Response> | Response | Effect.Effect<Response, HttpRouteError>
 
 // Server callback function types
-type OrchestratorRouteEffect<A> = Effect.Effect<A, OrchestratorOperationError | OrchestratorUnavailableError>
+type OrchestratorRouteEffect<A> = Effect.Effect<A, OrchestratorOperationError>
 
 export type RunControlFn = (runId: string) => OrchestratorRouteEffect<unknown>
 export type StartFn = () => OrchestratorRouteEffect<unknown>

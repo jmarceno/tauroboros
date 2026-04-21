@@ -57,18 +57,6 @@ export function getConfiguredRuntime(settings?: InfrastructureSettings): PiRunti
   return "container" // Default to container
 }
 
-/**
- * Create a pi process (native or containerized) based on configuration.
- *
- * Native mode: Spawns pi directly on the host (current behavior)
- * Container mode: Runs pi inside a gVisor container for isolation
- */
-export function createPiProcess(
-  options: UnifiedPiProcessOptions,
-): PiRpcProcess | ContainerPiProcess {
-  return Effect.runSync(createPiProcessEffect(options))
-}
-
 export const createPiProcessEffect = Effect.fn("createPiProcessEffect")(
   function* (options: UnifiedPiProcessOptions) {
     const runtime = options.forceRuntime || getConfiguredRuntime(options.settings)
@@ -117,15 +105,6 @@ export const createPiProcessEffect = Effect.fn("createPiProcessEffect")(
   },
 )
 
-/**
- * Check if container runtime is available and properly configured.
- */
-export async function isContainerRuntimeAvailable(
-  containerManager?: PiContainerManager,
-): Promise<boolean> {
-  return await Effect.runPromise(isContainerRuntimeAvailableEffect(containerManager))
-}
-
 export const isContainerRuntimeAvailableEffect = Effect.fn("isContainerRuntimeAvailableEffect")(
   function* (containerManager?: PiContainerManager) {
     if (!containerManager) {
@@ -146,20 +125,6 @@ export const isContainerRuntimeAvailableEffect = Effect.fn("isContainerRuntimeAv
     return status.podman && status.image
   },
 )
-
-/**
- * Validate container runtime setup and return detailed status.
- */
-export async function validateContainerSetup(
-  containerManager: PiContainerManager,
-  settings?: InfrastructureSettings,
-): Promise<{
-  available: boolean
-  runtime: PiRuntimeMode
-  issues: string[]
-}> {
-  return await Effect.runPromise(validateContainerSetupEffect(containerManager, settings))
-}
 
 export const validateContainerSetupEffect = Effect.fn("validateContainerSetupEffect")(
   function* (

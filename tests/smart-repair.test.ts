@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test"
+import { Effect } from "effect"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
@@ -81,6 +82,10 @@ afterEach(() => {
   }
 })
 
+function runEffect<A, E>(effect: Effect.Effect<A, E>) {
+  return Effect.runPromise(effect)
+}
+
 describe("smart repair", () => {
   it("applies each repair action with expected task state updates", () => {
     const root = createTempDir("tauroboros-smart-repair-actions-")
@@ -107,11 +112,11 @@ describe("smart repair", () => {
         planmode: true,
       })
 
-      const updated = service.applyAction(task.id, {
+      const updated = Effect.runSync(service.applyAction(task.id, {
         action: scenario.action,
         reason: "test-reason",
         ...(scenario.action === "fail_task" ? { errorMessage: "explicit failure" } : {}),
-      })
+      }))
 
       expect(updated.status).toBe(scenario.expectedStatus)
       if (scenario.expectedPhase) {
@@ -152,7 +157,7 @@ describe("smart repair", () => {
     })
 
     const service = new SmartRepairService(db, settings)
-    const result = await service.repair(task.id)
+    const result = await runEffect(service.repair(task.id))
 
     expect(result.action).toBe("mark_done")
     expect(result.task.status).toBe("done")
@@ -178,7 +183,7 @@ describe("smart repair", () => {
     const service = new SmartRepairService(db, settings)
 
     // Explicit errors: malformed JSON should throw, not fallback
-    await expect(service.repair(task.id)).rejects.toThrow()
+    await expect(runEffect(service.repair(task.id))).rejects.toThrow()
     db.close()
   })
 

@@ -7,7 +7,7 @@ import type { ThinkingLevel, SessionMessage } from "../types.ts"
 import { CollectEventsTimeoutError, PiProcessError, PiRpcProcess } from "./pi-process.ts"
 import type { PiContainerManager } from "./container-manager.ts"
 import { ContainerPiProcess } from "./container-pi-process.ts"
-import { createPiProcess, type PiRuntimeMode } from "./pi-process-factory.ts"
+import { createPiProcessEffect, type PiRuntimeMode } from "./pi-process-factory.ts"
 import { parseModelSelection } from "./model-utils.ts"
 import { loadPausedRunState } from "./session-pause-state.ts"
 
@@ -178,21 +178,19 @@ export class PiSessionManager {
         })
       }
 
-      const process = yield* Effect.try({
-        try: () =>
-          createPiProcess({
-            db: self.db,
-            session,
-            containerManager: self.containerManager,
-            onOutput: callbacks?.onOutput,
-            onSessionMessage: callbacks?.onSessionMessage,
-            forceRuntime: input.forceRuntime,
-            settings: self.settings,
-            existingContainerId,
-            containerImage: input.containerImage,
-          }),
-        catch: (cause) => toSessionManagerError("createProcess", cause),
-      })
+      const process = yield* createPiProcessEffect({
+        db: self.db,
+        session,
+        containerManager: self.containerManager,
+        onOutput: callbacks?.onOutput,
+        onSessionMessage: callbacks?.onSessionMessage,
+        forceRuntime: input.forceRuntime,
+        settings: self.settings,
+        existingContainerId,
+        containerImage: input.containerImage,
+      }).pipe(
+        Effect.mapError((cause) => toSessionManagerError("createProcess", cause)),
+      )
 
       if (callbacks?.onSessionCreated) {
         callbacks.onSessionCreated(process, session)

@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach } from "bun:test"
+import { Effect } from "effect"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
 import type { WorkflowRun } from "../src/types.ts"
+
+const runEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect)
 
 // Test-only subclass to expose private methods
 class TestableOrchestrator extends PiOrchestrator {
@@ -13,7 +16,7 @@ class TestableOrchestrator extends PiOrchestrator {
     return (this as any).findExternalDependencies(groupTasks, allTasks)
   }
 
-  testStartGroup(groupId: string): Promise<WorkflowRun> {
+  testStartGroup(groupId: string): Effect.Effect<WorkflowRun, unknown> {
     return (this as any).startGroup(groupId)
   }
 }
@@ -113,7 +116,7 @@ describe("Group Execution", () => {
   describe("startGroup integration", () => {
     it("should throw error for non-existent group", async () => {
       try {
-        await orchestrator.testStartGroup("non-existent-group")
+        await runEffect(orchestrator.testStartGroup("non-existent-group"))
         expect.fail("Should have thrown error")
       } catch (err) {
         expect((err as Error).message).toContain('Task group with ID "non-existent-group" not found')
@@ -124,7 +127,7 @@ describe("Group Execution", () => {
       const group = db.createTaskGroup({ name: "Empty Group", memberTaskIds: [] })
 
       try {
-        await orchestrator.testStartGroup(group.id)
+        await runEffect(orchestrator.testStartGroup(group.id))
         expect.fail("Should have thrown error")
       } catch (err) {
         expect((err as Error).message).toContain("group has no tasks")
@@ -155,7 +158,7 @@ describe("Group Execution", () => {
       })
 
       try {
-        await orchestrator.testStartGroup(group.id)
+        await runEffect(orchestrator.testStartGroup(group.id))
         expect.fail("Should have thrown error")
       } catch (err) {
         expect((err as Error).message).toContain("external dependencies")
@@ -189,7 +192,7 @@ describe("Group Execution", () => {
       // This should fail due to container images not being available in test,
       // but it validates that external dependency check passes
       try {
-        await orchestrator.testStartGroup(group.id)
+        await runEffect(orchestrator.testStartGroup(group.id))
         expect.fail("Should have thrown error about container images")
       } catch (err) {
         // Should fail on container image validation, NOT on external dependencies

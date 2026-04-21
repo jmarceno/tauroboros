@@ -26,6 +26,8 @@ import {
 } from '@/stores'
 
 import {
+  containersApi,
+  runApiEffect,
   Sidebar,
   TopBar,
   KanbanBoard,
@@ -98,11 +100,7 @@ function App() {
   // Load container status
   const loadContainerStatus = async () => {
     try {
-      const response = await fetch("/api/container/status")
-      if (!response.ok) {
-        throw new Error(`HTTP error: ${response.status} ${response.statusText}`)
-      }
-      setContainerStatus(await response.json())
+      setContainerStatus(await runApiEffect(containersApi.getStatus()))
     } catch (e) {
       setContainerStatus({ enabled: false, available: false, hasRunningWorkflows: false, message: `Failed to load status: ${e instanceof Error ? e.message : String(e)}` })
     }

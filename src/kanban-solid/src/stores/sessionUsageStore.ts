@@ -5,6 +5,7 @@
 
 import { createSignal } from 'solid-js'
 import { useQueryClient } from '@tanstack/solid-query'
+import { Effect } from 'effect'
 import type { SessionUsageRollup } from '@/types'
 import * as api from '@/api'
 
@@ -47,22 +48,26 @@ export function createSessionUsageStore() {
   }
 
   // Load session usage
-  const loadSessionUsage = async (sessionId: string, forceRefresh = false): Promise<SessionUsageRollup | null> => {
-    if (forceRefresh) {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.sessions.usage(sessionId) })
-    }
-    
-    try {
-      const data = await queryClient.fetchQuery({
-        queryKey: queryKeys.sessions.usage(sessionId),
-        queryFn: () => runApi(api.sessionsApi.getUsage(sessionId)),
-        staleTime: 5000,
+  const loadSessionUsageEffect = (sessionId: string, forceRefresh = false) =>
+    Effect.gen(function* () {
+      if (forceRefresh) {
+        yield* Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.sessions.usage(sessionId) }))
+      }
+
+      return yield* Effect.tryPromise({
+        try: () => queryClient.fetchQuery({
+          queryKey: queryKeys.sessions.usage(sessionId),
+          queryFn: () => runApi(api.sessionsApi.getUsage(sessionId)),
+          staleTime: 5000,
+        }),
+        catch: () => null,
       })
-      return data
-    } catch {
-      return null
-    }
-  }
+    }).pipe(
+      Effect.catchAll(() => Effect.succeed(null)),
+    )
+
+  const loadSessionUsage = (sessionId: string, forceRefresh = false) =>
+    runApi(loadSessionUsageEffect(sessionId, forceRefresh))
 
   // Start watching a session
   const startWatching = (sessionId: string) => {

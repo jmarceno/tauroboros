@@ -5,6 +5,7 @@
 
 import { createSignal } from 'solid-js'
 import { useQueryClient } from '@tanstack/solid-query'
+import { Effect } from 'effect'
 import { tasksApi, runApiEffect } from '@/api'
 
 const queryKeys = {
@@ -29,21 +30,21 @@ export function createTaskLastUpdateStore() {
   }
 
   // Load last update from backend
-  const loadLastUpdate = async (taskId: string): Promise<number | null> => {
-    try {
-      const data = await runApiEffect(tasksApi.getLastUpdate(taskId))
-      if (data.lastUpdateAt !== null) {
-        // Update local state
-        setLastUpdates(prev => ({ ...prev, [taskId]: data.lastUpdateAt }))
-        // Update query cache
-        queryClient.setQueryData(queryKeys.tasks.lastUpdate(taskId), data.lastUpdateAt)
-        return data.lastUpdateAt
-      }
-      return null
-    } catch {
-      return null
-    }
-  }
+  const loadLastUpdateEffect = (taskId: string) =>
+    tasksApi.getLastUpdate(taskId).pipe(
+      Effect.map((data) => {
+        if (data.lastUpdateAt !== null) {
+          setLastUpdates(prev => ({ ...prev, [taskId]: data.lastUpdateAt }))
+          queryClient.setQueryData(queryKeys.tasks.lastUpdate(taskId), data.lastUpdateAt)
+          return data.lastUpdateAt
+        }
+
+        return null
+      }),
+      Effect.catchAll(() => Effect.succeed(null)),
+    )
+
+  const loadLastUpdate = (taskId: string) => runApiEffect(loadLastUpdateEffect(taskId))
 
   // Update last update timestamp (typically called from WebSocket)
   const updateLastUpdate = (taskId: string, timestamp: number) => {

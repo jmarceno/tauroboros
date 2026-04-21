@@ -5,39 +5,13 @@
 
 import { createSignal, createEffect, onMount } from 'solid-js'
 import { createQuery, useQueryClient } from '@tanstack/solid-query'
-import { containersApi } from '@/api'
+import { containersApi, runApiEffect, tasksApi, type ContainerBuild, type ContainerProfile, type ContainerStatus } from '@/api'
 import { uiStore } from '@/stores'
 import type { ContainerImage, Task } from '@/types'
 import { formatLocalDateTime } from '@/utils/date'
 
-interface ContainerProfile {
-  id: string
-  name: string
-  description: string
-  image: string
-  dockerfileTemplate: string
-}
-
 const buildStatuses = ['pending', 'running', 'success', 'failed', 'cancelled'] as const
 type BuildStatus = (typeof buildStatuses)[number]
-
-interface ContainerBuild {
-  id: number
-  status: BuildStatus
-  startedAt: number | null
-  completedAt: number | null
-  packagesHash: string | null
-  errorMessage: string | null
-  imageTag: string | null
-  logs: string | null
-}
-
-interface ContainerStatus {
-  enabled: boolean
-  available: boolean
-  hasRunningWorkflows: boolean
-  message: string
-}
 
 export function ContainersTab() {
   const queryClient = useQueryClient()
@@ -73,60 +47,23 @@ export function ContainersTab() {
   const buildButtonText = () => isBuilding() ? 'Building...' : hasRunningWorkflows() ? 'Stop Workflow to Build' : 'Save & Build'
 
   const loadProfiles = async () => {
-    const response = await fetch('/api/container/profiles')
-    if (!response.ok) throw new Error(`Failed to load profiles: HTTP ${response.status}`)
-    const data = await response.json()
-    if (!Array.isArray(data.profiles)) {
-      throw new Error('Invalid API response: profiles is not an array')
-    }
+    const data = await runApiEffect(containersApi.getProfiles())
     setProfiles(data.profiles)
   }
 
   const loadBuilds = async () => {
-    const response = await fetch('/api/container/build-status?limit=10')
-    if (!response.ok) throw new Error(`Failed to load builds: HTTP ${response.status}`)
-    const data = await response.json()
-    if (!Array.isArray(data.builds)) {
-      throw new Error('Invalid API response: builds is not an array')
-    }
+    const data = await runApiEffect(containersApi.getBuilds(10))
     setBuilds(data.builds)
   }
 
   const loadContainerStatus = async () => {
-    const response = await fetch('/api/container/status')
-    if (!response.ok) throw new Error(`Failed to load container status: HTTP ${response.status}`)
-    const data = await response.json()
-
-    if (typeof data.enabled !== 'boolean') {
-      throw new Error('Invalid API response: enabled must be a boolean')
-    }
-    if (typeof data.available !== 'boolean') {
-      throw new Error('Invalid API response: available must be a boolean')
-    }
-    if (typeof data.hasRunningWorkflows !== 'boolean') {
-      throw new Error('Invalid API response: hasRunningWorkflows must be a boolean')
-    }
-    if (typeof data.message !== 'string') {
-      throw new Error('Invalid API response: message must be a string')
-    }
-
-    setContainerStatus({
-      enabled: data.enabled,
-      available: data.available,
-      hasRunningWorkflows: data.hasRunningWorkflows,
-      message: data.message,
-    })
+    setContainerStatus(await runApiEffect(containersApi.getStatus()))
   }
 
   const loadImages = async () => {
     setIsLoadingImages(true)
     try {
-      const response = await fetch('/api/container/images')
-      if (!response.ok) throw new Error(`Failed to load images: HTTP ${response.status}`)
-      const data = await response.json()
-      if (!Array.isArray(data.images)) {
-        throw new Error('Invalid API response: images is not an array')
-      }
+      const data = await runApiEffect(containersApi.getImages())
       setAvailableImages(data.images)
     } finally {
       setIsLoadingImages(false)
@@ -136,9 +73,7 @@ export function ContainersTab() {
   const loadTasksUsingImage = async (tag: string) => {
     setIsLoadingTasksUsing(true)
     try {
-      const response = await fetch('/api/tasks')
-      if (!response.ok) throw new Error('Failed to load tasks')
-      const tasks: Task[] = await response.json()
+      const tasks = await runApiEffect(tasksApi.getAll())
       setTasksUsingImage(
         tasks
           .filter((t: Task) => t.containerImage === tag && t.status !== 'done')
@@ -176,12 +111,7 @@ export function ContainersTab() {
 
     const loadDockerfile = async () => {
       try {
-        const response = await fetch(`/api/container/dockerfile/${profileId}`)
-        if (!response.ok) throw new Error(`Failed to load Dockerfile: HTTP ${response.status}`)
-        const data = await response.json()
-        if (typeof data.dockerfile !== 'string') {
-          throw new Error('Invalid API response: dockerfile must be a string')
-        }
+        const data = await runApiEffect(containersApi.getDockerfile(profileId))
         setCustomDockerfile(data.dockerfile)
         setOriginalDockerfile(data.dockerfile)
       } catch (e) {
@@ -201,21 +131,10 @@ export function ContainersTab() {
       return
     }
 
-    if (!customDockerfile().trim()) {
-      alert('Dockerfile is empty')
-      return
-    }
+        const data = await runApiEffect(containersApi.build({
 
     if (pollTimeout) {
-      clearTimeout(pollTimeout)
-      pollTimeout = null
-    }
-
-    setIsBuilding(true)
-
-    try {
-      const response = await fetch('/api/container/build', {
-        method: 'POST',
+          }))
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           profileId: selectedProfileId() || 'custom',
@@ -240,14 +159,7 @@ export function ContainersTab() {
   const pollBuildStatus = async (buildId: number) => {
     const checkStatus = async () => {
       try {
-        const response = await fetch('/api/container/build-status?limit=1')
-        if (!response.ok) {
-          throw new Error(`Failed to check build status: HTTP ${response.status}`)
-        }
-        const data = await response.json()
-        if (!Array.isArray(data.builds)) {
-          throw new Error('Invalid API response: builds is not an array')
-        }
+        const data = await runApiEffect(containersApi.getBuilds(1))
 
         const build = data.builds.find((b: unknown) => {
           if (typeof b !== 'object' || b === null) return false
@@ -310,22 +222,13 @@ export function ContainersTab() {
     }
 
     try {
-      const response = await fetch('/api/container/profiles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await runApiEffect(containersApi.createProfile({
           id: newProfileId(),
           name: newProfileName(),
           description: `Custom profile based on ${selectedProfile()?.name || 'manual edit'}`,
           image: selectedProfile()?.image || 'custom',
           dockerfileTemplate: customDockerfile(),
-        }),
-      })
-
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Failed to save profile')
-      }
+        }))
 
       alert(`Profile "${newProfileName()}" saved successfully`)
       setShowSaveProfileModal(false)
@@ -392,7 +295,7 @@ export function ContainersTab() {
     const tag = imageToDelete()!.tag
 
     try {
-      const result = await containersApi.deleteImage(tag)
+      const result = await runApiEffect(containersApi.deleteImage(tag))
       if (result.success) {
         alert('Image deleted successfully')
         closeDeleteModal()

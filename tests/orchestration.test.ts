@@ -3,9 +3,12 @@ import { execFileSync } from "child_process"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { Effect } from "effect"
 import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../src/config/settings.ts"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
+
+const runEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect)
 
 function createTestSettings(mockPiBin: string): InfrastructureSettings {
   return {
@@ -135,7 +138,7 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     })
 
     const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
-    const run = await orchestrator.startSingle(taskB.id)
+    const run = await runEffect(orchestrator.startSingle(taskB.id))
 
     await waitFor(() => {
       const latest = db.getWorkflowRun(run.id)
@@ -197,7 +200,7 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     })
 
     const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
-    const run = await orchestrator.startAll()
+    const run = await runEffect(orchestrator.startAll())
 
     await waitFor(() => {
       const latest = db.getWorkflowRun(run.id)
@@ -252,7 +255,7 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     })
 
     const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
-    const workflowRun = await orchestrator.startAll()
+    const workflowRun = await runEffect(orchestrator.startAll())
 
     await waitFor(() => {
       const completedRuns = db.getWorkflowRuns().filter((candidate) => candidate.status === "completed")
@@ -280,7 +283,7 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     })
 
     const beforeSingleTaskCount = db.getTasks().length
-    const singleRun = await orchestrator.startSingle(noTriggerSingle.id)
+    const singleRun = await runEffect(orchestrator.startSingle(noTriggerSingle.id))
 
     await waitFor(() => {
       const latest = db.getWorkflowRun(singleRun.id)
@@ -330,7 +333,7 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     db.addTasksToGroup(group.id, [groupTask.id])
 
     const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
-    const run = await orchestrator.startGroup(group.id)
+    const run = await runEffect(orchestrator.startGroup(group.id))
 
     await waitFor(() => {
       const completedRuns = db.getWorkflowRuns().filter((candidate) => candidate.status === "completed")

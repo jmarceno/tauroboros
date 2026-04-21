@@ -519,7 +519,21 @@ export class PiRpcProcess {
     }
   }
 
-  private async handleStdoutLine(line: string): Promise<void> {
+  private handleStdoutLine(line: string): void {
+    void Effect.runPromise(
+      this.handleStdoutLineEffect(line).pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logError(`[pi-process] Failed to handle stdout line`)
+            yield* Effect.logError(cause)
+          })
+        )
+      )
+    )
+  }
+
+  private handleStdoutLineEffect(line: string): Effect.Effect<void, never> {
+    return Effect.gen(this, function* () {
     let parsed: Record<string, unknown>
     try {
       parsed = JSON.parse(line) as Record<string, unknown>
@@ -546,21 +560,25 @@ export class PiRpcProcess {
     }
 
     if (isExtensionUIRequest && this.extensionUIHandler) {
-      try {
-        const response = await Effect.runPromise(this.extensionUIHandler(parsed as { id: string; method: string; [key: string]: unknown }))
-        await Effect.runPromise(this.send(response, 10_000))
-      } catch (error) {
-        // Send cancelled response if handler fails
-        try {
-          await Effect.runPromise(this.send({
+      yield* Effect.catchAll(
+        this.extensionUIHandler(parsed as { id: string; method: string; [key: string]: unknown }).pipe(
+          Effect.flatMap((response) => this.send(response, 10_000))
+        ),
+        (error) => Effect.gen(this, function* () {
+          yield* Effect.logError(`[pi-process] Extension UI handler failed`)
+          yield* Effect.logError(error)
+          yield* this.send({
             type: "extension_ui_response",
             id: parsed.id,
             cancelled: true,
-          }, 10_000))
-        } catch (sendErr) {
-          console.error(`[pi-process] Failed to send cancelled response:`, sendErr)
-        }
-      }
+          }, 10_000).pipe(
+            Effect.catchAll((sendErr) => Effect.gen(function* () {
+              yield* Effect.logError(`[pi-process] Failed to send cancelled response`)
+              yield* Effect.logError(sendErr)
+            }))
+          )
+        })
+      )
       return
     }
 
@@ -604,6 +622,7 @@ export class PiRpcProcess {
     if (text && this.onOutput) {
       this.onOutput(text)
     }
+    })
   }
 
   private captureStderr(): void {

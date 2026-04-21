@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto"
-import { Effect, Runtime } from "effect"
+import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
 import type { Task, WorkflowRun, WSMessage } from "../../types.ts"
@@ -8,6 +8,7 @@ import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
 import {
   HttpRouteError,
   badRequestError,
+  conflictError,
   internalRouteError,
   notFoundError,
   serviceUnavailableError,
@@ -66,29 +67,23 @@ function requireBestOfNTask(db: { getTask: (taskId: string) => Task | null }, ta
 
 export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): void {
   const mapOrchestratorRouteError = (taskId: string, messagePrefix: string, error: unknown): HttpRouteError => {
-    if (typeof error === "object" && error !== null && "_tag" in error && error._tag === "OrchestratorUnavailableError") {
-      const message = "message" in error && typeof error.message === "string" ? error.message : "Orchestrator unavailable"
-      return serviceUnavailableError(`${messagePrefix} ${taskId}: ${message}`, ErrorCode.SERVICE_UNAVAILABLE)
-    }
     const message = error instanceof Error ? error.message : String(error)
     return internalRouteError(`${messagePrefix} ${taskId}: ${message}`, ErrorCode.EXECUTION_OPERATION_FAILED, error)
   }
 
   const startSingleTaskEffect = (taskId: string): Effect.Effect<WorkflowRun | null, HttpRouteError> =>
-    Effect.tryPromise({
-      try: () => Effect.runPromise(ctx.onStartSingle(taskId)),
-      catch: (error) => mapOrchestratorRouteError(taskId, "Failed to start task", error),
-    })
+    ctx.onStartSingle(taskId).pipe(
+      Effect.mapError((error) => mapOrchestratorRouteError(taskId, "Failed to start task", error)),
+    )
 
   const manualSelfHealRecoverEffect = (
     taskId: string,
     reportId: string,
     action: "restart_task" | "keep_failed",
   ): Effect.Effect<{ ok: boolean; message: string }, HttpRouteError> =>
-    Effect.tryPromise({
-      try: () => Effect.runPromise(ctx.onManualSelfHealRecover!(taskId, reportId, action)),
-      catch: (error) => mapOrchestratorRouteError(taskId, "Failed manual self-heal recovery for task", error),
-    })
+    ctx.onManualSelfHealRecover!(taskId, reportId, action).pipe(
+      Effect.mapError((error) => mapOrchestratorRouteError(taskId, "Failed manual self-heal recovery for task", error)),
+    )
 
   const buildPlanRevisionResponse = (
     taskId: string,
@@ -99,7 +94,6 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     db: { getTask: (taskId: string) => Task | null; getActiveWorkflowRunForTask: (taskId: string) => WorkflowRun | null; updateTask: (taskId: string, patch: Partial<Task>) => Task | null },
   ) =>
     Effect.gen(function* () {
-      const runtime = yield* Effect.runtime<never>()
       const task = yield* requirePlanModeTask(db, taskId)
       const body = yield* parseJsonRecord(req)
       if (typeof body.feedback !== "string" || !body.feedback.trim()) {
@@ -117,11 +111,11 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       const nextPlanRevisionCount = task.planRevisionCount + 1
       const nextAgentOutput = `${task.agentOutput}\n[user-revision-request]\n${feedback}\n`
 
-      const startRevisionRunWhenReady = async (maxAttempts: number, delayMs: number): Promise<WorkflowRun | null> => {
+      const startRevisionRunWhenReady = (maxAttempts: number, delayMs: number): Effect.Effect<WorkflowRun | null, HttpRouteError> => Effect.gen(function* () {
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           const activeRun = db.getActiveWorkflowRunForTask(task.id)
           if (activeRun) {
-            await Bun.sleep(delayMs)
+            yield* Effect.sleep(delayMs)
             continue
           }
 
@@ -139,19 +133,13 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
           const normalizedPrepared = normalizeTaskForClient(prepared, sessionUrlFor)
           broadcast({ type: "task_updated", payload: normalizedPrepared })
           broadcast({ type: "plan_revision_requested", payload: { taskId: task.id } })
-          return await Runtime.runPromise(runtime)(startSingleTaskEffect(task.id))
+          return yield* startSingleTaskEffect(task.id)
         }
 
         return null
-      }
-
-      const run = yield* Effect.tryPromise({
-        try: () => startRevisionRunWhenReady(24, 50),
-        catch: (error) =>
-          error instanceof HttpRouteError
-            ? error
-            : internalRouteError(`Failed to queue revision run for ${task.id}`, ErrorCode.EXECUTION_OPERATION_FAILED, error),
       })
+
+      const run = yield* startRevisionRunWhenReady(24, 50)
 
       if (run) {
         const taskForResponse = db.getTask(task.id)
@@ -161,25 +149,11 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
         return json({ task: normalizeTaskForClient(taskForResponse, sessionUrlFor), run })
       }
 
-      void (async () => {
-        try {
-          const queuedRun = await startRevisionRunWhenReady(200, 100)
-          if (!queuedRun) {
-            console.error(`[plan-revision] Timed out queuing revision run for ${task.id} after prior run remained active`)
-          }
-        } catch (error) {
-          console.error(`[plan-revision] Failed to queue revision run for ${task.id}:`, error)
-        }
-      })()
-
-      const pendingTask: Task = {
-        ...task,
-        awaitingPlanApproval: false,
-        executionPhase: "plan_revision_pending",
-        planRevisionCount: nextPlanRevisionCount,
-        agentOutput: nextAgentOutput,
-      }
-      return json({ task: normalizeTaskForClient(pendingTask, sessionUrlFor), run: null, queued: true })
+      return yield* conflictError(
+        `Could not queue plan revision for task ${task.id} because a prior run is still active`,
+        ErrorCode.EXECUTION_OPERATION_FAILED,
+        { taskId: task.id },
+      )
     })
 
   router.get("/api/tasks", ({ json, sessionUrlFor, db }) => {
@@ -291,121 +265,139 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     return json(normalized, 201)
   })
 
-  router.post("/api/tasks/create-and-wait", async ({ req, json, sessionUrlFor, broadcast, db }) => {
-    const body = await req.json()
-    const invalidBooleanField = getInvalidTaskBooleanField(body)
-    if (invalidBooleanField) return json({ error: `Invalid ${invalidBooleanField}. Expected boolean.` }, 400)
-    if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
-      return json({ error: "Invalid thinkingLevel. Allowed values: default, low, medium, high" }, 400)
-    }
-    if (body?.planThinkingLevel !== undefined && !isThinkingLevel(body.planThinkingLevel)) {
-      return json({ error: "Invalid planThinkingLevel. Allowed values: default, low, medium, high" }, 400)
-    }
-    if (body?.executionThinkingLevel !== undefined && !isThinkingLevel(body.executionThinkingLevel)) {
-      return json({ error: "Invalid executionThinkingLevel. Allowed values: default, low, medium, high" }, 400)
-    }
-    if (body?.executionStrategy !== undefined && !isExecutionStrategy(body.executionStrategy)) {
-      return json({ error: "Invalid executionStrategy. Allowed values: standard, best_of_n" }, 400)
-    }
-    if (body?.executionStrategy === "best_of_n") {
-      const valid = validateBestOfNConfig(body.bestOfNConfig)
-      if (!valid.valid) return json({ error: valid.error }, 400)
-    }
-
-    if (body?.autoDeploy !== undefined || body?.autoDeployCondition !== undefined) {
-      return json(
-        { error: "autoDeploy is only supported for template tasks and cannot be used with create-and-wait" },
-        400,
-      )
-    }
-
-    const timeoutMs = Math.min(Math.max(Number(body.timeoutMs) || 1800000, 60000), 7200000)
-    const pollIntervalMs = Math.min(Math.max(Number(body.pollIntervalMs) || 2000, 1000), 30000)
-
-    if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
-      const imageExists = await ctx.validateContainerImage(String(body.containerImage))
-      if (!imageExists) {
-        return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
+  router.post("/api/tasks/create-and-wait", ({ req, json, sessionUrlFor, broadcast, db }) =>
+    Effect.gen(function* () {
+      const body = yield* parseJsonRecord(req)
+      const invalidBooleanField = getInvalidTaskBooleanField(body)
+      if (invalidBooleanField) return json({ error: `Invalid ${invalidBooleanField}. Expected boolean.` }, 400)
+      if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
+        return json({ error: "Invalid thinkingLevel. Allowed values: default, low, medium, high" }, 400)
       }
-    }
-
-    const task = db.createTask({
-      id: randomUUID().slice(0, 8),
-      name: String(body.name ?? "").trim(),
-      prompt: String(body.prompt ?? ""),
-      status: "backlog",
-      branch: body.branch,
-      planModel: body.planModel,
-      executionModel: body.executionModel,
-      planmode: body.planmode,
-      autoApprovePlan: body.autoApprovePlan,
-      review: body.review,
-      codeStyleReview: body.codeStyleReview,
-      autoCommit: body.autoCommit,
-      autoDeploy: false,
-      autoDeployCondition: null,
-      deleteWorktree: body.deleteWorktree,
-      requirements: Array.isArray(body.requirements) ? body.requirements : [],
-      thinkingLevel: body.thinkingLevel,
-      planThinkingLevel: body.planThinkingLevel,
-      executionThinkingLevel: body.executionThinkingLevel,
-      executionStrategy: body.executionStrategy,
-      bestOfNConfig: body.bestOfNConfig,
-      bestOfNSubstage: body.bestOfNSubstage,
-      skipPermissionAsking: body.skipPermissionAsking,
-      containerImage: body.containerImage,
-    })
-
-    const normalized = normalizeTaskForClient(task, sessionUrlFor)
-    broadcast({ type: "task_created", payload: normalized })
-
-    const run = await Effect.runPromise(ctx.onStartSingle(task.id))
-    if (!run) {
-      return json({ error: "Failed to start task execution" }, 500)
-    }
-
-    const startTime = Date.now()
-    const terminalStatuses = ["done", "failed", "stuck"] as const
-
-    while (true) {
-      await Bun.sleep(pollIntervalMs)
-
-      const currentTask = db.getTask(task.id)
-      if (!currentTask) {
-        return json(createApiError("Task was deleted during execution", ErrorCode.TASK_NOT_FOUND), 500)
+      if (body?.planThinkingLevel !== undefined && !isThinkingLevel(body.planThinkingLevel)) {
+        return json({ error: "Invalid planThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      if (body?.executionThinkingLevel !== undefined && !isThinkingLevel(body.executionThinkingLevel)) {
+        return json({ error: "Invalid executionThinkingLevel. Allowed values: default, low, medium, high" }, 400)
+      }
+      if (body?.executionStrategy !== undefined && !isExecutionStrategy(body.executionStrategy)) {
+        return json({ error: "Invalid executionStrategy. Allowed values: standard, best_of_n" }, 400)
+      }
+      if (body?.executionStrategy === "best_of_n") {
+        const valid = validateBestOfNConfig(body.bestOfNConfig)
+        if (!valid.valid) return json({ error: valid.error }, 400)
       }
 
-      if (terminalStatuses.includes(currentTask.status as (typeof terminalStatuses)[number])) {
+      if (body?.autoDeploy !== undefined || body?.autoDeployCondition !== undefined) {
         return json(
-          {
-            task: normalizeTaskForClient(currentTask, sessionUrlFor),
-            run: db.getWorkflowRun(run.id),
-            completedAt: Date.now(),
-            durationMs: Date.now() - startTime,
-            status: currentTask.status,
-          },
-          200,
+          { error: "autoDeploy is only supported for template tasks and cannot be used with create-and-wait" },
+          400,
         )
       }
 
-      if (Date.now() - startTime >= timeoutMs) {
-        if (ctx.onStopRun) {
-          Effect.runPromise(ctx.onStopRun(run.id, { destructive: false })).catch((err: unknown) => {
-            console.error(`[API /create-and-wait] Failed to stop run ${run.id} on timeout:`, err)
-          })
+      const timeoutMs = Math.min(Math.max(Number(body.timeoutMs) || 1800000, 60000), 7200000)
+      const pollIntervalMs = Math.min(Math.max(Number(body.pollIntervalMs) || 2000, 1000), 30000)
+
+      if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
+        const imageExists = yield* Effect.tryPromise({
+          try: () => ctx.validateContainerImage(String(body.containerImage)),
+          catch: (error) => internalRouteError(
+            `Failed to validate container image '${String(body.containerImage)}'`,
+            ErrorCode.CONTAINER_OPERATION_FAILED,
+            error,
+          ),
+        })
+        if (!imageExists) {
+          return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
         }
-        return json(
-          createApiError("Timeout waiting for task completion", ErrorCode.EXECUTION_OPERATION_FAILED, {
-            task: normalizeTaskForClient(currentTask, sessionUrlFor),
-            run: db.getWorkflowRun(run.id),
-            timeoutMs,
-            elapsedMs: Date.now() - startTime,
-          }),
-          408,
-        )
       }
-    }
-  })
+
+      const task = db.createTask({
+        id: randomUUID().slice(0, 8),
+        name: String(body.name ?? "").trim(),
+        prompt: String(body.prompt ?? ""),
+        status: "backlog",
+        branch: body.branch,
+        planModel: body.planModel,
+        executionModel: body.executionModel,
+        planmode: body.planmode,
+        autoApprovePlan: body.autoApprovePlan,
+        review: body.review,
+        codeStyleReview: body.codeStyleReview,
+        autoCommit: body.autoCommit,
+        autoDeploy: false,
+        autoDeployCondition: null,
+        deleteWorktree: body.deleteWorktree,
+        requirements: Array.isArray(body.requirements) ? body.requirements : [],
+        thinkingLevel: body.thinkingLevel,
+        planThinkingLevel: body.planThinkingLevel,
+        executionThinkingLevel: body.executionThinkingLevel,
+        executionStrategy: body.executionStrategy,
+        bestOfNConfig: body.bestOfNConfig,
+        bestOfNSubstage: body.bestOfNSubstage,
+        skipPermissionAsking: body.skipPermissionAsking,
+        containerImage: body.containerImage,
+      })
+
+      const normalized = normalizeTaskForClient(task, sessionUrlFor)
+      broadcast({ type: "task_created", payload: normalized })
+
+      const run = yield* ctx.onStartSingle(task.id).pipe(
+        Effect.mapError((error) => mapOrchestratorRouteError(task.id, "Failed to start task", error)),
+      )
+      if (!run) {
+        return json({ error: "Failed to start task execution" }, 500)
+      }
+
+      const startTime = Date.now()
+      const terminalStatuses = ["done", "failed", "stuck"] as const
+
+      while (true) {
+        yield* Effect.sleep(pollIntervalMs)
+
+        const currentTask = db.getTask(task.id)
+        if (!currentTask) {
+          return json(createApiError("Task was deleted during execution", ErrorCode.TASK_NOT_FOUND), 500)
+        }
+
+        if (terminalStatuses.includes(currentTask.status as (typeof terminalStatuses)[number])) {
+          return json(
+            {
+              task: normalizeTaskForClient(currentTask, sessionUrlFor),
+              run: db.getWorkflowRun(run.id),
+              completedAt: Date.now(),
+              durationMs: Date.now() - startTime,
+              status: currentTask.status,
+            },
+            200,
+          )
+        }
+
+        if (Date.now() - startTime >= timeoutMs) {
+          const stopOutcome = ctx.onStopRun
+            ? yield* Effect.either(
+                ctx.onStopRun(run.id, { destructive: false }).pipe(
+                  Effect.mapError((error) => mapOrchestratorRouteError(task.id, "Failed to stop timed out task", error)),
+                ),
+              )
+            : null
+
+          return json(
+            createApiError("Timeout waiting for task completion", ErrorCode.EXECUTION_OPERATION_FAILED, {
+              task: normalizeTaskForClient(currentTask, sessionUrlFor),
+              run: db.getWorkflowRun(run.id),
+              timeoutMs,
+              elapsedMs: Date.now() - startTime,
+              stopFailure:
+                stopOutcome && stopOutcome._tag === "Left"
+                  ? { message: stopOutcome.left.message, code: stopOutcome.left.code }
+                  : undefined,
+            }),
+            408,
+          )
+        }
+      }
+    }),
+  )
 
   router.put("/api/tasks/reorder", async ({ req, json, broadcast, db }) => {
     const body = await req.json()

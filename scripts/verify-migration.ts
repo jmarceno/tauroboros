@@ -19,10 +19,12 @@ interface CheckResult {
   readonly name: string
   readonly pattern: string
   readonly files: string
-  readonly allowed: number
+  readonly allowed?: number
+  readonly minimum?: number
   readonly found: number
   readonly violations: string[]
   readonly passed: boolean
+  readonly kind: "max" | "min" | "info"
 }
 
 function runGrep(pattern: string, files: string): string[] {
@@ -59,18 +61,44 @@ function checkPattern(
     found: lines.length,
     violations,
     passed: violations.length <= allowed,
+    kind: "max",
+  }
+}
+
+function measurePattern(
+  name: string,
+  pattern: string,
+  files: string,
+  minimum = 0,
+): CheckResult {
+  const lines = runGrep(pattern, files)
+  return {
+    name,
+    pattern,
+    files,
+    minimum,
+    found: lines.length,
+    violations: [],
+    passed: lines.length >= minimum,
+    kind: minimum > 0 ? "min" : "info",
   }
 }
 
 function printResult(result: CheckResult): void {
-  const status = result.passed ? "✓" : "✗"
-  const color = result.passed ? "\x1b[32m" : "\x1b[31m"
+  const status = result.kind === "info" ? "•" : result.passed ? "✓" : "✗"
+  const color = result.kind === "info" ? "\x1b[36m" : result.passed ? "\x1b[32m" : "\x1b[31m"
   const reset = "\x1b[0m"
 
   console.log(`${color}${status}${reset} ${result.name}`)
   console.log(`  Pattern: ${result.pattern}`)
   console.log(`  Files: ${result.files}`)
-  console.log(`  Found: ${result.found} (allowed: ${result.allowed})`)
+  if (result.kind === "max") {
+    console.log(`  Found: ${result.found} (allowed: ${result.allowed})`)
+  } else if (result.kind === "min") {
+    console.log(`  Found: ${result.found} (minimum expected: ${result.minimum})`)
+  } else {
+    console.log(`  Found: ${result.found}`)
+  }
 
   if (result.violations.length > 0 && !result.passed) {
     console.log(`  Violations:`)
@@ -85,6 +113,8 @@ function printResult(result: CheckResult): void {
 }
 
 function main(): void {
+  const strict = process.argv.includes("--strict")
+
   console.log("Effect Migration Verification")
   console.log("=============================\n")
 
@@ -128,75 +158,83 @@ function main(): void {
       "console.log (backend)",
       "console\\.log",
       SRC_DIR,
-      100, // Temporary allowance during migration
-      ["kanban-solid/", "node_modules/"]
+      0,
+      ["kanban-solid/", "node_modules/", "mock-llm-server/"]
     ),
 
     checkPattern(
       "console.error (backend)",
       "console\\.error",
       SRC_DIR,
-      50, // Temporary allowance during migration
-      ["kanban-solid/", "node_modules/"]
+      0,
+      ["kanban-solid/", "node_modules/", "mock-llm-server/"]
     ),
 
     checkPattern(
       "console.warn (backend)",
       "console\\.warn",
       SRC_DIR,
-      30, // Temporary allowance during migration
-      ["kanban-solid/", "node_modules/"]
+      0,
+      ["kanban-solid/", "node_modules/", "mock-llm-server/"]
     ),
 
     // Check 3: Effect.runPromise should only be at boundaries
     checkPattern(
-      "Effect.runPromise (internal)",
-      "Effect\\.runPromise",
+      "Effect.run* outside approved boundaries",
+      "Effect\\.run(Promise|Sync|Fork|Callback)",
       SRC_DIR,
-      50, // Temporary allowance during migration
+      0,
       [
         "index.ts", // Entry point is allowed
-        "kanban-solid/", // Frontend has its own rules
-        "tests/",
-        "server/server.ts", // Server boundary
-        "server/routes/", // Route boundaries
-        "runtime/pi-process.ts", // Has internal runs that need migration
-        "runtime/container-pi-process.ts",
-        "orchestrator.ts",
+        "server/route-interpreter.ts", // Bun request boundary
+        "kanban-solid/src/api/client.ts", // Frontend UI boundary helper
       ]
     ),
 
-    // Check 4: Proper Effect patterns should be expanding
+    // Frontend migration checks
     checkPattern(
+      "raw fetch outside frontend API client",
+      "\\bfetch\\(",
+      FRONTEND_DIR,
+      0,
+      ["api/client.ts"]
+    ),
+
+    checkPattern(
+      "frontend Promise signatures in API/stores",
+      ": .*Promise<|=> Promise<",
+      `${FRONTEND_DIR}/api ${FRONTEND_DIR}/stores`,
+      0,
+      ["api/client.ts"]
+    ),
+
+    // Migration signal metrics
+    measurePattern(
       "Context.GenericTag usage",
       "Context\\.GenericTag",
       SRC_DIR,
-      5,
-      []
+      1,
     ),
 
-    checkPattern(
+    measurePattern(
       "Layer usage",
       "Layer\\.",
       SRC_DIR,
-      10,
-      []
+      1,
     ),
 
-    checkPattern(
+    measurePattern(
       "Schema.TaggedError usage",
       "Schema\\.TaggedError",
       SRC_DIR,
-      15,
-      []
+      1,
     ),
 
-    checkPattern(
+    measurePattern(
       "Effect.log usage",
       "Effect\\.log",
       SRC_DIR,
-      20,
-      []
+      1,
     ),
   ]
 
@@ -205,6 +243,9 @@ function main(): void {
 
   for (const check of checks) {
     printResult(check)
+    if (check.kind === "info") {
+      continue
+    }
     if (check.passed) {
       passed++
     } else {
@@ -216,8 +257,8 @@ function main(): void {
   console.log(`Results: ${passed} passed, ${failed} failed`)
 
   if (failed > 0) {
-    console.log("\nMigration in progress - some checks are expected to fail")
-    process.exit(0) // Don't fail CI during migration
+    console.log(`\nMigration ${strict ? "failed strict verification" : "still in progress"}`)
+    process.exit(strict ? 1 : 0)
   }
 }
 

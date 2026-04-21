@@ -164,9 +164,7 @@ export function createTaskGroupsStore() {
     return await startGroupMutation.mutateAsync(groupId)
   }
 
-  const loadGroupDetails = async (groupId: string): Promise<TaskGroupWithTasks> => {
-    return await runApi(api.taskGroupsApi.getById(groupId))
-  }
+  const loadGroupDetails = (groupId: string) => runApi(api.taskGroupsApi.getById(groupId))
 
   return {
     groups,

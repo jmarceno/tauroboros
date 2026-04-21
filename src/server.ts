@@ -7,11 +7,7 @@ import type { WSMessage } from "./types.ts"
 import { PiKanbanDB } from "./db.ts"
 import { PiKanbanServer } from "./server/server.ts"
 import { WebSocketHub } from "./server/websocket.ts"
-import {
-  PiOrchestrator,
-  runOrchestratorOperationPromiseEffect,
-  runOrchestratorOperationSyncEffect,
-} from "./orchestrator.ts"
+import { PiOrchestrator, OrchestratorOperationError } from "./orchestrator.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
 import { ContainerImageManager } from "./runtime/container-image-manager.ts"
 import { PlanningSessionManager } from "./runtime/planning-session.ts"
@@ -36,6 +32,19 @@ interface RuntimeManagers {
   planningSessionManager: PlanningSessionManager
   imageManager?: ContainerImageManager
   containerManager?: PiContainerManager
+}
+
+function wrapOrchestratorSync<A>(operation: string, run: () => A): Effect.Effect<A, OrchestratorOperationError> {
+  return Effect.try({
+    try: run,
+    catch: (cause) =>
+      cause instanceof OrchestratorOperationError
+        ? cause
+        : new OrchestratorOperationError({
+            operation,
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+  })
 }
 
 export const ProjectRootContext = Context.GenericTag<string>("ProjectRootContext")
@@ -124,36 +133,36 @@ function buildPiServerRuntime(
     imageManager,
     containerManager,
     wsHub,
-    onStart: () => runOrchestratorOperationPromiseEffect(orchestrator, "startAll", (instance) => instance.startAll()),
-    onStartSingle: (taskId: string) => runOrchestratorOperationPromiseEffect(orchestrator, "startSingle", (instance) => instance.startSingle(taskId)),
-    onStartGroup: (groupId: string) => runOrchestratorOperationPromiseEffect(orchestrator, "startGroup", (instance) => instance.startGroup(groupId)),
+    onStart: () => orchestrator.startAll(),
+    onStartSingle: (taskId: string) => orchestrator.startSingle(taskId),
+    onStartGroup: (groupId: string) => orchestrator.startGroup(groupId),
     onStop: () =>
-      runOrchestratorOperationPromiseEffect(orchestrator, "stop", (instance) => instance.stop()).pipe(
+      orchestrator.stop().pipe(
         Effect.as({ ok: true }),
       ),
     onPauseRun: (runId: string) =>
-      runOrchestratorOperationPromiseEffect(orchestrator, "pauseRun", (instance) => instance.pauseRun(runId)).pipe(
+      orchestrator.pauseRun(runId).pipe(
         Effect.map((success) => {
           const run = db.getWorkflowRun(runId)
           return { success, run }
         }),
       ),
-    onResumeRun: (runId: string) => runOrchestratorOperationPromiseEffect(orchestrator, "resumeRun", (instance) => instance.resumeRun(runId)),
+    onResumeRun: (runId: string) => orchestrator.resumeRun(runId),
     onStopRun: (runId: string, stopOptions?: { destructive?: boolean }) => Effect.gen(function* () {
       if (stopOptions?.destructive) {
-        const result = yield* runOrchestratorOperationPromiseEffect(orchestrator, "destructiveStop", (instance) => instance.destructiveStop(runId))
+        const result = yield* orchestrator.destructiveStop(runId)
         const run = db.getWorkflowRun(runId)!
         return { success: true, run, killed: result.killed, cleaned: result.cleaned }
       }
 
-      yield* runOrchestratorOperationPromiseEffect(orchestrator, "stopRun", (instance) => instance.stopRun(runId))
+      yield* orchestrator.stopRun(runId)
       const run = db.getWorkflowRun(runId)!
       return { success: true, run }
     }),
-    onGetSlots: () => runOrchestratorOperationSyncEffect(orchestrator, "getSlotUtilization", (instance) => instance.getSlotUtilization()),
-    onGetRunQueueStatus: (runId: string) => runOrchestratorOperationSyncEffect(orchestrator, "getRunQueueStatus", (instance) => instance.getRunQueueStatus(runId)),
+    onGetSlots: () => wrapOrchestratorSync("getSlotUtilization", () => orchestrator.getSlotUtilization()),
+    onGetRunQueueStatus: (runId: string) => wrapOrchestratorSync("getRunQueueStatus", () => orchestrator.getRunQueueStatus(runId)),
     onManualSelfHealRecover: (taskId: string, reportId: string, action: "restart_task" | "keep_failed") =>
-      runOrchestratorOperationPromiseEffect(orchestrator, "manualSelfHealRecover", (instance) => instance.manualSelfHealRecover(taskId, reportId, action)),
+      orchestrator.manualSelfHealRecover(taskId, reportId, action),
   })
 
   return { db, server, orchestrator }

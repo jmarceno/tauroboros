@@ -6,8 +6,10 @@
 import { createSignal } from 'solid-js'
 import type { DropAction } from '@/utils/dropValidation'
 
+type Awaitable<T> = T | PromiseLike<T>
+
 export function createDragDropStore(
-  onDrop: (taskId: string, target: string, action: DropAction) => Promise<void>
+  onDrop: (taskId: string, target: string, action: DropAction) => Awaitable<void>
 ) {
   const [draggedTaskId, setDraggedTaskId] = createSignal<string | null>(null)
   const [dragSourceStatus, setDragSourceStatus] = createSignal<string | null>(null)
