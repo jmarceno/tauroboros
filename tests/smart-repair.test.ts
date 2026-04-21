@@ -130,7 +130,6 @@ describe("smart repair", () => {
       }
     }
 
-    db.close()
   })
 
   it("runs Pi-backed smart repair and stores repair session IO", async () => {
@@ -164,7 +163,6 @@ describe("smart repair", () => {
     const sessions = db.getWorkflowSessionsByTask(task.id)
     const repairSession = sessions.find((session) => session.sessionKind === "repair")
     expect(repairSession).toBeDefined()
-    db.close()
   })
 
   it("throws explicit error when smart repair JSON is malformed", async () => {
@@ -184,7 +182,6 @@ describe("smart repair", () => {
 
     // Explicit errors: malformed JSON should throw, not fallback
     await expect(runEffect(service.repair(task.id))).rejects.toThrow()
-    db.close()
   })
 
   describe("code-style phase detection", () => {
@@ -207,7 +204,6 @@ describe("smart repair", () => {
       const updatedTask = db.getTask(task.id)!
       expect(wasInCodeStylePhase(updatedTask)).toBe(true)
 
-      db.close()
     })
 
     it("detects code-style phase from 'code style' text in agent output", () => {
@@ -229,7 +225,6 @@ describe("smart repair", () => {
       const updatedTask = db.getTask(task.id)!
       expect(wasInCodeStylePhase(updatedTask)).toBe(true)
 
-      db.close()
     })
 
     it("detects code-style phase from error message", () => {
@@ -251,7 +246,6 @@ describe("smart repair", () => {
       const updatedTask = db.getTask(task.id)!
       expect(wasInCodeStylePhase(updatedTask)).toBe(true)
 
-      db.close()
     })
 
     it("returns false when codeStyleReview is disabled", () => {
@@ -273,7 +267,6 @@ describe("smart repair", () => {
       const updatedTask = db.getTask(task.id)!
       expect(wasInCodeStylePhase(updatedTask)).toBe(false)
 
-      db.close()
     })
 
     it("returns reset_backlog for stuck tasks in code-style phase", () => {
@@ -299,7 +292,6 @@ describe("smart repair", () => {
       expect(decision.action).toBe("reset_backlog")
       expect(decision.reason).toContain("Code style enforcement failed")
 
-      db.close()
     })
 
     it("skips code-style repair when task is not stuck", () => {
@@ -325,7 +317,6 @@ describe("smart repair", () => {
       expect(decision.action).not.toBe("reset_backlog")
       expect(decision.reason).not.toContain("Code style")
 
-      db.close()
     })
   })
 })

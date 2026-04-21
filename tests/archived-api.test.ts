@@ -40,7 +40,6 @@ describe("Archived Tasks API", () => {
 
   afterEach(() => {
     server.stop()
-    db.close()
     rmSync(tempDir, { recursive: true, force: true })
   })
 

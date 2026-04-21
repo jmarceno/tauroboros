@@ -887,6 +887,25 @@ export class PlanningSession {
 export class PlanningSessionManager {
   private sessions = new Map<string, PlanningSession>()
 
+  static make(
+    db: PiKanbanDB,
+    containerManager?: PiContainerManager,
+    settings?: InfrastructureSettings,
+  ): Effect.Effect<PlanningSessionManager> {
+    return Effect.sync(() => new PlanningSessionManager(db, containerManager, settings))
+  }
+
+  static makeScoped(
+    db: PiKanbanDB,
+    containerManager?: PiContainerManager,
+    settings?: InfrastructureSettings,
+  ): Effect.Effect<PlanningSessionManager, never, Scope.Scope> {
+    return Effect.acquireRelease(
+      Effect.sync(() => new PlanningSessionManager(db, containerManager, settings)),
+      (manager) => manager.closeAllSessions().pipe(Effect.orDie),
+    )
+  }
+
   constructor(
     private readonly db: PiKanbanDB,
     private readonly containerManager?: PiContainerManager,

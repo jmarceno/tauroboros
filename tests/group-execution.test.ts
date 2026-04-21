@@ -43,23 +43,26 @@ describe("Group Execution", () => {
   })
 
   describe("validateGroupTasksExist", () => {
-    it("should return tasks when all exist", () => {
+    it("should return tasks when all exist", async () => {
       const task1 = db.createTask({ id: "task-1", name: "Task 1", prompt: "Test prompt", status: "backlog" })
       const task2 = db.createTask({ id: "task-2", name: "Task 2", prompt: "Test prompt", status: "backlog" })
 
-      const result = orchestrator.testValidateGroupTasksExist(["task-1", "task-2"])
+      const result = await runEffect(orchestrator.testValidateGroupTasksExist(["task-1", "task-2"]))
 
       expect(result).toHaveLength(2)
       expect(result[0].id).toBe("task-1")
       expect(result[1].id).toBe("task-2")
     })
 
-    it("should throw error when tasks are missing", () => {
+    it("should throw error when tasks are missing", async () => {
       db.createTask({ id: "task-1", name: "Task 1", prompt: "Test prompt", status: "backlog" })
 
-      expect(() => {
-        orchestrator.testValidateGroupTasksExist(["task-1", "missing-task"])
-      }).toThrow("One or more tasks in group were not found in database: missing-task")
+      try {
+        await runEffect(orchestrator.testValidateGroupTasksExist(["task-1", "missing-task"]))
+        expect.fail("Should have thrown error")
+      } catch (err) {
+        expect((err as Error).message).toContain("One or more tasks in group were not found in database: missing-task")
+      }
     })
   })
 

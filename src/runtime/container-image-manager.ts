@@ -83,6 +83,16 @@ export interface ImageStatusChangeEvent {
 
 export type ImageStatusChangeHandler = (event: ImageStatusChangeEvent) => void
 
+// Logging helpers using Effect.log for observability
+function logInfo(message: string): Effect.Effect<void> {
+  return Effect.logInfo(message)
+}
+
+function logError(message: string): Effect.Effect<void> {
+  return Effect.logError(message)
+}
+
+// Legacy sync logging functions for backward compatibility during migration
 function writeInfo(message: string): void {
   process.stdout.write(`${message}\n`)
 }
@@ -183,24 +193,17 @@ export class ContainerImageManager {
   /**
    * Check if the image exists in Podman.
    */
-  checkImageExists(): Effect.Effect<boolean, ContainerImageManagerError> {
-    return Effect.tryPromise({
-      try: () => this.checkImageExistsInternal(),
-      catch: (cause) => new ContainerImageManagerError({
-        operation: "checkImageExists",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+  checkImageExists(): Effect.Effect<boolean, never> {
+    return this.checkImageExistsInternal()
   }
 
-  private async checkImageExistsInternal(): Promise<boolean> {
-    try {
-      await this.execPodman(["image", "exists", this.options.imageName])
-      return true
-    } catch {
-      return false
-    }
+  private checkImageExistsInternal(): Effect.Effect<boolean, never> {
+    return this.execPodman(["image", "exists", this.options.imageName]).pipe(
+      Effect.match({
+        onSuccess: () => true,
+        onFailure: () => false,
+      }),
+    )
   }
 
   /**
@@ -244,17 +247,7 @@ export class ContainerImageManager {
   }
 
   private doPrepareEffect(): Effect.Effect<void, ContainerImageManagerError> {
-    return Effect.tryPromise({
-      try: () => this.doPrepare(),
-      catch: (cause) =>
-        cause instanceof ContainerImageManagerError
-          ? cause
-          : new ContainerImageManagerError({
-              operation: "doPrepare",
-              message: cause instanceof Error ? cause.message : String(cause),
-              cause,
-            }),
-    })
+    return this.doPrepare()
   }
 
   close(): Effect.Effect<void, never> {
@@ -264,51 +257,76 @@ export class ContainerImageManager {
     })
   }
 
-  private async doPrepare(): Promise<void> {
-    // First check if image already exists
-    const exists = await this.checkImageExists()
-    if (exists) {
-      this.isPrepared = true
-      this.updateStatus("ready", "Container image is ready")
-      return
-    }
-
-    // Need to build or pull
-    this.updateStatus("preparing", "Preparing container image...")
-
-    const startTime = Date.now()
-
-    try {
-      if (this.options.imageSource === "dockerfile") {
-        await this.buildFromDockerfile()
-      } else if (this.options.imageSource === "registry") {
-        await this.pullFromRegistry()
+  private doPrepare(): Effect.Effect<void, ContainerImageManagerError> {
+    return Effect.gen(this, function* () {
+      // First check if image already exists
+      const exists = yield* this.checkImageExists()
+      if (exists) {
+        this.isPrepared = true
+        this.updateStatus("ready", "Container image is ready")
+        return
       }
 
-      const buildTime = Date.now() - startTime
-      this.isPrepared = true
-      this.saveCache({
-        imageName: this.options.imageName,
-        status: "ready",
-        lastUpdated: new Date().toISOString(),
-        source: this.options.imageSource,
-        buildTimeMs: buildTime,
-      })
+      // Need to build or pull
+      this.updateStatus("preparing", "Preparing container image...")
 
-      this.updateStatus("ready", `Container image ready (took ${Math.round(buildTime / 1000)}s)`)
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      this.isPrepared = false
-      this.saveCache({
-        imageName: this.options.imageName,
-        status: "error",
-        lastUpdated: new Date().toISOString(),
-        source: this.options.imageSource,
-        errorMessage,
-      })
-      this.updateStatus("error", "Failed to prepare container image", undefined, errorMessage)
-      throw error
-    }
+      const startTime = Date.now()
+
+      try {
+        if (this.options.imageSource === "dockerfile") {
+          yield* Effect.tryPromise({
+            try: () => this.buildFromDockerfile(),
+            catch: (cause) =>
+              new ContainerImageManagerError({
+                operation: "buildFromDockerfile",
+                message: cause instanceof Error ? cause.message : String(cause),
+                cause,
+              }),
+          })
+        } else if (this.options.imageSource === "registry") {
+          yield* Effect.tryPromise({
+            try: () => this.pullFromRegistry(),
+            catch: (cause) =>
+              new ContainerImageManagerError({
+                operation: "pullFromRegistry",
+                message: cause instanceof Error ? cause.message : String(cause),
+                cause,
+              }),
+          })
+        }
+
+        const buildTime = Date.now() - startTime
+        this.isPrepared = true
+        this.saveCache({
+          imageName: this.options.imageName,
+          status: "ready",
+          lastUpdated: new Date().toISOString(),
+          source: this.options.imageSource,
+          buildTimeMs: buildTime,
+        })
+
+        this.updateStatus("ready", `Container image ready (took ${Math.round(buildTime / 1000)}s)`)
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        this.isPrepared = false
+        this.saveCache({
+          imageName: this.options.imageName,
+          status: "error",
+          lastUpdated: new Date().toISOString(),
+          source: this.options.imageSource,
+          errorMessage,
+        })
+        this.updateStatus("error", "Failed to prepare container image", undefined, errorMessage)
+        if (error instanceof ContainerImageManagerError) {
+          return yield* error
+        }
+        return yield* new ContainerImageManagerError({
+          operation: "doPrepare",
+          message: errorMessage,
+          cause: error,
+        })
+      }
+    })
   }
 
   /**
@@ -408,18 +426,18 @@ export class ContainerImageManager {
    * Pull the image from a registry.
    * Future implementation for pulling pre-built images.
    */
-  private async pullFromRegistry(): Promise<void> {
+  private pullFromRegistry(): Effect.Effect<void, ContainerImageManagerError> {
     const registryUrl = this.options.registryUrl
     if (!registryUrl) {
-      throw new ContainerImageManagerError({
+      return Effect.fail(new ContainerImageManagerError({
         operation: "pullFromRegistry",
         message: "registryUrl is required when imageSource is 'registry'",
-      })
+      }))
     }
 
     writeInfo(`🔄 Pulling container image from ${registryUrl}...`)
 
-    return new Promise((resolve, reject) => {
+    return Effect.async((resume) => {
       const proc = spawn("podman", ["pull", registryUrl], {
         stdio: ["pipe", "pipe", "pipe"],
       })
@@ -445,19 +463,31 @@ export class ContainerImageManager {
         if (code === 0) {
           // Tag the pulled image with our local name if different
           if (registryUrl !== this.options.imageName) {
-            this.execPodman(["tag", registryUrl, this.options.imageName])
-              .then(() => resolve())
-              .catch(reject)
+            // Chain the tag operation as an Effect
+            const tagEffect = this.execPodman(["tag", registryUrl, this.options.imageName])
+            tagEffect.pipe(
+              Effect.matchEffect({
+                onSuccess: () => resume(Effect.succeed(undefined)),
+                onFailure: (error) => resume(Effect.fail(error)),
+              })
+            )
           } else {
-            resolve()
+            resume(Effect.succeed(undefined))
           }
         } else {
-          reject(new Error(`Failed to pull image: ${stderr || stdout || `exit code ${code}`}`))
+          resume(Effect.fail(new ContainerImageManagerError({
+            operation: "pullFromRegistry",
+            message: `Failed to pull image: ${stderr || stdout || `exit code ${code}`}`,
+          })))
         }
       })
 
       proc.on("error", (err) => {
-        reject(new Error(`Failed to spawn podman pull: ${err.message}`))
+        resume(Effect.fail(new ContainerImageManagerError({
+          operation: "pullFromRegistry",
+          message: err instanceof Error ? err.message : String(err),
+          cause: err,
+        })))
       })
     })
   }
@@ -554,8 +584,8 @@ export class ContainerImageManager {
   /**
    * Execute a podman command.
    */
-  private execPodman(args: string[]): Promise<{ stdout: string; stderr: string }> {
-    return new Promise((resolve, reject) => {
+  private execPodman(args: string[]): Effect.Effect<{ stdout: string; stderr: string }, ContainerImageManagerError> {
+    return Effect.async((resume) => {
       const proc = spawn("podman", args, {
         stdio: ["pipe", "pipe", "pipe"],
       })
@@ -573,14 +603,21 @@ export class ContainerImageManager {
 
       proc.on("close", (code) => {
         if (code === 0) {
-          resolve({ stdout, stderr })
+          resume(Effect.succeed({ stdout, stderr }))
         } else {
-          reject(new Error(`Podman command failed with code ${code}: ${stderr || stdout}`))
+          resume(Effect.fail(new ContainerImageManagerError({
+            operation: "execPodman",
+            message: `Podman command failed with code ${code}: ${stderr || stdout}`,
+          })))
         }
       })
 
       proc.on("error", (err) => {
-        reject(err)
+        resume(Effect.fail(new ContainerImageManagerError({
+          operation: "execPodman",
+          message: err instanceof Error ? err.message : String(err),
+          cause: err,
+        })))
       })
     })
   }
@@ -634,54 +671,57 @@ export class ContainerImageManager {
    * Validate packages exist in Alpine repos using apk search
    */
   validatePackages(packages: string[]): Effect.Effect<PackageValidationResult, ContainerImageManagerError> {
-    return Effect.tryPromise({
-      try: () => this.validatePackagesInternal(packages),
-      catch: (cause) => new ContainerImageManagerError({
-        operation: "validatePackages",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+    return this.validatePackagesInternal(packages)
   }
 
-  private async validatePackagesInternal(packages: string[]): Promise<PackageValidationResult> {
-    const valid: string[] = []
-    const invalid: string[] = []
-    const suggestions: Record<string, string[]> = {}
+  private validatePackagesInternal(packages: string[]): Effect.Effect<PackageValidationResult, ContainerImageManagerError> {
+    return Effect.gen(this, function* () {
+      const valid: string[] = []
+      const invalid: string[] = []
+      const suggestions: Record<string, string[]> = {}
 
-    for (const pkg of packages) {
-      try {
+      for (const pkg of packages) {
         // Use apk search to check if package exists
-        const result = await this.execPodman([
+        const result = yield* this.execPodman([
           "run", "--rm", "docker.io/alpine:3.19",
           "sh", "-c", `apk search --exact "${pkg}" 2>/dev/null | head -1`
-        ])
-
-        const found = result.stdout.trim()
-        if (found && (found === pkg || found.startsWith(pkg + "-"))) {
-          valid.push(pkg)
-        } else {
-          invalid.push(pkg)
-          // Try to find suggestions
-          try {
-            const suggestResult = await this.execPodman([
-              "run", "--rm", "docker.io/alpine:3.19",
-              "sh", "-c", `apk search "${pkg}*" 2>/dev/null | head -5`
-            ])
-            const suggestionsList = suggestResult.stdout.trim().split("\n").filter(Boolean)
-            if (suggestionsList.length > 0) {
-              suggestions[pkg] = suggestionsList.slice(0, 5)
-            }
-          } catch {
-            // Ignore suggestion errors
-          }
-        }
-      } catch {
-        invalid.push(pkg)
+        ]).pipe(
+          Effect.matchEffect({
+            onSuccess: (result) => Effect.gen(this, function* () {
+              const found = result.stdout.trim()
+              if (found && (found === pkg || found.startsWith(pkg + "-"))) {
+                valid.push(pkg)
+              } else {
+                invalid.push(pkg)
+                // Try to find suggestions
+                const suggestResult = yield* this.execPodman([
+                  "run", "--rm", "docker.io/alpine:3.19",
+                  "sh", "-c", `apk search "${pkg}*" 2>/dev/null | head -5`
+                ]).pipe(
+                  Effect.match({
+                    onSuccess: (suggestResult) => {
+                      const suggestionsList = suggestResult.stdout.trim().split("\n").filter(Boolean)
+                      if (suggestionsList.length > 0) {
+                        suggestions[pkg] = suggestionsList.slice(0, 5)
+                      }
+                      return undefined
+                    },
+                    onFailure: () => undefined,
+                  })
+                )
+              }
+              return undefined
+            }),
+            onFailure: () => Effect.sync(() => {
+              invalid.push(pkg)
+              return undefined
+            }),
+          })
+        )
       }
-    }
 
-    return { valid, invalid, suggestions }
+      return { valid, invalid, suggestions }
+    })
   }
 
   /**
@@ -692,92 +732,103 @@ export class ContainerImageManager {
     imageTag: string,
     progressHandler?: ContainerBuildProgressHandler
   ): Effect.Effect<ContainerBuildResult, ContainerImageManagerError> {
-    return Effect.tryPromise({
-      try: () => this.buildCustomImageInternal(config, imageTag, progressHandler),
-      catch: (cause) => new ContainerImageManagerError({
-        operation: "buildCustomImage",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+    return this.buildCustomImageInternal(config, imageTag, progressHandler)
   }
 
-  private async buildCustomImageInternal(
+  private buildCustomImageInternal(
     config: ContainerConfig,
     imageTag: string,
     progressHandler?: ContainerBuildProgressHandler
-  ): Promise<ContainerBuildResult> {
-    const logs: string[] = []
-    const dockerfile = this.generateDockerfile(config)
-    const dockerfilePath = join(this.options.cacheDir, "Dockerfile.generated")
+  ): Effect.Effect<ContainerBuildResult, ContainerImageManagerError> {
+    return Effect.gen(this, function* () {
+      const logs: string[] = []
+      const dockerfile = this.generateDockerfile(config)
+      const dockerfilePath = join(this.options.cacheDir, "Dockerfile.generated")
 
-    // Save generated Dockerfile
-    try {
-      writeFileSync(dockerfilePath, dockerfile, "utf-8")
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      return { success: false, imageTag, logs: [`Failed to save Dockerfile: ${errorMessage}`] }
-    }
-
-    return new Promise((resolve, reject) => {
-      const proc = spawn(
-        "podman",
-        ["build", "-t", imageTag, "-f", dockerfilePath, "."],
-        {
-          cwd: process.cwd(),
-          stdio: ["pipe", "pipe", "pipe"],
+      // Save generated Dockerfile - use match to handle both success and error as values
+      const saveResult = yield* Effect.try({
+        try: () => {
+          writeFileSync(dockerfilePath, dockerfile, "utf-8")
+          return { success: true as const }
         },
+        catch: (error) => {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          return { success: false as const, imageTag, logs: [`Failed to save Dockerfile: ${errorMessage}`] }
+        },
+      }).pipe(
+        Effect.match({
+          onSuccess: (result) => result,
+          onFailure: (errorResult) => errorResult,
+        })
       )
 
-      proc.stdout?.on("data", (data: Buffer) => {
-        const chunk = data.toString()
-        const lines = chunk.split("\n").filter(l => l.trim())
-        for (const line of lines) {
-          logs.push(line)
-          progressHandler?.onLog(line)
-        }
-      })
+      if (!saveResult.success) {
+        return saveResult as ContainerBuildResult
+      }
 
-      proc.stderr?.on("data", (data: Buffer) => {
-        const chunk = data.toString()
-        const lines = chunk.split("\n").filter(l => l.trim())
-        for (const line of lines) {
-          logs.push(line)
-          progressHandler?.onLog(line)
-        }
-      })
+      // Build image using spawn wrapped in Effect
+      const buildResult = yield* Effect.async<ContainerBuildResult, ContainerImageManagerError>((resume) => {
+        const proc = spawn(
+          "podman",
+          ["build", "-t", imageTag, "-f", dockerfilePath, "."],
+          {
+            cwd: process.cwd(),
+            stdio: ["pipe", "pipe", "pipe"],
+          },
+        )
 
-      proc.on("close", (code) => {
-        if (code === 0) {
-          progressHandler?.onStatus({
-            status: "success",
-            message: "Build completed successfully",
-            logs,
-            canCancel: false,
-          })
-          resolve({ success: true, imageTag, logs })
-        } else {
-          const errorMessage = `Build failed with exit code ${code}`
+        proc.stdout?.on("data", (data: Buffer) => {
+          const chunk = data.toString()
+          const lines = chunk.split("\n").filter(l => l.trim())
+          for (const line of lines) {
+            logs.push(line)
+            progressHandler?.onLog(line)
+          }
+        })
+
+        proc.stderr?.on("data", (data: Buffer) => {
+          const chunk = data.toString()
+          const lines = chunk.split("\n").filter(l => l.trim())
+          for (const line of lines) {
+            logs.push(line)
+            progressHandler?.onLog(line)
+          }
+        })
+
+        proc.on("close", (code) => {
+          if (code === 0) {
+            progressHandler?.onStatus({
+              status: "success",
+              message: "Build completed successfully",
+              logs,
+              canCancel: false,
+            })
+            resume(Effect.succeed({ success: true, imageTag, logs }))
+          } else {
+            const errorMessage = `Build failed with exit code ${code}`
+            progressHandler?.onStatus({
+              status: "failed",
+              message: errorMessage,
+              logs,
+              canCancel: false,
+            })
+            resume(Effect.succeed({ success: false, imageTag, logs }))
+          }
+        })
+
+        proc.on("error", (err) => {
+          const errorMessage = `Failed to spawn podman build: ${err.message}`
           progressHandler?.onStatus({
             status: "failed",
             message: errorMessage,
             logs,
             canCancel: false,
           })
-          resolve({ success: false, imageTag, logs })
-        }
+          resume(Effect.succeed({ success: false, imageTag, logs: [...logs, errorMessage] }))
+        })
       })
 
-      proc.on("error", (err) => {
-        const errorMessage = `Failed to spawn podman build: ${err.message}`
-        progressHandler?.onStatus({
-          status: "failed",
-          message: errorMessage,
-          logs,
-          canCancel: false,
-        })
-        resolve({ success: false, imageTag, logs: [...logs, errorMessage] })
-      })
+      return buildResult
     })
   }
 
@@ -789,115 +840,126 @@ export class ContainerImageManager {
     imageTag: string,
     progressHandler?: ContainerBuildProgressHandler
   ): Effect.Effect<ContainerBuildResult, ContainerImageManagerError> {
-    return Effect.tryPromise({
-      try: () => this.buildFromDockerfileContentInternal(dockerfileContent, imageTag, progressHandler),
-      catch: (cause) => new ContainerImageManagerError({
-        operation: "buildFromDockerfileContent",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+    return this.buildFromDockerfileContentInternal(dockerfileContent, imageTag, progressHandler)
   }
 
-  private async buildFromDockerfileContentInternal(
+  private buildFromDockerfileContentInternal(
     dockerfileContent: string,
     imageTag: string,
     progressHandler?: ContainerBuildProgressHandler
-  ): Promise<ContainerBuildResult> {
-    const logs: string[] = []
-    const errorLogs: string[] = []
-    const dockerfilePath = join(this.options.cacheDir, "Dockerfile.custom-build")
+  ): Effect.Effect<ContainerBuildResult, ContainerImageManagerError> {
+    return Effect.gen(this, function* () {
+      const logs: string[] = []
+      const errorLogs: string[] = []
+      const dockerfilePath = join(this.options.cacheDir, "Dockerfile.custom-build")
 
-    // Save Dockerfile content
-    try {
-      writeFileSync(dockerfilePath, dockerfileContent, "utf-8")
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      const finalLogs = [`Failed to save Dockerfile: ${errorMessage}`]
-      return { success: false, imageTag, logs: finalLogs }
-    }
-
-    return new Promise((resolve, reject) => {
-      const proc = spawn(
-        "podman",
-        ["build", "-t", imageTag, "-f", dockerfilePath, "."],
-        {
-          cwd: this.options.projectRoot ?? process.cwd(),
-          stdio: ["pipe", "pipe", "pipe"],
+      // Save Dockerfile content - use match to handle both success and error as values
+      const saveResult = yield* Effect.try({
+        try: () => {
+          writeFileSync(dockerfilePath, dockerfileContent, "utf-8")
+          return { success: true as const }
         },
+        catch: (error) => {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          const finalLogs = [`Failed to save Dockerfile: ${errorMessage}`]
+          return { success: false as const, imageTag, logs: finalLogs }
+        },
+      }).pipe(
+        Effect.match({
+          onSuccess: (result) => result,
+          onFailure: (errorResult) => errorResult,
+        })
       )
 
-      proc.stdout?.on("data", (data: Buffer) => {
-        const chunk = data.toString()
-        const lines = chunk.split("\n").filter(l => l.trim())
-        for (const line of lines) {
-          logs.push(line)
-          progressHandler?.onLog(line)
-        }
-      })
+      if (!saveResult.success) {
+        return saveResult as ContainerBuildResult
+      }
 
-      proc.stderr?.on("data", (data: Buffer) => {
-        const chunk = data.toString()
-        const lines = chunk.split("\n").filter(l => l.trim())
-        for (const line of lines) {
-          logs.push(line)
-          errorLogs.push(line)
-          progressHandler?.onLog(line)
-        }
-      })
+      // Build image using spawn wrapped in Effect
+      const buildResult = yield* Effect.async<ContainerBuildResult, ContainerImageManagerError>((resume) => {
+        const proc = spawn(
+          "podman",
+          ["build", "-t", imageTag, "-f", dockerfilePath, "."],
+          {
+            cwd: this.options.projectRoot ?? process.cwd(),
+            stdio: ["pipe", "pipe", "pipe"],
+          },
+        )
 
-      proc.on("close", (code) => {
-        if (code === 0) {
-          progressHandler?.onStatus({
-            status: "success",
-            message: "Build completed successfully",
-            logs,
-            canCancel: false,
-          })
-          resolve({ success: true, imageTag, logs })
-        } else {
-          // Build detailed error message with all available information
-          const errorDetails: string[] = []
-          errorDetails.push(`Build failed with exit code ${code}`)
-
-          if (errorLogs.length > 0) {
-            errorDetails.push("\n--- STDERR OUTPUT ---")
-            errorDetails.push(...errorLogs.slice(-50)) // Last 50 error lines
+        proc.stdout?.on("data", (data: Buffer) => {
+          const chunk = data.toString()
+          const lines = chunk.split("\n").filter(l => l.trim())
+          for (const line of lines) {
+            logs.push(line)
+            progressHandler?.onLog(line)
           }
+        })
 
-          // Include last few lines of stdout for context
-          const lastLogs = logs.slice(-30)
-          if (lastLogs.length > 0) {
-            errorDetails.push("\n--- LAST OUTPUT LINES ---")
-            errorDetails.push(...lastLogs)
+        proc.stderr?.on("data", (data: Buffer) => {
+          const chunk = data.toString()
+          const lines = chunk.split("\n").filter(l => l.trim())
+          for (const line of lines) {
+            logs.push(line)
+            errorLogs.push(line)
+            progressHandler?.onLog(line)
           }
+        })
 
-          const detailedErrorMessage = errorDetails.join("\n")
+        proc.on("close", (code) => {
+          if (code === 0) {
+            progressHandler?.onStatus({
+              status: "success",
+              message: "Build completed successfully",
+              logs,
+              canCancel: false,
+            })
+            resume(Effect.succeed({ success: true, imageTag, logs }))
+          } else {
+            // Build detailed error message with all available information
+            const errorDetails: string[] = []
+            errorDetails.push(`Build failed with exit code ${code}`)
+
+            if (errorLogs.length > 0) {
+              errorDetails.push("\n--- STDERR OUTPUT ---")
+              errorDetails.push(...errorLogs.slice(-50)) // Last 50 error lines
+            }
+
+            // Include last few lines of stdout for context
+            const lastLogs = logs.slice(-30)
+            if (lastLogs.length > 0) {
+              errorDetails.push("\n--- LAST OUTPUT LINES ---")
+              errorDetails.push(...lastLogs)
+            }
+
+            const detailedErrorMessage = errorDetails.join("\n")
+
+            progressHandler?.onStatus({
+              status: "failed",
+              message: `Build failed with exit code ${code}`,
+              logs,
+              errorMessage: detailedErrorMessage,
+              canCancel: false,
+            })
+            resume(Effect.succeed({ success: false, imageTag, logs, errorMessage: detailedErrorMessage }))
+          }
+        })
+
+        proc.on("error", (err) => {
+          const spawnError = `Failed to spawn podman build: ${err.message}`
+          const fullLogs = [...logs, spawnError]
 
           progressHandler?.onStatus({
             status: "failed",
-            message: `Build failed with exit code ${code}`,
-            logs,
-            errorMessage: detailedErrorMessage,
+            message: spawnError,
+            logs: fullLogs,
+            errorMessage: err.stack || err.message,
             canCancel: false,
           })
-          resolve({ success: false, imageTag, logs, errorMessage: detailedErrorMessage })
-        }
-      })
-
-      proc.on("error", (err) => {
-        const spawnError = `Failed to spawn podman build: ${err.message}`
-        const fullLogs = [...logs, spawnError]
-
-        progressHandler?.onStatus({
-          status: "failed",
-          message: spawnError,
-          logs: fullLogs,
-          errorMessage: err.stack || err.message,
-          canCancel: false,
+          resume(Effect.succeed({ success: false, imageTag, logs: fullLogs, errorMessage: err.stack || err.message }))
         })
-        resolve({ success: false, imageTag, logs: fullLogs, errorMessage: err.stack || err.message })
       })
+
+      return buildResult
     })
   }
 

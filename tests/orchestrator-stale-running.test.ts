@@ -71,8 +71,8 @@ describe("PiOrchestrator multi-workflow scheduling", () => {
     const run1 = await runEffect(orchestrator.startSingle(task1.id))
     const run2 = await runEffect(orchestrator.startSingle(task2.id))
 
-    const queue1 = orchestrator.getRunQueueStatus(run1.id)
-    const queue2 = orchestrator.getRunQueueStatus(run2.id)
+    const queue1 = await runEffect(orchestrator.getRunQueueStatus(run1.id))
+    const queue2 = await runEffect(orchestrator.getRunQueueStatus(run2.id))
 
     expect(queue1.queuedTasks + queue1.executingTasks + queue1.completedTasks).toBe(1)
     expect(queue1.totalTasks).toBe(1)

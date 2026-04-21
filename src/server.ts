@@ -34,19 +34,6 @@ interface RuntimeManagers {
   containerManager?: PiContainerManager
 }
 
-function wrapOrchestratorSync<A>(operation: string, run: () => A): Effect.Effect<A, OrchestratorOperationError> {
-  return Effect.try({
-    try: run,
-    catch: (cause) =>
-      cause instanceof OrchestratorOperationError
-        ? cause
-        : new OrchestratorOperationError({
-            operation,
-            message: cause instanceof Error ? cause.message : String(cause),
-          }),
-  })
-}
-
 export const ProjectRootContext = Context.GenericTag<string>("ProjectRootContext")
 export const CreateServerOptionsContext = Context.GenericTag<CreateServerOptions>("CreateServerOptionsContext")
 export const PiServerRuntimeContext = Context.GenericTag<PiServerRuntime>("PiServerRuntimeContext")
@@ -159,8 +146,10 @@ function buildPiServerRuntime(
       const run = db.getWorkflowRun(runId)!
       return { success: true, run }
     }),
-    onGetSlots: () => wrapOrchestratorSync("getSlotUtilization", () => orchestrator.getSlotUtilization()),
-    onGetRunQueueStatus: (runId: string) => wrapOrchestratorSync("getRunQueueStatus", () => orchestrator.getRunQueueStatus(runId)),
+    onGetSlots: () => orchestrator.getSlotUtilization().pipe(
+      Effect.mapError((cause) => new OrchestratorOperationError({ operation: "getSlotUtilization", message: cause.message })),
+    ),
+    onGetRunQueueStatus: (runId: string) => orchestrator.getRunQueueStatus(runId),
     onManualSelfHealRecover: (taskId: string, reportId: string, action: "restart_task" | "keep_failed") =>
       orchestrator.manualSelfHealRecover(taskId, reportId, action),
   })
@@ -178,7 +167,7 @@ export const makePiServerRuntime = Effect.fn("makePiServerRuntime")(
     const wsHub = new WebSocketHub()
     const smartRepair = new SmartRepairService(db, options.settings)
     const { imageManager, containerManager } = resolveContainerSettings(projectRoot, options)
-    const planningSessionManager = new PlanningSessionManager(db, containerManager, options.settings)
+    const planningSessionManager = yield* PlanningSessionManager.make(db, containerManager, options.settings)
 
     return buildPiServerRuntime(projectRoot, options, db, wsHub, {
       smartRepair,
@@ -199,7 +188,7 @@ const makeScopedPiServerRuntime = Effect.fn("makeScopedPiServerRuntime")(
         mkdirSync(dirname(dbPath), { recursive: true })
         return new PiKanbanDB(dbPath)
       }),
-      (database) => Effect.sync(() => database.close()),
+      () => Effect.void,
     )
 
     const wsHub = yield* Effect.acquireRelease(
@@ -213,21 +202,18 @@ const makeScopedPiServerRuntime = Effect.fn("makeScopedPiServerRuntime")(
     const imageManager = resolvedImageManager
       ? yield* Effect.acquireRelease(
           Effect.succeed(resolvedImageManager),
-          (manager) => Effect.promise(() => manager.close()),
+          (manager) => manager.close().pipe(Effect.orDie),
         )
       : undefined
 
     const containerManager = resolvedContainerManager
       ? yield* Effect.acquireRelease(
           Effect.succeed(resolvedContainerManager),
-          (manager) => Effect.promise(() => manager.close()),
+          (manager) => manager.close().pipe(Effect.orDie),
         )
       : undefined
 
-    const planningSessionManager = yield* Effect.acquireRelease(
-      Effect.sync(() => new PlanningSessionManager(db, containerManager, options.settings)),
-      (manager) => manager.closeAllSessions().pipe(Effect.orDie),
-    )
+    const planningSessionManager = yield* PlanningSessionManager.makeScoped(db, containerManager, options.settings)
 
     return yield* Effect.acquireRelease(
       Effect.sync(() => buildPiServerRuntime(projectRoot, options, db, wsHub, {

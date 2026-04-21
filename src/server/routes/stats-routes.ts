@@ -2,15 +2,19 @@ import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
 import { isStatsTimeRange } from "../validators.ts"
-import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
+import { ErrorCode } from "../../shared/error-codes.ts"
+import { badRequestError } from "../route-interpreter.ts"
 
 export function registerStatsRoutes(router: Router, _ctx: ServerRouteContext): void {
   // GET /api/stats/usage?range=24h|7d|30d|lifetime
   router.get("/api/stats/usage", ({ url, json, db }) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const rangeParam = url.searchParams.get("range") ?? "lifetime"
       if (!isStatsTimeRange(rangeParam)) {
-        return json(createApiError("Invalid range. Allowed values: 24h, 7d, 30d, lifetime", ErrorCode.INVALID_RANGE), 400)
+        return yield* Effect.fail(badRequestError(
+          "Invalid range. Allowed values: 24h, 7d, 30d, lifetime",
+          ErrorCode.INVALID_RANGE,
+        ))
       }
       return json(db.getUsageStats(rangeParam))
     }),

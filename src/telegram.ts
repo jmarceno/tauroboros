@@ -40,13 +40,9 @@ export interface NotificationContext {
   hasFailures?: boolean
 }
 
-function failTelegram(operation: string, message: string, cause?: unknown): never {
-  throw new TelegramError({ operation, message, cause })
-}
-
 /**
  * Determines whether a notification should be sent based on the notification level.
- * 
+ *
  * @param level - The notification level setting
  * @param oldStatus - The previous task status
  * @param newStatus - The new task status
@@ -62,22 +58,25 @@ export function shouldSendNotification(
   switch (level) {
     case "all":
       return true
-    
+
     case "failures":
       return newStatus === "failed" || newStatus === "stuck"
-    
+
     case "done_and_failures":
       return newStatus === "done" || newStatus === "failed" || newStatus === "stuck"
-    
+
     case "workflow_done_and_failures":
       // Send on workflow completion OR on task failures
       if (context.isWorkflowDone === true) {
         return true
       }
       return newStatus === "failed" || newStatus === "stuck"
-    
+
     default:
-      return failTelegram("shouldSendNotification", `Unsupported telegram notification level: ${String(level)}`)
+      throw new TelegramError({
+        operation: "shouldSendNotification",
+        message: `Unsupported telegram notification level: ${String(level)}`,
+      })
   }
 }
 

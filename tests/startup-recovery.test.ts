@@ -103,7 +103,6 @@ describe("startup recovery", () => {
     expect(recent?.status).toBe("active")
     expect(broadcasts.includes("task_updated")).toBe(true)
 
-    db.close()
   })
 
   it("is idempotent when run multiple times", async () => {
@@ -126,7 +125,6 @@ describe("startup recovery", () => {
 
     expect(first?.status).toBe("backlog")
     expect(second?.status).toBe("backlog")
-    db.close()
   })
 
   it("recovers stale workflow runs with no executing tasks", async () => {
@@ -176,7 +174,6 @@ describe("startup recovery", () => {
     // Verify broadcasts were sent
     expect(broadcasts.includes("run_updated")).toBe(true)
 
-    db.close()
   })
 
   it("recovers stale workflow runs in stopping and paused statuses", async () => {
@@ -224,7 +221,6 @@ describe("startup recovery", () => {
     const recoveredPaused = db.getWorkflowRun(pausedRun.id)
     expect(recoveredPaused?.status).toBe("failed")
 
-    db.close()
   })
 
   it("does not recover completed or failed workflow runs", async () => {
@@ -273,6 +269,5 @@ describe("startup recovery", () => {
     const unchangedFailed = db.getWorkflowRun(failedRun.id)
     expect(unchangedFailed?.status).toBe("failed")
 
-    db.close()
   })
 })

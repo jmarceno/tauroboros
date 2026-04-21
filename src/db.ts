@@ -95,9 +95,7 @@ export class DatabaseError extends Schema.TaggedError<DatabaseError>()("Database
   cause: Schema.optional(Schema.Unknown),
 }) {}
 
-function failDatabaseError(operation: string, message: string, cause?: unknown): never {
-  throw new DatabaseError({ operation, message, cause })
-}
+
 
 // Color palette for workflow runs - distinct colors that work well with dark theme
 const RUN_COLORS = [
@@ -450,7 +448,10 @@ function asThinkingLevel(value: unknown): ThinkingLevel {
   if (value === "low" || value === "medium" || value === "high" || value === "default") {
     return value
   }
-  failDatabaseError("validation", `Invalid thinking level: ${JSON.stringify(value)}. Expected "low", "medium", "high", or "default".`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid thinking level: ${JSON.stringify(value)}. Expected "low", "medium", "high", or "default".`,
+  })
 }
 
 function normalizeBoolean(value: unknown): boolean {
@@ -461,7 +462,10 @@ function normalizeBoolean(value: unknown): boolean {
     if (normalized === "true" || normalized === "1") return true
     if (normalized === "false" || normalized === "0") return false
   }
-  failDatabaseError("validation", `Invalid boolean value: ${JSON.stringify(value)}. Expected boolean, 0/1, or "true"/"false".`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid boolean value: ${JSON.stringify(value)}. Expected boolean, 0/1, or "true"/"false".`,
+  })
 }
 
 const TASK_STATUSES: TaskStatus[] = ["template", "backlog", "queued", "executing", "review", "code-style", "done", "failed", "stuck"]
@@ -479,7 +483,7 @@ function isTaskStatus(value: unknown): value is TaskStatus {
 
 function asTaskStatus(value: unknown): TaskStatus {
   if (isTaskStatus(value)) return value
-  failDatabaseError("validation", `Invalid task status: ${JSON.stringify(value)}. Expected one of: ${TASK_STATUSES.join(", ")}.`)
+  throw new DatabaseError({ operation: "validation", message: `Invalid task status: ${JSON.stringify(value)}. Expected one of: ${TASK_STATUSES.join(", ")}.` })
 }
 
 function isAutoDeployCondition(value: unknown): value is AutoDeployCondition {
@@ -489,7 +493,10 @@ function isAutoDeployCondition(value: unknown): value is AutoDeployCondition {
 function asAutoDeployConditionOrNull(value: unknown): AutoDeployCondition | null {
   if (value === null || value === undefined || value === "") return null
   if (isAutoDeployCondition(value)) return value
-  failDatabaseError("validation", `Invalid auto deploy condition: ${JSON.stringify(value)}. Expected one of: ${AUTO_DEPLOY_CONDITIONS.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid auto deploy condition: ${JSON.stringify(value)}. Expected one of: ${AUTO_DEPLOY_CONDITIONS.join(", ")}.`,
+  })
 }
 
 const EXECUTION_PHASES: ExecutionPhase[] = [
@@ -506,14 +513,20 @@ function isExecutionPhase(value: unknown): value is ExecutionPhase {
 
 function asExecutionPhase(value: unknown): ExecutionPhase {
   if (isExecutionPhase(value)) return value
-  failDatabaseError("validation", `Invalid execution phase: ${JSON.stringify(value)}. Expected one of: ${EXECUTION_PHASES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid execution phase: ${JSON.stringify(value)}. Expected one of: ${EXECUTION_PHASES.join(", ")}.`,
+  })
 }
 
 const RUN_EXECUTION_PHASES: RunExecutionPhase[] = ["not_started", "planning", "executing", "reviewing", "committing"]
 
 function asRunExecutionPhase(value: unknown): RunExecutionPhase {
   if (typeof value !== "string") {
-    failDatabaseError("validation", `Invalid run execution phase: ${JSON.stringify(value)}. Expected a string phase value.`)
+    throw new DatabaseError({
+      operation: "validation",
+      message: `Invalid run execution phase: ${JSON.stringify(value)}. Expected a string phase value.`,
+    })
   }
 
   if (RUN_EXECUTION_PHASES.includes(value as RunExecutionPhase)) {
@@ -534,10 +547,10 @@ function asRunExecutionPhase(value: unknown): RunExecutionPhase {
     return legacyMappedPhase[value as ExecutionPhase]
   }
 
-  failDatabaseError(
-    "validation",
-    `Invalid run execution phase: ${JSON.stringify(value)}. Expected one of: ${RUN_EXECUTION_PHASES.join(", ")} or a known legacy task phase.`,
-  )
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid run execution phase: ${JSON.stringify(value)}. Expected one of: ${RUN_EXECUTION_PHASES.join(", ")} or a known legacy task phase.`,
+  })
 }
 
 const EXECUTION_STRATEGIES: ExecutionStrategy[] = ["best_of_n", "standard"]
@@ -548,7 +561,10 @@ function isExecutionStrategy(value: unknown): value is ExecutionStrategy {
 
 function asExecutionStrategy(value: unknown): ExecutionStrategy {
   if (isExecutionStrategy(value)) return value
-  failDatabaseError("validation", `Invalid execution strategy: ${JSON.stringify(value)}. Expected "best_of_n" or "standard".`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid execution strategy: ${JSON.stringify(value)}. Expected "best_of_n" or "standard".`,
+  })
 }
 
 const BEST_OF_N_SUBSTAGES: Task["bestOfNSubstage"][] = [
@@ -566,7 +582,10 @@ function isBestOfNSubstage(value: unknown): value is Task["bestOfNSubstage"] {
 
 function asBestOfNSubstage(value: unknown): Task["bestOfNSubstage"] {
   if (isBestOfNSubstage(value)) return value
-  failDatabaseError("validation", `Invalid best-of-n substage: ${JSON.stringify(value)}. Expected one of: ${BEST_OF_N_SUBSTAGES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid best-of-n substage: ${JSON.stringify(value)}. Expected one of: ${BEST_OF_N_SUBSTAGES.join(", ")}.`,
+  })
 }
 
 const WORKFLOW_RUN_KINDS: WorkflowRunKind[] = ["all_tasks", "single_task", "workflow_review", "group_tasks"]
@@ -577,7 +596,10 @@ function isWorkflowRunKind(value: unknown): value is WorkflowRunKind {
 
 function asWorkflowRunKind(value: unknown): WorkflowRunKind {
   if (isWorkflowRunKind(value)) return value
-  failDatabaseError("validation", `Invalid workflow run kind: ${JSON.stringify(value)}. Expected one of: ${WORKFLOW_RUN_KINDS.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid workflow run kind: ${JSON.stringify(value)}. Expected one of: ${WORKFLOW_RUN_KINDS.join(", ")}.`,
+  })
 }
 
 const WORKFLOW_RUN_STATUSES: WorkflowRunStatus[] = ["queued", "running", "paused", "stopping", "completed", "failed"]
@@ -588,7 +610,10 @@ function isWorkflowRunStatus(value: unknown): value is WorkflowRunStatus {
 
 function asWorkflowRunStatus(value: unknown): WorkflowRunStatus {
   if (isWorkflowRunStatus(value)) return value
-  failDatabaseError("validation", `Invalid workflow run status: ${JSON.stringify(value)}. Expected one of: ${WORKFLOW_RUN_STATUSES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid workflow run status: ${JSON.stringify(value)}. Expected one of: ${WORKFLOW_RUN_STATUSES.join(", ")}.`,
+  })
 }
 
 const PI_SESSION_STATUSES: PiSessionStatus[] = ["starting", "active", "paused", "completed", "failed", "aborted"]
@@ -599,7 +624,10 @@ function isPiSessionStatus(value: unknown): value is PiSessionStatus {
 
 function asPiSessionStatus(value: unknown): PiSessionStatus {
   if (isPiSessionStatus(value)) return value
-  failDatabaseError("validation", `Invalid Pi session status: ${JSON.stringify(value)}. Expected one of: ${PI_SESSION_STATUSES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid Pi session status: ${JSON.stringify(value)}. Expected one of: ${PI_SESSION_STATUSES.join(", ")}.`,
+  })
 }
 
 const TASK_GROUP_STATUSES: TaskGroup["status"][] = ["active", "completed", "archived"]
@@ -610,7 +638,10 @@ export function isTaskGroupStatus(value: unknown): value is TaskGroup["status"] 
 
 function asTaskGroupStatus(value: unknown): TaskGroup["status"] {
   if (isTaskGroupStatus(value)) return value
-  failDatabaseError("validation", `Invalid task group status: ${JSON.stringify(value)}. Expected one of: ${TASK_GROUP_STATUSES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid task group status: ${JSON.stringify(value)}. Expected one of: ${TASK_GROUP_STATUSES.join(", ")}.`,
+  })
 }
 
 export function isValidHexColor(value: unknown): value is string {
@@ -669,7 +700,10 @@ function isMessageType(value: unknown): value is MessageType {
 
 function asMessageType(value: unknown): MessageType {
   if (isMessageType(value)) return value
-  failDatabaseError("validation", `Invalid message type: ${JSON.stringify(value)}. Expected one of: ${MESSAGE_TYPES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid message type: ${JSON.stringify(value)}. Expected one of: ${MESSAGE_TYPES.join(", ")}.`,
+  })
 }
 
 function pickString(...values: unknown[]): string | null {
@@ -678,6 +712,162 @@ function pickString(...values: unknown[]): string | null {
   }
   return null
 }
+
+// ============================================================================
+// Effect-wrapped validation helpers
+// These wrap the synchronous validation functions in Effect for composability.
+// They preserve the same error semantics (DatabaseError tagged errors).
+// ============================================================================
+
+export const asThinkingLevelEffect = (value: unknown): Effect.Effect<ThinkingLevel, DatabaseError> =>
+  Effect.try({
+    try: () => asThinkingLevel(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating thinking level: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asTaskStatusEffect = (value: unknown): Effect.Effect<TaskStatus, DatabaseError> =>
+  Effect.try({
+    try: () => asTaskStatus(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating task status: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asExecutionPhaseEffect = (value: unknown): Effect.Effect<ExecutionPhase, DatabaseError> =>
+  Effect.try({
+    try: () => asExecutionPhase(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating execution phase: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asRunExecutionPhaseEffect = (value: unknown): Effect.Effect<RunExecutionPhase, DatabaseError> =>
+  Effect.try({
+    try: () => asRunExecutionPhase(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating run execution phase: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asExecutionStrategyEffect = (value: unknown): Effect.Effect<ExecutionStrategy, DatabaseError> =>
+  Effect.try({
+    try: () => asExecutionStrategy(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating execution strategy: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asBestOfNSubstageEffect = (value: unknown): Effect.Effect<Task["bestOfNSubstage"], DatabaseError> =>
+  Effect.try({
+    try: () => asBestOfNSubstage(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating best-of-n substage: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asWorkflowRunKindEffect = (value: unknown): Effect.Effect<WorkflowRunKind, DatabaseError> =>
+  Effect.try({
+    try: () => asWorkflowRunKind(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating workflow run kind: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asWorkflowRunStatusEffect = (value: unknown): Effect.Effect<WorkflowRunStatus, DatabaseError> =>
+  Effect.try({
+    try: () => asWorkflowRunStatus(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating workflow run status: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asPiSessionStatusEffect = (value: unknown): Effect.Effect<PiSessionStatus, DatabaseError> =>
+  Effect.try({
+    try: () => asPiSessionStatus(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating Pi session status: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asPiSessionKindEffect = (value: unknown): Effect.Effect<PiWorkflowSession["sessionKind"], DatabaseError> =>
+  Effect.try({
+    try: () => asPiSessionKind(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating Pi session kind: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asTaskGroupStatusEffect = (value: unknown): Effect.Effect<TaskGroup["status"], DatabaseError> =>
+  Effect.try({
+    try: () => asTaskGroupStatus(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating task group status: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asMessageTypeEffect = (value: unknown): Effect.Effect<MessageType, DatabaseError> =>
+  Effect.try({
+    try: () => asMessageType(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating message type: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asSessionMessageRoleEffect = (value: unknown): Effect.Effect<SessionMessage["role"], DatabaseError> =>
+  Effect.try({
+    try: () => asSessionMessageRole(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating session message role: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asAutoDeployConditionOrNullEffect = (value: unknown): Effect.Effect<AutoDeployCondition | null, DatabaseError> =>
+  Effect.try({
+    try: () => asAutoDeployConditionOrNull(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating auto deploy condition: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const normalizeBooleanEffect = (value: unknown): Effect.Effect<boolean, DatabaseError> =>
+  Effect.try({
+    try: () => normalizeBoolean(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error normalizing boolean: ${String(error)}`,
+      cause: error,
+    }),
+  })
 
 const SESSION_MESSAGE_SELECT = `
   SELECT
@@ -881,7 +1071,10 @@ function isPiSessionKind(value: unknown): value is PiWorkflowSession["sessionKin
 
 function asPiSessionKind(value: unknown): PiWorkflowSession["sessionKind"] {
   if (isPiSessionKind(value)) return value
-  failDatabaseError("validation", `Invalid Pi session kind: ${JSON.stringify(value)}. Expected one of: ${PI_SESSION_KINDS.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid Pi session kind: ${JSON.stringify(value)}. Expected one of: ${PI_SESSION_KINDS.join(", ")}.`,
+  })
 }
 
 const SESSION_MESSAGE_ROLES: SessionMessage["role"][] = ["system", "user", "assistant", "tool"]
@@ -892,7 +1085,10 @@ function isSessionMessageRole(value: unknown): value is SessionMessage["role"] {
 
 function asSessionMessageRole(value: unknown): SessionMessage["role"] {
   if (isSessionMessageRole(value)) return value
-  failDatabaseError("validation", `Invalid session message role: ${JSON.stringify(value)}. Expected one of: ${SESSION_MESSAGE_ROLES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid session message role: ${JSON.stringify(value)}. Expected one of: ${SESSION_MESSAGE_ROLES.join(", ")}.`,
+  })
 }
 
 function rowToWorkflowSession(row: Record<string, unknown>): PiWorkflowSession {
@@ -1196,9 +1392,7 @@ export class PiKanbanDB {
     }
   }
 
-  close(): void {
-    this.db.close(false)
-  }
+  
 
   setTaskStatusChangeListener(listener: TaskStatusChangeListener | null): void {
     this._taskStatusChangeListener = listener
@@ -1830,7 +2024,7 @@ export class PiKanbanDB {
     selectedCandidates: number
   } {
     const task = this.getTask(taskId)
-    if (!task) failDatabaseError("getBestOfNSummary", "Task not found")
+    if (!task) throw new DatabaseError({ operation: "getBestOfNSummary", message: "Task not found" })
 
     const workersTotal = this.db.prepare("SELECT COUNT(*) AS cnt FROM task_runs WHERE task_id = ? AND phase = 'worker'").get(taskId) as { cnt: number }
     const workersDone = this.db.prepare("SELECT COUNT(*) AS cnt FROM task_runs WHERE task_id = ? AND phase = 'worker' AND status = 'done'").get(taskId) as { cnt: number }
@@ -1986,7 +2180,7 @@ export class PiKanbanDB {
   getArchivedTasks(): Task[] {
     const stmt = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 1 ORDER BY archived_at DESC")
     const rows = stmt.all() as unknown[]
-    if (!Array.isArray(rows)) failDatabaseError("getArchivedTasks", "getArchivedTasks: expected array result from database")
+    if (!Array.isArray(rows)) throw new DatabaseError({ operation: "getArchivedTasks", message: "getArchivedTasks: expected array result from database" })
     return rows.map((r) => rowToTask(r as Record<string, unknown>))
   }
 
@@ -2004,14 +2198,14 @@ export class PiKanbanDB {
       `SELECT * FROM tasks WHERE id IN (${placeholders}) AND is_archived = 1 ORDER BY archived_at DESC`
     )
     const rows = stmt.all(...run.taskOrder) as unknown[]
-    if (!Array.isArray(rows)) failDatabaseError("getArchivedTasksByRun", "getArchivedTasksByRun: expected array result from database")
+    if (!Array.isArray(rows)) throw new DatabaseError({ operation: "getArchivedTasksByRun", message: "getArchivedTasksByRun: expected array result from database" })
     return rows.map((r) => rowToTask(r as Record<string, unknown>))
   }
 
   getWorkflowRunsWithArchivedTasks(): WorkflowRun[] {
     const runsStmt = this.db.prepare("SELECT * FROM workflow_runs ORDER BY finished_at DESC, created_at DESC")
     const runsResult = runsStmt.all() as unknown[]
-    if (!Array.isArray(runsResult)) failDatabaseError("getWorkflowRunsWithArchivedTasks", "getWorkflowRunsWithArchivedTasks: expected array result from database")
+    if (!Array.isArray(runsResult)) throw new DatabaseError({ operation: "getWorkflowRunsWithArchivedTasks", message: "getWorkflowRunsWithArchivedTasks: expected array result from database" })
 
     const runsWithArchived: WorkflowRun[] = []
 
@@ -2023,10 +2217,10 @@ export class PiKanbanDB {
       const placeholders = taskOrder.map(() => "?").join(",")
       const countStmt = this.db.prepare(`SELECT COUNT(*) as cnt FROM tasks WHERE id IN (${placeholders}) AND is_archived = 1`)
       const countResult = countStmt.get(...taskOrder) as unknown
-      if (countResult === null || typeof countResult !== "object") failDatabaseError("getWorkflowRunsWithArchivedTasks", "getWorkflowRunsWithArchivedTasks: expected object result for count query")
+      if (countResult === null || typeof countResult !== "object") throw new DatabaseError({ operation: "getWorkflowRunsWithArchivedTasks", message: "getWorkflowRunsWithArchivedTasks: expected object result for count query" })
       const countRow = countResult as Record<string, unknown>
       const cnt = typeof countRow.cnt === "number" ? countRow.cnt : Number(countRow.cnt)
-      if (Number.isNaN(cnt)) failDatabaseError("getWorkflowRunsWithArchivedTasks", "getWorkflowRunsWithArchivedTasks: invalid count result from database")
+      if (Number.isNaN(cnt)) throw new DatabaseError({ operation: "getWorkflowRunsWithArchivedTasks", message: "getWorkflowRunsWithArchivedTasks: invalid count result from database" })
 
       if (cnt > 0) {
         runsWithArchived.push(rowToWorkflowRun(runRow))
@@ -2876,7 +3070,7 @@ export class PiKanbanDB {
   renderPrompt(key: PromptTemplateKey | string, variables: Record<string, unknown> = {}): PromptRenderResult {
     const template = this.getPromptTemplate(key)
     if (!template) {
-      failDatabaseError("renderPrompt", `Prompt template not found or inactive: ${key}`)
+      throw new DatabaseError({ operation: "renderPrompt", message: `Prompt template not found or inactive: ${key}` })
     }
 
     const renderedText = renderTemplate(template, variables)
@@ -2886,7 +3080,7 @@ export class PiKanbanDB {
 
   renderPromptAndCapture(input: PromptRenderAndCaptureInput): PromptRenderResult {
     if (input.key == null) {
-      failDatabaseError("renderPromptAndCapture", "Prompt render key is required but was not provided")
+      throw new DatabaseError({ operation: "renderPromptAndCapture", message: "Prompt render key is required but was not provided" })
     }
     return this.renderPrompt(input.key, input.variables)
   }
@@ -2901,7 +3095,7 @@ export class PiKanbanDB {
     if (value === "all" || value === "failures" || value === "done_and_failures" || value === "workflow_done_and_failures") {
       return value
     }
-    failDatabaseError("validation", `Invalid telegram notification level: ${JSON.stringify(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"`)
+    throw new DatabaseError({ operation: "validation", message: `Invalid telegram notification level: ${JSON.stringify(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"` })
   }
 
   private getNextTaskIndex(): number {
@@ -3748,15 +3942,15 @@ export class PiKanbanDB {
 
     // Validation
     if (!input.name || input.name.trim().length === 0) {
-      failDatabaseError("createTaskGroup", "Task group name is required and cannot be empty")
+      throw new DatabaseError({ operation: "createTaskGroup", message: "Task group name is required and cannot be empty" })
     }
     if (input.name.length > 100) {
-      failDatabaseError("createTaskGroup", "Task group name must be 100 characters or less")
+      throw new DatabaseError({ operation: "createTaskGroup", message: "Task group name must be 100 characters or less" })
     }
 
     const color = input.color ?? '#888888'
     if (color && !/^#[0-9A-Fa-f]{6}$/.test(color)) {
-      failDatabaseError("createTaskGroup", "Color must be a valid hex color format (e.g., #888888)")
+      throw new DatabaseError({ operation: "createTaskGroup", message: "Color must be a valid hex color format (e.g., #888888)" })
     }
 
     // Validate member task IDs if provided
@@ -3765,10 +3959,16 @@ export class PiKanbanDB {
       for (const taskId of memberTaskIds) {
         const task = this.getTask(taskId)
         if (!task) {
-          failDatabaseError("createTaskGroup", `Task with ID "${taskId}" does not exist`)
+          throw new DatabaseError({
+            operation: "createTaskGroup",
+            message: `Task with ID "${taskId}" does not exist`,
+          })
         }
         if (task.groupId && task.groupId !== id) {
-          failDatabaseError("createTaskGroup", `Task "${taskId}" is already in another group`)
+          throw new DatabaseError({
+            operation: "createTaskGroup",
+            message: `Task "${taskId}" is already in another group`,
+          })
         }
       }
     }
@@ -3822,7 +4022,10 @@ export class PiKanbanDB {
   updateTaskGroup(id: string, input: UpdateTaskGroupDTO): (TaskGroup & { taskIds: string[] }) | null {
     const group = this.getTaskGroup(id)
     if (!group) {
-      failDatabaseError("updateTaskGroup", `Task group with ID "${id}" does not exist`)
+      throw new DatabaseError({
+        operation: "updateTaskGroup",
+        message: `Task group with ID "${id}" does not exist`,
+      })
     }
 
     const sets: string[] = []
@@ -3830,10 +4033,10 @@ export class PiKanbanDB {
 
     if (input.name !== undefined) {
       if (!input.name || input.name.trim().length === 0) {
-        failDatabaseError("updateTaskGroup", "Task group name cannot be empty")
+        throw new DatabaseError({ operation: "updateTaskGroup", message: "Task group name cannot be empty" })
       }
       if (input.name.length > 100) {
-        failDatabaseError("updateTaskGroup", "Task group name must be 100 characters or less")
+        throw new DatabaseError({ operation: "updateTaskGroup", message: "Task group name must be 100 characters or less" })
       }
       sets.push("name = ?")
       values.push(input.name.trim())
@@ -3841,7 +4044,7 @@ export class PiKanbanDB {
 
     if (input.color !== undefined) {
       if (!/^#[0-9A-Fa-f]{6}$/.test(input.color)) {
-        failDatabaseError("updateTaskGroup", "Color must be a valid hex color format (e.g., #888888)")
+        throw new DatabaseError({ operation: "updateTaskGroup", message: "Color must be a valid hex color format (e.g., #888888)" })
       }
       sets.push("color = ?")
       values.push(input.color)
@@ -3894,17 +4097,26 @@ export class PiKanbanDB {
 
     const group = this.getTaskGroup(groupId)
     if (!group) {
-      failDatabaseError("addTasksToGroup", `Task group with ID "${groupId}" does not exist`)
+      throw new DatabaseError({
+        operation: "addTasksToGroup",
+        message: `Task group with ID "${groupId}" does not exist`,
+      })
     }
 
     // Validate all tasks
     for (const taskId of taskIds) {
       const task = this.getTask(taskId)
       if (!task) {
-        failDatabaseError("addTasksToGroup", `Task with ID "${taskId}" does not exist`)
+        throw new DatabaseError({
+          operation: "addTasksToGroup",
+          message: `Task with ID "${taskId}" does not exist`,
+        })
       }
       if (task.groupId && task.groupId !== groupId) {
-        failDatabaseError("addTasksToGroup", `Task "${taskId}" is already in another group`)
+        throw new DatabaseError({
+          operation: "addTasksToGroup",
+          message: `Task "${taskId}" is already in another group`,
+        })
       }
     }
 
@@ -3945,7 +4157,10 @@ export class PiKanbanDB {
 
     const group = this.getTaskGroup(groupId)
     if (!group) {
-      failDatabaseError("removeTasksFromGroup", `Task group with ID "${groupId}" does not exist`)
+      throw new DatabaseError({
+        operation: "removeTasksFromGroup",
+        message: `Task group with ID "${groupId}" does not exist`,
+      })
     }
 
     const tx = this.db.transaction((ids: string[]) => {
@@ -3990,7 +4205,10 @@ export class PiKanbanDB {
   getTaskGroupMembers(groupId: string): TaskGroupMember[] {
     const group = this.getTaskGroup(groupId)
     if (!group) {
-      failDatabaseError("getTaskGroupMembers", `Task group with ID "${groupId}" does not exist`)
+      throw new DatabaseError({
+        operation: "getTaskGroupMembers",
+        message: `Task group with ID "${groupId}" does not exist`,
+      })
     }
 
     const rows = this.db
@@ -4019,7 +4237,10 @@ export class PiKanbanDB {
   getTaskGroupMembership(taskId: string): { groupId: string | null; group?: TaskGroup } {
     const task = this.getTask(taskId)
     if (!task) {
-      failDatabaseError("getTaskGroupMembership", `Task with ID "${taskId}" does not exist`)
+      throw new DatabaseError({
+        operation: "getTaskGroupMembership",
+        message: `Task with ID "${taskId}" does not exist`,
+      })
     }
 
     if (!task.groupId) {
@@ -4118,6 +4339,25 @@ export class PiKanbanDB {
   }
 
 }
+
+// Effect wrapper for telegram notification level validation (mirrors private asTelegramNotificationLevel)
+export const asTelegramNotificationLevelEffect = (value: unknown): Effect.Effect<TelegramNotificationLevel, DatabaseError> =>
+  Effect.try({
+    try: () => {
+      if (value === "all" || value === "failures" || value === "done_and_failures" || value === "workflow_done_and_failures") {
+        return value
+      }
+      throw new DatabaseError({
+        operation: "validation",
+        message: `Invalid telegram notification level: ${JSON.stringify(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"`,
+      })
+    },
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating telegram notification level: ${String(error)}`,
+      cause: error,
+    }),
+  })
 
 const CONTAINER_BUILD_STATUSES: ContainerBuild["status"][] = ["pending", "running", "success", "failed", "cancelled"]
 

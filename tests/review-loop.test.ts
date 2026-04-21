@@ -175,7 +175,6 @@ describe("review loop", () => {
 
     const reviewFilePath = join(String(current?.worktreeDir), ".pi", "tauroboros", `review-${task.id}.md`)
     expect(existsSync(reviewFilePath)).toBe(false)
-    db.close()
   })
 
   it("enforces review limit and marks task stuck", async () => {
@@ -207,6 +206,5 @@ describe("review loop", () => {
     expect(current?.status).toBe("stuck")
     expect(current?.reviewCount).toBe(1)
     expect(current?.errorMessage?.includes("Max reviews (1) reached")).toBe(true)
-    db.close()
   })
 })

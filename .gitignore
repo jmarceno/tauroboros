@@ -3,6 +3,7 @@
 .tauroboros/settings.json
 .worktrees
 plans/reports
+.codex
 
 .playwright-mcp
 test-results

@@ -1,9 +1,11 @@
-import { readFileSync, existsSync, writeFileSync } from "fs"
+import { existsSync } from "fs"
+import { readFileSync, writeFileSync } from "fs"
 import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
 import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
 import {
+  HttpRouteError,
   badRequestError,
   conflictError,
   internalRouteError,
@@ -23,38 +25,64 @@ interface ProfilesFile {
   profiles: ContainerProfile[]
 }
 
-function loadProfilesFile(ctx: ServerRouteContext): ProfilesFile {
-  const profilesPath = ctx.getContainerProfilesPath()
-  if (!existsSync(profilesPath)) {
-    throw notFoundError(`Container profiles file not found at ${profilesPath}`, ErrorCode.PROFILE_NOT_FOUND)
-  }
-  const raw = readFileSync(profilesPath, "utf-8")
-  const data = JSON.parse(raw) as ProfilesFile
-  if (!Array.isArray(data.profiles)) {
-    throw badRequestError(`Invalid profiles file: 'profiles' must be an array, got ${typeof data.profiles}`, ErrorCode.INVALID_REQUEST_BODY)
-  }
-  return data
+function loadProfilesFileEffect(ctx: ServerRouteContext): Effect.Effect<ProfilesFile, HttpRouteError> {
+  return Effect.gen(function* () {
+    const profilesPath = ctx.getContainerProfilesPath()
+    if (!existsSync(profilesPath)) {
+      return yield* Effect.fail(notFoundError(
+        `Container profiles file not found at ${profilesPath}`,
+        ErrorCode.PROFILE_NOT_FOUND,
+      ))
+    }
+
+    const raw = yield* Effect.try({
+      try: () => readFileSync(profilesPath, "utf-8"),
+      catch: (cause) => internalRouteError(
+        `Failed to read profiles file: ${cause instanceof Error ? cause.message : String(cause)}`,
+        ErrorCode.CONTAINER_OPERATION_FAILED,
+        cause,
+      ),
+    })
+
+    const data = yield* Effect.try({
+      try: () => JSON.parse(raw) as ProfilesFile,
+      catch: (cause) => badRequestError(
+        `Invalid JSON in profiles file: ${cause instanceof Error ? cause.message : String(cause)}`,
+        ErrorCode.INVALID_REQUEST_BODY,
+        { cause },
+      ),
+    })
+
+    if (!Array.isArray(data.profiles)) {
+      return yield* Effect.fail(badRequestError(
+        `Invalid profiles file: 'profiles' must be an array, got ${typeof data.profiles}`,
+        ErrorCode.INVALID_REQUEST_BODY,
+      ))
+    }
+
+    return data
+  })
 }
 
 export function registerContainerRoutes(router: Router, ctx: ServerRouteContext): void {
   router.get("/api/workflow/status", ({ json, db }) => Effect.sync(() => json({ hasRunningWorkflows: db.hasRunningWorkflows() })))
 
   router.get("/api/container/profiles", ({ json }) =>
-    Effect.try({
-      try: () => loadProfilesFile(ctx),
-      catch: (error) =>
-        error && typeof error === "object" && "_tag" in error
-          ? error as ReturnType<typeof notFoundError>
-          : internalRouteError(`Failed to load profiles: ${error instanceof Error ? error.message : String(error)}`, ErrorCode.CONTAINER_OPERATION_FAILED, error),
-    }).pipe(Effect.map((data) => json({ profiles: data.profiles }))),
+    loadProfilesFileEffect(ctx).pipe(
+      Effect.map((data) => json({ profiles: data.profiles })),
+    ),
   )
 
   router.post("/api/container/profiles", ({ req, json, broadcast }) =>
     Effect.gen(function* () {
       const body = (yield* Effect.tryPromise({
         try: () => req.json() as Promise<Record<string, unknown>>,
-        catch: (error) => badRequestError(`Invalid JSON body: ${error instanceof Error ? error.message : String(error)}`, ErrorCode.INVALID_JSON_BODY),
+        catch: (error) => badRequestError(
+          `Invalid JSON body: ${error instanceof Error ? error.message : String(error)}`,
+          ErrorCode.INVALID_JSON_BODY,
+        ),
       })) as Record<string, unknown>
+
       const profile: ContainerProfile = {
         id: String(body.id ?? "").trim(),
         name: String(body.name ?? "").trim(),
@@ -64,42 +92,58 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
       }
 
       if (!profile.id || !profile.name || !profile.dockerfileTemplate) {
-        return json(createApiError("Profile id, name, and dockerfileTemplate are required", ErrorCode.INVALID_REQUEST_BODY), 400)
+        return yield* Effect.fail(badRequestError(
+          "Profile id, name, and dockerfileTemplate are required",
+          ErrorCode.INVALID_REQUEST_BODY,
+        ))
       }
 
       if (!/^[a-z0-9-]+$/.test(profile.id)) {
-        return json(createApiError("Profile ID must be lowercase alphanumeric with hyphens only", ErrorCode.INVALID_REQUEST_BODY), 400)
+        return yield* Effect.fail(badRequestError(
+          "Profile ID must be lowercase alphanumeric with hyphens only",
+          ErrorCode.INVALID_REQUEST_BODY,
+        ))
       }
 
-      const savedProfile = yield* Effect.tryPromise({
-        try: async () => {
-          const profilesPath = ctx.getContainerProfilesPath()
-          let data: ProfilesFile
+      const profilesPath = ctx.getContainerProfilesPath()
 
+      // Read existing profiles or create new file
+      const data = yield* Effect.try({
+        try: () => {
           if (existsSync(profilesPath)) {
             const raw = readFileSync(profilesPath, "utf-8")
-            data = await new Response(raw).json() as ProfilesFile
-          } else {
-            data = { profiles: [] }
+            return JSON.parse(raw) as ProfilesFile
           }
-
-          const existingIndex = data.profiles.findIndex((p) => p.id === profile.id)
-          if (existingIndex >= 0) {
-            throw conflictError(`Profile '${profile.id}' already exists. Use a different ID.`, ErrorCode.CONTAINER_OPERATION_FAILED)
-          }
-
-          data.profiles.push(profile)
-          writeFileSync(profilesPath, `${await Response.json(data).text()}\n`, "utf-8")
-          return profile
+          return { profiles: [] }
         },
-        catch: (error) =>
-          error && typeof error === "object" && "_tag" in error
-            ? error as ReturnType<typeof conflictError>
-            : internalRouteError(`Failed to save profile: ${error instanceof Error ? error.message : String(error)}`, ErrorCode.CONTAINER_OPERATION_FAILED, error),
+        catch: (cause) => internalRouteError(
+          `Failed to read profiles file: ${cause instanceof Error ? cause.message : String(cause)}`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+          cause,
+        ),
       })
 
-      broadcast({ type: "container_profile_created", payload: savedProfile })
-      return json({ ok: true, profile: savedProfile })
+      const existingIndex = data.profiles.findIndex((p) => p.id === profile.id)
+      if (existingIndex >= 0) {
+        return yield* Effect.fail(conflictError(
+          `Profile '${profile.id}' already exists. Use a different ID.`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+        ))
+      }
+
+      data.profiles.push(profile)
+
+      yield* Effect.try({
+        try: () => writeFileSync(profilesPath, `${JSON.stringify(data, null, 2)}\n`, "utf-8"),
+        catch: (cause) => internalRouteError(
+          `Failed to save profile: ${cause instanceof Error ? cause.message : String(cause)}`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+          cause,
+        ),
+      })
+
+      broadcast({ type: "container_profile_created", payload: profile })
+      return json({ ok: true, profile })
     }),
   )
 
@@ -147,26 +191,23 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
   )
 
   router.get("/api/container/dockerfile/:profileId", ({ params, json }) =>
-    Effect.try({
-      try: () => {
-        const data = loadProfilesFile(ctx)
-        const profile = data.profiles.find((p) => p.id === params.profileId)
+    Effect.gen(function* () {
+      const data = yield* loadProfilesFileEffect(ctx)
+      const profile = data.profiles.find((p) => p.id === params.profileId)
 
-        if (!profile) {
-          throw notFoundError(`Profile '${params.profileId}' not found`, ErrorCode.PROFILE_NOT_FOUND)
-        }
+      if (!profile) {
+        return yield* Effect.fail(notFoundError(
+          `Profile '${params.profileId}' not found`,
+          ErrorCode.PROFILE_NOT_FOUND,
+        ))
+      }
 
-        return {
-          dockerfile: profile.dockerfileTemplate,
-          image: profile.image,
-          profile: { id: profile.id, name: profile.name, description: profile.description },
-        }
-      },
-      catch: (error) =>
-        error && typeof error === "object" && "_tag" in error
-          ? error as ReturnType<typeof notFoundError>
-          : internalRouteError(`Failed to get Dockerfile: ${error instanceof Error ? error.message : String(error)}`, ErrorCode.CONTAINER_OPERATION_FAILED, error),
-    }).pipe(Effect.map((result) => json(result))),
+      return json({
+        dockerfile: profile.dockerfileTemplate,
+        image: profile.image,
+        profile: { id: profile.id, name: profile.name, description: profile.description },
+      })
+    }),
   )
 
   router.post("/api/container/build", ({ req, json, broadcast, db }) =>
@@ -307,12 +348,18 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
     Effect.gen(function* () {
       const body = (yield* Effect.tryPromise({
         try: () => req.json() as Promise<Record<string, unknown>>,
-        catch: (error) => badRequestError(`Invalid JSON body: ${error instanceof Error ? error.message : String(error)}`, ErrorCode.INVALID_JSON_BODY),
+        catch: (error) => badRequestError(
+          `Invalid JSON body: ${error instanceof Error ? error.message : String(error)}`,
+          ErrorCode.INVALID_JSON_BODY,
+        ),
       })) as Record<string, unknown>
       const buildId = body.buildId
 
       if (!buildId) {
-        return json(createApiError("buildId is required", ErrorCode.INVALID_REQUEST_BODY), 400)
+        return yield* Effect.fail(badRequestError(
+          "buildId is required",
+          ErrorCode.INVALID_REQUEST_BODY,
+        ))
       }
 
       db.updateContainerBuild(String(buildId), {
@@ -331,98 +378,112 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
         return json({ images: [] })
       }
 
-        const builds = db.getContainerBuilds(100)
-        const buildImages = builds
-          .filter((b) => b.imageTag && b.status === "success")
-          .map((b) => {
-            if (!b.completedAt && !b.startedAt) {
-              throw internalRouteError(`Build ${b.id} has no completedAt or startedAt timestamp`, ErrorCode.CONTAINER_OPERATION_FAILED)
-            }
-            const createdAt = b.completedAt ?? b.startedAt
-            if (!createdAt) {
-              throw internalRouteError(`Build ${b.id} has invalid timestamps: completedAt=${b.completedAt}, startedAt=${b.startedAt}`, ErrorCode.CONTAINER_OPERATION_FAILED)
-            }
-            return {
-              tag: b.imageTag!,
-              createdAt,
-              source: "build" as const,
-            }
-          })
+      const builds = db.getContainerBuilds(100)
 
-        const podmanImages = yield* ctx.getPodmanImages().pipe(
-          Effect.mapError((error) => internalRouteError(`Failed to get container images: ${error instanceof Error ? error.message : String(error)}`, ErrorCode.CONTAINER_OPERATION_FAILED, error)),
-        )
-        const podmanImagesMap = new Map<string, { tag: string; createdAt: number; size: string }>()
-        for (const img of podmanImages) {
-          podmanImagesMap.set(img.tag, img)
+      // Process build images with proper error handling
+      const buildImages: Array<{ tag: string; createdAt: number; source: "build" }> = []
+      for (const b of builds.filter((b) => b.imageTag && b.status === "success")) {
+        if (!b.completedAt && !b.startedAt) {
+          return yield* Effect.fail(internalRouteError(
+            `Build ${b.id} has no completedAt or startedAt timestamp`,
+            ErrorCode.CONTAINER_OPERATION_FAILED,
+          ))
         }
-
-        const allImages = new Map<string, { tag: string; createdAt: number; source: "build" | "podman"; size?: string }>()
-        for (const img of buildImages) {
-          const podmanImg = podmanImagesMap.get(img.tag)
-          allImages.set(img.tag, { ...img, size: podmanImg?.size })
+        const createdAt = b.completedAt ?? b.startedAt
+        if (!createdAt) {
+          return yield* Effect.fail(internalRouteError(
+            `Build ${b.id} has invalid timestamps: completedAt=${b.completedAt}, startedAt=${b.startedAt}`,
+            ErrorCode.CONTAINER_OPERATION_FAILED,
+          ))
         }
-        for (const img of podmanImages) {
-          if (!allImages.has(img.tag)) {
-            allImages.set(img.tag, { ...img, source: "podman" })
-          }
+        buildImages.push({
+          tag: b.imageTag!,
+          createdAt,
+          source: "build" as const,
+        })
+      }
+
+      const podmanImages = yield* ctx.getPodmanImages().pipe(
+        Effect.mapError((error) => internalRouteError(
+          `Failed to get container images: ${error instanceof Error ? error.message : String(error)}`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+          error,
+        )),
+      )
+
+      const podmanImagesMap = new Map<string, { tag: string; createdAt: number; size: string }>()
+      for (const img of podmanImages) {
+        podmanImagesMap.set(img.tag, img)
+      }
+
+      const allImages = new Map<string, { tag: string; createdAt: number; source: "build" | "podman"; size?: string }>()
+      for (const img of buildImages) {
+        const podmanImg = podmanImagesMap.get(img.tag)
+        allImages.set(img.tag, { ...img, size: podmanImg?.size })
+      }
+      for (const img of podmanImages) {
+        if (!allImages.has(img.tag)) {
+          allImages.set(img.tag, { ...img, source: "podman" })
         }
+      }
 
-        const tasks = db.getTasks()
-        const imageUsage: Record<string, number> = {}
-        for (const task of tasks) {
-          if (task.containerImage && task.status !== "done") {
-            const currentCount = imageUsage[task.containerImage]
-            imageUsage[task.containerImage] = currentCount === undefined ? 1 : currentCount + 1
-          }
+      const tasks = db.getTasks()
+      const imageUsage: Record<string, number> = {}
+      for (const task of tasks) {
+        if (task.containerImage && task.status !== "done") {
+          const currentCount = imageUsage[task.containerImage]
+          imageUsage[task.containerImage] = currentCount === undefined ? 1 : currentCount + 1
         }
+      }
 
-        const result = Array.from(allImages.values()).map((img) => ({
-          ...img,
-          inUseByTasks: imageUsage[img.tag] ?? 0,
-        }))
+      const result = Array.from(allImages.values()).map((img) => ({
+        ...img,
+        inUseByTasks: imageUsage[img.tag] ?? 0,
+      }))
 
-        return json({ images: result.sort((a, b) => b.createdAt - a.createdAt) })
-      }).pipe(
-        Effect.catchAll((error) =>
-          Effect.fail(
-            error && typeof error === "object" && "_tag" in error
-              ? error as ReturnType<typeof internalRouteError>
-              : internalRouteError(`Failed to get container images: ${error instanceof Error ? error.message : String(error)}`, ErrorCode.CONTAINER_OPERATION_FAILED, error),
-          )
-        ),
-      ),
+      return json({ images: result.sort((a, b) => b.createdAt - a.createdAt) })
+    }),
   )
 
   router.post("/api/container/validate-image", ({ req, json, db }) =>
     Effect.gen(function* () {
       const body = (yield* Effect.tryPromise({
         try: () => req.json() as Promise<Record<string, unknown>>,
-        catch: (error) => badRequestError(`Invalid JSON body: ${error instanceof Error ? error.message : String(error)}`, ErrorCode.INVALID_JSON_BODY),
+        catch: (error) => badRequestError(
+          `Invalid JSON body: ${error instanceof Error ? error.message : String(error)}`,
+          ErrorCode.INVALID_JSON_BODY,
+        ),
       })) as Record<string, unknown>
       const tag = String(body?.tag ?? "")
 
       if (!tag) {
-        return json(createApiError("tag is required", ErrorCode.INVALID_REQUEST_BODY), 400)
+        return yield* Effect.fail(badRequestError(
+          "tag is required",
+          ErrorCode.INVALID_REQUEST_BODY,
+        ))
       }
 
-        let availableInPodman = false
-        if (ctx.settings?.workflow?.container?.enabled !== false) {
-          availableInPodman = yield* ctx.validateContainerImage(tag).pipe(
-            Effect.mapError((error) => internalRouteError(`Validation failed: ${error instanceof Error ? error.message : String(error)}`, ErrorCode.CONTAINER_OPERATION_FAILED, error)),
-          )
-        }
+      let availableInPodman = false
+      if (ctx.settings?.workflow?.container?.enabled !== false) {
+        availableInPodman = yield* ctx.validateContainerImage(tag).pipe(
+          Effect.mapError((error) => internalRouteError(
+            `Validation failed: ${error instanceof Error ? error.message : String(error)}`,
+            ErrorCode.CONTAINER_OPERATION_FAILED,
+            error,
+          )),
+        )
+      }
 
-        const builds = db.getContainerBuilds(100)
-        const existsInBuilds = builds.some((b) => b.imageTag === tag && b.status === "success")
+      const builds = db.getContainerBuilds(100)
+      const existsInBuilds = builds.some((b) => b.imageTag === tag && b.status === "success")
 
-        return json({
-          exists: existsInBuilds || availableInPodman,
-          tag,
-          availableInPodman,
-          availableInBuilds: existsInBuilds,
-        })
-      }),
+      return json({
+        exists: existsInBuilds || availableInPodman,
+        tag,
+        availableInPodman,
+        availableInBuilds: existsInBuilds,
+      })
+    }),
   )
 
   router.delete("/api/container/images/:tag", ({ params, json, db }) =>
@@ -430,40 +491,59 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
       const tag = decodeURIComponent(params.tag)
 
       if (!tag) {
-        return json(createApiError("tag is required", ErrorCode.INVALID_REQUEST_BODY), 400)
+        return yield* Effect.fail(badRequestError(
+          "tag is required",
+          ErrorCode.INVALID_REQUEST_BODY,
+        ))
       }
 
       const tasks = db.getTasks()
       const tasksUsing = tasks.filter((t) => t.containerImage === tag && t.status !== "done")
       if (tasksUsing.length > 0) {
-        return json(
-          createApiError(`Cannot delete image: used by ${tasksUsing.length} non-done task(s)`, ErrorCode.CONTAINER_OPERATION_FAILED, {
-            tasksUsing: tasksUsing.map((t) => ({ id: t.id, name: t.name })),
-          }),
-          400,
-        )
+        return yield* Effect.fail(badRequestError(
+          `Cannot delete image: used by ${tasksUsing.length} non-done task(s)`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+          { tasksUsing: tasksUsing.map((t) => ({ id: t.id, name: t.name })) },
+        ))
       }
 
       if (!ctx.containerManager) {
-        return json(createApiError("Container manager not available", ErrorCode.SERVICE_UNAVAILABLE), 503)
+        return yield* Effect.fail(serviceUnavailableError(
+          "Container manager not available",
+          ErrorCode.SERVICE_UNAVAILABLE,
+        ))
       }
 
-        const allImages = yield* ctx.getPodmanImages().pipe(
-          Effect.mapError((error) => internalRouteError(`Failed to delete image: ${error instanceof Error ? error.message : String(error)}`, ErrorCode.CONTAINER_OPERATION_FAILED, error)),
-        )
-        const piAgentImages = allImages.filter((img) => img.tag.includes("pi-agent"))
-        if (piAgentImages.length <= 1) {
-          return yield* Effect.fail(badRequestError("Cannot delete the last available pi-agent image", ErrorCode.CONTAINER_OPERATION_FAILED))
-        }
+      const allImages = yield* ctx.getPodmanImages().pipe(
+        Effect.mapError((error) => internalRouteError(
+          `Failed to delete image: ${error instanceof Error ? error.message : String(error)}`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+          error,
+        )),
+      )
+      const piAgentImages = allImages.filter((img) => img.tag.includes("pi-agent"))
+      if (piAgentImages.length <= 1) {
+        return yield* Effect.fail(badRequestError(
+          "Cannot delete the last available pi-agent image",
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+        ))
+      }
 
-        const result = yield* ctx.containerManager.deleteImage(tag).pipe(
-          Effect.mapError((error) => internalRouteError(`Failed to delete image: ${error instanceof Error ? error.message : String(error)}`, ErrorCode.CONTAINER_OPERATION_FAILED, error)),
-        )
-        if (!result.success) {
-          return yield* Effect.fail(internalRouteError(`Failed to delete image: ${result.error}`, ErrorCode.CONTAINER_OPERATION_FAILED))
-        }
+      const result = yield* ctx.containerManager.deleteImage(tag).pipe(
+        Effect.mapError((error) => internalRouteError(
+          `Failed to delete image: ${error instanceof Error ? error.message : String(error)}`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+          error,
+        )),
+      )
+      if (!result.success) {
+        return yield* Effect.fail(internalRouteError(
+          `Failed to delete image: ${result.error}`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+        ))
+      }
 
-        return json({ success: true, message: `Image ${tag} deleted successfully` })
-      }),
+      return json({ success: true, message: `Image ${tag} deleted successfully` })
+    }),
   )
 }

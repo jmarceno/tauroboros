@@ -34,7 +34,7 @@ describe("PiKanbanDB", () => {
     expect(prompts.some((item) => item.key === "execution")).toBe(true)
     expect(prompts.some((item) => item.key === "commit")).toBe(true)
 
-    db.close()
+    
   })
 
   it("codeStylePrompt defaults to DEFAULT_CODE_STYLE_PROMPT and can be updated", () => {
@@ -59,7 +59,7 @@ describe("PiKanbanDB", () => {
     expect(reset.codeStylePrompt).not.toBe("")
     expect(reset.codeStylePrompt.length).toBeGreaterThan(0)
 
-    db.close()
+    
   })
 
   it("codeStyleReview defaults to false on tasks and can be updated", () => {
@@ -92,7 +92,7 @@ describe("PiKanbanDB", () => {
     const reset = db.updateTask("task-csr-1", { codeStyleReview: false })
     expect(reset?.codeStyleReview).toBe(false)
 
-    db.close()
+    
   })
 
   it("supports task and workflow run storage", () => {
@@ -127,7 +127,7 @@ describe("PiKanbanDB", () => {
     expect(deleted).toBe(true)
     expect(db.getTask("task-1")).toBeNull()
 
-    db.close()
+    
   })
 
   it("persists self-healing task state and reports", () => {
@@ -191,7 +191,7 @@ describe("PiKanbanDB", () => {
     expect(linked?.selfHealStatus).toBe("recovering")
     expect(linked?.selfHealReportId).toBe(report.id)
 
-    db.close()
+    
   })
 
   it("supports normalized session message storage", () => {
@@ -230,7 +230,7 @@ describe("PiKanbanDB", () => {
     const filtered = db.getSessionMessagesByType("session-messages", "text")
     expect(filtered.length).toBe(1)
 
-    db.close()
+    
   })
 
   it("computes per-session token and cost rollups", () => {
@@ -295,12 +295,12 @@ describe("PiKanbanDB", () => {
     expect(rollup.totalTokens).toBe(181)
     expect(rollup.totalCost).toBeCloseTo(0.17, 10)
 
-    db.close()
+    
   })
 
   it("creates a pi-native session_messages schema", () => {
     const { db, dbPath } = createTempDb()
-    db.close()
+    
 
     const sqlite = new Database(dbPath, { readonly: true })
     const columns = sqlite.prepare("PRAGMA table_info(session_messages)").all() as Array<{ name: string }>
@@ -375,7 +375,7 @@ describe("PiKanbanDB", () => {
     expect(summary.workersDone).toBe(1)
     expect(summary.availableCandidates + summary.selectedCandidates).toBe(1)
 
-    db.close()
+    
   })
 
   it("renders prompt templates", () => {
@@ -406,7 +406,7 @@ describe("PiKanbanDB", () => {
     const afterVersions = db.getPromptTemplateVersions("execution").length
     expect(afterVersions).toBe(beforeVersions + 1)
 
-    db.close()
+    
   })
 
   describe("archived tasks", () => {
@@ -440,7 +440,7 @@ describe("PiKanbanDB", () => {
         expect(firstTimestamp).toBeGreaterThanOrEqual(secondTimestamp)
       }
 
-      db.close()
+      
     })
 
     it("getArchivedTasks() returns empty array when no archived tasks exist", () => {
@@ -452,7 +452,7 @@ describe("PiKanbanDB", () => {
       const archived = db.getArchivedTasks()
       expect(archived).toEqual([])
 
-      db.close()
+      
     })
 
     it("getArchivedTasksByRun() returns archived tasks for a specific run's task_order", () => {
@@ -489,7 +489,7 @@ describe("PiKanbanDB", () => {
       expect(archivedInRun.length).toBe(2)
       expect(archivedInRun.some((t) => t.id === "run-arch-3")).toBe(false)
 
-      db.close()
+      
     })
 
     it("getArchivedTasksByRun() returns empty array for non-existent runId", () => {
@@ -498,7 +498,7 @@ describe("PiKanbanDB", () => {
       const archived = db.getArchivedTasksByRun("non-existent-run")
       expect(archived).toEqual([])
 
-      db.close()
+      
     })
 
     it("getArchivedTasksByRun() returns empty array when run has no archived tasks", () => {
@@ -518,7 +518,7 @@ describe("PiKanbanDB", () => {
       const archived = db.getArchivedTasksByRun("run-no-archived")
       expect(archived).toEqual([])
 
-      db.close()
+      
     })
 
     it("getArchivedTasksByRun() returns empty array when run has empty task_order", () => {
@@ -535,7 +535,7 @@ describe("PiKanbanDB", () => {
       const archived = db.getArchivedTasksByRun("run-empty-order")
       expect(archived).toEqual([])
 
-      db.close()
+      
     })
 
     it("getWorkflowRunsWithArchivedTasks() returns only runs with archived tasks", () => {
@@ -588,7 +588,7 @@ describe("PiKanbanDB", () => {
       expect(runsWithArchived[0]?.id).toBe("run-with-arch-2")
       expect(runsWithArchived[1]?.id).toBe("run-with-arch-1")
 
-      db.close()
+      
     })
 
     it("getWorkflowRunsWithArchivedTasks() returns empty array when no runs have archived tasks", () => {
@@ -606,7 +606,7 @@ describe("PiKanbanDB", () => {
       const runsWithArchived = db.getWorkflowRunsWithArchivedTasks()
       expect(runsWithArchived).toEqual([])
 
-      db.close()
+      
     })
 
     it("getArchivedTasksGroupedByRun() returns correct Map structure with run and tasks", () => {
@@ -663,7 +663,7 @@ describe("PiKanbanDB", () => {
         expect(data.tasks.every((t) => t.isArchived)).toBe(true)
       }
 
-      db.close()
+      
     })
 
     it("getArchivedTasksGroupedByRun() returns empty Map when no archived tasks exist", () => {
@@ -681,7 +681,7 @@ describe("PiKanbanDB", () => {
       const grouped = db.getArchivedTasksGroupedByRun()
       expect(grouped.size).toBe(0)
 
-      db.close()
+      
     })
 
     it("getArchivedTasksGroupedByRun() handles mixed archived/non-archived tasks in runs", () => {
@@ -713,7 +713,7 @@ describe("PiKanbanDB", () => {
       expect(runData?.tasks.some((t) => t.id === "mixed-2")).toBe(false)
       expect(runData?.tasks.some((t) => t.id === "mixed-3")).toBe(true)
 
-      db.close()
+      
     })
 
     it("archived tasks are excluded from getTasks() and getTask()", () => {
@@ -731,7 +731,7 @@ describe("PiKanbanDB", () => {
       const archived = db.getArchivedTasks()
       expect(archived.some((t) => t.id === "exclude-1")).toBe(true)
 
-      db.close()
+      
     })
   })
 
@@ -746,7 +746,7 @@ describe("PiKanbanDB", () => {
         expect(stats.tokenChange).toBe(0)
         expect(stats.costChange).toBe(0)
 
-        db.close()
+        
       })
 
       it("calculates lifetime stats correctly", () => {
@@ -785,7 +785,7 @@ describe("PiKanbanDB", () => {
         expect(stats.tokenChange).toBe(0)
         expect(stats.costChange).toBe(0)
 
-        db.close()
+        
       })
 
       it("calculates 24h stats with period comparison", () => {
@@ -824,7 +824,7 @@ describe("PiKanbanDB", () => {
         expect(stats.tokenChange).toBe(100)
         expect(stats.costChange).toBe(100)
 
-        db.close()
+        
       })
 
       it("calculates 7d stats with period comparison", () => {
@@ -863,7 +863,7 @@ describe("PiKanbanDB", () => {
         expect(stats.tokenChange).toBe(-50)
         expect(stats.costChange).toBe(-50)
 
-        db.close()
+        
       })
 
       it("calculates 30d stats with period comparison", () => {
@@ -902,7 +902,7 @@ describe("PiKanbanDB", () => {
         expect(stats.tokenChange).toBe(100)
         expect(stats.costChange).toBe(100)
 
-        db.close()
+        
       })
     })
 
@@ -915,7 +915,7 @@ describe("PiKanbanDB", () => {
         expect(stats.failed).toBe(0)
         expect(stats.averageReviews).toBe(0)
 
-        db.close()
+        
       })
 
       it("counts completed and failed tasks correctly", () => {
@@ -931,7 +931,7 @@ describe("PiKanbanDB", () => {
         expect(stats.failed).toBe(1)
         expect(stats.averageReviews).toBe(0)
 
-        db.close()
+        
       })
 
       it("calculates average reviews for completed tasks", () => {
@@ -948,7 +948,7 @@ describe("PiKanbanDB", () => {
         expect(stats.completed).toBe(3)
         expect(stats.averageReviews).toBe(2)
 
-        db.close()
+        
       })
     })
 
@@ -961,7 +961,7 @@ describe("PiKanbanDB", () => {
         expect(stats.execution).toEqual([])
         expect(stats.review).toEqual([])
 
-        db.close()
+        
       })
 
       it("categorizes planning sessions correctly", () => {
@@ -995,7 +995,7 @@ describe("PiKanbanDB", () => {
         expect(stats.execution).toEqual([])
         expect(stats.review).toEqual([])
 
-        db.close()
+        
       })
 
       it("categorizes execution sessions correctly", () => {
@@ -1028,7 +1028,7 @@ describe("PiKanbanDB", () => {
         expect(stats.execution.every(e => e.model === "o3-mini")).toBe(true)
         expect(stats.execution.reduce((sum, e) => sum + e.count, 0)).toBe(2)
 
-        db.close()
+        
       })
 
       it("categorizes review sessions correctly", () => {
@@ -1054,7 +1054,7 @@ describe("PiKanbanDB", () => {
         expect(stats.review.every(r => r.model === "o4-mini")).toBe(true)
         expect(stats.review.reduce((sum, r) => sum + r.count, 0)).toBe(2)
 
-        db.close()
+        
       })
 
       it("sorts results by count descending", () => {
@@ -1087,7 +1087,7 @@ describe("PiKanbanDB", () => {
         expect(stats.execution[1]?.model).toBe("rare-model")
         expect(stats.execution[1]?.count).toBe(1)
 
-        db.close()
+        
       })
 
       it("excludes default and empty models", () => {
@@ -1118,7 +1118,7 @@ describe("PiKanbanDB", () => {
         expect(stats.execution).toHaveLength(1)
         expect(stats.execution[0]?.model).toBe("valid-model")
 
-        db.close()
+        
       })
     })
 
@@ -1129,7 +1129,7 @@ describe("PiKanbanDB", () => {
         const duration = db.getAverageTaskDuration()
         expect(duration).toBe(0)
 
-        db.close()
+        
       })
 
       it("returns zero when no completed tasks", () => {
@@ -1147,7 +1147,7 @@ describe("PiKanbanDB", () => {
         const duration = db.getAverageTaskDuration()
         expect(duration).toBe(0)
 
-        db.close()
+        
       })
 
       it("calculates average duration correctly", () => {
@@ -1175,7 +1175,7 @@ describe("PiKanbanDB", () => {
         const duration = db.getAverageTaskDuration()
         expect(duration).toBe(90) // Average of 3600 and 7200 seconds, returned in minutes
 
-        db.close()
+        
       })
     })
 
@@ -1186,7 +1186,7 @@ describe("PiKanbanDB", () => {
         const series = db.getHourlyUsageTimeSeries()
         expect(series).toEqual([])
 
-        db.close()
+        
       })
 
       it("returns hourly data for last 24 hours", () => {
@@ -1252,7 +1252,7 @@ describe("PiKanbanDB", () => {
         expect(series[0]?.hour).toContain("T")
         expect(series[0]?.hour).toContain("Z")
 
-        db.close()
+        
       })
     })
 
@@ -1263,7 +1263,7 @@ describe("PiKanbanDB", () => {
         const series = db.getDailyUsageTimeSeries(30)
         expect(series).toEqual([])
 
-        db.close()
+        
       })
 
       it("returns daily data for specified days", () => {
@@ -1325,7 +1325,7 @@ describe("PiKanbanDB", () => {
         expect(series[1]?.tokens).toBe(1500)
         expect(series[1]?.cost).toBeCloseTo(0.075, 10)
 
-        db.close()
+        
       })
 
       it("respects days parameter", () => {
@@ -1365,7 +1365,7 @@ describe("PiKanbanDB", () => {
         const series30d = db.getDailyUsageTimeSeries(30)
         expect(series30d.length).toBe(2)
 
-        db.close()
+        
       })
     })
   })

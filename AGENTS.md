@@ -156,7 +156,6 @@ See `docs/EFFECT_ARCHITECTURE.md` for:
 
 Current migration progress is tracked in:
 - `plans/effect-full-migration-plan.md` - Full migration plan
-- `plans/MIGRATION_PROGRESS.md` - Progress report
 - `scripts/verify-migration.ts` - Verification script
 
 Run verification:

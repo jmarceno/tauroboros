@@ -7,6 +7,21 @@ import { BASE_IMAGES } from "../config/base-images.ts"
 import * as path from "path"
 import * as fs from "fs"
 
+// Logging helpers using Effect.log for observability
+function logInfo(message: string): Effect.Effect<void> {
+  return Effect.logInfo(message)
+}
+
+function logDebug(message: string): Effect.Effect<void> {
+  return Effect.logDebug(message)
+}
+
+function logError(message: string): Effect.Effect<void> {
+  return Effect.logError(message)
+}
+
+// Legacy sync logging functions for backward compatibility during migration
+// These should NOT be used in new code - use logInfo/logDebug/logError instead
 function writeInfo(message: string): void {
   process.stdout.write(`${message}\n`)
 }
@@ -49,8 +64,8 @@ export interface ContainerProcess {
   stdin: WritableStream<Uint8Array>
   stdout: ReadableStream<Uint8Array>
   stderr: ReadableStream<Uint8Array>
-  kill(): Promise<void>
-  inspect(): Promise<{ State: { Status: string; Running: boolean } }>
+  kill(): Effect.Effect<void, ContainerManagerError>
+  inspect(): Effect.Effect<{ State: { Status: string; Running: boolean } }, ContainerManagerError>
 }
 
 export interface VolumeMount {
@@ -193,35 +208,47 @@ export class PiContainerManager {
     })
   }
 
-  private async generateModelsJson(containerId: string, mockPort: number, repoRoot: string, useHostNetwork: boolean = false): Promise<void> {
-    const modelsJson = {
-      providers: {
-        fake: {
-          baseUrl: `http://localhost:${mockPort}/v1`,
-          apiKey: 'fake-key-not-used',
-          api: 'openai-completions',
-          models: [
-            {
-              id: 'fake-model',
-              name: 'Fake Model',
-              reasoning: false,
-              input: ['text'],
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              contextWindow: 128000,
-              maxTokens: 4096,
-            },
-          ],
+  private generateModelsJson(containerId: string, mockPort: number, repoRoot: string, useHostNetwork: boolean = false): Effect.Effect<void, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      const modelsJson = {
+        providers: {
+          fake: {
+            baseUrl: `http://localhost:${mockPort}/v1`,
+            apiKey: 'fake-key-not-used',
+            api: 'openai-completions',
+            models: [
+              {
+                id: 'fake-model',
+                name: 'Fake Model',
+                reasoning: false,
+                input: ['text'],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 128000,
+                maxTokens: 4096,
+              },
+            ],
+          },
         },
-      },
-    }
+      }
 
-    const tauroborosDir = path.join(repoRoot, '.tauroboros')
-    const piDir = path.join(tauroborosDir, 'agent')
-    const modelsJsonPath = path.join(piDir, 'models.json')
+      const tauroborosDir = path.join(repoRoot, '.tauroboros')
+      const piDir = path.join(tauroborosDir, 'agent')
+      const modelsJsonPath = path.join(piDir, 'models.json')
 
-    fs.mkdirSync(piDir, { recursive: true })
-    fs.writeFileSync(modelsJsonPath, JSON.stringify(modelsJson, null, 2))
-    writeInfo(`[container-manager] Generated models.json at ${modelsJsonPath}`)
+      yield* Effect.try({
+        try: () => {
+          fs.mkdirSync(piDir, { recursive: true })
+          fs.writeFileSync(modelsJsonPath, JSON.stringify(modelsJson, null, 2))
+        },
+        catch: (cause) => new ContainerManagerError({
+          operation: "generateModelsJson",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
+
+      yield* logInfo(`[container-manager] Generated models.json at ${modelsJsonPath}`)
+    })
   }
 
   /**
@@ -255,11 +282,11 @@ export class PiContainerManager {
           })),
         )
       } else {
-        const exists = yield* Effect.promise(() =>
-          self.execPodman(["image", "exists", self.imageName]).then(
-            () => true,
-            () => false,
-          ),
+        const exists = yield* self.execPodman(["image", "exists", self.imageName]).pipe(
+          Effect.match({
+            onSuccess: () => true,
+            onFailure: () => false,
+          })
         )
         if (!exists) {
           return yield* new ContainerManagerError({
@@ -274,29 +301,39 @@ export class PiContainerManager {
   /**
    * Verify that the container image is ready (must have been prepared already).
    * This does NOT trigger image builds - it only checks the prepared flag.
-   * Throws a hard error if the image was not prepared, preventing any
+   * Returns an Effect that fails if the image was not prepared, preventing any
    * fallback to building/pulling during task execution.
    */
-  verifyImageReady(): void {
-    if (this.imageManager && !this.imageManager.isReady()) {
-      throw new ContainerManagerError({
-        operation: "verifyImageReady",
-        message: `Container image '${this.imageName}' has not been prepared. The server must prepare the image on startup before containers can be created. Ensure 'autoPrepare: true' is set in .tauroboros/settings.json or manually prepare the image.`,
-      })
-    }
+  verifyImageReady(): Effect.Effect<void, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      if (this.imageManager && !this.imageManager.isReady()) {
+        return yield* new ContainerManagerError({
+          operation: "verifyImageReady",
+          message: `Container image '${this.imageName}' has not been prepared. The server must prepare the image on startup before containers can be created. Ensure 'autoPrepare: true' is set in .tauroboros/settings.json or manually prepare the image.`,
+        })
+      }
+    })
   }
 
   /**
    * Check if podman is available
    */
-  static isAvailable(): boolean {
-    try {
-      execSync("podman --version", { stdio: "pipe" })
-      return true
-    } catch (err) {
-      writeDebug(`[container-manager] Podman not available: ${err instanceof Error ? err.message : String(err)}`)
-      return false
-    }
+  static isAvailable(): Effect.Effect<boolean, never> {
+    return Effect.gen(function* () {
+      const result = yield* Effect.try({
+        try: () => {
+          execSync("podman --version", { stdio: "pipe" })
+          return true
+        },
+        catch: () => false,
+      }).pipe(
+        Effect.catchAll(() => Effect.succeed(false))
+      )
+      if (!result) {
+        yield* logDebug(`[container-manager] Podman not available`)
+      }
+      return result
+    })
   }
 
   /**
@@ -306,536 +343,144 @@ export class PiContainerManager {
     return Effect.gen(this, function* () {
       const imageName = config.imageName || this.imageName
 
-      yield* Effect.try({
-        try: () => {
-          this.verifyImageReady()
-        },
-        catch: (cause) =>
-          cause instanceof ContainerManagerError
-            ? cause
-            : new ContainerManagerError({
-                operation: "createContainer",
-                message: cause instanceof Error ? cause.message : String(cause),
-                cause,
-              }),
-      })
+      yield* this.verifyImageReady()
 
       const mockPort = yield* this.startMockServerIfNeeded(config)
       if (mockPort !== null) {
-        yield* Effect.tryPromise({
-          try: () => this.generateModelsJson(imageName, mockPort, config.repoRoot),
-          catch: (cause) =>
-            cause instanceof ContainerManagerError
-              ? cause
-              : new ContainerManagerError({
-                  operation: "createContainer",
-                  message: cause instanceof Error ? cause.message : String(cause),
-                  cause,
-                }),
-        })
+        yield* this.generateModelsJson(imageName, mockPort, config.repoRoot)
       }
 
-      return yield* Effect.tryPromise({
-        try: () => this.createContainerInternal(config),
-        catch: (cause) =>
-          cause instanceof ContainerManagerError
-            ? cause
-            : new ContainerManagerError({
-                operation: "createContainer",
-                message: cause instanceof Error ? cause.message : String(cause),
-                cause,
-              }),
-      })
+      return yield* this.createContainerInternal(config)
     })
   }
 
-  private async createContainerInternal(config: ContainerConfig): Promise<ContainerProcess> {
-    const imageName = config.imageName || this.imageName
+  private createContainerInternal(config: ContainerConfig): Effect.Effect<ContainerProcess, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      const imageName = config.imageName || this.imageName
 
-    // Use host network when mock LLM is enabled so container can reach mock server on localhost
-    const networkMode = config.useMockLLM ? "host" : (config.networkMode || "bridge")
+      // Use host network when mock LLM is enabled so container can reach mock server on localhost
+      const networkMode = config.useMockLLM ? "host" : (config.networkMode || "bridge")
 
-    const agentDirOverride = config.useMockLLM ? path.join(config.repoRoot, '.tauroboros', 'agent') : undefined
-    const mounts = createVolumeMounts(config.worktreeDir, config.repoRoot, config.mountPodmanSocket, agentDirOverride)
+      const agentDirOverride = config.useMockLLM ? path.join(config.repoRoot, '.tauroboros', 'agent') : undefined
+      const mounts = createVolumeMounts(config.worktreeDir, config.repoRoot, config.mountPodmanSocket, agentDirOverride)
 
-    // Build mount arguments for podman
-    const mountArgs: string[] = []
-    for (const mount of mounts) {
-      const roFlag = mount.ReadOnly ? ",ro" : ""
-      mountArgs.push("--volume", `${mount.Source}:${mount.Target}:z${roFlag}`)
-    }
+      // Build mount arguments for podman
+      const mountArgs: string[] = []
+      for (const mount of mounts) {
+        const roFlag = mount.ReadOnly ? ",ro" : ""
+        mountArgs.push("--volume", `${mount.Source}:${mount.Target}:z${roFlag}`)
+      }
 
-    // Environment variables
-    // PI_OFFLINE=1 prevents pi's package manager from auto-installing
-    // packages on every startup. Packages listed in ~/.pi/agent/settings.json
-    // would otherwise trigger npm install on each fresh container start
-    // (containers are ephemeral with --rm, so installed packages don't persist).
-    // PI_CODING_AGENT=true allows subprocesses to detect they are running inside the coding agent.
-    const defaultEnv: Record<string, string> = {
-      PI_OFFLINE: "1",
-      PI_CODING_AGENT: "true",
-    }
+      // Environment variables
+      // PI_OFFLINE=1 prevents pi's package manager from auto-installing
+      // packages on every startup. Packages listed in ~/.pi/agent/settings.json
+      // would otherwise trigger npm install on each fresh container start
+      // (containers are ephemeral with --rm, so installed packages don't persist).
+      // PI_CODING_AGENT=true allows subprocesses to detect they are running inside the coding agent.
+      const defaultEnv: Record<string, string> = {
+        PI_OFFLINE: "1",
+        PI_CODING_AGENT: "true",
+      }
 
-    // If mounting podman socket, set DOCKER_HOST so docker-compose can find it
-    if (config.mountPodmanSocket) {
-      defaultEnv.DOCKER_HOST = "unix:///var/run/docker.sock"
-    }
-    if (!config.env) {
-      throw new ContainerManagerError({
-        operation: "createContainer",
-        message: "Container config.env is required but was not provided",
+      // If mounting podman socket, set DOCKER_HOST so docker-compose can find it
+      if (config.mountPodmanSocket) {
+        defaultEnv.DOCKER_HOST = "unix:///var/run/docker.sock"
+      }
+      if (!config.env) {
+        return yield* new ContainerManagerError({
+          operation: "createContainer",
+          message: "Container config.env is required but was not provided",
+        })
+      }
+      const envVars = { ...defaultEnv, ...config.env }
+      const envArgs: string[] = []
+      for (const [key, value] of Object.entries(envVars)) {
+        envArgs.push("-e", `${key}=${value}`)
+      }
+
+      // Generate container name
+      const containerName = `tauroboros-${config.sessionId}`
+
+      // Resource limits
+      const resourceArgs: string[] = []
+      if (config.memoryMb) {
+        resourceArgs.push("--memory", `${config.memoryMb}m`)
+      }
+      if (config.cpuCount) {
+        resourceArgs.push("--cpus", config.cpuCount.toString())
+      }
+
+      // Security options
+      const securityArgs = [
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+      ]
+
+      // Network
+      const networkArgs = ["--network", networkMode]
+
+      // Build the podman run command (without -d for proper stdin handling)
+      const podmanArgs = [
+        "run",
+        "--rm",  // Auto-remove after exit
+        "--name", containerName,
+        "--workdir", config.worktreeDir,
+        "-i",  // Interactive (keep stdin open)
+        "--label", `tauroboros.session-id=${config.sessionId}`,
+        "--label", `tauroboros.managed=true`,
+        ...resourceArgs,
+        ...securityArgs,
+        ...networkArgs,
+        ...mountArgs,
+        ...envArgs,
+        imageName,
+      ]
+
+      // Spawn podman run directly for proper stdin/stdout handling
+      const proc = spawn("podman", podmanArgs, {
+        stdio: ["pipe", "pipe", "pipe"],
       })
-    }
-    const envVars = { ...defaultEnv, ...config.env }
-    const envArgs: string[] = []
-    for (const [key, value] of Object.entries(envVars)) {
-      envArgs.push("-e", `${key}=${value}`)
-    }
 
-    // Generate container name
-    const containerName = `tauroboros-${config.sessionId}`
+      // Wait for container to be ready by polling podman ps
+      // instead of a fixed 15-second delay
+      let containerId = ""
+      const startTime = Date.now()
+      const maxWaitMs = 15000 // Max 15 seconds, but usually much faster
+      const pollIntervalMs = 500
 
-    // Resource limits
-    const resourceArgs: string[] = []
-    if (config.memoryMb) {
-      resourceArgs.push("--memory", `${config.memoryMb}m`)
-    }
-    if (config.cpuCount) {
-      resourceArgs.push("--cpus", config.cpuCount.toString())
-    }
-
-    // Security options
-    const securityArgs = [
-      "--cap-drop", "ALL",
-      "--security-opt", "no-new-privileges",
-    ]
-
-    // Network
-    const networkArgs = ["--network", networkMode]
-
-    // Build the podman run command (without -d for proper stdin handling)
-    const podmanArgs = [
-      "run",
-      "--rm",  // Auto-remove after exit
-      "--name", containerName,
-      "--workdir", config.worktreeDir,
-      "-i",  // Interactive (keep stdin open)
-      "--label", `tauroboros.session-id=${config.sessionId}`,
-      "--label", `tauroboros.managed=true`,
-      ...resourceArgs,
-      ...securityArgs,
-      ...networkArgs,
-      ...mountArgs,
-      ...envArgs,
-      imageName,
-    ]
-
-    // Spawn podman run directly for proper stdin/stdout handling
-    const proc = spawn("podman", podmanArgs, {
-      stdio: ["pipe", "pipe", "pipe"],
-    })
-
-    // Wait for container to be ready by polling podman ps
-    // instead of a fixed 15-second delay
-    let containerId = ""
-    const startTime = Date.now()
-    const maxWaitMs = 15000 // Max 15 seconds, but usually much faster
-    const pollIntervalMs = 500
-
-    while (Date.now() - startTime < maxWaitMs) {
-      try {
-        const { stdout } = await this.execPodman([
+      while (Date.now() - startTime < maxWaitMs) {
+        const result = yield* this.execPodman([
           "ps", "-q", "-f", `name=${containerName}`,
-        ])
-        containerId = stdout.trim()
+        ]).pipe(
+          Effect.catchAll((err) => {
+            // Container not ready yet, continue polling
+            // This is expected during startup polling, so we only log at debug level
+            writeDebug(`[container-manager] Container not ready yet during polling: ${err.message}`)
+            return Effect.succeed({ stdout: "", stderr: "" })
+          })
+        )
+        
+        containerId = result.stdout.trim()
         if (containerId) {
           // Container is running, pi should be ready soon
           break
         }
-      } catch (err) {
-        // Container not ready yet, continue polling
-        // This is expected during startup polling, so we only log at debug level
-        writeDebug(`[container-manager] Container not ready yet during polling: ${err instanceof Error ? err.message : String(err)}`)
-      }
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
-    }
-
-    if (!containerId) {
-      throw new ContainerManagerError({
-        operation: "createContainer",
-        message: `Container failed to start within ${maxWaitMs}ms. The container process started but podman could not find a running container with name ${containerName}. Check podman logs with: podman logs ${containerName}`,
-      })
-    }
-
-    // Create process wrapper with stdio streams
-    const process: ContainerProcess = {
-      sessionId: config.sessionId,
-      containerId: containerId || `proc-${proc.pid}`,
-
-      stdin: new WritableStream({
-        write: async (chunk: Uint8Array) => {
-          return new Promise((resolve, reject) => {
-            if (!proc.stdin) {
-              reject(new Error("Process stdin not available"))
-              return
-            }
-            proc.stdin.write(chunk, (err) => {
-              if (err) reject(err)
-              else resolve()
-            })
-          })
-        },
-      }),
-
-      stdout: new ReadableStream({
-        start: (controller) => {
-          if (!proc.stdout) {
-            controller.close()
-            return
-          }
-
-          let isClosed = false
-
-          proc.stdout.on("data", (data: Buffer) => {
-            if (!isClosed) {
-              try {
-                controller.enqueue(new Uint8Array(data))
-              } catch (err) {
-                writeDebug(`[container-manager] stdout controller already closed: ${err instanceof Error ? err.message : String(err)}`)
-              }
-            }
-          })
-
-          proc.stdout.on("end", () => {
-            if (!isClosed) {
-              isClosed = true
-              try {
-                controller.close()
-              } catch (err) {
-                writeDebug(`[container-manager] stdout controller already closed on end: ${err instanceof Error ? err.message : String(err)}`)
-              }
-            }
-          })
-
-          proc.on("error", (err) => {
-            if (!isClosed) {
-              isClosed = true
-              try {
-                controller.error(err)
-              } catch (closeErr) {
-                writeError(`[container-manager] Failed to error stdout controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`)
-              }
-            }
-          })
-        },
-      }),
-
-      stderr: new ReadableStream({
-        start: (controller) => {
-          if (!proc.stderr) {
-            controller.close()
-            return
-          }
-
-          let isClosed = false
-
-          proc.stderr.on("data", (data: Buffer) => {
-            if (!isClosed) {
-              try {
-                controller.enqueue(new Uint8Array(data))
-              } catch (err) {
-                writeDebug(`[container-manager] stderr controller already closed: ${err instanceof Error ? err.message : String(err)}`)
-              }
-            }
-          })
-
-          proc.stderr.on("end", () => {
-            if (!isClosed) {
-              isClosed = true
-              try {
-                controller.close()
-              } catch (err) {
-                writeDebug(`[container-manager] stderr controller already closed on end: ${err instanceof Error ? err.message : String(err)}`)
-              }
-            }
-          })
-
-          proc.on("error", (err) => {
-            if (!isClosed) {
-              isClosed = true
-              try {
-                controller.error(err)
-              } catch (closeErr) {
-                writeError(`[container-manager] Failed to error stderr controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`)
-              }
-            }
-          })
-        },
-      }),
-
-      kill: async () => {
-        try {
-          if (containerId && !containerId.startsWith("pending") && !containerId.startsWith("proc-")) {
-            await this.execPodman(["kill", containerName])
-          } else {
-            proc.kill()
-          }
-        } catch (err) {
-          writeDebug(`[container-manager] Error killing container (may already be stopped): ${err instanceof Error ? err.message : String(err)}`)
-        }
-        this.containers.delete(config.sessionId)
-      },
-
-      inspect: async () => {
-        if (containerId && !containerId.startsWith("pending") && !containerId.startsWith("proc-")) {
-          return this.inspectContainer(containerId)
-        }
-        return { State: { Status: "running", Running: true } }
-      },
-    }
-
-    this.containers.set(config.sessionId, process)
-    return process
-  }
-
-  /**
-   * Kill a container by session ID.
-   */
-  killContainer(sessionId: string): Effect.Effect<void, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.killContainerInternal(sessionId),
-      catch: (cause) => new ContainerManagerError({
-        operation: "killContainer",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
-  }
-
-  private async killContainerInternal(sessionId: string): Promise<void> {
-    const process = this.containers.get(sessionId)
-    if (process) {
-      await process.kill()
-    }
-  }
-
-  /**
-   * Check if a container exists and is running by session ID.
-   * Returns the container info if found and running, null otherwise.
-   */
-  checkContainerExists(sessionId: string): Effect.Effect<{
-    containerId: string
-    containerName: string
-    status: string
-    running: boolean
-  } | null, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.checkContainerExistsInternal(sessionId),
-      catch: (cause) => new ContainerManagerError({
-        operation: "checkContainerExists",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
-  }
-
-  private async checkContainerExistsInternal(sessionId: string): Promise<{
-    containerId: string
-    containerName: string
-    status: string
-    running: boolean
-  } | null> {
-    // First check our managed containers
-    const managedProcess = this.containers.get(sessionId)
-    if (managedProcess) {
-      try {
-        const inspection = await managedProcess.inspect()
-        if (inspection.State.Running) {
-          return {
-            containerId: managedProcess.containerId,
-            containerName: `tauroboros-${sessionId}`,
-            status: inspection.State.Status,
-            running: true,
-          }
-        }
-      } catch (err) {
-        writeDebug(`[container-manager] Container ${sessionId} exists in map but inspection failed: ${err instanceof Error ? err.message : String(err)}`)
-      }
-    }
-
-    // Check if container exists in podman but is not in our managed map
-    // (e.g., after server restart)
-    const containerName = `tauroboros-${sessionId}`
-    try {
-      const { stdout } = await this.execPodman([
-        "ps",
-        "-a",
-        "-f", `name=${containerName}`,
-        "--format", "{{.ID}}|{{.Names}}|{{.State}}|{{.Status}}",
-      ])
-
-      if (!stdout.trim()) {
-        return null
+        
+        yield* Effect.sleep(pollIntervalMs)
       }
 
-      const [id, name, state, status] = stdout.trim().split("|")
-      if (!id) {
-        return null
-      }
-
-      const isRunning = state === "running"
-
-      // If container exists but not in our map, add it so we can manage it
-      if (isRunning && !managedProcess) {
-        // We'll create a minimal process wrapper - the caller will need to
-        // properly reconnect stdin/stdout if they want to interact with it
-        this.containers.set(sessionId, {
-          sessionId,
-          containerId: id,
-          stdin: new WritableStream(),
-          stdout: new ReadableStream(),
-          stderr: new ReadableStream(),
-          kill: async () => {
-            await this.execPodman(["kill", id])
-          },
-          inspect: async () => ({
-            State: { Status: state, Running: true },
-          }),
+      if (!containerId) {
+        return yield* new ContainerManagerError({
+          operation: "createContainer",
+          message: `Container failed to start within ${maxWaitMs}ms. The container process started but podman could not find a running container with name ${containerName}. Check podman logs with: podman logs ${containerName}`,
         })
       }
 
-      return {
-        containerId: id,
-        containerName: containerName,
-        status: state,
-        running: isRunning,
-      }
-    } catch (err) {
-      writeDebug(`[container-manager] Error checking container existence for ${sessionId}: ${err instanceof Error ? err.message : String(err)}`)
-      return null
-    }
-  }
-
-  /**
-   * Check if a container exists and is running by container ID.
-   * This is used for resume operations when we only have the container ID.
-   */
-  checkContainerById(containerId: string): Effect.Effect<{
-    containerId: string
-    status: string
-    running: boolean
-  } | null, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.checkContainerByIdInternal(containerId),
-      catch: (cause) => new ContainerManagerError({
-        operation: "checkContainerById",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
-  }
-
-  private async checkContainerByIdInternal(containerId: string): Promise<{
-    containerId: string
-    status: string
-    running: boolean
-  } | null> {
-    try {
-      const { stdout } = await this.execPodman([
-        "ps",
-        "-a",
-        "-f", `id=${containerId}`,
-        "--format", "{{.ID}}|{{.State}}|{{.Status}}",
-      ])
-
-      if (!stdout.trim()) {
-        return null
-      }
-
-      const [id, state] = stdout.trim().split("|")
-      if (!id) {
-        return null
-      }
-
-      return {
-        containerId: id,
-        status: state,
-        running: state === "running",
-      }
-    } catch (err) {
-      writeDebug(`[container-manager] Error checking container by ID ${containerId}: ${err instanceof Error ? err.message : String(err)}`)
-      return null
-    }
-  }
-
-  /**
-   * Attach to an existing container (for resume).
-   *
-   * CRITICAL: This is the RECOMMENDED approach for container resume operations.
-   * Reattaching to an existing container preserves:
-   *   - All file system state (modified files, installed packages)
-   *   - Environment variables set during execution
-   *   - Running processes and their state
-   *   - Network connections
-   *
-   * Container recreation (the fallback) loses all unsaved work and requires
-   * re-execution from scratch. Only use recreation when attach fails.
-   *
-   * Implementation uses 'podman exec' to create a new session in the existing
-   * container while preserving all container state.
-   *
-   * @param containerId - The ID of the container to attach to
-   * @param sessionId - The session ID for tracking this attachment
-   * @returns ContainerProcess if successful, null if container not running or attach failed
-   */
-  attachToContainer(containerId: string, sessionId: string): Effect.Effect<ContainerProcess | null, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.attachToContainerInternal(containerId, sessionId),
-      catch: (cause) => new ContainerManagerError({
-        operation: "attachToContainer",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
-  }
-
-  private async attachToContainerInternal(containerId: string, sessionId: string): Promise<ContainerProcess | null> {
-    // Verify container exists and is running
-    const containerInfo = await this.checkContainerByIdInternal(containerId)
-    if (!containerInfo?.running) {
-      writeInfo(`[container-manager] Container ${containerId} not running, cannot attach`)
-      return null
-    }
-
-    try {
-      writeInfo(`[container-manager] Attaching to existing container ${containerId} for session ${sessionId}`)
-
-      // Spawn podman exec to create a new pi rpc session in the existing container
-      // The -i flag keeps stdin open, allowing us to send commands
-      // The -e flag passes the PI_CODING_AGENT environment variable
-      const proc = spawn("podman", [
-        "exec",
-        "-i",  // Interactive mode - keep stdin open
-        "-e", "PI_CODING_AGENT=true",  // Pass environment variable to container
-        containerId,
-        "pi", "rpc", "--session-id", sessionId,
-      ], {
-        stdio: ["pipe", "pipe", "pipe"],
-      })
-
-      // Wait a moment for the exec to initialize
-      await new Promise((resolve) => setTimeout(resolve, 500))
-
-      // Verify the exec session is still running by checking the process
-      if (!proc.pid) {
-        writeError(`[container-manager] Failed to start podman exec for container ${containerId}`)
-        return null
-      }
-
-      // Create process wrapper with proper stdio streams
+      // Create process wrapper with stdio streams
+      const self = this
       const process: ContainerProcess = {
-        sessionId,
-        containerId,
+        sessionId: config.sessionId,
+        containerId: containerId || `proc-${proc.pid}`,
 
         stdin: new WritableStream({
           write: async (chunk: Uint8Array) => {
@@ -866,7 +511,7 @@ export class PiContainerManager {
                 try {
                   controller.enqueue(new Uint8Array(data))
                 } catch (err) {
-                  writeDebug(`[container-manager] attach stdout controller already closed: ${err instanceof Error ? err.message : String(err)}`)
+                  writeDebug(`[container-manager] stdout controller already closed: ${err instanceof Error ? err.message : String(err)}`)
                 }
               }
             })
@@ -877,7 +522,7 @@ export class PiContainerManager {
                 try {
                   controller.close()
                 } catch (err) {
-                  writeDebug(`[container-manager] attach stdout controller already closed on end: ${err instanceof Error ? err.message : String(err)}`)
+                  writeDebug(`[container-manager] stdout controller already closed on end: ${err instanceof Error ? err.message : String(err)}`)
                 }
               }
             })
@@ -888,7 +533,7 @@ export class PiContainerManager {
                 try {
                   controller.error(err)
                 } catch (closeErr) {
-                  writeError(`[container-manager] Failed to error attach stdout controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`)
+                  writeError(`[container-manager] Failed to error stdout controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`)
                 }
               }
             })
@@ -909,7 +554,7 @@ export class PiContainerManager {
                 try {
                   controller.enqueue(new Uint8Array(data))
                 } catch (err) {
-                  writeDebug(`[container-manager] attach stderr controller already closed: ${err instanceof Error ? err.message : String(err)}`)
+                  writeDebug(`[container-manager] stderr controller already closed: ${err instanceof Error ? err.message : String(err)}`)
                 }
               }
             })
@@ -920,7 +565,7 @@ export class PiContainerManager {
                 try {
                   controller.close()
                 } catch (err) {
-                  writeDebug(`[container-manager] attach stderr controller already closed on end: ${err instanceof Error ? err.message : String(err)}`)
+                  writeDebug(`[container-manager] stderr controller already closed on end: ${err instanceof Error ? err.message : String(err)}`)
                 }
               }
             })
@@ -931,55 +576,419 @@ export class PiContainerManager {
                 try {
                   controller.error(err)
                 } catch (closeErr) {
-                  writeError(`[container-manager] Failed to error attach stderr controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`)
+                  writeError(`[container-manager] Failed to error stderr controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`)
                 }
               }
             })
           },
         }),
 
-        kill: async () => {
-          try {
+        kill: () => Effect.gen(function* () {
+          if (containerId && !containerId.startsWith("pending") && !containerId.startsWith("proc-")) {
+            yield* self.execPodman(["kill", containerName]).pipe(
+              Effect.catchAll((err) => {
+                writeDebug(`[container-manager] Error killing container (may already be stopped): ${err.message}`)
+                return Effect.void
+              })
+            )
+          } else {
+            proc.kill()
+          }
+          self.containers.delete(config.sessionId)
+        }),
+
+        inspect: () => Effect.gen(function* () {
+          if (containerId && !containerId.startsWith("pending") && !containerId.startsWith("proc-")) {
+            return yield* self.inspectContainer(containerId)
+          }
+          return { State: { Status: "running", Running: true } }
+        }),
+      }
+
+      this.containers.set(config.sessionId, process)
+      return process
+    })
+  }
+
+  /**
+   * Kill a container by session ID.
+   */
+  killContainer(sessionId: string): Effect.Effect<void, ContainerManagerError> {
+    return this.killContainerInternal(sessionId)
+  }
+
+  private killContainerInternal(sessionId: string): Effect.Effect<void, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      const process = this.containers.get(sessionId)
+      if (process) {
+        yield* process.kill()
+      }
+    })
+  }
+
+  /**
+   * Check if a container exists and is running by session ID.
+   * Returns the container info if found and running, null otherwise.
+   */
+  checkContainerExists(sessionId: string): Effect.Effect<{
+    containerId: string
+    containerName: string
+    status: string
+    running: boolean
+  } | null, ContainerManagerError> {
+    return this.checkContainerExistsInternal(sessionId)
+  }
+
+  private checkContainerExistsInternal(sessionId: string): Effect.Effect<{
+    containerId: string
+    containerName: string
+    status: string
+    running: boolean
+  } | null, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      // First check our managed containers
+      const managedProcess = this.containers.get(sessionId)
+      if (managedProcess) {
+        const inspectionResult = yield* managedProcess.inspect().pipe(
+          Effect.match({
+            onSuccess: (inspection) => {
+              if (inspection.State.Running) {
+                return {
+                  containerId: managedProcess.containerId,
+                  containerName: `tauroboros-${sessionId}`,
+                  status: inspection.State.Status,
+                  running: true,
+                }
+              }
+              return null
+            },
+            onFailure: (err) => {
+              writeDebug(`[container-manager] Container ${sessionId} exists in map but inspection failed: ${err.message}`)
+              return null
+            },
+          })
+        )
+        if (inspectionResult) {
+          return inspectionResult
+        }
+      }
+
+      // Check if container exists in podman but is not in our managed map
+      // (e.g., after server restart)
+      const containerName = `tauroboros-${sessionId}`
+      const result = yield* this.execPodman([
+        "ps",
+        "-a",
+        "-f", `name=${containerName}`,
+        "--format", "{{.ID}}|{{.Names}}|{{.State}}|{{.Status}}",
+      ]).pipe(
+        Effect.catchAll((err) => {
+          writeDebug(`[container-manager] Error checking container existence for ${sessionId}: ${err.message}`)
+          return Effect.succeed({ stdout: "", stderr: "" })
+        })
+      )
+
+      if (!result.stdout.trim()) {
+        return null
+      }
+
+      const [id, name, state, status] = result.stdout.trim().split("|")
+      if (!id) {
+        return null
+      }
+
+      const isRunning = state === "running"
+
+      // If container exists but not in our map, add it so we can manage it
+      if (isRunning && !managedProcess) {
+        // We'll create a minimal process wrapper - the caller will need to
+        // properly reconnect stdin/stdout if they want to interact with it
+        this.containers.set(sessionId, {
+          sessionId,
+          containerId: id,
+          stdin: new WritableStream(),
+          stdout: new ReadableStream(),
+          stderr: new ReadableStream(),
+          kill: () => Effect.gen(this, function* () {
+            yield* this.execPodman(["kill", id]).pipe(
+              Effect.catchAll((err) => {
+                writeDebug(`[container-manager] Error killing recovered container (may already be stopped): ${err.message}`)
+                return Effect.void
+              })
+            )
+            this.containers.delete(sessionId)
+          }),
+
+          inspect: () => Effect.succeed({
+            State: { Status: state, Running: true },
+          }),
+        })
+      }
+
+      return {
+        containerId: id,
+        containerName: containerName,
+        status: state,
+        running: isRunning,
+      }
+    })
+  }
+
+  /**
+   * Check if a container exists and is running by container ID.
+   * This is used for resume operations when we only have the container ID.
+   */
+  checkContainerById(containerId: string): Effect.Effect<{
+    containerId: string
+    status: string
+    running: boolean
+  } | null, ContainerManagerError> {
+    return this.checkContainerByIdInternal(containerId)
+  }
+
+  private checkContainerByIdInternal(containerId: string): Effect.Effect<{
+    containerId: string
+    status: string
+    running: boolean
+  } | null, never> {
+    return Effect.gen(this, function* () {
+      const result = yield* this.execPodman([
+        "ps",
+        "-a",
+        "-f", `id=${containerId}`,
+        "--format", "{{.ID}}|{{.State}}|{{.Status}}",
+      ]).pipe(
+        Effect.match({
+          onSuccess: ({ stdout }) => stdout,
+          onFailure: (err) => {
+            writeDebug(`[container-manager] Error checking container by ID ${containerId}: ${err.message}`)
+            return ""
+          },
+        })
+      )
+
+      if (!result.trim()) {
+        return null
+      }
+
+      const [id, state] = result.trim().split("|")
+      if (!id) {
+        return null
+      }
+
+      return {
+        containerId: id,
+        status: state,
+        running: state === "running",
+      }
+    })
+  }
+
+  /**
+   * Attach to an existing container (for resume).
+   *
+   * CRITICAL: This is the RECOMMENDED approach for container resume operations.
+   * Reattaching to an existing container preserves:
+   *   - All file system state (modified files, installed packages)
+   *   - Environment variables set during execution
+   *   - Running processes and their state
+   *   - Network connections
+   *
+   * Container recreation (the fallback) loses all unsaved work and requires
+   * re-execution from scratch. Only use recreation when attach fails.
+   *
+   * Implementation uses 'podman exec' to create a new session in the existing
+   * container while preserving all container state.
+   *
+   * @param containerId - The ID of the container to attach to
+   * @param sessionId - The session ID for tracking this attachment
+   * @returns ContainerProcess if successful, null if container not running or attach failed
+   */
+  attachToContainer(containerId: string, sessionId: string): Effect.Effect<ContainerProcess | null, ContainerManagerError> {
+    return this.attachToContainerInternal(containerId, sessionId)
+  }
+
+  private attachToContainerInternal(containerId: string, sessionId: string): Effect.Effect<ContainerProcess | null, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      // Verify container exists and is running
+      const containerInfo = yield* this.checkContainerByIdInternal(containerId)
+      if (!containerInfo?.running) {
+        yield* logInfo(`[container-manager] Container ${containerId} not running, cannot attach`)
+        return null
+      }
+
+      try {
+        yield* logInfo(`[container-manager] Attaching to existing container ${containerId} for session ${sessionId}`)
+
+        // Spawn podman exec to create a new pi rpc session in the existing container
+        // The -i flag keeps stdin open, allowing us to send commands
+        // The -e flag passes the PI_CODING_AGENT environment variable
+        const proc = spawn("podman", [
+          "exec",
+          "-i",  // Interactive mode - keep stdin open
+          "-e", "PI_CODING_AGENT=true",  // Pass environment variable to container
+          containerId,
+          "pi", "rpc", "--session-id", sessionId,
+        ], {
+          stdio: ["pipe", "pipe", "pipe"],
+        })
+
+        // Wait a moment for the exec to initialize
+        yield* Effect.sleep(500)
+
+        // Verify the exec session is still running by checking the process
+        if (!proc.pid) {
+          yield* logError(`[container-manager] Failed to start podman exec for container ${containerId}`)
+          return null
+        }
+
+        // Create process wrapper with proper stdio streams
+        const self = this
+        const process: ContainerProcess = {
+          sessionId,
+          containerId,
+
+          stdin: new WritableStream({
+            write: async (chunk: Uint8Array) => {
+              return new Promise((resolve, reject) => {
+                if (!proc.stdin) {
+                  reject(new Error("Process stdin not available"))
+                  return
+                }
+                proc.stdin.write(chunk, (err) => {
+                  if (err) reject(err)
+                  else resolve()
+                })
+              })
+            },
+          }),
+
+          stdout: new ReadableStream({
+            start: (controller) => {
+              if (!proc.stdout) {
+                controller.close()
+                return
+              }
+
+              let isClosed = false
+
+              proc.stdout.on("data", (data: Buffer) => {
+                if (!isClosed) {
+                  try {
+                    controller.enqueue(new Uint8Array(data))
+                  } catch (err) {
+                    writeDebug(`[container-manager] attach stdout controller already closed: ${err instanceof Error ? err.message : String(err)}`)
+                  }
+                }
+              })
+
+              proc.stdout.on("end", () => {
+                if (!isClosed) {
+                  isClosed = true
+                  try {
+                    controller.close()
+                  } catch (err) {
+                    writeDebug(`[container-manager] attach stdout controller already closed on end: ${err instanceof Error ? err.message : String(err)}`)
+                  }
+                }
+              })
+
+              proc.on("error", (err) => {
+                if (!isClosed) {
+                  isClosed = true
+                  try {
+                    controller.error(err)
+                  } catch (closeErr) {
+                    writeError(`[container-manager] Failed to error attach stdout controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`)
+                  }
+                }
+              })
+            },
+          }),
+
+          stderr: new ReadableStream({
+            start: (controller) => {
+              if (!proc.stderr) {
+                controller.close()
+                return
+              }
+
+              let isClosed = false
+
+              proc.stderr.on("data", (data: Buffer) => {
+                if (!isClosed) {
+                  try {
+                    controller.enqueue(new Uint8Array(data))
+                  } catch (err) {
+                    writeDebug(`[container-manager] attach stderr controller already closed: ${err instanceof Error ? err.message : String(err)}`)
+                  }
+                }
+              })
+
+              proc.stderr.on("end", () => {
+                if (!isClosed) {
+                  isClosed = true
+                  try {
+                    controller.close()
+                  } catch (err) {
+                    writeDebug(`[container-manager] attach stderr controller already closed on end: ${err instanceof Error ? err.message : String(err)}`)
+                  }
+                }
+              })
+
+              proc.on("error", (err) => {
+                if (!isClosed) {
+                  isClosed = true
+                  try {
+                    controller.error(err)
+                  } catch (closeErr) {
+                    writeError(`[container-manager] Failed to error attach stderr controller: ${closeErr instanceof Error ? closeErr.message : String(closeErr)}`)
+                  }
+                }
+              })
+            },
+          }),
+
+          kill: () => Effect.gen(function* () {
             // Kill the exec session by killing the podman exec process
             proc.kill("SIGTERM")
             // Also try to kill any processes in the container with this session ID
-            try {
-              await this.execPodman([
-                "exec", containerId,
-                "sh", "-c",
-                `pkill -f "pi.*${sessionId}" || true`
-              ])
-            } catch (err) {
-              writeDebug(`[container-manager] pkill command failed (process may already be stopped): ${err instanceof Error ? err.message : String(err)}`)
+            yield* self.execPodman([
+              "exec", containerId,
+              "sh", "-c",
+              `pkill -f "pi.*${sessionId}" || true`
+            ]).pipe(
+              Effect.catchAll((err) => {
+                writeDebug(`[container-manager] pkill command failed (process may already be stopped): ${err.message}`)
+                return Effect.void
+              })
+            )
+            self.containers.delete(sessionId)
+          }),
+
+          inspect: () => Effect.gen(function* () {
+            // Check if the container is still running
+            const info = yield* self.checkContainerByIdInternal(containerId)
+            return {
+              State: {
+                Status: info?.status || "unknown",
+                Running: info?.running || false
+              },
             }
-          } catch (err) {
-            writeDebug(`[container-manager] Error killing attached container process: ${err instanceof Error ? err.message : String(err)}`)
-          }
-          this.containers.delete(sessionId)
-        },
+          }),
+        }
 
-        inspect: async () => {
-          // Check if the container is still running
-          const info = await this.checkContainerByIdInternal(containerId)
-          return {
-            State: {
-              Status: info?.status || "unknown",
-              Running: info?.running || false
-            },
-          }
-        },
+        // Register in managed containers
+        this.containers.set(sessionId, process)
+
+        yield* logInfo(`[container-manager] Successfully attached to container ${containerId}`)
+        return process
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        yield* logError(`[container-manager] Failed to attach to container ${containerId}: ${errorMessage}`)
+        return null
       }
-
-      // Register in managed containers
-      this.containers.set(sessionId, process)
-
-      writeInfo(`[container-manager] Successfully attached to container ${containerId}`)
-      return process
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      writeError(`[container-manager] Failed to attach to container ${containerId}: ${errorMessage}`)
-      return null
-    }
+    })
   }
 
   /**
@@ -987,27 +996,22 @@ export class PiContainerManager {
    * Used for emergency stop and destructive operations.
    */
   forceKillContainer(sessionId: string): Effect.Effect<boolean, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.forceKillContainerInternal(sessionId),
-      catch: (cause) => new ContainerManagerError({
-        operation: "forceKillContainer",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+    return this.forceKillContainerInternal(sessionId)
   }
 
-  private async forceKillContainerInternal(sessionId: string): Promise<boolean> {
-    const containerName = `tauroboros-${sessionId}`
-    try {
-      // Send SIGKILL instead of graceful stop
-      await this.execPodman(["kill", "-s", "SIGKILL", containerName])
-      this.containers.delete(sessionId)
-      return true
-    } catch (err) {
-      writeDebug(`[container-manager] Failed to force kill container ${sessionId}: ${err instanceof Error ? err.message : String(err)}`)
-      return false
-    }
+  private forceKillContainerInternal(sessionId: string): Effect.Effect<boolean, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      const containerName = `tauroboros-${sessionId}`
+      try {
+        // Send SIGKILL instead of graceful stop
+        yield* this.execPodman(["kill", "-s", "SIGKILL", containerName])
+        this.containers.delete(sessionId)
+        return true
+      } catch (err) {
+        yield* logDebug(`[container-manager] Failed to force kill container ${sessionId}: ${err instanceof Error ? err.message : String(err)}`)
+        return false
+      }
+    })
   }
 
   /**
@@ -1015,105 +1019,82 @@ export class PiContainerManager {
    * Returns true if successful, false otherwise.
    */
   restartContainer(sessionId: string): Effect.Effect<boolean, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.restartContainerInternal(sessionId),
-      catch: (cause) => new ContainerManagerError({
-        operation: "restartContainer",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+    return this.restartContainerInternal(sessionId)
   }
 
-  private async restartContainerInternal(sessionId: string): Promise<boolean> {
-    const containerName = `tauroboros-${sessionId}`
-    try {
-      // First try to start the existing container
-      await this.execPodman(["start", containerName])
+  private restartContainerInternal(sessionId: string): Effect.Effect<boolean, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      const containerName = `tauroboros-${sessionId}`
+      try {
+        // First try to start the existing container
+        yield* this.execPodman(["start", containerName])
 
-      // Wait a moment for it to be ready
-      await new Promise((resolve) => setTimeout(resolve, 2000))
+        // Wait a moment for it to be ready
+        yield* Effect.sleep(2000)
 
-      // Verify it's running
-      const check = await this.checkContainerExistsInternal(sessionId)
-      return check?.running ?? false
-    } catch (err) {
-      writeDebug(`[container-manager] Failed to restart container ${sessionId}: ${err instanceof Error ? err.message : String(err)}`)
-      return false
-    }
+        // Verify it's running
+        const check = yield* this.checkContainerExists(sessionId)
+        return check?.running ?? false
+      } catch (err) {
+        yield* logDebug(`[container-manager] Failed to restart container ${sessionId}: ${err instanceof Error ? err.message : String(err)}`)
+        return false
+      }
+    })
   }
 
   /**
    * Remove a container by session ID (forcefully if needed).
    */
   removeContainer(sessionId: string, force = false): Effect.Effect<boolean, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.removeContainerInternal(sessionId, force),
-      catch: (cause) => new ContainerManagerError({
-        operation: "removeContainer",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+    return this.removeContainerInternal(sessionId, force)
   }
 
-  private async removeContainerInternal(sessionId: string, force = false): Promise<boolean> {
-    const containerName = `tauroboros-${sessionId}`
-    try {
-      const args = ["rm"]
-      if (force) {
-        args.push("-f")
+  private removeContainerInternal(sessionId: string, force = false): Effect.Effect<boolean, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      const containerName = `tauroboros-${sessionId}`
+      try {
+        const args = ["rm"]
+        if (force) {
+          args.push("-f")
+        }
+        args.push(containerName)
+        yield* this.execPodman(args)
+        this.containers.delete(sessionId)
+        return true
+      } catch (err) {
+        yield* logDebug(`[container-manager] Failed to remove container ${sessionId}: ${err instanceof Error ? err.message : String(err)}`)
+        return false
       }
-      args.push(containerName)
-      await this.execPodman(args)
-      this.containers.delete(sessionId)
-      return true
-    } catch (err) {
-      writeDebug(`[container-manager] Failed to remove container ${sessionId}: ${err instanceof Error ? err.message : String(err)}`)
-      return false
-    }
+    })
   }
 
   /**
    * Clean up all managed containers.
    */
   cleanup(): Effect.Effect<void, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.cleanupInternal(),
-      catch: (cause) => new ContainerManagerError({
-        operation: "cleanup",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+    return this.cleanupInternal()
   }
 
-  private async cleanupInternal(): Promise<void> {
-    const killResults = await Promise.allSettled(
-      Array.from(this.containers.values()).map((proc) => proc.kill())
-    )
+  private cleanupInternal(): Effect.Effect<void, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      const killEffects = Array.from(this.containers.values()).map((proc) => proc.kill())
+      const killResults = yield* Effect.all(killEffects, { mode: "either" })
 
-    // Log any failures but continue clearing the map
-    for (let i = 0; i < killResults.length; i++) {
-      const result = killResults[i]
-      if (result.status === "rejected") {
-        writeError(`[container-manager] Failed to kill container at index ${i}: ${result.reason}`)
+      // Log any failures but continue clearing the map
+      for (let i = 0; i < killResults.length; i++) {
+        const result = killResults[i]
+        if (result._tag === "Left") {
+          yield* logError(`[container-manager] Failed to kill container at index ${i}: ${result.left.message}`)
+        }
       }
-    }
 
-    this.containers.clear()
+      this.containers.clear()
+    })
   }
 
   close(): Effect.Effect<void, ContainerManagerError> {
     return Effect.gen(this, function* () {
-      yield* Effect.tryPromise({
-        try: () => this.cleanupInternal(),
-        catch: (cause) => new ContainerManagerError({
-          operation: "close",
-          message: cause instanceof Error ? cause.message : String(cause),
-          cause,
-        }),
-      })
+      yield* this.cleanupInternal()
 
       if (this.mockServerManager?.isRunning()) {
         yield* this.mockServerManager.stop().pipe(
@@ -1132,28 +1113,29 @@ export class PiContainerManager {
    */
   listManagedContainers(): Effect.Effect<
     { sessionId: string; containerId: string; status: string }[],
-    ContainerManagerError
+    never
   > {
-    return Effect.tryPromise({
-      try: () => this.listManagedContainersInternal(),
-      catch: (cause) => new ContainerManagerError({
-        operation: "listManagedContainers",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+    return this.listManagedContainersInternal()
   }
 
-  private async listManagedContainersInternal(): Promise<
-    { sessionId: string; containerId: string; status: string }[]
+  private listManagedContainersInternal(): Effect.Effect<
+    { sessionId: string; containerId: string; status: string }[],
+    never
   > {
-    try {
-      const { stdout } = await this.execPodman([
+    return Effect.gen(this, function* () {
+      const { stdout } = yield* this.execPodman([
         "ps",
         "-a",
         "--filter", "label=tauroboros.managed=true",
         "--format", "{{.ID}}|{{.Names}}|{{.State}}|{{.Labels}}",
-      ])
+      ]).pipe(
+        Effect.catchAll((err) =>
+          Effect.gen(this, function* () {
+            yield* logDebug(`[container-manager] Failed to list managed containers: ${err.message}`)
+            return { stdout: "", stderr: "" }
+          })
+        )
+      )
 
       const containers: { sessionId: string; containerId: string; status: string }[] = []
 
@@ -1172,41 +1154,42 @@ export class PiContainerManager {
       }
 
       return containers
-    } catch (err) {
-      writeDebug(`[container-manager] Failed to list managed containers: ${err instanceof Error ? err.message : String(err)}`)
-      return []
-    }
+    })
   }
 
   /**
    * Emergency stop - kill all tauroboros containers.
    */
-  emergencyStop(): Effect.Effect<number, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.emergencyStopInternal(),
-      catch: (cause) => new ContainerManagerError({
-        operation: "emergencyStop",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+  emergencyStop(): Effect.Effect<number, never> {
+    return this.emergencyStopInternal()
   }
 
-  private async emergencyStopInternal(): Promise<number> {
-    const containers = await this.listManagedContainersInternal()
-    let killed = 0
+  private emergencyStopInternal(): Effect.Effect<number, never> {
+    return Effect.gen(this, function* () {
+      const containers = yield* this.listManagedContainersInternal()
+      let killed = 0
 
-    for (const info of containers) {
-      try {
-        await this.execPodman(["kill", info.containerId])
-        killed++
-      } catch (err) {
-        writeDebug(`[container-manager] Failed to kill container ${info.containerId} during emergency stop: ${err instanceof Error ? err.message : String(err)}`)
+      for (const info of containers) {
+        const killResult = yield* this.execPodman(["kill", info.containerId]).pipe(
+          Effect.match({
+            onSuccess: () => {
+              killed++
+              return true
+            },
+            onFailure: (err) => {
+              return err
+            },
+          })
+        )
+
+        if (killResult !== true) {
+          yield* logDebug(`[container-manager] Failed to kill container ${info.containerId} during emergency stop: ${killResult instanceof Error ? killResult.message : String(killResult)}`)
+        }
       }
-    }
 
-    this.containers.clear()
-    return killed
+      this.containers.clear()
+      return killed
+    })
   }
 
   /**
@@ -1216,68 +1199,69 @@ export class PiContainerManager {
     podman: boolean
     image: boolean
     errors: string[]
-  }, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.validateSetupInternal(),
-      catch: (cause) => new ContainerManagerError({
-        operation: "validateSetup",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+  }, never> {
+    return this.validateSetupInternal()
   }
 
-  private async validateSetupInternal(): Promise<{
+  private validateSetupInternal(): Effect.Effect<{
     podman: boolean
     image: boolean
     errors: string[]
-  }> {
-    const errors: string[] = []
+  }, never> {
+    return Effect.gen(this, function* () {
+      const errors: string[] = []
 
-    let podman = false
-    try {
-      await this.execPodman(["--version"])
-      podman = true
-    } catch {
-      errors.push("Podman is not available")
-    }
+      let podman = false
+      const podmanResult = yield* this.execPodman(["--version"]).pipe(
+        Effect.match({
+          onSuccess: () => true,
+          onFailure: () => false,
+        })
+      )
 
-    let image = false
-    if (podman) {
-      try {
-        await this.execPodman(["image", "exists", this.imageName])
-        image = true
-      } catch {
-        errors.push(
-          `Podman image '${this.imageName}' not found. Run: podman build -t ${this.imageName} -f docker/pi-agent/Dockerfile .`,
-        )
+      if (podmanResult) {
+        podman = true
+      } else {
+        errors.push("Podman is not available")
       }
-    }
 
-    return { podman, image, errors }
+      let image = false
+      if (podman) {
+        const imageResult = yield* this.execPodman(["image", "exists", this.imageName]).pipe(
+          Effect.match({
+            onSuccess: () => true,
+            onFailure: () => false,
+          })
+        )
+
+        if (imageResult) {
+          image = true
+        } else {
+          errors.push(
+            `Podman image '${this.imageName}' not found. Run: podman build -t ${this.imageName} -f docker/pi-agent/Dockerfile .`,
+          )
+        }
+      }
+
+      return { podman, image, errors }
+    })
   }
 
   /**
    * Check if a specific image exists in Podman.
    */
   checkImageExists(imageName: string): Effect.Effect<boolean, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.checkImageExistsInternal(imageName),
-      catch: (cause) => new ContainerManagerError({
-        operation: "checkImageExists",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+    return this.checkImageExistsInternal(imageName)
   }
 
-  private async checkImageExistsInternal(imageName: string): Promise<boolean> {
-    try {
-      await this.execPodman(["image", "exists", imageName])
-      return true
-    } catch {
-      return false
-    }
+  private checkImageExistsInternal(imageName: string): Effect.Effect<boolean, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      const result = yield* this.execPodman(["image", "exists", imageName]).pipe(
+        Effect.map(() => true),
+        Effect.catchAll(() => Effect.succeed(false))
+      )
+      return result
+    })
   }
 
   /**
@@ -1287,35 +1271,46 @@ export class PiContainerManager {
     tag: string
     createdAt: number
     size: string
-  }>, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.listImagesInternal(),
-      catch: (cause) => new ContainerManagerError({
-        operation: "listImages",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+  }>, never> {
+    return this.listImagesInternal()
   }
 
-  private async listImagesInternal(): Promise<Array<{
+  private listImagesInternal(): Effect.Effect<Array<{
     tag: string
     createdAt: number
     size: string
-  }>> {
-    try {
-      const { stdout } = await this.execPodman([
+  }>, never> {
+    return Effect.gen(this, function* () {
+      const { stdout } = yield* this.execPodman([
         "images",
         "--format", "json",
         "--filter", "reference=*pi-agent*"
-      ])
+      ]).pipe(
+        Effect.catchAll((err) =>
+          Effect.gen(this, function* () {
+            yield* logError(`[container-manager] Failed to list images: ${err.message}`)
+            return { stdout: "[]", stderr: "" }
+          })
+        )
+      )
 
-      const images = JSON.parse(stdout) as Array<{
+      let images: Array<{
         Names?: string[]
         CreatedAt?: string
         Size?: string
         RepoTags?: string[]
-      }>
+      }> = []
+      
+      try {
+        images = JSON.parse(stdout) as Array<{
+          Names?: string[]
+          CreatedAt?: string
+          Size?: string
+          RepoTags?: string[]
+        }>
+      } catch {
+        images = []
+      }
 
       const result: Array<{ tag: string; createdAt: number; size: string }> = []
 
@@ -1333,60 +1328,55 @@ export class PiContainerManager {
       }
 
       return result.sort((a, b) => b.createdAt - a.createdAt)
-    } catch (err) {
-      writeError(`[container-manager] Failed to list images: ${err instanceof Error ? err.message : String(err)}`)
-      return []
-    }
+    })
   }
 
   /**
    * Delete an image by tag.
    */
   deleteImage(imageName: string): Effect.Effect<{ success: boolean; error?: string }, ContainerManagerError> {
-    return Effect.tryPromise({
-      try: () => this.deleteImageInternal(imageName),
-      catch: (cause) => new ContainerManagerError({
-        operation: "deleteImage",
-        message: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      }),
-    })
+    return this.deleteImageInternal(imageName)
   }
 
-  private async deleteImageInternal(imageName: string): Promise<{ success: boolean; error?: string }> {
-    try {
-      await this.execPodman(["rmi", imageName])
-      return { success: true }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      return { success: false, error: errorMessage }
-    }
+  private deleteImageInternal(imageName: string): Effect.Effect<{ success: boolean; error?: string }, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      const result = yield* this.execPodman(["rmi", imageName]).pipe(
+        Effect.map(() => ({ success: true as const })),
+        Effect.catchAll((err) => Effect.succeed({
+          success: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }))
+      )
+      return result
+    })
   }
 
   /**
    * Inspect a container and return its state.
    */
-  private async inspectContainer(containerId: string): Promise<{ State: { Status: string; Running: boolean } }> {
-    const { stdout } = await this.execPodman([
-      "inspect",
-      "--format", "{{.State.Status}}|{{.State.Running}}",
-      containerId,
-    ])
+  private inspectContainer(containerId: string): Effect.Effect<{ State: { Status: string; Running: boolean } }, ContainerManagerError> {
+    return Effect.gen(this, function* () {
+      const { stdout } = yield* this.execPodman([
+        "inspect",
+        "--format", "{{.State.Status}}|{{.State.Running}}",
+        containerId,
+      ])
 
-    const [status, running] = stdout.trim().split("|")
-    return {
-      State: {
-        Status: status,
-        Running: running === "true",
-      },
-    }
+      const [status, running] = stdout.trim().split("|")
+      return {
+        State: {
+          Status: status,
+          Running: running === "true",
+        },
+      }
+    })
   }
 
   /**
    * Execute a podman command and return stdout/stderr.
    */
-  private execPodman(args: string[]): Promise<{ stdout: string; stderr: string }> {
-    return new Promise((resolve, reject) => {
+  private execPodman(args: string[]): Effect.Effect<{ stdout: string; stderr: string }, ContainerManagerError> {
+    return Effect.async((resume) => {
       const proc = spawn("podman", args, {
         stdio: ["pipe", "pipe", "pipe"],
       })
@@ -1394,24 +1384,31 @@ export class PiContainerManager {
       let stdout = ""
       let stderr = ""
 
-      proc.stdout.on("data", (data: Buffer) => {
+      proc.stdout?.on("data", (data: Buffer) => {
         stdout += data.toString()
       })
 
-      proc.stderr.on("data", (data: Buffer) => {
+      proc.stderr?.on("data", (data: Buffer) => {
         stderr += data.toString()
       })
 
       proc.on("close", (code) => {
         if (code === 0) {
-          resolve({ stdout, stderr })
+          resume(Effect.succeed({ stdout, stderr }))
         } else {
-          reject(new Error(`Podman command failed with code ${code}: ${stderr || stdout}`))
+          resume(Effect.fail(new ContainerManagerError({
+            operation: "execPodman",
+            message: `Podman command failed with code ${code}: ${stderr || stdout}`,
+          })))
         }
       })
 
       proc.on("error", (err) => {
-        reject(err)
+        resume(Effect.fail(new ContainerManagerError({
+          operation: "execPodman",
+          message: err instanceof Error ? err.message : String(err),
+          cause: err,
+        })))
       })
     })
   }

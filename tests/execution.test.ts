@@ -146,6 +146,5 @@ describe("PiOrchestrator standard execution", () => {
     const sessions = db.getWorkflowSessionsByTask(task.id)
     expect(sessions.length).toBeGreaterThanOrEqual(2)
 
-    db.close()
   })
 })

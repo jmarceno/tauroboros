@@ -8,7 +8,7 @@ import type { SessionMessage } from "../../types.ts"
 import type { Task } from "../../types.ts"
 import type { ContextAttachment } from "../../runtime/planning-session.ts"
 import { isThinkingLevel, normalizeTaskForClient } from "../validators.ts"
-import { HttpRouteError, internalRouteError } from "../route-interpreter.ts"
+import { HttpRouteError, badRequestError, notFoundError, internalRouteError } from "../route-interpreter.ts"
 
 function validateTasksPayload(
   tasks: unknown,
@@ -98,9 +98,14 @@ function validateTasksPayload(
 
 export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext): void {
   router.get("/api/planning/prompt", ({ json, db }) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const prompt = db.getPlanningPrompt("default")
-      if (!prompt) return json({ error: "Planning prompt not found" }, 404)
+      if (!prompt) {
+        return yield* Effect.fail(notFoundError(
+          "Planning prompt not found",
+          ErrorCode.PLANNING_PROMPT_NOT_CONFIGURED,
+        ))
+      }
       return json(prompt)
     }),
   )
@@ -108,23 +113,33 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
   router.get("/api/planning/prompts", ({ json, db }) => Effect.sync(() => json(db.getAllPlanningPrompts())))
 
   router.put("/api/planning/prompt", ({ req, json, broadcast, db }) =>
-    Effect.tryPromise({
-      try: async () => {
-        const body = await req.json()
-        const existing = db.getPlanningPrompt((body as Record<string, unknown>).key as string ?? "default")
-        if (!existing) return json({ error: "Planning prompt not found" }, 404)
+    Effect.gen(function* () {
+      const body = (yield* Effect.tryPromise({
+        try: () => req.json() as Promise<Record<string, unknown>>,
+        catch: (cause) => badRequestError(
+          cause instanceof Error ? cause.message : "Invalid JSON body",
+          ErrorCode.INVALID_JSON_BODY,
+          { cause },
+        ),
+      })) as Record<string, unknown>
 
-        const updated = db.updatePlanningPrompt(existing.id, {
-          name: (body as Record<string, unknown>).name,
-          description: (body as Record<string, unknown>).description,
-          promptText: (body as Record<string, unknown>).promptText,
-          isActive: (body as Record<string, unknown>).isActive,
-        })
+      const existing = db.getPlanningPrompt((body as Record<string, unknown>).key as string ?? "default")
+      if (!existing) {
+        return yield* Effect.fail(notFoundError(
+          "Planning prompt not found",
+          ErrorCode.PLANNING_PROMPT_NOT_CONFIGURED,
+        ))
+      }
 
-        broadcast({ type: "planning_prompt_updated", payload: updated })
-        return json(updated)
-      },
-      catch: (cause) => internalRouteError(cause instanceof Error ? cause.message : String(cause), ErrorCode.INTERNAL_SERVER_ERROR, cause),
+      const updated = db.updatePlanningPrompt(existing.id, {
+        name: (body as Record<string, unknown>).name,
+        description: (body as Record<string, unknown>).description,
+        promptText: (body as Record<string, unknown>).promptText,
+        isActive: (body as Record<string, unknown>).isActive,
+      })
+
+      broadcast({ type: "planning_prompt_updated", payload: updated })
+      return json(updated)
     }),
   )
 
@@ -391,71 +406,88 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
   )
 
     router.get("/api/planning/sessions/:id", ({ params, json, sessionUrlFor, db }) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         const session = db.getWorkflowSession(params.id)
-        if (!session) return json({ error: "Session not found" }, 404)
-        if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
-          return json({ error: "Not a planning session" }, 400)
+        if (!session) {
+          return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+        }
+        if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+          return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+        }
         return json({ ...session, sessionUrl: sessionUrlFor(session.id) })
       }),
     )
 
     router.patch("/api/planning/sessions/:id", ({ params, req, json, broadcast, sessionUrlFor, db }) =>
-      Effect.tryPromise({
-        try: async () => {
-          const session = db.getWorkflowSession(params.id)
-          if (!session) return json({ error: "Session not found" }, 404)
-          if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
-            return json({ error: "Not a planning session" }, 400)
+      Effect.gen(function* () {
+        const session = db.getWorkflowSession(params.id)
+        if (!session) {
+          return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+        }
+        if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+          return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+        }
 
-          const body = (await req.json()) as Record<string, unknown>
-          const updated = db.updateWorkflowSession(params.id, {
-            status: body.status,
-            errorMessage: body.errorMessage,
-          })
+        const body = (yield* Effect.tryPromise({
+          try: () => req.json() as Promise<Record<string, unknown>>,
+          catch: (cause) => badRequestError(
+            cause instanceof Error ? cause.message : "Invalid JSON body",
+            ErrorCode.INVALID_JSON_BODY,
+            { cause },
+          ),
+        })) as Record<string, unknown>
 
-          const withUrl = { ...updated!, sessionUrl: sessionUrlFor(updated!.id) }
-          broadcast({ type: "planning_session_updated", payload: withUrl })
-          return json(withUrl)
-        },
-        catch: (cause) => internalRouteError(cause instanceof Error ? cause.message : String(cause), ErrorCode.INTERNAL_SERVER_ERROR, cause),
+        const updated = db.updateWorkflowSession(params.id, {
+          status: body.status,
+          errorMessage: body.errorMessage,
+        })
+
+        const withUrl = { ...updated!, sessionUrl: sessionUrlFor(updated!.id) }
+        broadcast({ type: "planning_session_updated", payload: withUrl })
+        return json(withUrl)
       }),
     )
 
     router.post("/api/planning/sessions/:id/close", ({ params, json, broadcast, db }) =>
       Effect.gen(function* () {
         const session = db.getWorkflowSession(params.id)
-        if (!session) return json({ error: "Session not found" }, 404)
-        if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
-          return json({ error: "Not a planning session" }, 400)
+        if (!session) {
+          return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+        }
+        if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+          return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+        }
 
         return yield* ctx.planningSessionManager.closeSession(params.id).pipe(
-        Effect.map(() => {
-          const updated = db.updateWorkflowSession(params.id, {
-            status: "completed",
-            finishedAt: Math.floor(Date.now() / 1000),
-          })
+          Effect.map(() => {
+            const updated = db.updateWorkflowSession(params.id, {
+              status: "completed",
+              finishedAt: Math.floor(Date.now() / 1000),
+            })
 
-          broadcast({ type: "planning_session_closed", payload: { id: params.id } })
-          return json(updated)
-        }),
-        Effect.catchTag("PlanningSessionError", (error) =>
-          Effect.fail(new HttpRouteError({
-            message: `Failed to close session: ${error.message}`,
-            code: ErrorCode.PLANNING_SESSION_CLOSE_FAILED,
-            status: 500,
-            cause: error,
-          }))),
-      )
-    }),
-  )
+            broadcast({ type: "planning_session_closed", payload: { id: params.id } })
+            return json(updated)
+          }),
+          Effect.catchTag("PlanningSessionError", (error) =>
+            Effect.fail(new HttpRouteError({
+              message: `Failed to close session: ${error.message}`,
+              code: ErrorCode.PLANNING_SESSION_CLOSE_FAILED,
+              status: 500,
+              cause: error,
+            }))),
+        )
+      }),
+    )
 
   router.get("/api/planning/sessions/:id/messages", ({ params, url, json, db }) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const session = db.getWorkflowSession(params.id)
-      if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
-        return json({ error: "Not a planning session" }, 400)
+      if (!session) {
+        return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+      }
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+        return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+      }
 
       const limit = Number(url.searchParams.get("limit") ?? 500)
       const offset = Number(url.searchParams.get("offset") ?? 0)
@@ -464,11 +496,14 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
   )
 
   router.get("/api/planning/sessions/:id/timeline", ({ params, json, db }) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const session = db.getWorkflowSession(params.id)
-      if (!session) return json({ error: "Session not found" }, 404)
-      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config")
-        return json({ error: "Not a planning session" }, 400)
+      if (!session) {
+        return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+      }
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+        return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+      }
 
       return json(db.getSessionTimelineEntries(params.id))
     }),

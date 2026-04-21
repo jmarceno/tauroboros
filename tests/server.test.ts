@@ -454,8 +454,7 @@ describe("PiKanbanServer API", () => {
       expect(sessionEventRes.response.status).toBe(200)
       expect(sessionEventRes.data.ok).toBe(true)
     } finally {
-      server.stop()
-      db.close()
+      
     }
   })
 
@@ -497,8 +496,7 @@ describe("PiKanbanServer API", () => {
       expect(event.payload.name).toBe("WS test task")
     } finally {
       ws.close()
-      server.stop()
-      db.close()
+      
     }
   })
 
@@ -553,8 +551,7 @@ describe("PiKanbanServer API", () => {
       expect(event.payload.messageType).toBe("thinking")
     } finally {
       ws.close()
-      server.stop()
-      db.close()
+      
     }
   })
 
@@ -602,8 +599,7 @@ describe("PiKanbanServer API", () => {
       expect(event.payload.color).toBe("#888888")
     } finally {
       ws.close()
-      server.stop()
-      db.close()
+      
     }
   })
 
@@ -658,8 +654,7 @@ describe("PiKanbanServer API", () => {
       expect(taskGroupCreatedEvents[0].payload.name).toBe("No Duplicate Test")
     } finally {
       ws.close()
-      server.stop()
-      db.close()
+      
     }
   })
 
@@ -719,8 +714,7 @@ describe("PiKanbanServer API", () => {
       expect(event.payload.color).toBe("#FF5733")
     } finally {
       ws.close()
-      server.stop()
-      db.close()
+      
     }
   })
 
@@ -774,8 +768,7 @@ describe("PiKanbanServer API", () => {
       expect(event.payload.id).toBe(groupId)
     } finally {
       ws.close()
-      server.stop()
-      db.close()
+      
     }
   })
 
@@ -848,8 +841,7 @@ describe("PiKanbanServer API", () => {
       expect(event.payload.addedCount).toBe(1)
     } finally {
       ws.close()
-      server.stop()
-      db.close()
+      
     }
   })
 
@@ -923,8 +915,7 @@ describe("PiKanbanServer API", () => {
       expect(event.payload.removedCount).toBe(1)
     } finally {
       ws.close()
-      server.stop()
-      db.close()
+      
     }
   })
 
@@ -990,9 +981,8 @@ describe("PiKanbanServer API", () => {
     expect(events.some(e => e.type === "task_group_members_removed" && e.payload.groupId === groupId)).toBe(true)
     expect(events.some(e => e.type === "group_task_removed" && e.payload.groupId === groupId && e.payload.taskId === taskId)).toBe(true)
 
-    ws.close()
-    server.stop()
-    db.close()
+ws.close()
+      server.stop()
   })
 
   it("broadcasts websocket group_execution_started event", async () => {
@@ -1062,8 +1052,7 @@ describe("PiKanbanServer API", () => {
       expect(typeof event.payload.runId).toBe("string")
     } finally {
       ws.close()
-      server.stop()
-      db.close()
+      
     }
   })
 
@@ -1159,8 +1148,7 @@ describe("PiKanbanServer API", () => {
       expect(Array.isArray(event.payload.results)).toBe(true)
     } finally {
       ws.close()
-      server.stop()
-      db.close()
+      
     }
   })
 
@@ -1223,7 +1211,6 @@ describe("PiKanbanServer API", () => {
         expect(resetData.task.completedAt).toBeNull()
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1261,7 +1248,6 @@ describe("PiKanbanServer API", () => {
         expect(resetData.task.status).toBe("backlog")
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1325,7 +1311,6 @@ describe("PiKanbanServer API", () => {
         expect(updatedTask.groupId).toBe(groupId)
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1361,7 +1346,6 @@ describe("PiKanbanServer API", () => {
         expect(resetData.error).toBe("Task was not in a group")
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1424,7 +1408,6 @@ describe("PiKanbanServer API", () => {
         expect(taskAfter.groupId === null || taskAfter.groupId === undefined).toBe(true)
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1479,7 +1462,6 @@ describe("PiKanbanServer API", () => {
         expect(taskAfter.groupId).toBe(groupId)
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1561,7 +1543,6 @@ describe("PiKanbanServer API", () => {
       } finally {
         ws.close()
         server.stop()
-        db.close()
       }
     })
 
@@ -1598,7 +1579,6 @@ describe("PiKanbanServer API", () => {
         expect(moveData.error).toContain("groupId must be a string, null, or undefined")
       } finally {
         server.stop()
-        db.close()
       }
     })
   })
@@ -1640,7 +1620,6 @@ describe("PiKanbanServer API", () => {
         expect(data.totalCost).toBeCloseTo(0.25, 10)
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1661,7 +1640,6 @@ describe("PiKanbanServer API", () => {
         }
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1679,7 +1657,6 @@ describe("PiKanbanServer API", () => {
         expect(data.error).toContain("Invalid range")
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1710,7 +1687,6 @@ describe("PiKanbanServer API", () => {
         expect(data.averageReviews).toBe(1) // (2+0)/2 = 1
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1754,7 +1730,6 @@ describe("PiKanbanServer API", () => {
         expect(data.review.some((m: { model: string }) => m.model === "o4-mini")).toBe(true)
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1798,7 +1773,6 @@ describe("PiKanbanServer API", () => {
         expect(data).toBe(90)
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1840,7 +1814,6 @@ describe("PiKanbanServer API", () => {
         }
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1882,7 +1855,6 @@ describe("PiKanbanServer API", () => {
         }
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1935,7 +1907,6 @@ describe("PiKanbanServer API", () => {
         expect(data30d.length).toBeGreaterThanOrEqual(data7d.length)
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -1958,7 +1929,6 @@ describe("PiKanbanServer API", () => {
         expect(Array.isArray(data)).toBe(true)
       } finally {
         server.stop()
-        db.close()
       }
     })
 
@@ -2005,7 +1975,6 @@ describe("PiKanbanServer API", () => {
         expect(dailyData).toEqual([])
       } finally {
         server.stop()
-        db.close()
       }
     })
   })

@@ -188,7 +188,6 @@ describe("Plan mode flows", () => {
       expect(current?.agentOutput.includes("[exec]")).toBe(true)
     } finally {
       server.stop()
-      db.close()
     }
   }, 15000)
 })

@@ -36,7 +36,6 @@ describe("CodeStyleSessionRunner", () => {
       const runner = new CodeStyleSessionRunner(db, DEFAULT_INFRASTRUCTURE_SETTINGS)
 
       expect(runner).toBeDefined()
-      db.close()
     })
 
     it("should use external PiSessionManager when provided", () => {
@@ -54,7 +53,6 @@ describe("CodeStyleSessionRunner", () => {
       )
 
       expect(runner).toBeDefined()
-      db.close()
     })
 
     it("should work without settings (undefined settings)", () => {
@@ -64,7 +62,6 @@ describe("CodeStyleSessionRunner", () => {
       const runner = new CodeStyleSessionRunner(db, undefined)
 
       expect(runner).toBeDefined()
-      db.close()
     })
   })
 
@@ -150,7 +147,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(callArg.model).toBe("anthropic/claude-sonnet-4-20250514")
       expect(callArg.thinkingLevel).toBe("default")
 
-      db.close()
     })
 
     it("should use custom code style prompt when provided", async () => {
@@ -212,7 +208,6 @@ describe("CodeStyleSessionRunner", () => {
       const callArg = mockExecutePrompt.mock.calls[0][0] as { thinkingLevel: string }
       expect(callArg.thinkingLevel).toBe("high")
 
-      db.close()
     })
 
     it("should fall back to DEFAULT_CODE_STYLE_PROMPT when codeStylePrompt is empty", async () => {
@@ -271,7 +266,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(capturedPrompt).toContain("code style enforcement")
       expect(capturedPrompt).toContain("STANDARD RULES")
 
-      db.close()
     })
 
     it("should call onOutput callback when provided", async () => {
@@ -355,7 +349,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(callbacksArg.onOutput).toBe(onOutputMock)
       expect(callbacksArg.onSessionCreated).toBe(onSessionCreatedMock)
 
-      db.close()
     })
 
     it("should use container image from settings when task has no specific image", async () => {
@@ -423,7 +416,6 @@ describe("CodeStyleSessionRunner", () => {
 
       expect(capturedImage).toBe("custom-image:v1")
 
-      db.close()
     })
   })
 
@@ -487,7 +479,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(result.sessionId).toBe("test-session-fail")
       expect(result.errorMessage).toBe("Code style violations found")
 
-      db.close()
     })
 
     it("should handle throw from session manager", async () => {
@@ -532,7 +523,6 @@ describe("CodeStyleSessionRunner", () => {
       // Should throw the error from session manager
       await expect(runCodeStyle(runner, input)).rejects.toThrow("Session execution failed: connection timeout")
 
-      db.close()
     })
 
     it("should handle unknown session status gracefully", async () => {
@@ -590,7 +580,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(result.sessionId).toBe("test-session-unknown")
       expect(result.errorMessage).toBeUndefined()
 
-      db.close()
     })
   })
 
@@ -669,7 +658,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(params.thinkingLevel).toBe("low")
       expect(params.promptText).toBe("Custom prompt")
 
-      db.close()
     })
   })
 
@@ -739,7 +727,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(result.responseText).toBe("All code style checks passed successfully!")
       expect(result.sessionId).toBe("session-success")
 
-      db.close()
     })
 
     it("should return result with all required fields on failure", async () => {
@@ -807,7 +794,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(result.responseText).toBe("Code style issues found")
       expect(result.sessionId).toBe("session-failure")
 
-      db.close()
     })
   })
 })

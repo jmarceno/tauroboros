@@ -65,7 +65,6 @@ describe("Template Conversion Group Removal", () => {
     expect(groupAfter.tasks).not.toContainEqual(expect.objectContaining({ id: taskId }))
 
     server.stop()
-    db.close()
   })
 
   it("does NOT remove task from group when setting other status", async () => {
@@ -110,6 +109,5 @@ describe("Template Conversion Group Removal", () => {
     expect(groupAfter.tasks).toContainEqual(expect.objectContaining({ id: taskId }))
 
     server.stop()
-    db.close()
   })
 })

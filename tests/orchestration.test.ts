@@ -163,7 +163,6 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     expect(sessionsA.length).toBeGreaterThan(0)
     expect(sessionsB.length).toBeGreaterThan(0)
 
-    db.close()
   })
 
   it("deploys before-workflow-start templates into the run and executes them", async () => {
@@ -218,7 +217,6 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     expect(finalRun?.taskOrder[0]).toBe(deployedTask?.id)
     expect(finalRun?.taskOrder.includes(backlog.id)).toBe(true)
 
-    db.close()
   })
 
   it("triggers workflow_done auto-deploy tasks only from workflow runs (not single-task runs)", async () => {
@@ -293,7 +291,6 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     const afterSingleTaskCount = db.getTasks().length
     expect(afterSingleTaskCount).toBe(beforeSingleTaskCount)
 
-    db.close()
   })
 
   it("checks auto-deploy conditions for group runs", async () => {
@@ -347,6 +344,5 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     const autoTask = db.getTasks().find((task) => task.name === "Group Done Template" && task.status === "done")
     expect(autoTask).toBeTruthy()
 
-    db.close()
   })
 })

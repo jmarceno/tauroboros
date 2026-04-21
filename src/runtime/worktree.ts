@@ -620,7 +620,7 @@ export class WorktreeLifecycle {
   /** Creates task worktree with `task-<taskId>-<random>` naming. */
   createForTask(taskId: string, branch?: string, baseRef?: string): Effect.Effect<WorktreeInfo, WorktreeError> {
     const normalizedTaskId = taskId.trim()
-    if (!normalizedTaskId) throw new WorktreeError({ message: "taskId cannot be empty", code: "INVALID_TASK_ID" })
+    if (!normalizedTaskId) return Effect.fail(new WorktreeError({ message: "taskId cannot be empty", code: "INVALID_TASK_ID" }))
     // Add random suffix to ensure unique worktree names for task reruns
     const randomSuffix = Math.random().toString(36).substring(2, 8)
     const name = `task-${normalizedTaskId}-${randomSuffix}`
@@ -637,8 +637,8 @@ export class WorktreeLifecycle {
   createForRun(runId: string, prefix: string, baseRef?: string): Effect.Effect<WorktreeInfo, WorktreeError> {
     const normalizedRunId = runId.trim()
     const normalizedPrefix = prefix.trim()
-    if (!normalizedRunId) throw new WorktreeError({ message: "runId cannot be empty", code: "INVALID_RUN_ID" })
-    if (!normalizedPrefix) throw new WorktreeError({ message: "prefix cannot be empty", code: "INVALID_PREFIX" })
+    if (!normalizedRunId) return Effect.fail(new WorktreeError({ message: "runId cannot be empty", code: "INVALID_RUN_ID" }))
+    if (!normalizedPrefix) return Effect.fail(new WorktreeError({ message: "prefix cannot be empty", code: "INVALID_PREFIX" }))
 
     // Add random suffix to ensure unique worktree names for run reruns
     const randomSuffix = Math.random().toString(36).substring(2, 8)

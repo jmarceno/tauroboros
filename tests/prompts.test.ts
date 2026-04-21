@@ -300,6 +300,5 @@ describe("prompt template seeds", () => {
       expect(rendered.renderedText.length).toBeGreaterThan(20)
     }
 
-    db.close()
   })
 })
