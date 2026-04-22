@@ -275,6 +275,21 @@ Each task can be configured with:
 - Prompt templates are database-backed (`prompt_templates`)
 - Skills are file-based and synced into `.pi/skills/`
 
+### Architecture Pattern
+The application uses an **Effect-first** architecture:
+
+- **Effect Services**: All async operations return `Effect.Effect<T, E>` values
+- **Layer Composition**: Application assembly uses `Layer` from the Effect library
+- **Tagged Errors**: Domain errors use `Schema.TaggedError` for typed failure handling
+- **Scoped Resources**: Long-lived resources use `Effect.acquireRelease` for lifecycle management
+- **Structured Logging**: All logging uses `Effect.log*` for observability
+
+**Runtime Boundaries**: Effects are only executed at approved boundaries:
+- Backend entrypoint (`src/index.ts`)
+- Bun HTTP adapter (`src/server/router.ts`)
+- Frontend UI boundary (`src/kanban-solid/src/api/client.ts`)
+- Test harness
+
 ### Database Schema
 The system uses SQLite with tables for:
 - `tasks` – Task definitions and state
@@ -304,38 +319,52 @@ The server exposes a comprehensive REST API:
 
 ```
 src/
-├── index.ts              # Entry point
-├── server.ts             # HTTP server setup
-├── orchestrator.ts       # Workflow execution orchestration
-├── db.ts                 # Database layer
+├── index.ts              # Entry point (Effect runtime boundary)
+├── server.ts             # HTTP server setup (Layer composition)
+├── orchestrator.ts       # Workflow execution orchestration (Effect-native)
+├── db.ts                 # Database layer (Effect-based)
 ├── types.ts              # TypeScript type definitions
 ├── execution-plan.ts     # Dependency resolution
 ├── task-state.ts         # Task state machine
-├── kanban-vue/           # Vue 3 kanban UI (Vite + Tailwind)
+├── kanban-solid/         # Solid JS kanban UI (Vite + Tailwind)
 │   ├── package.json      # Frontend dependencies (npm)
 │   ├── vite.config.ts
 │   └── src/
-│       ├── App.vue
-│       ├── components/
-│       └── composables/
+│       ├── App.tsx
+│       ├── api/          # Effect-based API client
+│       ├── stores/       # Effect-based state management
+│       └── components/
 ├── server/               # HTTP server implementation
 │   ├── router.ts         # URL routing
 │   ├── server.ts         # Route handlers
+│   ├── route-interpreter.ts  # Central Effect route interpreter
 │   ├── websocket.ts      # WebSocket hub
-│   └── types.ts          # Server types
-├── runtime/              # Execution runtime
+│   ├── types.ts          # Server types (Effect-based)
+│   └── routes/           # Route handlers (Effect-based)
+├── runtime/              # Execution runtime (Effect-native)
 │   ├── session-manager.ts
+│   ├── planning-session.ts
 │   ├── pi-process.ts
+│   ├── container-pi-process.ts
 │   ├── container-manager.ts
+│   ├── container-image-manager.ts
+│   ├── global-scheduler.ts
 │   ├── worktree.ts
 │   ├── best-of-n.ts      # Best-of-N strategy
-│   └── review-session.ts
+│   ├── review-session.ts
+│   ├── smart-repair.ts
+│   └── self-healing.ts
+├── shared/               # Shared utilities
+│   ├── errors.ts        # Domain errors (Schema.TaggedError)
+│   ├── logger.ts        # Logging service
+│   ├── services.ts      # Service tags (Context.GenericTag)
+│   └── error-codes.ts   # Error codes
 ├── prompts/              # Prompt templates
 ├── db/                   # Database migrations and types
 └── recovery/             # Startup recovery logic
 ```
 
-# Acknolacknowledgements
+# Acknowledgements
 
 - [cline](https://github.com/cline/cline "Cline") for Inspiring me. Pay them a visit and test their solution Kanban solution too.
 - [coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent "pi") for being a pretty cool and flexible piece of software to build around.

@@ -1,10 +1,11 @@
 import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
-import { isTaskGroupStatus, isValidHexColor, validateTaskGroupName, validateTaskIds } from "../../db.ts"
+import { isTaskGroupStatus, isValidHexColor, validateTaskGroupName, validateTaskIds, DatabaseError } from "../../db.ts"
 import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
 import { HttpRouteError, badRequestError, conflictError, internalRouteError, notFoundError } from "../route-interpreter.ts"
 import { normalizeTaskForClient } from "../validators.ts"
+import { OrchestratorOperationError } from "../../orchestrator.ts"
 
 export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext): void {
   router.get("/api/task-groups", ({ json, db }) => Effect.sync(() => json(db.getTaskGroups())))
@@ -214,14 +215,23 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
           return updated
         },
         catch: (cause) => {
-          const message = cause instanceof Error ? cause.message : String(cause)
-          if (message.includes("already in another group")) {
+          // Catch DatabaseError and check for specific error code
+          if (cause instanceof DatabaseError) {
+            if (cause.code === ErrorCode.TASK_ALREADY_IN_GROUP) {
+              return new HttpRouteError({
+                message: cause.message,
+                code: cause.code,
+                status: 409,
+              })
+            }
             return new HttpRouteError({
-              message,
-              code: ErrorCode.CONTAINER_OPERATION_FAILED,
-              status: 409,
+              message: cause.message,
+              code: cause.code ?? ErrorCode.CONTAINER_OPERATION_FAILED,
+              status: 500,
+              cause,
             })
           }
+          const message = cause instanceof Error ? cause.message : String(cause)
           return new HttpRouteError({
             message,
             code: ErrorCode.CONTAINER_OPERATION_FAILED,
@@ -317,9 +327,26 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
       }
 
       return yield* ctx.onStartGroup(params.id).pipe(
+        Effect.catchTag("OrchestratorOperationError", (err) => {
+          // Use explicit error code checking instead of message string inspection
+          switch (err.code) {
+            case ErrorCode.EXTERNAL_DEPENDENCIES_BLOCKED:
+            case ErrorCode.TASK_BLOCKED:
+            case ErrorCode.INVALID_CONTAINER_IMAGES:
+            case ErrorCode.CONTAINER_IMAGE_NOT_FOUND:
+            case ErrorCode.TASK_ALREADY_EXECUTING:
+              return Effect.fail(conflictError(err.message, err.code))
+            case ErrorCode.TASK_NOT_FOUND:
+            case ErrorCode.TASK_GROUP_NOT_FOUND:
+              return Effect.fail(badRequestError(err.message, err.code))
+            default:
+              return Effect.fail(internalRouteError(err.message, ErrorCode.EXECUTION_OPERATION_FAILED, err))
+          }
+        }),
         Effect.catchAll((err) => {
           const error = err instanceof Error ? err : new Error(String(err))
           const message = error.message
+          // Fallback for non-OrchestratorOperationError errors
           if (
             message.includes("external dependencies") ||
             message.includes("blocked") ||

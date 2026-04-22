@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite"
 import { mkdirSync } from "fs"
 import { dirname } from "path"
 import { Effect, Schema } from "effect"
+import { ErrorCode } from "./shared/error-codes.ts"
 import {
   type AutoDeployCondition,
   DEFAULT_COMMIT_PROMPT,
@@ -92,6 +93,7 @@ import { projectPiEventToSessionMessage } from "./runtime/message-projection.ts"
 export class DatabaseError extends Schema.TaggedError<DatabaseError>()("DatabaseError", {
   operation: Schema.String,
   message: Schema.String,
+  code: Schema.optional(Schema.Enums(ErrorCode)),
   cause: Schema.optional(Schema.Unknown),
 }) {}
 
@@ -3968,6 +3970,7 @@ export class PiKanbanDB {
           throw new DatabaseError({
             operation: "createTaskGroup",
             message: `Task "${taskId}" is already in another group`,
+            code: ErrorCode.TASK_ALREADY_IN_GROUP,
           })
         }
       }
@@ -4116,6 +4119,7 @@ export class PiKanbanDB {
         throw new DatabaseError({
           operation: "addTasksToGroup",
           message: `Task "${taskId}" is already in another group`,
+          code: ErrorCode.TASK_ALREADY_IN_GROUP,
         })
       }
     }

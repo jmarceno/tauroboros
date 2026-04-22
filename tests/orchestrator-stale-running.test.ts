@@ -85,7 +85,7 @@ describe("PiOrchestrator multi-workflow scheduling", () => {
     const task1 = db.createTask({ id: "slot-1", name: "Slot 1", prompt: "s1", status: "backlog", review: false })
     await runEffect(orchestrator.startSingle(task1.id))
 
-    const slots = orchestrator.getSlotUtilization()
+    const slots = await runEffect(orchestrator.getSlotUtilization())
 
     expect(slots.maxSlots).toBe(2)
     expect(slots.usedSlots).toBeGreaterThanOrEqual(0)

@@ -1,11 +1,11 @@
 /**
  * Shared module exports.
- * 
- * This module provides shared utilities for the Effect migration:
+ *
+ * This module provides shared utilities for the Effect-first architecture:
  * - Domain errors (Schema.TaggedError based)
  * - Logging service
  * - Service tags for dependency injection
- * - Error codes (legacy, being migrated to typed errors)
+ * - Error codes (for API compatibility with frontend)
  */
 
 export * from "./errors.ts"

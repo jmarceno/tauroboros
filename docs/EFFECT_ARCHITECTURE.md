@@ -1,10 +1,10 @@
-# Effect Migration Architecture Guide
+# Effect Architecture Guide
 
-This document describes the Effect-first architecture patterns established during the migration.
+This document describes the Effect-first architecture patterns used in TaurOboros.
 
 ## Overview
 
-TaurOboros has been migrated from a mixed Promise/Effect architecture to a fully Effect-first application. This guide documents the patterns and rules for maintaining consistency.
+TaurOboros uses a fully Effect-first architecture. This guide documents the patterns and rules for maintaining consistency.
 
 ## Core Principles
 
@@ -143,34 +143,46 @@ const program = Effect.gen(function* () {
 
 ## Module Categories
 
-### Migrated Modules
+### Backend Modules (Fully Migrated)
 
-These modules follow the Effect-first architecture:
+All backend modules follow the Effect-first architecture:
 
-- `src/shared/errors.ts` - Domain error definitions
+- `src/shared/errors.ts` - Domain error definitions (Schema.TaggedError)
 - `src/shared/logger.ts` - Structured logging service
-- `src/shared/services.ts` - Service tags
-- `src/runtime/session-manager.ts` - Session management (partial)
-- `src/runtime/planning-session.ts` - Planning sessions (partial)
-- `src/runtime/container-manager.ts` - Container management (partial)
-
-### Pending Migration
-
-These modules still have Promise-based APIs:
-
-- `src/orchestrator.ts` - Main orchestration engine
-- `src/server/server.ts` - HTTP server
-- `src/server/routes/*.ts` - Route handlers
+- `src/shared/services.ts` - Service tags (Context.GenericTag)
+- `src/shared/error-codes.ts` - Error codes for API compatibility
+- `src/index.ts` - Backend entrypoint (runtime boundary)
+- `src/server.ts` - Server composition via layers
+- `src/server/server.ts` - HTTP server with scoped resources
+- `src/server/router.ts` - HTTP routing via Effect interpreters
+- `src/server/route-interpreter.ts` - Central route error handling
+- `src/server/routes/*.ts` - All route handlers (Effect-based)
+- `src/server/websocket.ts` - WebSocket hub with scoped ownership
+- `src/orchestrator.ts` - Main orchestration engine (Effect-native)
+- `src/db.ts` - Database with typed errors
+- `src/telegram.ts` - Telegram integration (Effect-based)
+- `src/runtime/planning-session.ts` - Planning sessions
+- `src/runtime/session-manager.ts` - Session management
 - `src/runtime/pi-process.ts` - Pi process management
 - `src/runtime/container-pi-process.ts` - Container process management
+- `src/runtime/container-manager.ts` - Container management
+- `src/runtime/container-image-manager.ts` - Container image management
 - `src/runtime/global-scheduler.ts` - Task scheduling
 - `src/runtime/best-of-n.ts` - Best-of-N execution
 - `src/runtime/review-session.ts` - Review sessions
-- `src/runtime/smart-repair.ts` - Self-healing
-- `src/telegram.ts` - Telegram integration
-- `src/kanban-solid/src/` - Frontend (entire)
+- `src/runtime/smart-repair.ts` - Smart repair service
+- `src/runtime/self-healing.ts` - Self-healing service
+- `src/runtime/codestyle-session.ts` - Code style sessions
+- `src/runtime/worktree.ts` - Git worktree operations
 
-## Migration Checklist for New Code
+### Frontend Modules (Fully Migrated)
+
+- `src/kanban-solid/src/api/client.ts` - Effect-based HTTP client
+- `src/kanban-solid/src/api/*.ts` - All API modules (Effect-based)
+- `src/kanban-solid/src/stores/*.ts` - All stores (Effect-based)
+- `src/kanban-solid/src/App.tsx` - Main app with Effect boundaries
+
+## Code Standards
 
 When adding new features or modifying existing code:
 
@@ -197,6 +209,18 @@ This checks:
 - No `console.log/error/warn` in application code
 - `Effect.run*` only at runtime boundaries
 - Proper use of Effect patterns
+
+Run the full test suite:
+
+```bash
+bun test tests/*.test.ts
+bun run test:effect-migration
+```
+
+Current verification status:
+- 14 migration checks pass
+- 246 unit tests pass
+- 6 effect migration boundary tests pass
 
 ## Common Migration Patterns
 

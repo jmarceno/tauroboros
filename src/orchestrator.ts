@@ -2,6 +2,7 @@ import { randomUUID } from "crypto"
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "fs"
 import { join } from "path"
 import { Effect, Fiber, Schema, Either } from "effect"
+import { ErrorCode } from "./shared/error-codes.ts"
 import type { InfrastructureSettings } from "./config/settings.ts"
 import { BASE_IMAGES } from "./config/base-images.ts"
 import { buildExecutionVariables, buildPlanningVariables, buildPlanRevisionVariables, buildCommitVariables, buildReviewFixVariables } from "./prompts/index.ts"
@@ -165,6 +166,7 @@ export class OrchestratorOperationError extends Schema.TaggedError<OrchestratorO
   {
     operation: Schema.String,
     message: Schema.String,
+    code: Schema.optional(Schema.Enums(ErrorCode)),
     cause: Schema.optional(Schema.Unknown),
   },
 ) {}
@@ -1183,6 +1185,7 @@ export class PiOrchestrator {
           return yield* new OrchestratorOperationError({
             operation: "startAll",
             message: `Cannot start workflow: The following tasks have invalid container images: ${details}. Build the images first.`,
+            code: ErrorCode.INVALID_CONTAINER_IMAGES,
           })
         }
 
@@ -1237,6 +1240,7 @@ export class PiOrchestrator {
           return yield* new OrchestratorOperationError({
             operation: "startSingle",
             message: `Cannot start workflow: The following tasks have invalid container images: ${details}. Build the images first.`,
+            code: ErrorCode.INVALID_CONTAINER_IMAGES,
           })
         }
 
@@ -1334,6 +1338,7 @@ export class PiOrchestrator {
           return yield* new OrchestratorOperationError({
             operation: "startGroup",
             message: `Group execution blocked: ${externalDeps.length} tasks have external dependencies that must be completed first: ${taskNamesWithExternalDeps.join(', ')}`,
+            code: ErrorCode.EXTERNAL_DEPENDENCIES_BLOCKED,
           })
         }
 
@@ -1353,6 +1358,7 @@ export class PiOrchestrator {
           return yield* new OrchestratorOperationError({
             operation: "startGroup",
             message: `Cannot start group: The following tasks have invalid container images: ${details}`,
+            code: ErrorCode.INVALID_CONTAINER_IMAGES,
           })
         }
 

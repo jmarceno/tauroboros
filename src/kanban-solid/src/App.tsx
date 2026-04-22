@@ -26,8 +26,6 @@ import {
 } from '@/stores'
 
 import {
-  containersApi,
-  runApiEffect,
   Sidebar,
   TopBar,
   KanbanBoard,
@@ -59,7 +57,7 @@ import {
   TaskSessionsModal,
   ChatContainer,
 } from '@/components'
-import { sleepMs } from '@/api'
+import { containersApi, runApiEffect, sleepMs } from '@/api'
 
 import type { Task, TaskGroup, TaskStatus } from '@/types'
 import { validateTaskDrop, validateGroupDrop } from '@/utils/dropValidation'
