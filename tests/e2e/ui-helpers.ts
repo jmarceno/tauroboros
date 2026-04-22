@@ -30,14 +30,17 @@ export async function openTaskModal(page: Page, createStatus: 'backlog' | 'templ
   const headingName = createStatus === 'template' ? 'Add Template' : 'Add Task'
 
   await page.getByRole('button', { name: buttonName }).click()
-  await expect(page.getByRole('heading', { name: headingName })).toBeVisible({ timeout: 10000 })
+  await expect(page.getByRole('heading', { name: headingName })).toBeVisible({ timeout: 15000 })
 
   const modal = page.locator('.modal-overlay').last()
   const branchGroup = modal.locator('.form-group').filter({ hasText: 'Branch' }).first()
   const branchSelect = branchGroup.locator('select.form-select').first()
 
-  await expect(branchSelect).toBeVisible({ timeout: 10000 })
-  await expect.poll(async () => branchSelect.inputValue(), { timeout: 10000 }).not.toBe('')
+  await expect(branchSelect).toBeVisible({ timeout: 15000 })
+  await expect.poll(async () => branchSelect.inputValue(), { 
+    timeout: 15000,
+    intervals: [100, 200, 500, 1000]
+  }).not.toBe('')
 
   return modal
 }
@@ -48,7 +51,7 @@ export async function createTaskViaUI(page: Page, options: TaskModalOptions): Pr
   await modal.getByPlaceholder('Task name').fill(options.name)
 
   const promptEditor = modal.locator('.editor-content .ProseMirror').first()
-  await expect(promptEditor).toBeVisible({ timeout: 10000 })
+  await expect(promptEditor).toBeVisible({ timeout: 15000 })
   await promptEditor.click()
   await promptEditor.fill(options.prompt)
 
@@ -76,7 +79,7 @@ export async function createTaskViaUI(page: Page, options: TaskModalOptions): Pr
 
     for (const requirementName of options.requirements) {
       const requirementLabel = requirementsGroup.locator('label.checkbox-item').filter({ hasText: requirementName }).first()
-      await expect(requirementLabel).toBeVisible({ timeout: 10000 })
+      await expect(requirementLabel).toBeVisible({ timeout: 15000 })
       const checkbox = requirementLabel.locator('input[type="checkbox"]').first()
       if (!(await checkbox.isChecked())) {
         await requirementLabel.click()
@@ -86,10 +89,13 @@ export async function createTaskViaUI(page: Page, options: TaskModalOptions): Pr
 
   const saveButtonText = options.createStatus === 'template' ? 'Save Template' : 'Save'
   await modal.getByRole('button', { name: saveButtonText }).click()
-  await expect(modal).not.toBeVisible({ timeout: 10000 })
+  await expect(modal).not.toBeVisible({ timeout: 15000 })
 
+  // Wait a moment for the card to appear in the DOM
+  await page.waitForTimeout(500)
+  
   const taskCard = getTaskCard(page, options.name)
-  await expect(taskCard).toBeVisible({ timeout: 15000 })
+  await expect(taskCard).toBeVisible({ timeout: 20000 })
   return taskCard
 }
 

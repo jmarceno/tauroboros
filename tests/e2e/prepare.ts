@@ -177,6 +177,7 @@ if (useMockLLM) {
   console.log('[PREPARE] Starting mock LLM server...');
 
   const { MockServerManager } = await import('../../src/runtime/mock-server-manager.ts');
+  const { Effect } = await import('effect');
   const mockServer = new MockServerManager(9999);
 
   try {
@@ -186,8 +187,13 @@ if (useMockLLM) {
       execSync('npm install', { cwd: mockLlmServerPath, stdio: 'inherit' });
       console.log('[PREPARE] ✓ Mock LLM server dependencies installed');
     }
-    await mockServer.start(mockLlmServerPath, { detached: true });
+    
+    // Properly run the Effect
+    await Effect.runPromise(mockServer.start(mockLlmServerPath, { detached: true }));
     console.log('[PREPARE] ✓ Mock LLM server started on port 9999');
+
+    // Wait a moment for the server to be fully ready
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     // Generate models.json for the mock server
     const agentDir = join(tauroborosDir, 'agent');
@@ -226,6 +232,7 @@ if (useMockLLM) {
     writeFileSync(mockServerMarker, JSON.stringify({ port: 9999, pid: mockServerPid }));
   } catch (err) {
     console.error('[PREPARE] ✗ Failed to start mock LLM server:', err);
+    throw err; // Re-throw to fail the preparation
   }
 }
 
