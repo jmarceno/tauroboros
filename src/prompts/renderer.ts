@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import type {
   AggregatedReviewResult,
   Options,
@@ -10,6 +11,16 @@ import type {
   PromptTemplate,
   PromptTemplateKey,
 } from "../db/types.ts"
+
+/**
+ * Error for prompt rendering failures
+ */
+export class PromptRenderError extends Schema.TaggedError<PromptRenderError>()("PromptRenderError", {
+  operation: Schema.String,
+  message: Schema.String,
+  key: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 type PromptTemplateStore = {
   getPromptTemplate: (key: PromptTemplateKey | string) => PromptTemplate | null
@@ -43,7 +54,11 @@ export function renderPrompt(
 ): PromptRenderResult {
   const template = db.getPromptTemplate(key)
   if (!template) {
-    throw new Error(`Prompt template not found or inactive: ${key}`)
+    throw new PromptRenderError({
+      operation: "renderPrompt",
+      message: `Prompt template not found or inactive: ${key}`,
+      key,
+    })
   }
   return {
     template,

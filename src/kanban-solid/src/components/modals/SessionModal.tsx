@@ -6,7 +6,7 @@
 import { createMemo, createEffect, Show, For } from 'solid-js'
 import { createQuery } from '@tanstack/solid-query'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
-import { sessionsApi } from '@/api'
+import { sessionsApi, runApiEffect } from '@/api'
 import { formatLocalTime } from '@/utils/date'
 import type { SessionMessage } from '@/types'
 
@@ -18,7 +18,7 @@ interface SessionModalProps {
 export function SessionModal(props: SessionModalProps) {
   const messagesQuery = createQuery(() => ({
     queryKey: ['sessions', props.sessionId, 'messages'],
-    queryFn: () => sessionsApi.getMessages(props.sessionId, 1000),
+    queryFn: () => runApiEffect(sessionsApi.getMessages(props.sessionId, 1000)),
     staleTime: 5000,
   }))
 

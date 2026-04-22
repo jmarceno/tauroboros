@@ -4,9 +4,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../src/config/settings.ts"
-import { PiKanbanDB } from "../src/db.ts"
-import { PiKanbanServer } from "../src/server/server.ts"
-import { PiOrchestrator } from "../src/orchestrator.ts"
+import { createPiServer } from "./test-utils"
 
 function createTestSettings(mockPiBin: string): InfrastructureSettings {
   return {
@@ -104,19 +102,13 @@ describe("Plan mode flows", () => {
     const mockPi = createMockPiBinary(root)
     const settings = createTestSettings(mockPi)
 
-    const db = new PiKanbanDB(join(root, "tasks.db"))
-    db.updateOptions({ branch: "master", planModel: TEST_MODEL, executionModel: TEST_MODEL })
-    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
-    const server = new PiKanbanServer(db, {
+    const { db, server } = createPiServer({
+      projectRoot: root,
+      dbPath: join(root, "tasks.db"),
       port: 0,
       settings,
-      onStart: async () => await orchestrator.startAll(),
-      onStartSingle: async (taskId) => await orchestrator.startSingle(taskId),
-      onStop: async () => {
-        await orchestrator.stop()
-        return { ok: true }
-      },
     })
+    db.updateOptions({ branch: "master", planModel: TEST_MODEL, executionModel: TEST_MODEL })
 
     const port = await server.start(0)
     const baseUrl = `http://127.0.0.1:${port}`
@@ -196,7 +188,6 @@ describe("Plan mode flows", () => {
       expect(current?.agentOutput.includes("[exec]")).toBe(true)
     } finally {
       server.stop()
-      db.close()
     }
-  })
+  }, 15000)
 })

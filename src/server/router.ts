@@ -1,4 +1,5 @@
 import type { RequestContext, RouteHandler, RouteParams } from "./types.ts"
+import { runRouteEffect } from "./route-interpreter.ts"
 
 type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
@@ -65,7 +66,7 @@ export class Router {
         params[route.paramNames[i]] = decodeURIComponent(match[i + 1] ?? "")
       }
 
-      return await route.handler({ ...baseContext, params })
+      return await runRouteEffect(route.handler({ ...baseContext, params }))
     }
 
     return null

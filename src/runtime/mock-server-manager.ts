@@ -1,10 +1,22 @@
 import { spawn, ChildProcess } from "child_process"
+import { existsSync } from "fs"
 import * as http from "http"
 import * as path from "path"
+import { Effect, Schema } from "effect"
+
+function writeInfo(message: string): void {
+  process.stdout.write(`${message}\n`)
+}
 
 type StartOptions = {
   detached?: boolean
 }
+
+export class MockServerManagerError extends Schema.TaggedError<MockServerManagerError>()("MockServerManagerError", {
+  operation: Schema.String,
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 export class MockServerManager {
   private process: ChildProcess | null = null
@@ -14,32 +26,25 @@ export class MockServerManager {
     this.port = port
   }
 
-  async start(mockLlmServerPath?: string, options: StartOptions = {}): Promise<void> {
+  start(mockLlmServerPath?: string, options: StartOptions = {}): Effect.Effect<void, MockServerManagerError> {
     if (this.process) {
-      console.log("[MockServerManager] Server already running")
-      return
+      return Effect.sync(() => {
+        writeInfo("[MockServerManager] Server already running")
+      })
     }
 
-    const serverPath = mockLlmServerPath || path.join(process.cwd(), "mock-llm-server")
-    const distPath = path.join(serverPath, "dist")
+    return Effect.async<void, MockServerManagerError>((resume) => {
+      const serverPath = mockLlmServerPath || path.join(process.cwd(), "mock-llm-server")
+      const distPath = path.join(serverPath, "dist")
 
-    let startCommand: string
-    let startArgs: string[]
+      const [startCommand, startArgs] = this.isBuilt(distPath)
+        ? ["node", [path.join(distPath, "index.js")]]
+        : ["npx", ["tsx", "src/index.ts"]]
 
-    if (this.isBuilt(distPath)) {
-      startCommand = "node"
-      startArgs = [path.join(distPath, "index.js")]
-    } else {
-      startCommand = "npx"
-      startArgs = ["tsx", "src/index.ts"]
-    }
+      writeInfo(`[MockServerManager] Starting mock LLM server on port ${this.port}...`)
+      writeInfo(`[MockServerManager] Command: ${startCommand} ${startArgs.join(" ")}`)
 
-    console.log(`[MockServerManager] Starting mock LLM server on port ${this.port}...`)
-    console.log(`[MockServerManager] Command: ${startCommand} ${startArgs.join(" ")}`)
-
-    return new Promise((resolve, reject) => {
       const detached = options.detached === true
-
       this.process = spawn(startCommand, startArgs, {
         cwd: serverPath,
         stdio: detached ? "ignore" : ["pipe", "pipe", "pipe"],
@@ -51,82 +56,106 @@ export class MockServerManager {
         this.process.unref()
       }
 
-      let resolved = false
+      let settled = false
 
-      const cleanup = () => {
+      const completeWith = (effect: Effect.Effect<void, MockServerManagerError>) => {
+        if (settled) {
+          return
+        }
+        settled = true
         clearInterval(checkReady)
         clearTimeout(startupTimeout)
+        resume(effect)
+      }
+
+      const fail = (cause: unknown) => {
+        completeWith(
+          Effect.fail(
+            new MockServerManagerError({
+              operation: "start",
+              message: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+          ),
+        )
+      }
+
+      const succeed = () => {
+        writeInfo("[MockServerManager] Mock LLM server ready")
+        completeWith(Effect.void)
       }
 
       const checkReady = setInterval(() => {
-        if (resolved) {
-          cleanup()
+        if (settled) {
           return
         }
+
         const req = http.get(`http://localhost:${this.port}/health`, (res) => {
           if (res.statusCode === 200) {
-            resolved = true
-            cleanup()
-            console.log("[MockServerManager] Mock LLM server ready")
-            resolve()
+            succeed()
           }
         })
-        req.on("error", () => {})
+        req.on("error", () => undefined)
       }, 500)
 
       this.process.on("error", (err) => {
-        if (!resolved) {
-          resolved = true
-          cleanup()
-          reject(err)
-        }
+        fail(err)
       })
 
       this.process.on("exit", (code, signal) => {
-        if (!resolved) {
-          resolved = true
-          cleanup()
-          reject(new Error(`Mock server exited before ready (code=${code ?? "null"}, signal=${signal ?? "null"})`))
-        }
+        fail(new Error(`Mock server exited before ready (code=${code ?? "null"}, signal=${signal ?? "null"})`))
       })
 
       if (!detached) {
         this.process.stderr?.on("data", (data: Buffer) => {
-          console.log(`[MockServerManager] stderr: ${data.toString().trim()}`)
+          writeInfo(`[MockServerManager] stderr: ${data.toString().trim()}`)
         })
 
         this.process.stdout?.on("data", (data: Buffer) => {
-          console.log(`[MockServerManager] stdout: ${data.toString().trim()}`)
+          writeInfo(`[MockServerManager] stdout: ${data.toString().trim()}`)
         })
       }
 
       const startupTimeout = setTimeout(() => {
-        if (!resolved) {
-          resolved = true
-          cleanup()
-          reject(new Error("Mock server startup timeout"))
-        }
+        fail(new Error("Mock server startup timeout"))
       }, 30000)
+
+      return Effect.sync(() => {
+        clearInterval(checkReady)
+        clearTimeout(startupTimeout)
+      })
     })
   }
 
   private isBuilt(distPath: string): boolean {
-    try {
-      const { existsSync } = require("fs")
-      return existsSync(distPath)
-    } catch {
-      return false
-    }
+    return existsSync(distPath)
   }
 
-  async stop(): Promise<void> {
-    if (this.process) {
-      console.log("[MockServerManager] Stopping mock LLM server...")
-      this.process.kill("SIGTERM")
+  stop(): Effect.Effect<void, MockServerManagerError> {
+    return Effect.gen(this, function* () {
+      if (!this.process) {
+        return
+      }
+
+      writeInfo("[MockServerManager] Stopping mock LLM server...")
+
+      const processToStop = this.process
       this.process = null
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      console.log("[MockServerManager] Mock LLM server stopped")
-    }
+
+      yield* Effect.try({
+        try: () => {
+          processToStop.kill("SIGTERM")
+        },
+        catch: (cause) => new MockServerManagerError({
+          operation: "stop",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
+
+      yield* Effect.sleep("1 second")
+      writeInfo("[MockServerManager] Mock LLM server stopped")
+    })
   }
 
   getPort(): number {

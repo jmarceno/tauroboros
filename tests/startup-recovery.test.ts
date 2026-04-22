@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it } from "bun:test"
 import { mkdtempSync, mkdirSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { Effect } from "effect"
 import { PiKanbanDB } from "../src/db.ts"
-import { runStartupRecovery } from "../src/recovery/startup-recovery.ts"
+import { runStartupRecoveryEffect } from "../src/recovery/startup-recovery.ts"
 
 const tempDirs: string[] = []
 
@@ -78,10 +79,10 @@ describe("startup recovery", () => {
     })
 
     const broadcasts: string[] = []
-    await runStartupRecovery({
+    await Effect.runPromise(runStartupRecoveryEffect({
       db,
       broadcast: (message) => broadcasts.push(message.type),
-    })
+    }))
 
     const recoveredTask = db.getTask(staleTask.id)
     expect(recoveredTask?.status).toBe("backlog")
@@ -102,7 +103,6 @@ describe("startup recovery", () => {
     expect(recent?.status).toBe("active")
     expect(broadcasts.includes("task_updated")).toBe(true)
 
-    db.close()
   })
 
   it("is idempotent when run multiple times", async () => {
@@ -118,14 +118,13 @@ describe("startup recovery", () => {
     })
     db.updateTask(task.id, { worktreeDir: join(root, "missing") })
 
-    await runStartupRecovery({ db, broadcast: () => {} })
+    await Effect.runPromise(runStartupRecoveryEffect({ db, broadcast: () => {} }))
     const first = db.getTask(task.id)
-    await runStartupRecovery({ db, broadcast: () => {} })
+    await Effect.runPromise(runStartupRecoveryEffect({ db, broadcast: () => {} }))
     const second = db.getTask(task.id)
 
     expect(first?.status).toBe("backlog")
     expect(second?.status).toBe("backlog")
-    db.close()
   })
 
   it("recovers stale workflow runs with no executing tasks", async () => {
@@ -161,10 +160,10 @@ describe("startup recovery", () => {
     })
 
     const broadcasts: string[] = []
-    await runStartupRecovery({
+    await Effect.runPromise(runStartupRecoveryEffect({
       db,
       broadcast: (message) => broadcasts.push(message.type),
-    })
+    }))
 
     // Verify stale run was marked as failed
     const recoveredRun = db.getWorkflowRun(staleRun.id)
@@ -175,7 +174,6 @@ describe("startup recovery", () => {
     // Verify broadcasts were sent
     expect(broadcasts.includes("run_updated")).toBe(true)
 
-    db.close()
   })
 
   it("recovers stale workflow runs in stopping and paused statuses", async () => {
@@ -214,7 +212,7 @@ describe("startup recovery", () => {
       color: "#0000ff",
     })
 
-    await runStartupRecovery({ db, broadcast: () => {} })
+    await Effect.runPromise(runStartupRecoveryEffect({ db, broadcast: () => {} }))
 
     // Verify both were marked as failed
     const recoveredStopping = db.getWorkflowRun(stoppingRun.id)
@@ -223,7 +221,6 @@ describe("startup recovery", () => {
     const recoveredPaused = db.getWorkflowRun(pausedRun.id)
     expect(recoveredPaused?.status).toBe("failed")
 
-    db.close()
   })
 
   it("does not recover completed or failed workflow runs", async () => {
@@ -263,7 +260,7 @@ describe("startup recovery", () => {
     })
     db.updateWorkflowRun(failedRun.id, { finishedAt: Math.floor(Date.now() / 1000) })
 
-    await runStartupRecovery({ db, broadcast: () => {} })
+    await Effect.runPromise(runStartupRecoveryEffect({ db, broadcast: () => {} }))
 
     // Verify terminal runs were not touched
     const unchangedCompleted = db.getWorkflowRun(completedRun.id)
@@ -272,6 +269,5 @@ describe("startup recovery", () => {
     const unchangedFailed = db.getWorkflowRun(failedRun.id)
     expect(unchangedFailed?.status).toBe("failed")
 
-    db.close()
   })
 })

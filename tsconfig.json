@@ -1,19 +1,29 @@
 {
+  "$schema": "https://raw.githubusercontent.com/Effect-TS/language-service/refs/heads/main/schema.json",
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "moduleDetection": "force",
     "types": ["bun-types"],
     "strict": true,
     "esModuleInterop": true,
+    "incremental": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
-    "noEmit": true
+    "noEmit": true,
+    "plugins": [
+      {
+        "name": "@effect/language-service"
+      }
+    ]
   },
   "include": [
-    "src/**/*",
-    "tests/**/*"
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/kanban-solid/**/*"
   ]
 }

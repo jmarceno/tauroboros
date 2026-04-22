@@ -3,9 +3,10 @@
  * Replaces: TaskLastUpdateContext
  */
 
-import { createSignal, createMemo } from 'solid-js'
-import { createQuery, useQueryClient } from '@tanstack/solid-query'
-import { tasksApi } from '@/api'
+import { createSignal } from 'solid-js'
+import { useQueryClient } from '@tanstack/solid-query'
+import { Effect, Either } from 'effect'
+import { tasksApi, runApiEffect } from '@/api'
 
 const queryKeys = {
   tasks: {
@@ -16,6 +17,19 @@ const queryKeys = {
 export function createTaskLastUpdateStore() {
   const queryClient = useQueryClient()
   const [lastUpdates, setLastUpdates] = createSignal<Record<string, number>>({})
+  const [lastUpdateErrors, setLastUpdateErrors] = createSignal<Record<string, string>>({})
+
+  const setLastUpdateError = (taskId: string, message: string | null) => {
+    setLastUpdateErrors(prev => {
+      const next = { ...prev }
+      if (message) {
+        next[taskId] = message
+      } else {
+        delete next[taskId]
+      }
+      return next
+    })
+  }
 
   // Get last update for a task (from local state or query cache)
   const getLastUpdate = (taskId: string): number | null => {
@@ -29,22 +43,35 @@ export function createTaskLastUpdateStore() {
   }
 
   // Load last update from backend
-  const loadLastUpdate = async (taskId: string): Promise<number | null> => {
-    try {
-      const data = await tasksApi.getLastUpdate(taskId)
-      if (data.lastUpdateAt !== null) {
-        // Update local state
-        setLastUpdates(prev => ({ ...prev, [taskId]: data.lastUpdateAt }))
-        // Update query cache
-        queryClient.setQueryData(queryKeys.tasks.lastUpdate(taskId), data.lastUpdateAt)
-        return data.lastUpdateAt
-      }
-      return null
-    } catch (err) {
-      console.error('Failed to load last update timestamp:', err)
-      return null
-    }
-  }
+  const loadLastUpdateEffect = (taskId: string) =>
+    tasksApi.getLastUpdate(taskId).pipe(
+      Effect.map((data) => {
+        if (data.lastUpdateAt !== null) {
+          setLastUpdates(prev => ({ ...prev, [taskId]: data.lastUpdateAt }))
+          queryClient.setQueryData(queryKeys.tasks.lastUpdate(taskId), data.lastUpdateAt)
+          setLastUpdateError(taskId, null)
+          return data.lastUpdateAt
+        }
+
+        setLastUpdateError(taskId, null)
+        return null
+      }),
+      Effect.tapError((error) =>
+        Effect.logError(`[task-last-update-store] Failed to load last update for task ${taskId}: ${error.message}`),
+      ),
+      Effect.either,
+      Effect.flatMap((result) =>
+        Effect.sync(() => {
+          if (Either.isLeft(result)) {
+            setLastUpdateError(taskId, result.left.message)
+            return null
+          }
+          return result.right
+        })
+      ),
+    )
+
+  const loadLastUpdate = (taskId: string) => runApiEffect(loadLastUpdateEffect(taskId))
 
   // Update last update timestamp (typically called from WebSocket)
   const updateLastUpdate = (taskId: string, timestamp: number) => {
@@ -63,5 +90,6 @@ export function createTaskLastUpdateStore() {
     loadLastUpdate,
     updateLastUpdate,
     clearAll,
+    lastUpdateErrors,
   }
 }

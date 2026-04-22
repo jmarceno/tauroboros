@@ -8,7 +8,7 @@ import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { HelpButton } from '@/components/common/HelpButton'
 import { uiStore, createTasksStore } from '@/stores'
 import { createModelSearchStore } from '@/stores'
-import { optionsApi, referenceApi } from '@/api'
+import { referenceApi, runApiEffect } from '@/api'
 import type { ThinkingLevel, TaskStatus, Task } from '@/types'
 
 interface BatchEditModalProps {
@@ -195,7 +195,7 @@ export function BatchEditModal(props: BatchEditModalProps) {
   createEffect(() => {
     setBranchesLoading(true)
     setBranchesError(null)
-    referenceApi.getBranches()
+    runApiEffect(referenceApi.getBranches())
       .then((data) => {
         setBranches(data.branches || [])
       })

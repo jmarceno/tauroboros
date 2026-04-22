@@ -1,3 +1,4 @@
+import type { ServerWebSocket } from "bun"
 import type { WSMessage } from "../types.ts"
 
 export class WebSocketHub {
@@ -24,5 +25,16 @@ export class WebSocketHub {
 
   size(): number {
     return this.clients.size
+  }
+
+  close(): void {
+    for (const ws of this.clients) {
+      try {
+        ws.close()
+      } catch {
+        // Ignore already-closed sockets.
+      }
+    }
+    this.clients.clear()
   }
 }

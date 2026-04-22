@@ -3,8 +3,9 @@
  * Replaces: SessionUsageContext
  */
 
-import { createSignal, createMemo, batch } from 'solid-js'
-import { createQuery, useQueryClient, createMutation } from '@tanstack/solid-query'
+import { createSignal } from 'solid-js'
+import { useQueryClient } from '@tanstack/solid-query'
+import { Effect, Either } from 'effect'
 import type { SessionUsageRollup } from '@/types'
 import * as api from '@/api'
 
@@ -16,8 +17,35 @@ const queryKeys = {
 
 export function createSessionUsageStore() {
   const queryClient = useQueryClient()
+  const runApi = api.runApiEffect
   const [activeSessionIds, setActiveSessionIds] = createSignal<Set<string>>(new Set())
   const [taskSessionMap, setTaskSessionMap] = createSignal<Record<string, string[]>>({})
+  const [sessionUsageErrors, setSessionUsageErrors] = createSignal<Record<string, string>>({})
+  const [taskSessionErrors, setTaskSessionErrors] = createSignal<Record<string, string>>({})
+
+  const setSessionUsageError = (sessionId: string, message: string | null) => {
+    setSessionUsageErrors(prev => {
+      const next = { ...prev }
+      if (message) {
+        next[sessionId] = message
+      } else {
+        delete next[sessionId]
+      }
+      return next
+    })
+  }
+
+  const setTaskSessionError = (taskId: string, message: string | null) => {
+    setTaskSessionErrors(prev => {
+      const next = { ...prev }
+      if (message) {
+        next[taskId] = message
+      } else {
+        delete next[taskId]
+      }
+      return next
+    })
+  }
 
   // Format helpers
   const formatTokenCount = (count: number): string => {
@@ -46,23 +74,39 @@ export function createSessionUsageStore() {
   }
 
   // Load session usage
-  const loadSessionUsage = async (sessionId: string, forceRefresh = false): Promise<SessionUsageRollup | null> => {
-    if (forceRefresh) {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.sessions.usage(sessionId) })
-    }
-    
-    try {
-      const data = await queryClient.fetchQuery({
-        queryKey: queryKeys.sessions.usage(sessionId),
-        queryFn: () => api.sessionsApi.getUsage(sessionId),
-        staleTime: 5000,
+  const loadSessionUsageEffect = (sessionId: string, forceRefresh = false) =>
+    Effect.gen(function* () {
+      if (forceRefresh) {
+        yield* Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.sessions.usage(sessionId) }))
+      }
+
+      return yield* Effect.tryPromise({
+        try: () => queryClient.fetchQuery({
+          queryKey: queryKeys.sessions.usage(sessionId),
+          queryFn: () => runApi(api.sessionsApi.getUsage(sessionId)),
+          staleTime: 5000,
+        }),
+        catch: (cause) => cause instanceof Error ? cause : new Error(String(cause)),
       })
-      return data
-    } catch (e) {
-      console.error('Failed to load session usage:', e)
-      return null
-    }
-  }
+    }).pipe(
+      Effect.tapError((error) =>
+        Effect.logError(`[session-usage-store] Failed to load usage for session ${sessionId}: ${error.message}`),
+      ),
+      Effect.tap(() => Effect.sync(() => setSessionUsageError(sessionId, null))),
+      Effect.either,
+      Effect.flatMap((result) =>
+        Effect.sync(() => {
+          if (Either.isLeft(result)) {
+            setSessionUsageError(sessionId, result.left.message)
+            return null
+          }
+          return result.right
+        })
+      ),
+    )
+
+  const loadSessionUsage = (sessionId: string, forceRefresh = false) =>
+    runApi(loadSessionUsageEffect(sessionId, forceRefresh))
 
   // Start watching a session
   const startWatching = (sessionId: string) => {
@@ -85,21 +129,31 @@ export function createSessionUsageStore() {
   }
 
   // Start watching all sessions for a task
-  const startWatchingTask = async (taskId: string) => {
-    try {
-      const sessions = await api.tasksApi.getTaskSessions(taskId)
-      const sessionIds = sessions.map(s => s.id)
-      
-      setTaskSessionMap(prev => ({ ...prev, [taskId]: sessionIds }))
-      
-      // Start watching all sessions for this task
-      sessionIds.forEach(sessionId => {
-        startWatching(sessionId)
-      })
-    } catch (e) {
-      console.error('Failed to start watching task:', e)
-    }
-  }
+  const startWatchingTask = (taskId: string) =>
+    runApi(
+      api.tasksApi.getTaskSessions(taskId).pipe(
+        Effect.tapError((error) =>
+          Effect.logError(`[session-usage-store] Failed to load sessions for task ${taskId}: ${error.message}`),
+        ),
+        Effect.tap(() => Effect.sync(() => setTaskSessionError(taskId, null))),
+        Effect.either,
+        Effect.flatMap((result) =>
+          Effect.sync(() => {
+            if (Either.isLeft(result)) {
+              setTaskSessionError(taskId, result.left.message)
+              return
+            }
+
+            const sessionIds = result.right.map((session) => session.id)
+            setTaskSessionMap(prev => ({ ...prev, [taskId]: sessionIds }))
+
+            sessionIds.forEach(sessionId => {
+              startWatching(sessionId)
+            })
+          })
+        ),
+      ),
+    )
 
   // Stop watching a task
   const stopWatchingTask = (taskId: string) => {
@@ -154,5 +208,7 @@ export function createSessionUsageStore() {
     stopWatchingTask,
     getTaskUsage,
     isLoadingTaskUsage,
+    sessionUsageErrors,
+    taskSessionErrors,
   }
 }

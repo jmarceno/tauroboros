@@ -14,10 +14,11 @@ const queryKeys = {
 }
 
 export function createModelSearchStore() {
+  const runApi = api.runApiEffect
   // Query
   const modelsQuery = createQuery(() => ({
     queryKey: queryKeys.models,
-    queryFn: () => api.referenceApi.getModels(),
+    queryFn: () => runApi(api.referenceApi.getModels()),
     staleTime: 60000,
   }))
 

@@ -8,7 +8,7 @@ import { createQuery, useQueryClient } from '@tanstack/solid-query'
 import { ChatPanel } from './ChatPanel'
 import { ModelPicker } from '@/components/common/ModelPicker'
 import { ThinkingLevelSelect } from '@/components/common/ThinkingLevelSelect'
-import { planningApi } from '@/api'
+import { planningApi, runApiEffect } from '@/api'
 import { uiStore } from '@/stores'
 import type { ChatSession, ContextAttachment, createPlanningChatStore } from '@/stores/planningChatStore'
 import type { PlanningSession } from '@/types'
@@ -92,10 +92,10 @@ export function ChatContainer(props: ChatContainerProps) {
   const loadAllSessions = async () => {
     setIsLoadingSessions(true)
     try {
-      const sessions = await planningApi.getSessions()
+      const sessions = await runApiEffect(planningApi.getSessions())
       setAllSessions(sessions.sort((a, b) => b.createdAt - a.createdAt))
-    } catch (e) {
-      console.error('Failed to load planning sessions:', e)
+    } catch {
+      uiStore.showToast('Failed to load planning sessions', 'error')
     } finally {
       setIsLoadingSessions(false)
     }
@@ -135,10 +135,10 @@ export function ChatContainer(props: ChatContainerProps) {
     }
 
     try {
-      const messages = await planningApi.getSessionMessages(dbSession.id, 100)
+      const messages = await runApiEffect(planningApi.getSessionMessages(dbSession.id, 100))
       newSession.messages = messages
-    } catch (e) {
-      console.error('Failed to load session messages:', e)
+    } catch {
+      uiStore.showToast('Failed to load session messages', 'error')
     }
 
     props.planningChat.addExistingSession(newSession)

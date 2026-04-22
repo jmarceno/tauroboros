@@ -1,4 +1,5 @@
 import type {
+  AutoDeployCondition,
   BestOfNConfig,
   BestOfNSubstage,
   CreateSessionMessageInput,
@@ -23,6 +24,7 @@ import type {
 } from "../types.ts"
 
 export type {
+  AutoDeployCondition,
   BestOfNConfig,
   BestOfNSubstage,
   CreateSessionMessageInput,
@@ -209,6 +211,8 @@ export interface CreateTaskInput {
   autoApprovePlan?: boolean
   review?: boolean
   autoCommit?: boolean
+  autoDeploy?: boolean
+  autoDeployCondition?: AutoDeployCondition | null
   deleteWorktree?: boolean
   requirements?: string[]
   thinkingLevel?: ThinkingLevel
@@ -240,6 +244,8 @@ export interface UpdateTaskInput {
   autoApprovePlan?: boolean
   review?: boolean
   autoCommit?: boolean
+  autoDeploy?: boolean
+  autoDeployCondition?: AutoDeployCondition | null
   deleteWorktree?: boolean
   requirements?: string[]
   agentOutput?: string
@@ -267,6 +273,57 @@ export interface UpdateTaskInput {
   archivedAt?: number | null
   containerImage?: string
   codeStyleReview?: boolean
+  groupId?: string | null
+  selfHealStatus?: "idle" | "investigating" | "recovering"
+  selfHealMessage?: string | null
+  selfHealReportId?: string | null
+}
+
+export interface SelfHealReport {
+  id: string
+  runId: string
+  taskId: string
+  taskStatus: TaskStatus
+  errorMessage: string | null
+  diagnosticsSummary: string
+  rootCauses: string[]
+  proposedSolution: string
+  implementationPlan: string[]
+  recoverable: boolean
+  recommendedAction: "restart_task" | "keep_failed"
+  actionRationale: string
+  sourceMode: "local" | "github_clone" | "github_metadata_only"
+  sourcePath: string | null
+  githubUrl: string
+  tauroborosVersion: string
+  dbPath: string
+  dbSchemaJson: Record<string, unknown>
+  rawResponse: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface CreateSelfHealReportInput {
+  id?: string
+  runId: string
+  taskId: string
+  taskStatus: TaskStatus
+  errorMessage?: string | null
+  diagnosticsSummary: string
+  rootCauses: string[]
+  proposedSolution: string
+  implementationPlan: string[]
+  recoverable: boolean
+  recommendedAction: "restart_task" | "keep_failed"
+  actionRationale: string
+  sourceMode: "local" | "github_clone" | "github_metadata_only"
+  sourcePath?: string | null
+  githubUrl: string
+  tauroborosVersion: string
+  dbPath: string
+  dbSchemaJson: Record<string, unknown>
+  rawResponse: string
+  createdAt?: number
 }
 
 export interface PromptRenderResult {
@@ -423,6 +480,7 @@ export interface ContainerProfile {
   description: string
   image: string
   dockerfileTemplate: string
+  packages: Array<{ name: string; category: string }>
 }
 
 export interface PackageValidationResult {

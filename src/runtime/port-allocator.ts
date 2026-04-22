@@ -1,3 +1,13 @@
+import { Schema } from "effect"
+
+/**
+ * Tagged error for port allocation failures
+ */
+export class PortAllocatorError extends Schema.TaggedError<PortAllocatorError>()("PortAllocatorError", {
+  operation: Schema.String,
+  message: Schema.String,
+}) {}
+
 /**
  * Port Allocator for gVisor container port isolation.
  *
@@ -48,9 +58,10 @@ export class PortAllocator {
       }
     }
 
-    throw new Error(
-      `No available ports in range ${this.basePort}-${this.maxPort}`,
-    )
+    throw new PortAllocatorError({
+      operation: "allocatePort",
+      message: `No available ports in range ${this.basePort}-${this.maxPort}`,
+    })
   }
 
   /**

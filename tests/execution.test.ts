@@ -3,9 +3,12 @@ import { execFileSync } from "child_process"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { Effect } from "effect"
 import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../src/config/settings.ts"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
+
+const runEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect)
 
 function createTestSettings(mockPiBin: string): InfrastructureSettings {
   return {
@@ -123,7 +126,7 @@ describe("PiOrchestrator standard execution", () => {
     })
 
     const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
-    await orchestrator.startSingle(task.id)
+    await runEffect(orchestrator.startSingle(task.id))
 
     await waitFor(() => {
       const current = db.getTask(task.id)
@@ -143,6 +146,5 @@ describe("PiOrchestrator standard execution", () => {
     const sessions = db.getWorkflowSessionsByTask(task.id)
     expect(sessions.length).toBeGreaterThanOrEqual(2)
 
-    db.close()
   })
 })

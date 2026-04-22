@@ -4,7 +4,7 @@
  */
 
 import { createSignal, createMemo, onMount, For, Show } from 'solid-js'
-import { tasksApi } from '@/api'
+import { tasksApi, runApiEffect } from '@/api'
 import type { Task, WorkflowRun } from '@shared-types'
 import { formatLocalDateTime } from '@/utils/date'
 
@@ -54,32 +54,39 @@ export function ArchivedTasksTab(props: ArchivedTasksTabProps) {
     setIsLoading(true)
     setError(null)
     try {
-      const data = await tasksApi.getArchived()
+      const data = await runApiEffect(tasksApi.getArchived())
 
       if (!data || !Array.isArray(data.runs)) {
-        throw new Error('Invalid response: runs must be an array')
+        setError('Invalid response: runs must be an array')
+        return
       }
 
-      const runs: ArchivedRun[] = data.runs.map((runData: { run: WorkflowRun; tasks: ArchivedTask[] }) => {
-        if (!runData.run || !Array.isArray(runData.tasks)) {
-          throw new Error('Invalid run data: missing run or tasks array')
-        }
-        return {
-          run: runData.run,
-          tasks: runData.tasks.map((task): ArchivedTask => {
-            if (!task.id || !task.name) {
-              throw new Error(`Invalid task data: missing required fields for task in run ${runData.run.id}`)
-            }
-            return {
-              ...task,
-              sessionId: task.sessionId ?? null,
-              completedAt: task.completedAt ?? null,
-            }
-          }),
-          taskCount: runData.tasks.length,
-          expanded: false,
-        }
-      })
+      const runs: ArchivedRun[] = data.runs
+        .map((runData: { run: WorkflowRun; tasks: ArchivedTask[] }) => {
+          if (!runData.run || !Array.isArray(runData.tasks)) {
+            // Skip invalid run data
+            return null
+          }
+          return {
+            run: runData.run,
+            tasks: runData.tasks
+              .map((task): ArchivedTask | null => {
+                if (!task.id || !task.name) {
+                  // Skip invalid task data
+                  return null
+                }
+                return {
+                  ...task,
+                  sessionId: task.sessionId ?? null,
+                  completedAt: task.completedAt ?? null,
+                }
+              })
+              .filter((t): t is ArchivedTask => t !== null),
+            taskCount: runData.tasks.length,
+            expanded: false,
+          }
+        })
+        .filter((r): r is ArchivedRun => r !== null)
 
       setArchivedRuns(runs)
     } catch (e) {

@@ -1,4 +1,16 @@
-export type TaskStatus = "template" | "backlog" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
+import { Schema } from "effect"
+import { PROMPT_CATALOG, joinPrompt } from "./prompts/catalog.ts"
+
+/**
+ * Tagged error for container image resolution failures
+ */
+export class ContainerImageError extends Schema.TaggedError<ContainerImageError>()("ContainerImageError", {
+  operation: Schema.String,
+  message: Schema.String,
+}) {}
+
+export type TaskStatus = "template" | "backlog" | "queued" | "executing" | "review" | "code-style" | "done" | "failed" | "stuck"
+export type AutoDeployCondition = "before_workflow_start" | "after_workflow_end" | "workflow_done" | "workflow_failed"
 
 export type TelegramNotificationLevel = "all" | "failures" | "done_and_failures" | "workflow_done_and_failures"
 
@@ -7,6 +19,8 @@ export type TaskGroupStatus = "active" | "completed" | "archived"
 export type ThinkingLevel = "default" | "low" | "medium" | "high"
 
 export type ExecutionPhase = "not_started" | "plan_complete_waiting_approval" | "plan_revision_pending" | "implementation_pending" | "implementation_done"
+
+export type RunExecutionPhase = "not_started" | "planning" | "executing" | "reviewing" | "committing"
 
 export type ExecutionStrategy = "standard" | "best_of_n"
 
@@ -18,6 +32,26 @@ export type BestOfNSubstage =
   | "blocked_for_manual_review"
   | "completed"
 
+export interface BestOfNSlot {
+  model: string
+  count: number
+  taskSuffix?: string | null
+}
+
+export interface BestOfNFinalApplier {
+  model: string
+  taskSuffix?: string | null
+}
+
+export interface BestOfNConfig {
+  workers: BestOfNSlot[]
+  reviewers: BestOfNSlot[]
+  finalApplier: BestOfNFinalApplier
+  selectionMode: SelectionMode
+  minSuccessfulWorkers: number
+  verificationCommand?: string | null
+}
+
 export type RunPhase = "worker" | "reviewer" | "final_applier"
 
 export type RunStatus = "pending" | "running" | "done" | "failed" | "skipped"
@@ -26,28 +60,53 @@ export type SelectionMode = "pick_best" | "synthesize" | "pick_or_synthesize"
 
 export type WorkflowRunKind = "all_tasks" | "single_task" | "workflow_review" | "group_tasks"
 
-export type WorkflowRunStatus = "running" | "paused" | "stopping" | "completed" | "failed"
+export type WorkflowRunStatus = "queued" | "running" | "paused" | "stopping" | "completed" | "failed"
+export type SelfHealStatus = "idle" | "investigating" | "recovering"
 
-export interface BestOfNSlot {
-  model: string
-  count: number
-  taskSuffix?: string
-  thinkingLevel?: ThinkingLevel
+export interface RunContext {
+  id: string
+  kind: WorkflowRunKind
+  status: WorkflowRunStatus
+  displayName: string
+  targetTaskId: string | null
+  groupId?: string
+  createdAt: number
+  startedAt: number
+  finishedAt: number | null
+  taskIds: string[]
 }
 
-export interface BestOfNFinalApplier {
-  model: string
-  taskSuffix?: string
-  thinkingLevel?: ThinkingLevel
+export interface TaskExecutionState {
+  taskId: string
+  runId: string
+  slotIndex: number | null
+  status: "queued" | "executing" | "done" | "failed" | "stuck"
+  startedAt: number | null
+  finishedAt: number | null
+  sessionId: string | null
 }
 
-export interface BestOfNConfig {
-  workers: BestOfNSlot[]
-  reviewers: BestOfNSlot[]
-  finalApplier: BestOfNFinalApplier
-  minSuccessfulWorkers: number
-  selectionMode: SelectionMode
-  verificationCommand?: string
+export interface SlotTaskInfo {
+  taskId: string
+  runId: string
+  taskName: string
+  slotIndex: number
+}
+
+export interface SlotUtilization {
+  maxSlots: number
+  usedSlots: number
+  availableSlots: number
+  tasks: SlotTaskInfo[]
+}
+
+export interface RunQueueStatus {
+  runId: string
+  status: WorkflowRunStatus
+  totalTasks: number
+  queuedTasks: number
+  executingTasks: number
+  completedTasks: number
 }
 
 export interface TaskGroup {
@@ -80,6 +139,8 @@ export interface Task {
   autoApprovePlan: boolean
   review: boolean
   autoCommit: boolean
+  autoDeploy: boolean
+  autoDeployCondition: AutoDeployCondition | null
   deleteWorktree: boolean
   status: TaskStatus
   requirements: string[]
@@ -111,6 +172,33 @@ export interface Task {
   containerImage?: string
   codeStyleReview: boolean
   groupId?: string
+  selfHealStatus: SelfHealStatus
+  selfHealMessage: string | null
+  selfHealReportId: string | null
+}
+
+export interface SelfHealReport {
+  id: string
+  runId: string
+  taskId: string
+  taskStatus: TaskStatus
+  errorMessage: string | null
+  diagnosticsSummary: string
+  rootCauses: string[]
+  proposedSolution: string
+  implementationPlan: string[]
+  recoverable: boolean
+  recommendedAction: "restart_task" | "keep_failed"
+  actionRationale: string
+  sourceMode: "local" | "github_clone" | "github_metadata_only"
+  sourcePath: string | null
+  githubUrl: string
+  tauroborosVersion: string
+  dbPath: string
+  dbSchemaJson: Record<string, unknown>
+  rawResponse: string
+  createdAt: number
+  updatedAt: number
 }
 
 export interface WorkflowRun {
@@ -133,6 +221,8 @@ export interface WorkflowRun {
   archivedAt: number | null
   color: string
   groupId?: string
+  queuedTaskCount?: number
+  executingTaskCount?: number
 }
 
 export interface TaskRun {
@@ -227,50 +317,9 @@ export interface Options {
   columnSorts?: ColumnSortPreferences
 }
 
-export const DEFAULT_COMMIT_PROMPT = `You are in a worktree on a detached HEAD. When you are finished with the task, commit the working changes onto {{base_ref}}.
+export const DEFAULT_COMMIT_PROMPT = joinPrompt(PROMPT_CATALOG.defaultCommitPromptLines)
 
-- Do not run destructive commands: git reset --hard, git clean -fdx, git worktree remove, rm/mv on repository paths.
-- Do not edit files outside git workflows unless required for conflict resolution.
-- **CRITICAL: Never push changes to remote repositories unless explicitly instructed to do so.**
-- Preserve any pre-existing user uncommitted changes in the base worktree.
-- **CRITICAL: Do NOT delete the worktree. The system will handle worktree cleanup after you report success.**
-
-Steps:
-1. In the current task worktree, stage and create a commit for the pending task changes.
-2. Find where {{base_ref}} is checked out:
-   - Run: git worktree list --porcelain
-   - If branch {{base_ref}} is checked out in path P, use that P.
-   - If not checked out anywhere, use current worktree as P by checking out {{base_ref}} there.
-3. In P, verify current branch is {{base_ref}}.
-4. If P has uncommitted changes, stash them: git -C P stash push -u -m "pre-cherry-pick"
-5. Cherry-pick the task commit into P.
-6. If cherry-pick conflicts, resolve carefully, preserving both the intended task changes and existing user edits.
-7. If a stash was created, restore it with: git -C P stash pop
-8. If stash pop conflicts, resolve them while preserving pre-existing user edits.
-9. Report:
-   - Final commit hash
-   - Final commit message
-   - Whether stash was used
-   - Whether conflicts were resolved
-   - Any remaining manual follow-up needed`
-
-export const DEFAULT_CODE_STYLE_PROMPT = `You are a code style enforcement agent. Review the code in the workspace and apply fixes to ensure compliance.
-
-STANDARD RULES:
-- Follow existing project conventions
-- Use consistent indentation (match existing files)
-- Remove trailing whitespace
-- Ensure consistent quote style
-- Add missing semicolons where required by the language
-- Fix obvious linting issues
-
-APPROACH:
-1. First, read the relevant source files
-2. Identify any style violations
-3. Use the edit tool to fix all issues
-4. Confirm when complete
-
-IMPORTANT: You must actively use the edit tool to make changes. Do not just report issues - fix them.`
+export const DEFAULT_CODE_STYLE_PROMPT = joinPrompt(PROMPT_CATALOG.defaultCodeStylePromptLines)
 
 /**
  * Resolves the code style prompt to use.
@@ -291,6 +340,7 @@ export type WSMessageType =
   | "task_reordered"
   | "options_updated"
   | "execution_started"
+  | "execution_queued"
   | "execution_stopped"
   | "execution_complete"
   | "execution_paused"
@@ -337,6 +387,10 @@ export type WSMessageType =
   // Group execution lifecycle events (broadcast when group execution is implemented)
   | "group_execution_started"
   | "group_execution_complete"
+  | "group_task_added"
+  | "group_task_removed"
+  | "container_profile_created"
+  | "self_heal_status"
 
 export interface WSMessage {
   type: WSMessageType
@@ -351,7 +405,7 @@ export interface ImageStatusPayload {
 }
 
 export interface ReviewResult {
-  status: "pass" | "gaps_found" | "blocked"
+  status: "pass" | "gaps_found" | "blocked" | "json_parse_max_retries"
   summary: string
   gaps: string[]
   recommendedPrompt: string
@@ -489,7 +543,10 @@ export function resolveContainerImage(
   if (systemImage) {
     return systemImage
   }
-  throw new Error("No container image available: task has no containerImage set and no system default is configured")
+  throw new ContainerImageError({
+    operation: "resolveContainerImage",
+    message: "No container image available: task has no containerImage set and no system default is configured",
+  })
 }
 
 // ============================================================================
@@ -528,23 +585,35 @@ export interface ContainerImage {
 }
 
 export interface ExecutionGraph {
+  batches: { idx: number; taskIds: string[]; taskNames: string[] }[]
   nodes: ExecutionGraphNode[]
   edges: ExecutionGraphEdge[]
+  totalTasks: number
+  parallelLimit: number
+  warnings?: string[]
+  pendingApprovals?: {
+    id: string
+    name: string
+    status: string
+    awaitingPlanApproval: boolean
+    planRevisionCount?: number
+  }[]
 }
 
 export interface ExecutionGraphNode {
   id: string
-  type: 'task' | 'milestone' | 'decision'
-  label: string
-  status: TaskStatus
-  x?: number
-  y?: number
+  name: string
+  status: string
+  requirements: string[]
+  expandedWorkerRuns?: number
+  expandedReviewerRuns?: number
+  hasFinalApplier?: boolean
+  estimatedRunCount?: number
 }
 
 export interface ExecutionGraphEdge {
   from: string
   to: string
-  label?: string
 }
 
 export interface PlanningSession {
@@ -617,6 +686,8 @@ export interface CreateTaskDTO {
   review?: boolean
   codeStyleReview?: boolean
   autoCommit?: boolean
+  autoDeploy?: boolean
+  autoDeployCondition?: AutoDeployCondition | null
   deleteWorktree?: boolean
   skipPermissionAsking?: boolean
   requirements?: string[]

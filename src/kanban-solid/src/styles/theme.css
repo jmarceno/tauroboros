@@ -228,8 +228,20 @@
     @apply p-3 bg-dark-bg border border-dark-border rounded-md cursor-pointer transition-all;
   }
 
+  .task-card.auto-deploy-template {
+    @apply border-accent-success/50 bg-accent-success/10;
+  }
+
   .task-card:hover {
     @apply border-accent-primary translate-x-0.5;
+  }
+
+  .task-card.auto-deploy-template:hover {
+    @apply border-accent-success;
+  }
+
+  .task-card.selected {
+    @apply border-accent-primary bg-accent-primary/10 shadow-card-highlight;
   }
 
   .task-card.dragging {
@@ -727,18 +739,7 @@
   }
 
   .tooltip {
-    @apply absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1.5 bg-dark-surface2 border border-dark-border rounded-md shadow-lg text-xs text-dark-text whitespace-normal max-w-[200px] z-[100] opacity-0 pointer-events-none transition-opacity duration-200;
-  }
-
-  .tooltip-container:hover .tooltip {
-    @apply opacity-100;
-  }
-
-  .tooltip::after {
-    @apply content-[''] absolute top-full left-1/2 -translate-x-1/2;
-    border-width: 5px;
-    border-style: solid;
-    border-color: theme('colors.dark.surface2') transparent transparent transparent;
+    @apply fixed px-2 py-1.5 bg-dark-surface2 border border-dark-border rounded-md shadow-lg text-xs text-dark-text whitespace-normal max-w-[260px] pointer-events-none z-[2147483647];
   }
 
   .form-select {

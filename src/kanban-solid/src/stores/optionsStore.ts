@@ -5,6 +5,7 @@
 
 import { createSignal, createMemo } from 'solid-js'
 import { createQuery, useQueryClient, createMutation } from '@tanstack/solid-query'
+import { Effect } from 'effect'
 import type { Options } from '@/types'
 import * as api from '@/api'
 
@@ -14,11 +15,12 @@ const queryKeys = {
 
 export function createOptionsStore() {
   const queryClient = useQueryClient()
+  const runApi = api.runApiEffect
 
   // Query
   const optionsQuery = createQuery(() => ({
     queryKey: queryKeys.options,
-    queryFn: () => api.optionsApi.get(),
+    queryFn: () => runApi(api.optionsApi.get()),
     staleTime: 10000,
   }))
 
@@ -27,54 +29,37 @@ export function createOptionsStore() {
   const error = () => optionsQuery.error?.message || null
 
   // Actions
-  const loadOptions = async () => {
-    await queryClient.invalidateQueries({ queryKey: queryKeys.options })
-  }
+  const loadOptions = () => runApi(Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.options })))
 
   // Mutations
-  const saveOptionsMutation = createMutation(() => ({
-    mutationFn: (data: Partial<Options>) => api.optionsApi.save(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.options })
-    },
-  }))
-
   const updateOptionsMutation = createMutation(() => ({
-    mutationFn: (data: Partial<Options>) => api.optionsApi.update(data),
+    mutationFn: (data: Partial<Options>) => runApi(api.optionsApi.update(data)),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.options })
+      void loadOptions()
     },
   }))
 
   const startExecutionMutation = createMutation(() => ({
-    mutationFn: () => api.optionsApi.startExecution(),
+    mutationFn: () => runApi(api.optionsApi.startExecution()),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.options })
+      void loadOptions()
     },
   }))
 
   const stopExecutionMutation = createMutation(() => ({
-    mutationFn: () => api.optionsApi.stopExecution(),
+    mutationFn: () => runApi(api.optionsApi.stopExecution()),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.options })
+      void loadOptions()
     },
   }))
 
-  const saveOptions = async (data: Partial<Options>) => {
-    return await saveOptionsMutation.mutateAsync(data)
-  }
+  const saveOptions = (data: Partial<Options>) => updateOptionsMutation.mutateAsync(data)
 
-  const updateOptions = async (data: Partial<Options>) => {
-    return await updateOptionsMutation.mutateAsync(data)
-  }
+  const updateOptions = (data: Partial<Options>) => updateOptionsMutation.mutateAsync(data)
 
-  const startExecution = async () => {
-    return await startExecutionMutation.mutateAsync()
-  }
+  const startExecution = () => startExecutionMutation.mutateAsync()
 
-  const stopExecution = async () => {
-    return await stopExecutionMutation.mutateAsync()
-  }
+  const stopExecution = () => stopExecutionMutation.mutateAsync()
 
   return {
     options,

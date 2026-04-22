@@ -3,9 +3,12 @@ import { execFileSync } from "child_process"
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { Effect } from "effect"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
 import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
+
+const runEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect)
 
 const tempDirs: string[] = []
 const TEST_MODEL = "openai/gpt-4"
@@ -154,7 +157,7 @@ describe("review loop", () => {
     })
 
     const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
-    await orchestrator.startSingle(task.id)
+    await runEffect(orchestrator.startSingle(task.id))
 
     await waitFor(() => {
       const current = db.getTask(task.id)
@@ -172,7 +175,6 @@ describe("review loop", () => {
 
     const reviewFilePath = join(String(current?.worktreeDir), ".pi", "tauroboros", `review-${task.id}.md`)
     expect(existsSync(reviewFilePath)).toBe(false)
-    db.close()
   })
 
   it("enforces review limit and marks task stuck", async () => {
@@ -193,7 +195,7 @@ describe("review loop", () => {
       planmode: false,
     })
     const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
-    await orchestrator.startSingle(task.id)
+    await runEffect(orchestrator.startSingle(task.id))
 
     await waitFor(() => {
       const current = db.getTask(task.id)
@@ -204,6 +206,5 @@ describe("review loop", () => {
     expect(current?.status).toBe("stuck")
     expect(current?.reviewCount).toBe(1)
     expect(current?.errorMessage?.includes("Max reviews (1) reached")).toBe(true)
-    db.close()
   })
 })

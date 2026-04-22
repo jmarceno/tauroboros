@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs"
 import { join } from "path"
+import { Effect, Either, Schema } from "effect"
 import { BASE_IMAGES } from "./base-images.ts"
 
 export interface SkillsSettings {
@@ -84,7 +85,73 @@ export interface SettingsLoadResult {
   unknownFields: string[]
 }
 
-function deepMerge<T>(target: T, source: Partial<T>): T {
+export class SettingsError extends Schema.TaggedError<SettingsError>()("SettingsError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
+
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K]
+}
+
+interface WorkflowSettingsPatch {
+  server?: Partial<ServerSettings>
+  container?: Partial<ContainerSettings>
+}
+
+interface InfrastructureSettingsPatch {
+  skills?: Partial<SkillsSettings>
+  project?: Partial<ProjectSettings>
+  workflow?: WorkflowSettingsPatch
+}
+
+const IntegerSchema = Schema.Number.pipe(Schema.int())
+const NonNegativeIntegerSchema = Schema.Number.pipe(Schema.int(), Schema.nonNegative())
+const PortSchema = Schema.Number.pipe(
+  Schema.int(),
+  Schema.greaterThanOrEqualTo(0),
+  Schema.lessThanOrEqualTo(65535),
+)
+const ImageSourceSchema = Schema.Literal("dockerfile", "registry")
+const RegistryUrlSchema = Schema.Union(Schema.String, Schema.Null)
+
+const SkillsPartialSchema = Schema.Struct({
+  localPath: Schema.optional(Schema.String),
+  autoLoad: Schema.optional(Schema.Boolean),
+  allowGlobal: Schema.optional(Schema.Boolean),
+})
+
+const ProjectPartialSchema = Schema.Struct({
+  name: Schema.optional(Schema.String),
+  type: Schema.optional(Schema.String),
+})
+
+const ServerPartialSchema = Schema.Struct({
+  port: Schema.optional(PortSchema),
+  dbPath: Schema.optional(Schema.String),
+})
+
+const ContainerPartialSchema = Schema.Struct({
+  enabled: Schema.optional(Schema.Boolean),
+  piBin: Schema.optional(Schema.String),
+  piArgs: Schema.optional(Schema.String),
+  image: Schema.optional(Schema.String),
+  imageSource: Schema.optional(ImageSourceSchema),
+  dockerfilePath: Schema.optional(Schema.String),
+  registryUrl: Schema.optional(RegistryUrlSchema),
+  autoPrepare: Schema.optional(Schema.Boolean),
+  memoryMb: Schema.optional(NonNegativeIntegerSchema),
+  cpuCount: Schema.optional(NonNegativeIntegerSchema),
+  portRangeStart: Schema.optional(IntegerSchema),
+  portRangeEnd: Schema.optional(IntegerSchema),
+  mountPodmanSocket: Schema.optional(Schema.Boolean),
+})
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function deepMerge<T>(target: T, source: DeepPartial<T>): T {
   const result = { ...target }
 
   for (const key in source) {
@@ -106,45 +173,17 @@ function deepMerge<T>(target: T, source: Partial<T>): T {
   return result
 }
 
-function validateFieldType(
+function validateWithSchema<A, I>(
   path: string,
   value: unknown,
-  expectedType: string,
+  schema: Schema.Schema<A, I, never>,
   warnings: string[],
 ): boolean {
-  const actualType = typeof value
-
-  if (expectedType === "number" && actualType === "number") {
-    if (Number.isNaN(value)) {
-      warnings.push(`Invalid value at '${path}': must be a valid number, got NaN`)
-      return false
-    }
-    return true
-  }
-
-  if (expectedType === "integer" && actualType === "number") {
-    if (!Number.isInteger(value)) {
-      warnings.push(`Invalid value at '${path}': must be an integer, got ${value}`)
-      return false
-    }
-    return true
-  }
-
-  if (expectedType === "boolean" && actualType === "boolean") {
-    return true
-  }
-
-  if (expectedType === "string" && actualType === "string") {
-    return true
-  }
-
-  if (actualType !== expectedType) {
-    warnings.push(
-      `Invalid type at '${path}': expected ${expectedType}, got ${actualType}`,
-    )
+  const decoded = Schema.decodeUnknownEither(schema)(value)
+  if (Either.isLeft(decoded)) {
+    warnings.push(`Invalid value at '${path}': ${decoded.left.message}`)
     return false
   }
-
   return true
 }
 
@@ -170,67 +209,73 @@ function validateAndExtractUnknown(
   warnings: string[],
 ): SettingsLoadResult {
   const unknownFields: string[] = []
+  const sanitized: InfrastructureSettingsPatch = {}
 
   const validTopKeys = ["skills", "project", "workflow"]
   unknownFields.push(...extractUnknownFields(parsed, validTopKeys, ""))
 
   if (parsed.skills !== undefined) {
-    if (typeof parsed.skills === "object" && parsed.skills !== null) {
-      const skills = parsed.skills as Record<string, unknown>
+    if (isRecord(parsed.skills)) {
+      const skills = parsed.skills
       const validSkillsKeys = ["localPath", "autoLoad", "allowGlobal"]
       unknownFields.push(...extractUnknownFields(skills, validSkillsKeys, "skills"))
 
-      if (skills.localPath !== undefined) {
-        validateFieldType("skills.localPath", skills.localPath, "string", warnings)
+      const decodedSkills = Schema.decodeUnknownEither(SkillsPartialSchema)(skills)
+      if (Either.isRight(decodedSkills)) {
+        sanitized.skills = decodedSkills.right
+      } else {
+        warnings.push(`Invalid value at 'skills': ${decodedSkills.left.message}`)
       }
-      if (skills.autoLoad !== undefined) {
-        validateFieldType("skills.autoLoad", skills.autoLoad, "boolean", warnings)
-      }
-      if (skills.allowGlobal !== undefined) {
-        validateFieldType("skills.allowGlobal", skills.allowGlobal, "boolean", warnings)
-      }
+    } else {
+      warnings.push("Invalid value at 'skills': expected an object")
     }
   }
 
   if (parsed.project !== undefined) {
-    if (typeof parsed.project === "object" && parsed.project !== null) {
-      const project = parsed.project as Record<string, unknown>
+    if (isRecord(parsed.project)) {
+      const project = parsed.project
       const validProjectKeys = ["name", "type"]
       unknownFields.push(...extractUnknownFields(project, validProjectKeys, "project"))
 
-      if (project.name !== undefined) {
-        validateFieldType("project.name", project.name, "string", warnings)
+      const decodedProject = Schema.decodeUnknownEither(ProjectPartialSchema)(project)
+      if (Either.isRight(decodedProject)) {
+        sanitized.project = decodedProject.right
+      } else {
+        warnings.push(`Invalid value at 'project': ${decodedProject.left.message}`)
       }
-      if (project.type !== undefined) {
-        validateFieldType("project.type", project.type, "string", warnings)
-      }
+    } else {
+      warnings.push("Invalid value at 'project': expected an object")
     }
   }
 
   if (parsed.workflow !== undefined) {
-    if (typeof parsed.workflow === "object" && parsed.workflow !== null) {
-      const workflow = parsed.workflow as Record<string, unknown>
+    if (isRecord(parsed.workflow)) {
+      const workflow = parsed.workflow
       const validWorkflowKeys = ["server", "container"]
       unknownFields.push(...extractUnknownFields(workflow, validWorkflowKeys, "workflow"))
 
+      const workflowPatch: WorkflowSettingsPatch = {}
+
       if (workflow.server !== undefined) {
-        if (typeof workflow.server === "object" && workflow.server !== null) {
-          const server = workflow.server as Record<string, unknown>
+        if (isRecord(workflow.server)) {
+          const server = workflow.server
           const validServerKeys = ["port", "dbPath"]
           unknownFields.push(...extractUnknownFields(server, validServerKeys, "workflow.server"))
 
-          if (server.port !== undefined) {
-            validateFieldType("workflow.server.port", server.port, "integer", warnings)
+          const decodedServer = Schema.decodeUnknownEither(ServerPartialSchema)(server)
+          if (Either.isRight(decodedServer)) {
+            workflowPatch.server = decodedServer.right
+          } else {
+            warnings.push(`Invalid value at 'workflow.server': ${decodedServer.left.message}`)
           }
-          if (server.dbPath !== undefined) {
-            validateFieldType("workflow.server.dbPath", server.dbPath, "string", warnings)
-          }
+        } else {
+          warnings.push("Invalid value at 'workflow.server': expected an object")
         }
       }
 
       if (workflow.container !== undefined) {
-        if (typeof workflow.container === "object" && workflow.container !== null) {
-          const container = workflow.container as Record<string, unknown>
+        if (isRecord(workflow.container)) {
+          const container = workflow.container
           const validContainerKeys = [
             "enabled",
             "piBin",
@@ -250,70 +295,27 @@ function validateAndExtractUnknown(
             ...extractUnknownFields(container, validContainerKeys, "workflow.container"),
           )
 
-          if (container.enabled !== undefined) {
-            validateFieldType("workflow.container.enabled", container.enabled, "boolean", warnings)
+          const decodedContainer = Schema.decodeUnknownEither(ContainerPartialSchema)(container)
+          if (Either.isRight(decodedContainer)) {
+            workflowPatch.container = decodedContainer.right
+          } else {
+            warnings.push(`Invalid value at 'workflow.container': ${decodedContainer.left.message}`)
           }
-          if (container.piBin !== undefined) {
-            validateFieldType("workflow.container.piBin", container.piBin, "string", warnings)
-          }
-          if (container.piArgs !== undefined) {
-            validateFieldType("workflow.container.piArgs", container.piArgs, "string", warnings)
-          }
-          if (container.image !== undefined) {
-            validateFieldType("workflow.container.image", container.image, "string", warnings)
-          }
-          if (container.imageSource !== undefined) {
-            if (validateFieldType("workflow.container.imageSource", container.imageSource, "string", warnings)) {
-              if (container.imageSource !== "dockerfile" && container.imageSource !== "registry") {
-                warnings.push(
-                  `Invalid value at 'workflow.container.imageSource': must be "dockerfile" or "registry", got "${container.imageSource}"`,
-                )
-              }
-            }
-          }
-          if (container.dockerfilePath !== undefined) {
-            validateFieldType("workflow.container.dockerfilePath", container.dockerfilePath, "string", warnings)
-          }
-          if (container.registryUrl !== undefined) {
-            if (container.registryUrl !== null) {
-              validateFieldType("workflow.container.registryUrl", container.registryUrl, "string", warnings)
-            }
-          }
-          if (container.autoPrepare !== undefined) {
-            validateFieldType("workflow.container.autoPrepare", container.autoPrepare, "boolean", warnings)
-          }
-          if (container.memoryMb !== undefined) {
-            validateFieldType("workflow.container.memoryMb", container.memoryMb, "integer", warnings)
-          }
-          if (container.cpuCount !== undefined) {
-            validateFieldType("workflow.container.cpuCount", container.cpuCount, "integer", warnings)
-          }
-          if (container.portRangeStart !== undefined) {
-            validateFieldType(
-              "workflow.container.portRangeStart",
-              container.portRangeStart,
-              "integer",
-              warnings,
-            )
-          }
-          if (container.portRangeEnd !== undefined) {
-            validateFieldType(
-              "workflow.container.portRangeEnd",
-              container.portRangeEnd,
-              "integer",
-              warnings,
-            )
-          }
-          if (container.mountPodmanSocket !== undefined) {
-            validateFieldType("workflow.container.mountPodmanSocket", container.mountPodmanSocket, "boolean", warnings)
-          }
+        } else {
+          warnings.push("Invalid value at 'workflow.container': expected an object")
         }
       }
+
+      if (workflowPatch.server || workflowPatch.container) {
+        sanitized.workflow = workflowPatch
+      }
+    } else {
+      warnings.push("Invalid value at 'workflow': expected an object")
     }
   }
 
   // Merge with defaults
-  const merged = deepMerge(DEFAULT_INFRASTRUCTURE_SETTINGS, parsed as Partial<InfrastructureSettings>)
+  const merged = deepMerge(DEFAULT_INFRASTRUCTURE_SETTINGS, sanitized)
 
   return {
     settings: merged,
@@ -322,7 +324,7 @@ function validateAndExtractUnknown(
   }
 }
 
-export function loadInfrastructureSettings(projectRoot: string): SettingsLoadResult {
+function loadSettingsResult(projectRoot: string): SettingsLoadResult {
   const settingsPath = join(projectRoot, ".tauroboros", "settings.json")
   const warnings: string[] = []
 
@@ -342,11 +344,30 @@ export function loadInfrastructureSettings(projectRoot: string): SettingsLoadRes
       parsed = JSON.parse(raw)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`Invalid JSON in settings file: ${message}`)
+      warnings.push(`Invalid JSON in settings file: ${message}. Using defaults.`)
+      return {
+        settings: { ...DEFAULT_INFRASTRUCTURE_SETTINGS },
+        warnings,
+        unknownFields: [],
+      }
     }
 
     if (!parsed || typeof parsed !== "object") {
-      throw new Error("Settings must be a JSON object")
+      warnings.push("Settings must be a JSON object. Using defaults.")
+      return {
+        settings: { ...DEFAULT_INFRASTRUCTURE_SETTINGS },
+        warnings,
+        unknownFields: [],
+      }
+    }
+
+    // Validate object shape before field-level decode
+    if (!validateWithSchema("settings", parsed, Schema.Record({ key: Schema.String, value: Schema.Unknown }), warnings)) {
+      return {
+        settings: { ...DEFAULT_INFRASTRUCTURE_SETTINGS },
+        warnings,
+        unknownFields: [],
+      }
     }
 
     return validateAndExtractUnknown(parsed as Record<string, unknown>, warnings)
@@ -362,7 +383,7 @@ export function loadInfrastructureSettings(projectRoot: string): SettingsLoadRes
   }
 }
 
-export function saveInfrastructureSettings(
+function saveSettingsResult(
   projectRoot: string,
   settings: InfrastructureSettings,
 ): void {
@@ -378,7 +399,7 @@ export interface EnsureSettingsOptions {
   preferContainer?: boolean
 }
 
-export function ensureInfrastructureSettings(
+function ensureSettingsResult(
   projectRoot: string,
   options?: EnsureSettingsOptions,
 ): SettingsLoadResult {
@@ -387,10 +408,10 @@ export function ensureInfrastructureSettings(
   let result: SettingsLoadResult
 
   if (existsSync(settingsPath)) {
-    result = loadInfrastructureSettings(projectRoot)
+    result = loadSettingsResult(projectRoot)
 
     // Re-save to ensure file has all defaults and proper formatting
-    saveInfrastructureSettings(projectRoot, result.settings)
+    saveSettingsResult(projectRoot, result.settings)
   } else {
     // Create new with defaults
     const settings = { ...DEFAULT_INFRASTRUCTURE_SETTINGS }
@@ -405,8 +426,50 @@ export function ensureInfrastructureSettings(
       warnings: ["Created new settings.json with default values"],
       unknownFields: [],
     }
-    saveInfrastructureSettings(projectRoot, result.settings)
+    saveSettingsResult(projectRoot, result.settings)
   }
 
   return result
 }
+
+function logSettingsWarnings(result: SettingsLoadResult): Effect.Effect<void> {
+  return Effect.gen(function* () {
+    for (const w of result.warnings) {
+      yield* Effect.logWarning(`[settings] ${w}`)
+    }
+    for (const f of result.unknownFields) {
+      yield* Effect.logWarning(`[settings] Unknown field in settings.json: ${f}`)
+    }
+  })
+}
+
+export const loadSettingsEffect = Effect.fn("loadSettingsEffect")(
+  function* (projectRoot: string) {
+    const result = yield* Effect.try({
+      try: () => loadSettingsResult(projectRoot),
+      catch: (e) => new SettingsError({ message: e instanceof Error ? e.message : String(e), cause: e }),
+    })
+    yield* logSettingsWarnings(result)
+    return result
+  },
+)
+
+export const saveSettingsEffect = Effect.fn("saveSettingsEffect")(
+  function* (projectRoot: string, settings: InfrastructureSettings) {
+    return yield* Effect.try({
+      try: () => saveSettingsResult(projectRoot, settings),
+      catch: (e) => new SettingsError({ message: e instanceof Error ? e.message : String(e), cause: e }),
+    })
+  },
+)
+
+export const ensureSettingsEffect = Effect.fn("ensureSettingsEffect")(
+  function* (projectRoot: string, options?: EnsureSettingsOptions) {
+    const result = yield* Effect.try({
+      try: () => ensureSettingsResult(projectRoot, options),
+      catch: (e) => new SettingsError({ message: e instanceof Error ? e.message : String(e), cause: e }),
+    })
+    yield* logSettingsWarnings(result)
+    return result
+  },
+)

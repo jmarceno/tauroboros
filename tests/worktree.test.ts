@@ -3,6 +3,7 @@ import { execFileSync } from "child_process"
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs"
 import { basename, join } from "path"
 import { tmpdir } from "os"
+import { runEffectOrThrow } from "./helpers/effect"
 import {
   WorktreeError,
   WorktreeLifecycle,
@@ -77,12 +78,12 @@ describe("parseWorktreeList", () => {
 describe("worktree operations", () => {
   it("createWorktree creates a new branch worktree", async () => {
     const repo = createTempRepo()
-    const info = await createWorktree({
+    const info = await runEffectOrThrow(createWorktree({
       name: "task-1",
       branch: "task-1",
       baseRef: "master",
       baseDirectory: repo,
-    })
+    }))
 
     expect(info.branch).toBe("task-1")
     expect(existsSync(info.directory)).toBe(true)
@@ -93,12 +94,12 @@ describe("worktree operations", () => {
     const repo = createTempRepo()
     git(repo, ["branch", "existing-branch"])
 
-    const info = await createWorktree({
+    const info = await runEffectOrThrow(createWorktree({
       name: "existing-branch-tree",
       branch: "existing-branch",
       baseRef: "master",
       baseDirectory: repo,
-    })
+    }))
 
     expect(info.branch).toBe("existing-branch")
   })
@@ -107,21 +108,21 @@ describe("worktree operations", () => {
     const repo = createTempRepo()
 
     await expect(
-      createWorktree({
+      runEffectOrThrow(createWorktree({
         name: "invalid-base",
         branch: "invalid-base",
         baseRef: "does-not-exist",
         baseDirectory: repo,
-      }),
+      })),
     ).rejects.toBeInstanceOf(WorktreeError)
   })
 
   it("listWorktrees includes main and created worktrees", async () => {
     const repo = createTempRepo()
-    await createWorktree({ name: "task-a", baseRef: "master", baseDirectory: repo })
-    await createWorktree({ name: "task-b", baseRef: "master", baseDirectory: repo })
+    await runEffectOrThrow(createWorktree({ name: "task-a", baseRef: "master", baseDirectory: repo }))
+    await runEffectOrThrow(createWorktree({ name: "task-b", baseRef: "master", baseDirectory: repo }))
 
-    const worktrees = await listWorktrees(repo)
+    const worktrees = await runEffectOrThrow(listWorktrees(repo))
     const names = worktrees.map((item) => basename(item.directory))
     expect(names).toContain("task-a")
     expect(names).toContain("task-b")
@@ -130,14 +131,14 @@ describe("worktree operations", () => {
 
   it("inspectWorktree reports staged/modified/untracked files", async () => {
     const repo = createTempRepo()
-    const info = await createWorktree({ name: "inspect-target", baseRef: "master", baseDirectory: repo })
+    const info = await runEffectOrThrow(createWorktree({ name: "inspect-target", baseRef: "master", baseDirectory: repo }))
 
     writeFileSync(join(info.directory, "README.md"), "# changed\n", "utf-8")
     writeFileSync(join(info.directory, "staged.txt"), "staged\n", "utf-8")
     writeFileSync(join(info.directory, "untracked.txt"), "untracked\n", "utf-8")
     git(info.directory, ["add", "staged.txt"])
 
-    const status = await inspectWorktree(info.directory)
+    const status = await runEffectOrThrow(inspectWorktree(info.directory))
     expect(status.isClean).toBe(false)
     expect(status.modifiedFiles).toContain("README.md")
     expect(status.stagedFiles).toContain("staged.txt")
@@ -146,13 +147,13 @@ describe("worktree operations", () => {
 
   it("getChangedFiles and getDiffStats return meaningful metadata", async () => {
     const repo = createTempRepo()
-    const info = await createWorktree({ name: "stats-target", baseRef: "master", baseDirectory: repo })
+    const info = await runEffectOrThrow(createWorktree({ name: "stats-target", baseRef: "master", baseDirectory: repo }))
 
     writeFileSync(join(info.directory, "README.md"), "# changed\n", "utf-8")
     writeFileSync(join(info.directory, "new.txt"), "new\n", "utf-8")
 
-    const changed = await getChangedFiles(info.directory)
-    const stats = await getDiffStats(info.directory)
+    const changed = await runEffectOrThrow(getChangedFiles(info.directory))
+    const stats = await runEffectOrThrow(getDiffStats(info.directory))
 
     expect(changed).toContain("README.md")
     expect(changed).toContain("new.txt")
@@ -161,26 +162,26 @@ describe("worktree operations", () => {
 
   it("mergeWorktree merges into target branch in another worktree", async () => {
     const repo = createTempRepo()
-    const target = await createWorktree({
+    const target = await runEffectOrThrow(createWorktree({
       name: "dev-tree",
       branch: "dev",
       baseRef: "master",
       baseDirectory: repo,
-    })
-    const source = await createWorktree({
+    }))
+    const source = await runEffectOrThrow(createWorktree({
       name: "feature-tree",
       branch: "feature",
       baseRef: "master",
       baseDirectory: repo,
-    })
+    }))
 
     commitFile(source.directory, "feature.txt", "feature\n", "feature commit")
 
-    await mergeWorktree({
+    await runEffectOrThrow(mergeWorktree({
       worktreeDir: source.directory,
       branch: "feature",
       targetBranch: "dev",
-    })
+    }))
 
     const mergedText = Bun.file(join(target.directory, "feature.txt")).text()
     await expect(mergedText).resolves.toBe("feature\n")
@@ -188,25 +189,25 @@ describe("worktree operations", () => {
 
   it("mergeWorktree throws when target branch is missing", async () => {
     const repo = createTempRepo()
-    const source = await createWorktree({ name: "source-tree", baseRef: "master", baseDirectory: repo })
+    const source = await runEffectOrThrow(createWorktree({ name: "source-tree", baseRef: "master", baseDirectory: repo }))
 
     await expect(
-      mergeWorktree({
+      runEffectOrThrow(mergeWorktree({
         worktreeDir: source.directory,
         branch: source.branch,
         targetBranch: "missing-target",
-      }),
+      })),
     ).rejects.toBeInstanceOf(WorktreeError)
   })
 
-  it("removeWorktree removes worktree and supports no-op on missing directory", async () => {
+  it("removeWorktree removes worktree and fails on missing directory", async () => {
     const repo = createTempRepo()
-    const info = await createWorktree({ name: "remove-me", baseRef: "master", baseDirectory: repo })
+    const info = await runEffectOrThrow(createWorktree({ name: "remove-me", baseRef: "master", baseDirectory: repo }))
 
-    await removeWorktree(info.directory)
+    await runEffectOrThrow(removeWorktree(info.directory))
     expect(existsSync(info.directory)).toBe(false)
 
-    await expect(removeWorktree(join(repo, "does-not-exist"))).resolves.toBeUndefined()
+    await expect(runEffectOrThrow(removeWorktree(join(repo, "does-not-exist")))).rejects.toBeInstanceOf(WorktreeError)
   })
 
   it("removeWorktree throws for non-worktree directory", async () => {
@@ -214,7 +215,7 @@ describe("worktree operations", () => {
     const notWorktree = join(repo, "plain-dir")
     mkdirSync(notWorktree, { recursive: true })
 
-    await expect(removeWorktree(notWorktree)).rejects.toBeInstanceOf(WorktreeError)
+    await expect(runEffectOrThrow(removeWorktree(notWorktree))).rejects.toBeInstanceOf(WorktreeError)
   })
 })
 
@@ -223,11 +224,11 @@ describe("branch resolution helpers", () => {
     const repo = createTempRepo()
     git(repo, ["branch", "task-branch"])
 
-    const resolved = await resolveTargetBranch({
+    const resolved = await runEffectOrThrow(resolveTargetBranch({
       baseDirectory: repo,
       taskBranch: "task-branch",
       optionBranch: "main",
-    })
+    }))
 
     expect(resolved).toBe("task-branch")
   })
@@ -246,20 +247,20 @@ describe("WorktreeLifecycle", () => {
       worktreeBaseDir: join(repo, ".tmp-worktrees"),
     })
 
-    const taskWorktree = await lifecycle.createForTask("abc", "task-abc", "master")
+    const taskWorktree = await runEffectOrThrow(lifecycle.createForTask("abc", "task-abc", "master"))
     commitFile(taskWorktree.directory, "task.txt", "done\n", "task commit")
 
-    const result = await lifecycle.complete(taskWorktree.directory, {
+    const result = await runEffectOrThrow(lifecycle.complete(taskWorktree.directory, {
       branch: "task-abc",
       targetBranch: "master",
       shouldMerge: true,
       shouldRemove: true,
-    })
+    }))
 
     expect(result).toEqual({ merged: true, removed: true, kept: false })
     expect(existsSync(taskWorktree.directory)).toBe(false)
 
-    const runWorktree = await lifecycle.createForRun("r1", "worker", "master")
+    const runWorktree = await runEffectOrThrow(lifecycle.createForRun("r1", "worker", "master"))
     expect(basename(runWorktree.directory)).toMatch(/^worker-r1-[a-z0-9]+$/)
   })
 
@@ -270,20 +271,20 @@ describe("WorktreeLifecycle", () => {
       keepWorktrees: true,
     })
 
-    const kept = await lifecycle.createForTask("keep", "task-keep", "master")
-    const completion = await lifecycle.complete(kept.directory, {
+    const kept = await runEffectOrThrow(lifecycle.createForTask("keep", "task-keep", "master"))
+    const completion = await runEffectOrThrow(lifecycle.complete(kept.directory, {
       branch: "task-keep",
       targetBranch: "master",
       shouldMerge: false,
       shouldRemove: true,
-    })
+    }))
     expect(completion.kept).toBe(true)
     expect(existsSync(kept.directory)).toBe(true)
 
-    await createWorktree({ name: "task-cleanup-1", baseRef: "master", baseDirectory: repo })
-    await createWorktree({ name: "misc-cleanup-1", baseRef: "master", baseDirectory: repo })
+    await runEffectOrThrow(createWorktree({ name: "task-cleanup-1", baseRef: "master", baseDirectory: repo }))
+    await runEffectOrThrow(createWorktree({ name: "misc-cleanup-1", baseRef: "master", baseDirectory: repo }))
 
-    const removed = await lifecycle.cleanupOrphaned("task-cleanup")
+    const removed = await runEffectOrThrow(lifecycle.cleanupOrphaned("task-cleanup"))
     expect(removed.some((path) => basename(path) === "task-cleanup-1")).toBe(true)
     expect(removed.some((path) => basename(path) === "misc-cleanup-1")).toBe(false)
   })

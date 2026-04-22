@@ -5,6 +5,7 @@ import { join } from "path"
 import { execFileSync } from "child_process"
 import { ErrorCode, isErrorCode, detectErrorCodeFromMessage } from "../src/shared/error-codes.ts"
 import type { InfrastructureSettings } from "../src/config/settings.ts"
+import { createPiServer } from "./test-utils"
 
 // Default test settings with container mode disabled
 function getTestSettings(): InfrastructureSettings {
@@ -102,9 +103,6 @@ describe("Planning Chat Auto-Reconnect", () => {
       tempDirs.push(tempDir)
       initGitRepo(tempDir)
 
-      // Import here to avoid issues with module initialization
-      const { createPiServer } = await import("../src/server.ts")
-
       const dbPath = join(tempDir, ".tauroboros", "tasks.db")
       mkdirSync(join(tempDir, ".tauroboros"), { recursive: true })
 
@@ -154,8 +152,6 @@ describe("Planning Chat Auto-Reconnect", () => {
       tempDirs.push(tempDir)
       initGitRepo(tempDir)
 
-      const { createPiServer } = await import("../src/server.ts")
-
       const dbPath = join(tempDir, ".tauroboros", "tasks.db")
       mkdirSync(join(tempDir, ".tauroboros"), { recursive: true })
 
@@ -183,8 +179,6 @@ describe("Planning Chat Auto-Reconnect", () => {
       const tempDir = createTempDir("tauroboros-chat-test-")
       tempDirs.push(tempDir)
       initGitRepo(tempDir)
-
-      const { createPiServer } = await import("../src/server.ts")
 
       const dbPath = join(tempDir, ".tauroboros", "tasks.db")
       mkdirSync(join(tempDir, ".tauroboros"), { recursive: true })
@@ -226,8 +220,6 @@ describe("Planning Chat Auto-Reconnect", () => {
       const tempDir = createTempDir("tauroboros-chat-test-")
       tempDirs.push(tempDir)
       initGitRepo(tempDir)
-
-      const { createPiServer } = await import("../src/server.ts")
 
       const dbPath = join(tempDir, ".tauroboros", "tasks.db")
       mkdirSync(join(tempDir, ".tauroboros"), { recursive: true })
@@ -290,8 +282,6 @@ describe("Planning Chat Auto-Reconnect", () => {
       tempDirs.push(tempDir)
       initGitRepo(tempDir)
 
-      const { createPiServer } = await import("../src/server.ts")
-
       const dbPath = join(tempDir, ".tauroboros", "tasks.db")
       mkdirSync(join(tempDir, ".tauroboros"), { recursive: true })
 
@@ -320,8 +310,6 @@ describe("Planning Chat Auto-Reconnect", () => {
       const tempDir = createTempDir("tauroboros-chat-test-")
       tempDirs.push(tempDir)
       initGitRepo(tempDir)
-
-      const { createPiServer } = await import("../src/server.ts")
 
       const dbPath = join(tempDir, ".tauroboros", "tasks.db")
       mkdirSync(join(tempDir, ".tauroboros"), { recursive: true })
@@ -359,8 +347,6 @@ describe("Planning Chat Auto-Reconnect", () => {
       const tempDir = createTempDir("tauroboros-chat-test-")
       tempDirs.push(tempDir)
       initGitRepo(tempDir)
-
-      const { createPiServer } = await import("../src/server.ts")
 
       const dbPath = join(tempDir, ".tauroboros", "tasks.db")
       mkdirSync(join(tempDir, ".tauroboros"), { recursive: true })
@@ -403,8 +389,6 @@ describe("Planning Chat Auto-Reconnect", () => {
       const tempDir = createTempDir("tauroboros-chat-test-")
       tempDirs.push(tempDir)
       initGitRepo(tempDir)
-
-      const { createPiServer } = await import("../src/server.ts")
 
       const dbPath = join(tempDir, ".tauroboros", "tasks.db")
       mkdirSync(join(tempDir, ".tauroboros"), { recursive: true })

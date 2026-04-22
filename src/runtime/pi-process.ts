@@ -1,5 +1,6 @@
 import { mkdirSync } from "fs"
 import { dirname } from "path"
+import { Effect, Fiber, Schema, Scope } from "effect"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
@@ -10,30 +11,32 @@ import { MessageStreamer } from "./message-streamer.ts"
 export type PiEventListener = (event: Record<string, unknown>) => void
 
 /**
+ * Tagged error for Pi process operations
+ */
+export class PiProcessError extends Schema.TaggedError<PiProcessError>()("PiProcessError", {
+  operation: Schema.String,
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
+
+/**
  * Error thrown when collectEvents times out but has partial events collected.
  * The orchestrator can use these events to determine if the task was "essentially complete".
  */
-export class CollectEventsTimeoutError extends Error {
-  readonly collectedEvents: Record<string, unknown>[]
-  readonly originalTimeoutMs: number
-
-  constructor(collectedEvents: Record<string, unknown>[], timeoutMs: number) {
-    super(`Timeout collecting events after ${timeoutMs}ms (collected ${collectedEvents.length} events)`)
-    this.name = "CollectEventsTimeoutError"
-    this.collectedEvents = collectedEvents
-    this.originalTimeoutMs = timeoutMs
-  }
-}
+export class CollectEventsTimeoutError extends Schema.TaggedError<CollectEventsTimeoutError>()("CollectEventsTimeoutError", {
+  message: Schema.String,
+  collectedEvents: Schema.Array(Schema.Unknown),
+  originalTimeoutMs: Schema.Number,
+}) {}
 export type ExtensionUIRequestHandler = (request: {
   id: string
   method: string
   [key: string]: unknown
-}) => Promise<{ type: "extension_ui_response"; id: string } & Record<string, unknown>>
+}) => Effect.Effect<{ type: "extension_ui_response"; id: string } & Record<string, unknown>, PiProcessError>
 
 type Pending = {
   resolve: (value: Record<string, unknown>) => void
-  reject: (error: Error) => void
-  timer: Timer
+  reject: (error: PiProcessError) => void
 }
 
 function parseArgs(value: string): string[] {
@@ -83,12 +86,13 @@ export class PiRpcProcess {
   private proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null
   private requestId = 0
   private readonly pending = new Map<string, Pending>()
-  private eventListeners: PiEventListener[] = []
+  private readonly eventListeners = new Set<PiEventListener>()
   private extensionUIHandler: ExtensionUIRequestHandler | null = null
   private stdoutBuffer = ""
   private stderrBuffer = ""
   private isIdle = true
-  private abortController: AbortController | null = null
+  private stdoutFiber: Fiber.Fiber<void, never> | null = null
+  private stderrFiber: Fiber.Fiber<void, never> | null = null
   private messageStreamer: MessageStreamer | null = null
 
   constructor(args: {
@@ -121,62 +125,96 @@ export class PiRpcProcess {
     }
   }
 
-  start(): void {
-    if (this.proc) return
+  start(): Effect.Effect<void, PiProcessError> {
+    return Effect.gen(this, function* () {
+      if (this.proc) return yield* Effect.void
 
-    const piBin = this.settings?.workflow?.container?.piBin?.trim() || "pi"
-    const configuredArgs = this.settings?.workflow?.container?.piArgs
-      ? parseArgs(this.settings.workflow.container.piArgs)
-      : ["--mode", "rpc"]
+      const piBin = this.settings?.workflow?.container?.piBin?.trim() || "pi"
+      const configuredArgs = this.settings?.workflow?.container?.piArgs
+        ? parseArgs(this.settings.workflow.container.piArgs)
+        : ["--mode", "rpc"]
 
-    // Add system prompt if provided
-    const args = [...configuredArgs]
-    if (this.systemPrompt) {
-      args.push("--system-prompt", this.systemPrompt)
-    }
-
-    // Add session file if available for conversation history persistence
-    if (this.piSessionFile) {
-      // Ensure the session directory exists
-      try {
-        mkdirSync(dirname(this.piSessionFile), { recursive: true })
-      } catch {
-        // Directory may already exist, ignore error
+      const args = [...configuredArgs]
+      if (this.systemPrompt) {
+        args.push("--system-prompt", this.systemPrompt)
       }
-      args.push("--session", this.piSessionFile)
-    }
 
-    this.proc = Bun.spawn({
-      cmd: [piBin, ...args],
-      cwd: this.session.cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "pipe",
-      env: { ...process.env, PI_CODING_AGENT: "true" },
+      if (this.piSessionFile) {
+        const sessionFile = this.piSessionFile
+        yield* Effect.try({
+          try: () => mkdirSync(dirname(sessionFile), { recursive: true }),
+          catch: (cause) => new PiProcessError({
+            operation: "start",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+        })
+        args.push("--session", sessionFile)
+      }
+
+      this.proc = Bun.spawn({
+        cmd: [piBin, ...args],
+        cwd: this.session.cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "pipe",
+        env: { ...process.env, PI_CODING_AGENT: "true" },
+      })
+
+      yield* Effect.try({
+        try: () => this.db.updateWorkflowSession(this.session.id, {
+          status: "active",
+          processPid: this.proc!.pid,
+        }),
+        catch: (cause) => new PiProcessError({
+          operation: "start",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
+
+      this.stdoutFiber = yield* this.captureStdoutEffect().pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logError(`[pi-process] Stdout capture failed`)
+            yield* Effect.logError(cause)
+          }),
+        ),
+        Effect.forkDaemon,
+      )
+      this.stderrFiber = yield* this.captureStderrEffect().pipe(
+        Effect.catchAllCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logError(`[pi-process] Stderr capture failed`)
+            yield* Effect.logError(cause)
+          }),
+        ),
+        Effect.forkDaemon,
+      )
     })
-
-    this.db.updateWorkflowSession(this.session.id, {
-      status: "active",
-      processPid: this.proc.pid,
-    })
-
-    this.abortController = new AbortController()
-
-    this.captureStdout()
-    this.captureStderr()
   }
 
   /**
    * Subscribe to agent events
    */
-  onEvent(listener: PiEventListener): () => void {
-    this.eventListeners.push(listener)
-    return () => {
-      const index = this.eventListeners.indexOf(listener)
-      if (index !== -1) {
-        this.eventListeners.splice(index, 1)
-      }
-    }
+  subscribeEvents(listener: PiEventListener): Effect.Effect<void, never, Scope.Scope> {
+    return Effect.acquireRelease(
+      Effect.sync(() => {
+        this.eventListeners.add(listener)
+      }),
+      () =>
+        Effect.sync(() => {
+          this.eventListeners.delete(listener)
+        }),
+    )
+  }
+
+  /**
+   * Returns true if the underlying process has already exited (or was never started).
+   */
+  hasExited(): boolean {
+    if (!this.proc) return true
+    return this.proc.exitCode !== null
   }
 
   /**
@@ -189,145 +227,224 @@ export class PiRpcProcess {
   /**
    * Send a command and wait for response
    */
-  async send(command: { type: string } & Record<string, unknown>, timeoutMs = 30_000): Promise<Record<string, unknown>> {
-    if (!this.proc) throw new Error("Pi process not started")
+  send(command: { type: string } & Record<string, unknown>, timeoutMs = 30_000): Effect.Effect<Record<string, unknown>, PiProcessError> {
+    return Effect.gen(this, function* () {
+      if (!this.proc) {
+        return yield* new PiProcessError({
+          operation: "send",
+          message: "Pi process not started",
+        })
+      }
 
-    const id = `req_${++this.requestId}`
-    const payload = { ...command, id }
-    const line = `${JSON.stringify(payload)}\n`
+      const id = `req_${++this.requestId}`
+      const payload = { ...command, id }
+      const line = `${JSON.stringify(payload)}\n`
 
-    // Write to stdin with a timeout to prevent hanging if process is in bad state
-    const writeTimeoutMs = Math.min(5_000, timeoutMs) // Max 5s for write, or less if total timeout is smaller
-    await Promise.race([
-      this.proc.stdin.write(line),
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new Error(`Stdin write timeout for command ${command.type}`)), writeTimeoutMs)
-      })
-    ])
+      // Write to stdin with a timeout
+      const writeTimeoutMs = Math.min(5_000, timeoutMs)
+      yield* Effect.tryPromise({
+        try: async () => {
+          await this.proc!.stdin.write(line)
+        },
+        catch: (cause) => new PiProcessError({
+          operation: "send",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      }).pipe(
+        Effect.timeoutFail({
+          duration: writeTimeoutMs,
+          onTimeout: () => new PiProcessError({
+            operation: "send",
+            message: `Stdin write timeout for command ${command.type}`,
+          }),
+        }),
+      )
 
-    if (command.type === "prompt" || command.type === "steer" || command.type === "follow_up") {
-      this.isIdle = false
-    }
+      if (command.type === "prompt" || command.type === "steer" || command.type === "follow_up") {
+        this.isIdle = false
+      }
 
-    return await new Promise<Record<string, unknown>>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id)
-        reject(new Error(`Pi RPC timeout for command ${command.type}`))
-      }, timeoutMs)
-      this.pending.set(id, { resolve, reject, timer })
+      return yield* Effect.async<Record<string, unknown>, PiProcessError>((resume) => {
+        this.pending.set(id, {
+          resolve: (value) => resume(Effect.succeed(value)),
+          reject: (error) => resume(Effect.fail(new PiProcessError({
+            operation: "send",
+            message: error.message,
+            cause: error,
+          }))),
+        })
+        return Effect.sync(() => {
+          this.pending.delete(id)
+        })
+      }).pipe(
+        Effect.timeoutFail({
+          duration: timeoutMs,
+          onTimeout: () => new PiProcessError({
+            operation: "send",
+            message: `Pi RPC timeout for command ${command.type}`,
+          }),
+        }),
+      )
     })
   }
 
   /**
    * Send a prompt (returns immediately, use onEvent/waitForIdle for results)
    */
-  async prompt(message: string): Promise<void> {
-    await this.send({ type: "prompt", message }, 60_000)
+  prompt(message: string): Effect.Effect<void, PiProcessError> {
+    return this.send({ type: "prompt", message }, 60_000).pipe(Effect.asVoid)
   }
 
   /**
    * Wait for agent to become idle (no streaming)
    * Resolves when agent_end event is received
    */
-  waitForIdle(timeoutMs = 600_000): Promise<void> { // 10 min default
-    return new Promise((resolve, reject) => {
+  waitForIdle(timeoutMs = 600_000): Effect.Effect<void, PiProcessError> {
+    return Effect.gen(this, function* () {
       if (this.isIdle) {
-        resolve()
-        return
+        return yield* Effect.void
       }
 
-      const timer = setTimeout(() => {
-        unsubscribe()
-        reject(new Error(`Timeout waiting for agent to become idle`))
-      }, timeoutMs)
+      return yield* Effect.scoped(
+        Effect.async<void, PiProcessError>((resume) => {
+          const listener: PiEventListener = (event) => {
+            if (event.type === "agent_end") {
+              this.isIdle = true
+              resume(Effect.void)
+            } else if (event.type === "process_killed") {
+              const signal = (event as Record<string, unknown>).signal
+              resume(Effect.fail(new PiProcessError({
+                operation: "waitForIdle",
+                message: `Process was killed (${signal || "SIGKILL"}) while waiting for idle`,
+              })))
+            }
+          }
 
-      const unsubscribe = this.onEvent((event) => {
-        if (event.type === "agent_end") {
-          this.isIdle = true
-          clearTimeout(timer)
-          unsubscribe()
-          resolve()
-        } else if (event.type === "process_killed") {
-          // Process was force killed - reject immediately
-          clearTimeout(timer)
-          unsubscribe()
-          const signal = (event as Record<string, unknown>).signal
-          reject(new Error(`Process was killed (${signal || "SIGKILL"}) while waiting for idle`))
-        }
-      })
+          this.eventListeners.add(listener)
+          return Effect.sync(() => {
+            this.eventListeners.delete(listener)
+          })
+        }).pipe(
+          Effect.timeoutFail({
+            duration: timeoutMs,
+            onTimeout: () => new PiProcessError({
+              operation: "waitForIdle",
+              message: "Timeout waiting for agent to become idle",
+            }),
+          }),
+        ),
+      )
     })
   }
 
   /**
    * Collect all events until agent becomes idle
    */
-  collectEvents(timeoutMs = 600_000): Promise<Record<string, unknown>[]> {
-    return new Promise((resolve, reject) => {
+  collectEvents(timeoutMs = 600_000): Effect.Effect<Record<string, unknown>[], PiProcessError | CollectEventsTimeoutError> {
+    return Effect.gen(this, function* () {
       const events: Record<string, unknown>[] = []
 
-      const timer = setTimeout(() => {
-        unsubscribe()
-        // Use CollectEventsTimeoutError to preserve collected events
-        // This allows the orchestrator to determine if the task was "essentially complete"
-        reject(new CollectEventsTimeoutError(events, timeoutMs))
-      }, timeoutMs)
+      return yield* Effect.scoped(
+        Effect.async<Record<string, unknown>[], PiProcessError | CollectEventsTimeoutError>((resume) => {
+          const listener: PiEventListener = (event) => {
+            events.push(event)
+            if (event.type === "agent_end") {
+              this.isIdle = true
+              resume(Effect.succeed(events))
+            } else if (event.type === "process_killed") {
+              const signal = (event as Record<string, unknown>).signal
+              resume(Effect.fail(new PiProcessError({
+                operation: "collectEvents",
+                message: `Process was killed (${signal || "SIGKILL"}) while collecting events`,
+              })))
+            }
+          }
 
-      const unsubscribe = this.onEvent((event) => {
-        events.push(event)
-        if (event.type === "agent_end") {
-          this.isIdle = true
-          clearTimeout(timer)
-          unsubscribe()
-          resolve(events)
-        } else if (event.type === "process_killed") {
-          // Process was force killed - reject immediately with collected events
-          clearTimeout(timer)
-          unsubscribe()
-          const signal = (event as Record<string, unknown>).signal
-          reject(new Error(`Process was killed (${signal || "SIGKILL"}) while collecting events`))
-        }
-      })
+          this.eventListeners.add(listener)
+          return Effect.sync(() => {
+            this.eventListeners.delete(listener)
+          })
+        }).pipe(
+          Effect.timeoutFail({
+            duration: timeoutMs,
+            onTimeout: () => new CollectEventsTimeoutError({
+              message: `Timeout collecting events after ${timeoutMs}ms (collected ${events.length} events)`,
+              collectedEvents: events,
+              originalTimeoutMs: timeoutMs,
+            }),
+          }),
+        ),
+      )
     })
   }
 
   /**
    * Send prompt and wait for completion
    */
-  async promptAndWait(message: string, timeoutMs = 600_000): Promise<Record<string, unknown>[]> {
-    const eventsPromise = this.collectEvents(timeoutMs)
-    await this.prompt(message)
-    return eventsPromise
+  promptAndWait(message: string, timeoutMs = 600_000): Effect.Effect<Record<string, unknown>[], PiProcessError | CollectEventsTimeoutError> {
+    return Effect.gen(this, function* () {
+      const eventsFiber = yield* this.collectEvents(timeoutMs).pipe(Effect.fork)
+      return yield* this.prompt(message).pipe(
+        Effect.zipRight(Fiber.join(eventsFiber)),
+        Effect.tapError(() => Fiber.interrupt(eventsFiber)),
+      )
+    })
   }
 
-  async close(): Promise<void> {
-    if (!this.proc) return
+  close(): Effect.Effect<void, PiProcessError> {
+    return Effect.gen(this, function* () {
+      if (!this.proc) return yield* Effect.void
 
-    const proc = this.proc
-    this.proc = null
+      const proc = this.proc
+      this.proc = null
 
-    // Signal stream readers to stop
-    if (this.abortController) {
-      this.abortController.abort()
-      this.abortController = null
-    }
+      yield* this.interruptCaptureFibers()
 
-    for (const [id, pending] of this.pending.entries()) {
-      clearTimeout(pending.timer)
-      pending.reject(new Error(`Pi process closed before RPC response (${id})`))
-      this.pending.delete(id)
-    }
+      for (const [id, pending] of this.pending.entries()) {
+        pending.reject(new PiProcessError({
+          operation: "close",
+          message: `Pi process closed before RPC response (${id})`,
+        }))
+        this.pending.delete(id)
+      }
 
-    try {
-      proc.kill()
-    } catch (err) {
-      console.error(`[pi-process] Error killing process during close:`, err)
-    }
+      yield* Effect.try({
+        try: () => proc.kill(),
+        catch: (cause) => new PiProcessError({
+          operation: "close",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.logError(`[pi-process] Error killing process during close`).pipe(
+            Effect.annotateLogs({ error: error.message }),
+          ),
+        ),
+      )
 
-    const exitCode = await proc.exited
-    this.db.updateWorkflowSession(this.session.id, {
-      status: exitCode === 0 ? "completed" : "failed",
-      finishedAt: Math.floor(Date.now() / 1000),
-      exitCode,
+      const exitCode = yield* Effect.tryPromise({
+        try: () => proc.exited,
+        catch: (cause) => new PiProcessError({
+          operation: "close",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
+
+      yield* Effect.try({
+        try: () => this.db.updateWorkflowSession(this.session.id, {
+          status: exitCode === 0 ? "completed" : "failed",
+          finishedAt: Math.floor(Date.now() / 1000),
+          exitCode,
+        }),
+        catch: (cause) => new PiProcessError({
+          operation: "close",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
     })
   }
 
@@ -335,55 +452,73 @@ export class PiRpcProcess {
    * Force kill the process immediately without waiting for graceful shutdown.
    * Used for emergency stop and destructive operations.
    */
-  async forceKill(signal: "SIGTERM" | "SIGKILL" = "SIGKILL"): Promise<void> {
-    if (!this.proc) return
+  forceKill(signal: "SIGTERM" | "SIGKILL" = "SIGKILL"): Effect.Effect<void, PiProcessError> {
+    return Effect.gen(this, function* () {
+      if (!this.proc) return yield* Effect.void
 
-    const proc = this.proc
-    this.proc = null
+      const proc = this.proc
+      this.proc = null
 
-    // Signal stream readers to stop
-    if (this.abortController) {
-      this.abortController.abort()
-      this.abortController = null
-    }
+      yield* this.interruptCaptureFibers()
 
-    // Reject all pending requests immediately
-    for (const [id, pending] of this.pending.entries()) {
-      clearTimeout(pending.timer)
-      pending.reject(new Error(`Pi process force killed (${id})`))
-      this.pending.delete(id)
-    }
-
-    // Notify all event listeners that the process is being killed
-    // This allows collectEvents() and waitForIdle() to reject immediately
-    const killEvent = { type: "process_killed", signal, timestamp: Date.now() }
-    for (const listener of this.eventListeners) {
-      try {
-        listener(killEvent)
-      } catch (err) {
-        console.error(`[pi-process] Error in event listener during force kill:`, err)
+      // Reject all pending requests immediately
+      for (const [id, pending] of this.pending.entries()) {
+        pending.reject(new PiProcessError({
+          operation: "forceKill",
+          message: `Pi process force killed (${id})`,
+        }))
+        this.pending.delete(id)
       }
-    }
-    // Clear event listeners to prevent memory leaks
-    this.eventListeners = []
 
-    // Force kill the process
-    try {
-      if (signal === "SIGKILL") {
-        proc.kill(9) // SIGKILL
-      } else {
-        proc.kill(15) // SIGTERM
+      // Notify all event listeners that the process is being killed
+      const killEvent = { type: "process_killed", signal, timestamp: Date.now() }
+      for (const listener of this.eventListeners) {
+        try {
+          listener(killEvent)
+        } catch (err) {
+          yield* Effect.logError(`[pi-process] Error in event listener during force kill`).pipe(
+            Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
+          )
+        }
       }
-    } catch (err) {
-      console.error(`[pi-process] Error during force kill:`, err)
-    }
+      this.eventListeners.clear()
 
-    // Don't wait for exit - force kill is immediate
-    this.db.updateWorkflowSession(this.session.id, {
-      status: "aborted",
-      finishedAt: Math.floor(Date.now() / 1000),
-      exitCode: -1,
-      exitSignal: signal,
+      // Force kill the process
+      yield* Effect.try({
+        try: () => {
+          if (signal === "SIGKILL") {
+            proc.kill(9) // SIGKILL
+            return
+          }
+          proc.kill(15) // SIGTERM
+        },
+        catch: (cause) => new PiProcessError({
+          operation: "forceKill",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.logError(`[pi-process] Error during force kill`).pipe(
+            Effect.annotateLogs({ error: error.message }),
+          ),
+        ),
+      )
+
+      // Don't wait for exit - force kill is immediate
+      yield* Effect.try({
+        try: () => this.db.updateWorkflowSession(this.session.id, {
+          status: "aborted",
+          finishedAt: Math.floor(Date.now() / 1000),
+          exitCode: -1,
+          exitSignal: signal,
+        }),
+        catch: (cause) => new PiProcessError({
+          operation: "forceKill",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
     })
   }
 
@@ -395,52 +530,72 @@ export class PiRpcProcess {
     return this.proc
   }
 
-  private captureStdout(): void {
-    if (!this.proc || !this.abortController) return
-
-    const reader = this.proc.stdout.getReader()
-    const decoder = new TextDecoder()
-    const signal = this.abortController.signal
-
-    const loop = async () => {
-      try {
-        while (!signal.aborted) {
-          const { done, value } = await reader.read()
-          if (done || signal.aborted) break
-          this.stdoutBuffer += decoder.decode(value, { stream: true })
-          this.consumeStdoutLines()
-        }
-        if (this.stdoutBuffer.trim() && !signal.aborted) {
-          this.handleStdoutLine(this.stdoutBuffer.trim())
-          this.stdoutBuffer = ""
-        }
-      } finally {
-        reader.releaseLock()
+  private interruptCaptureFibers(): Effect.Effect<void, never> {
+    return Effect.gen(this, function* () {
+      if (this.stdoutFiber) {
+        yield* Fiber.interrupt(this.stdoutFiber)
+        this.stdoutFiber = null
       }
-    }
-
-    void loop()
+      if (this.stderrFiber) {
+        yield* Fiber.interrupt(this.stderrFiber)
+        this.stderrFiber = null
+      }
+    })
   }
 
-  private consumeStdoutLines(): void {
+  private captureStdoutEffect(): Effect.Effect<void, PiProcessError> {
+    if (!this.proc) return Effect.void
+
+    const proc = this.proc
+    const decoder = new TextDecoder()
+
+    return Effect.scoped(
+      Effect.gen(this, function* () {
+        const reader = yield* Effect.acquireRelease(
+          Effect.sync(() => proc.stdout.getReader()),
+          (r) => Effect.promise(() => r.cancel().catch(() => {})).pipe(Effect.asVoid),
+        )
+
+        while (true) {
+          const result = yield* Effect.tryPromise({
+            try: () => reader.read(),
+            catch: (cause) => new PiProcessError({
+              operation: "captureStdout",
+              message: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+          })
+          if (result.done) break
+          this.stdoutBuffer += decoder.decode(result.value, { stream: true })
+          yield* this.consumeStdoutLinesEffect()
+        }
+        if (this.stdoutBuffer.trim()) {
+          yield* this.handleStdoutLineEffect(this.stdoutBuffer.trim())
+          this.stdoutBuffer = ""
+        }
+      }),
+    )
+  }
+
+  private consumeStdoutLinesEffect(): Effect.Effect<void, never> {
+    return Effect.gen(this, function* () {
     while (true) {
       const newlineIdx = this.stdoutBuffer.indexOf("\n")
       if (newlineIdx < 0) break
       const line = this.stdoutBuffer.slice(0, newlineIdx).trim()
       this.stdoutBuffer = this.stdoutBuffer.slice(newlineIdx + 1)
       if (!line) continue
-      this.handleStdoutLine(line)
+      yield* this.handleStdoutLineEffect(line)
     }
+    })
   }
 
-  private async handleStdoutLine(line: string): Promise<void> {
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(line) as Record<string, unknown>
-    } catch {
-      // Not JSON, treat as text event
-      parsed = { type: "text", text: line }
-    }
+  private handleStdoutLineEffect(line: string): Effect.Effect<void, never> {
+    return Effect.gen(this, function* () {
+    const parsed = (yield* Effect.orElse(
+      Effect.try(() => JSON.parse(line) as Record<string, unknown>),
+      () => Effect.succeed({ type: "text", text: line }),
+    )) as Record<string, unknown>
 
     const id = typeof parsed.id === "string" ? parsed.id : null
     const isResponse = parsed.type === "response" && id !== null
@@ -449,11 +604,14 @@ export class PiRpcProcess {
     if (isResponse && id && this.pending.has(id)) {
       const pending = this.pending.get(id)!
       this.pending.delete(id)
-      clearTimeout(pending.timer)
 
       if (parsed.success === false) {
         const errorMsg = typeof parsed.error === "string" ? parsed.error : JSON.stringify(parsed.error)
-        pending.reject(new Error(errorMsg))
+        pending.reject(new PiProcessError({
+          operation: "handleStdoutLine",
+          message: errorMsg,
+          cause: parsed.error,
+        }))
       } else {
         pending.resolve(asRecord(parsed.data))
       }
@@ -461,21 +619,25 @@ export class PiRpcProcess {
     }
 
     if (isExtensionUIRequest && this.extensionUIHandler) {
-      try {
-        const response = await this.extensionUIHandler(parsed as { id: string; method: string; [key: string]: unknown })
-        await this.send(response, 10_000)
-      } catch (error) {
-        // Send cancelled response if handler fails
-        try {
-          await this.send({
+      yield* Effect.catchAll(
+        this.extensionUIHandler(parsed as { id: string; method: string; [key: string]: unknown }).pipe(
+          Effect.flatMap((response) => this.send(response, 10_000))
+        ),
+        (error) => Effect.gen(this, function* () {
+          yield* Effect.logError(`[pi-process] Extension UI handler failed`)
+          yield* Effect.logError(error)
+          yield* this.send({
             type: "extension_ui_response",
             id: parsed.id,
             cancelled: true,
-          }, 10_000)
-        } catch (sendErr) {
-          console.error(`[pi-process] Failed to send cancelled response:`, sendErr)
-        }
-      }
+          }, 10_000).pipe(
+            Effect.catchAll((sendErr) => Effect.gen(function* () {
+              yield* Effect.logError(`[pi-process] Failed to send cancelled response`)
+              yield* Effect.logError(sendErr)
+            }))
+          )
+        })
+      )
       return
     }
 
@@ -484,7 +646,9 @@ export class PiRpcProcess {
       try {
         listener(parsed)
       } catch (err) {
-        console.error(`[pi-process] Error in event listener:`, err)
+        yield* Effect.logError(`[pi-process] Error in event listener`).pipe(
+          Effect.annotateLogs({ error: err instanceof Error ? err.message : String(err) }),
+        )
       }
     }
 
@@ -519,42 +683,60 @@ export class PiRpcProcess {
     if (text && this.onOutput) {
       this.onOutput(text)
     }
+    })
   }
 
-  private captureStderr(): void {
-    if (!this.proc || !this.abortController) return
+  private captureStderrEffect(): Effect.Effect<void, PiProcessError> {
+    if (!this.proc) return Effect.void
 
-    const reader = this.proc.stderr.getReader()
+    const proc = this.proc
     const decoder = new TextDecoder()
-    const signal = this.abortController.signal
 
-    const loop = async () => {
-      try {
-        while (!signal.aborted) {
-          const { done, value } = await reader.read()
-          if (done || signal.aborted) break
-          this.stderrBuffer += decoder.decode(value, { stream: true })
-          this.consumeStderrLines()
+    return Effect.scoped(
+      Effect.gen(this, function* () {
+        const reader = yield* Effect.acquireRelease(
+          Effect.sync(() => proc.stderr.getReader()),
+          (r) => Effect.promise(() => r.cancel().catch(() => {})).pipe(Effect.asVoid),
+        )
+
+        while (true) {
+          const result = yield* Effect.tryPromise({
+            try: () => reader.read(),
+            catch: (cause) => new PiProcessError({
+              operation: "captureStderr",
+              message: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+          })
+          if (result.done) break
+          this.stderrBuffer += decoder.decode(result.value, { stream: true })
+          yield* this.consumeStderrLinesEffect()
         }
-        if (this.stderrBuffer.trim() && !signal.aborted) {
-          this.persistStderr(this.stderrBuffer.trim())
+        if (this.stderrBuffer.trim()) {
+          yield* this.persistStderrEffect(this.stderrBuffer.trim())
           this.stderrBuffer = ""
         }
-      } finally {
-        reader.releaseLock()
-      }
-    }
-
-    void loop()
+      }),
+    )
   }
 
-  private consumeStderrLines(): void {
-    while (true) {
-      const newlineIdx = this.stderrBuffer.indexOf("\n")
-      if (newlineIdx < 0) break
-      const line = this.stderrBuffer.slice(0, newlineIdx).trim()
-      this.stderrBuffer = this.stderrBuffer.slice(newlineIdx + 1)
-      if (!line) continue
-    }
+  private consumeStderrLinesEffect(): Effect.Effect<void, never> {
+    return Effect.sync(() => {
+      while (true) {
+        const newlineIdx = this.stderrBuffer.indexOf("\n")
+        if (newlineIdx < 0) break
+        const line = this.stderrBuffer.slice(0, newlineIdx).trim()
+        this.stderrBuffer = this.stderrBuffer.slice(newlineIdx + 1)
+        if (!line) continue
+      }
+    })
+  }
+
+  private persistStderrEffect(content: string): Effect.Effect<void, never> {
+    return Effect.sync(() => {
+      if (this.onOutput) {
+        this.onOutput(`[stderr] ${content}`)
+      }
+    })
   }
 }

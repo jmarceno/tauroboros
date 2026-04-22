@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, mock } from "bun:test"
+import { Effect } from "effect"
 import { mkdtempSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { PiKanbanDB } from "../src/db.ts"
 import { CodeStyleSessionRunner, RunCodeStyleInput } from "../src/runtime/codestyle-session.ts"
-import { PiSessionManager, ExecuteSessionPromptResult } from "../src/runtime/session-manager.ts"
+import { PiSessionManager, ExecuteSessionPromptResult, SessionManagerExecuteError } from "../src/runtime/session-manager.ts"
 import { DEFAULT_CODE_STYLE_PROMPT, resolveCodeStylePrompt } from "../src/types.ts"
 import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
 
@@ -22,6 +23,10 @@ afterEach(() => {
   }
 })
 
+function runCodeStyle(runner: CodeStyleSessionRunner, input: RunCodeStyleInput) {
+  return Effect.runPromise(runner.run(input))
+}
+
 describe("CodeStyleSessionRunner", () => {
   describe("constructor initialization", () => {
     it("should create its own PiSessionManager when no external manager is provided", () => {
@@ -31,7 +36,6 @@ describe("CodeStyleSessionRunner", () => {
       const runner = new CodeStyleSessionRunner(db, DEFAULT_INFRASTRUCTURE_SETTINGS)
 
       expect(runner).toBeDefined()
-      db.close()
     })
 
     it("should use external PiSessionManager when provided", () => {
@@ -49,7 +53,6 @@ describe("CodeStyleSessionRunner", () => {
       )
 
       expect(runner).toBeDefined()
-      db.close()
     })
 
     it("should work without settings (undefined settings)", () => {
@@ -59,7 +62,6 @@ describe("CodeStyleSessionRunner", () => {
       const runner = new CodeStyleSessionRunner(db, undefined)
 
       expect(runner).toBeDefined()
-      db.close()
     })
   })
 
@@ -69,7 +71,7 @@ describe("CodeStyleSessionRunner", () => {
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
       // Create a mock session manager that returns successful response
-      const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
+      const mockExecutePrompt = mock((_input: unknown) => {
         const session = db.createWorkflowSession({
           id: "test-session-1",
           taskId: "task-1",
@@ -81,7 +83,20 @@ describe("CodeStyleSessionRunner", () => {
           session,
           responseText: "Code style check passed. All files comply with the style guidelines.",
         }
-      })
+      }).mockImplementation((input: unknown) => Effect.succeed((() => {
+        const session = db.createWorkflowSession({
+          id: "test-session-1",
+          taskId: "task-1",
+          sessionKind: "task_run_reviewer",
+          cwd: root,
+          status: "completed",
+        })
+        return {
+          session,
+          responseText: "Code style check passed. All files comply with the style guidelines.",
+        } satisfies ExecuteSessionPromptResult
+      })()))
+
 
       const mockSessionManager = {
         executePrompt: mockExecutePrompt,
@@ -111,7 +126,7 @@ describe("CodeStyleSessionRunner", () => {
         thinkingLevel: "default",
       }
 
-      const result = await runner.run(input)
+      const result = await runCodeStyle(runner, input)
 
       expect(result.success).toBe(true)
       expect(result.responseText).toBe("Code style check passed. All files comply with the style guidelines.")
@@ -132,7 +147,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(callArg.model).toBe("anthropic/claude-sonnet-4-20250514")
       expect(callArg.thinkingLevel).toBe("default")
 
-      db.close()
     })
 
     it("should use custom code style prompt when provided", async () => {
@@ -140,7 +154,7 @@ describe("CodeStyleSessionRunner", () => {
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
       let capturedPrompt: string | undefined
-      const mockExecutePrompt = mock(async (input: unknown): Promise<ExecuteSessionPromptResult> => {
+      const mockExecutePrompt = mock((input: unknown) => {
         const execInput = input as { promptText: string }
         capturedPrompt = execInput.promptText
 
@@ -151,10 +165,10 @@ describe("CodeStyleSessionRunner", () => {
           cwd: root,
           status: "completed",
         })
-        return {
+        return Effect.succeed({
           session,
           responseText: "Custom style check passed.",
-        }
+        } satisfies ExecuteSessionPromptResult)
       })
 
       const mockSessionManager = {
@@ -186,7 +200,7 @@ describe("CodeStyleSessionRunner", () => {
         thinkingLevel: "high",
       }
 
-      await runner.run(input)
+      await runCodeStyle(runner, input)
 
       expect(capturedPrompt).toBe(customPrompt)
 
@@ -194,7 +208,6 @@ describe("CodeStyleSessionRunner", () => {
       const callArg = mockExecutePrompt.mock.calls[0][0] as { thinkingLevel: string }
       expect(callArg.thinkingLevel).toBe("high")
 
-      db.close()
     })
 
     it("should fall back to DEFAULT_CODE_STYLE_PROMPT when codeStylePrompt is empty", async () => {
@@ -202,7 +215,7 @@ describe("CodeStyleSessionRunner", () => {
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
       let capturedPrompt: string | undefined
-      const mockExecutePrompt = mock(async (input: unknown): Promise<ExecuteSessionPromptResult> => {
+      const mockExecutePrompt = mock((input: unknown) => {
         const execInput = input as { promptText: string }
         capturedPrompt = execInput.promptText
 
@@ -213,10 +226,10 @@ describe("CodeStyleSessionRunner", () => {
           cwd: root,
           status: "completed",
         })
-        return {
+        return Effect.succeed({
           session,
           responseText: "Default style check passed.",
-        }
+        } satisfies ExecuteSessionPromptResult)
       })
 
       const mockSessionManager = {
@@ -247,13 +260,12 @@ describe("CodeStyleSessionRunner", () => {
         thinkingLevel: "default",
       }
 
-      await runner.run(input)
+      await runCodeStyle(runner, input)
 
       expect(capturedPrompt).toBe(DEFAULT_CODE_STYLE_PROMPT)
       expect(capturedPrompt).toContain("code style enforcement")
       expect(capturedPrompt).toContain("STANDARD RULES")
 
-      db.close()
     })
 
     it("should call onOutput callback when provided", async () => {
@@ -268,15 +280,21 @@ describe("CodeStyleSessionRunner", () => {
         // session created callback
       })
 
-      const mockExecutePrompt = mock(async (input: unknown): Promise<ExecuteSessionPromptResult> => {
-        const execInput = input as { onOutput?: (chunk: string) => void; onSessionCreated?: () => void }
+      const mockExecutePrompt = mock((input: unknown, callbacks?: {
+        onOutput?: (chunk: string) => void
+        onSessionCreated?: (process: unknown, session: unknown) => void
+      }) => {
+        const execInput = input as { promptText: string }
+        expect(typeof execInput.promptText).toBe("string")
 
-        // Simulate calling the callbacks
-        if (execInput.onOutput) {
-          execInput.onOutput("Processing files...")
+        if (callbacks?.onOutput) {
+          callbacks.onOutput("Processing files...")
         }
-        if (execInput.onSessionCreated) {
-          execInput.onSessionCreated({} as unknown as import("../src/runtime/pi-process.ts").PiRpcProcess, {} as unknown as import("../src/db/types.ts").PiWorkflowSession)
+        if (callbacks?.onSessionCreated) {
+          callbacks.onSessionCreated(
+            {} as unknown as import("../src/runtime/pi-process.ts").PiRpcProcess,
+            {} as unknown as import("../src/db/types.ts").PiWorkflowSession,
+          )
         }
 
         const session = db.createWorkflowSession({
@@ -286,10 +304,10 @@ describe("CodeStyleSessionRunner", () => {
           cwd: root,
           status: "completed",
         })
-        return {
+        return Effect.succeed({
           session,
           responseText: "Callbacks test passed.",
-        }
+        } satisfies ExecuteSessionPromptResult)
       })
 
       const mockSessionManager = {
@@ -322,17 +340,15 @@ describe("CodeStyleSessionRunner", () => {
         onSessionCreated: onSessionCreatedMock,
       }
 
-      await runner.run(input)
+      await runCodeStyle(runner, input)
 
-      // The callbacks should be passed through to executePrompt
-      const callArg = mockExecutePrompt.mock.calls[0][0] as {
+      const callbacksArg = mockExecutePrompt.mock.calls[0][1] as {
         onOutput?: (chunk: string) => void
-        onSessionCreated?: () => void
+        onSessionCreated?: (process: unknown, session: unknown) => void
       }
-      expect(callArg.onOutput).toBe(onOutputMock)
-      expect(callArg.onSessionCreated).toBe(onSessionCreatedMock)
+      expect(callbacksArg.onOutput).toBe(onOutputMock)
+      expect(callbacksArg.onSessionCreated).toBe(onSessionCreatedMock)
 
-      db.close()
     })
 
     it("should use container image from settings when task has no specific image", async () => {
@@ -340,7 +356,7 @@ describe("CodeStyleSessionRunner", () => {
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
       let capturedImage: string | null | undefined
-      const mockExecutePrompt = mock(async (input: unknown): Promise<ExecuteSessionPromptResult> => {
+      const mockExecutePrompt = mock((input: unknown) => {
         const execInput = input as { containerImage?: string | null }
         capturedImage = execInput.containerImage
 
@@ -351,10 +367,10 @@ describe("CodeStyleSessionRunner", () => {
           cwd: root,
           status: "completed",
         })
-        return {
+        return Effect.succeed({
           session,
           responseText: "Image test passed.",
-        }
+        } satisfies ExecuteSessionPromptResult)
       })
 
       const mockSessionManager = {
@@ -396,11 +412,10 @@ describe("CodeStyleSessionRunner", () => {
         thinkingLevel: "default",
       }
 
-      await runner.run(input)
+      await runCodeStyle(runner, input)
 
       expect(capturedImage).toBe("custom-image:v1")
 
-      db.close()
     })
   })
 
@@ -409,7 +424,7 @@ describe("CodeStyleSessionRunner", () => {
       const root = createTempDir("tauroboros-codestyle-failure-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
-      const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
+      const mockExecutePrompt = mock((_input: unknown) => {
         const session = db.createWorkflowSession({
           id: "test-session-fail",
           taskId: "task-fail",
@@ -423,10 +438,10 @@ describe("CodeStyleSessionRunner", () => {
           errorMessage: "Code style violations found",
         })
 
-        return {
+        return Effect.succeed({
           session,
           responseText: "Issues found: trailing whitespace in file.ts",
-        }
+        } satisfies ExecuteSessionPromptResult)
       })
 
       const mockSessionManager = {
@@ -457,23 +472,25 @@ describe("CodeStyleSessionRunner", () => {
         thinkingLevel: "default",
       }
 
-      const result = await runner.run(input)
+      const result = await runCodeStyle(runner, input)
 
       expect(result.success).toBe(false)
       expect(result.responseText).toBe("Issues found: trailing whitespace in file.ts")
       expect(result.sessionId).toBe("test-session-fail")
       expect(result.errorMessage).toBe("Code style violations found")
 
-      db.close()
     })
 
     it("should handle throw from session manager", async () => {
       const root = createTempDir("tauroboros-codestyle-throw-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
-      const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
-        throw new Error("Session execution failed: connection timeout")
-      })
+      const mockExecutePrompt = mock((_input: unknown) =>
+        Effect.fail(new SessionManagerExecuteError({
+          operation: "executePrompt",
+          message: "Session execution failed: connection timeout",
+        })),
+      )
 
       const mockSessionManager = {
         executePrompt: mockExecutePrompt,
@@ -504,16 +521,15 @@ describe("CodeStyleSessionRunner", () => {
       }
 
       // Should throw the error from session manager
-      await expect(runner.run(input)).rejects.toThrow("Session execution failed: connection timeout")
+      await expect(runCodeStyle(runner, input)).rejects.toThrow("Session execution failed: connection timeout")
 
-      db.close()
     })
 
     it("should handle unknown session status gracefully", async () => {
       const root = createTempDir("tauroboros-codestyle-unknown-status-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
-      const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
+      const mockExecutePrompt = mock((_input: unknown) => {
         const session = db.createWorkflowSession({
           id: "test-session-unknown",
           taskId: "task-unknown",
@@ -522,10 +538,10 @@ describe("CodeStyleSessionRunner", () => {
           status: "active", // Non-completed, non-failed status
         })
 
-        return {
+        return Effect.succeed({
           session,
           responseText: "Session still active",
-        }
+        } satisfies ExecuteSessionPromptResult)
       })
 
       const mockSessionManager = {
@@ -556,7 +572,7 @@ describe("CodeStyleSessionRunner", () => {
         thinkingLevel: "default",
       }
 
-      const result = await runner.run(input)
+      const result = await runCodeStyle(runner, input)
 
       // Should be false since status is "active", not "completed"
       expect(result.success).toBe(false)
@@ -564,7 +580,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(result.sessionId).toBe("test-session-unknown")
       expect(result.errorMessage).toBeUndefined()
 
-      db.close()
     })
   })
 
@@ -574,7 +589,7 @@ describe("CodeStyleSessionRunner", () => {
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
       const capturedParams: unknown[] = []
-      const mockExecutePrompt = mock(async (input: unknown): Promise<ExecuteSessionPromptResult> => {
+      const mockExecutePrompt = mock((input: unknown) => {
         capturedParams.push(input)
 
         const session = db.createWorkflowSession({
@@ -584,10 +599,10 @@ describe("CodeStyleSessionRunner", () => {
           cwd: root,
           status: "completed",
         })
-        return {
+        return Effect.succeed({
           session,
           responseText: "Parameters test passed.",
-        }
+        } satisfies ExecuteSessionPromptResult)
       })
 
       const mockSessionManager = {
@@ -618,7 +633,7 @@ describe("CodeStyleSessionRunner", () => {
         thinkingLevel: "low",
       }
 
-      await runner.run(input)
+      await runCodeStyle(runner, input)
 
       expect(mockExecutePrompt).toHaveBeenCalledTimes(1)
 
@@ -643,7 +658,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(params.thinkingLevel).toBe("low")
       expect(params.promptText).toBe("Custom prompt")
 
-      db.close()
     })
   })
 
@@ -652,7 +666,7 @@ describe("CodeStyleSessionRunner", () => {
       const root = createTempDir("tauroboros-codestyle-result-success-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
-      const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
+      const mockExecutePrompt = mock((_input: unknown) => {
         const session = db.createWorkflowSession({
           id: "session-success",
           taskId: "task-result",
@@ -660,10 +674,10 @@ describe("CodeStyleSessionRunner", () => {
           cwd: root,
           status: "completed",
         })
-        return {
+        return Effect.succeed({
           session,
           responseText: "All code style checks passed successfully!",
-        }
+        } satisfies ExecuteSessionPromptResult)
       })
 
       const mockSessionManager = {
@@ -694,7 +708,7 @@ describe("CodeStyleSessionRunner", () => {
         thinkingLevel: "default",
       }
 
-      const result = await runner.run(input)
+      const result = await runCodeStyle(runner, input)
 
       // Verify all required fields are present
       expect(result).toHaveProperty("success")
@@ -713,14 +727,13 @@ describe("CodeStyleSessionRunner", () => {
       expect(result.responseText).toBe("All code style checks passed successfully!")
       expect(result.sessionId).toBe("session-success")
 
-      db.close()
     })
 
     it("should return result with all required fields on failure", async () => {
       const root = createTempDir("tauroboros-codestyle-result-failure-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
-      const mockExecutePrompt = mock(async (_input: unknown): Promise<ExecuteSessionPromptResult> => {
+      const mockExecutePrompt = mock((_input: unknown) => {
         const session = db.createWorkflowSession({
           id: "session-failure",
           taskId: "task-fail-result",
@@ -733,10 +746,10 @@ describe("CodeStyleSessionRunner", () => {
           errorMessage: "Trailing whitespace detected in 3 files",
         })
 
-        return {
+        return Effect.succeed({
           session,
           responseText: "Code style issues found",
-        }
+        } satisfies ExecuteSessionPromptResult)
       })
 
       const mockSessionManager = {
@@ -767,7 +780,7 @@ describe("CodeStyleSessionRunner", () => {
         thinkingLevel: "default",
       }
 
-      const result = await runner.run(input)
+      const result = await runCodeStyle(runner, input)
 
       // Verify all required fields are present
       expect(result).toHaveProperty("success")
@@ -781,7 +794,6 @@ describe("CodeStyleSessionRunner", () => {
       expect(result.responseText).toBe("Code style issues found")
       expect(result.sessionId).toBe("session-failure")
 
-      db.close()
     })
   })
 })

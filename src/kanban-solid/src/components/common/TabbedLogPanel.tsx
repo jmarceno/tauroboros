@@ -101,6 +101,7 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
   const getRunStatusClass = (status: string, isStale = false) => {
     if (isStale) return 'stale'
     switch (status) {
+      case 'queued': return 'active'
       case 'running': return 'active'
       case 'paused': return 'paused'
       default: return ''
@@ -127,7 +128,7 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
 
   return (
     <Show when={!props.collapsed} fallback={
-      <div class="fixed bottom-0 left-[240px] right-0 h-10 bg-dark-surface border-t border-dark-border flex items-center justify-between px-4 z-30">
+      <div class="h-10 bg-dark-surface border-t border-dark-border flex items-center justify-between px-4 shrink-0">
         <div class="flex items-center gap-2 text-sm text-dark-text-muted">
           <span>{props.logs.length} logs</span>
           <span>•</span>

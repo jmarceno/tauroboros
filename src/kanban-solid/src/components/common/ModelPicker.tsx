@@ -6,7 +6,7 @@
 import { createSignal, createEffect, onMount, Show, For } from 'solid-js'
 import { createQuery } from '@tanstack/solid-query'
 import Fuse from 'fuse.js'
-import { referenceApi } from '@/api'
+import { referenceApi, runApiEffect } from '@/api'
 import { HelpButton } from './HelpButton'
 import type { ModelEntry } from '@/types'
 
@@ -28,7 +28,7 @@ export function ModelPicker(props: ModelPickerProps) {
 
   const modelsQuery = createQuery(() => ({
     queryKey: ['models'],
-    queryFn: () => referenceApi.getModels(),
+    queryFn: () => runApiEffect(referenceApi.getModels()),
     staleTime: 60000,
   }))
 

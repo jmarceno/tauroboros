@@ -1,5 +1,6 @@
 import { formatTimestampForNotification } from "./utils/date-format.ts"
 import type { TelegramNotificationLevel, TaskStatus } from "./types.ts"
+import { Effect, Schema } from "effect"
 
 export type { TelegramNotificationLevel }
 
@@ -9,6 +10,12 @@ export const NOTIFICATION_LEVELS: TelegramNotificationLevel[] = [
   "done_and_failures",
   "workflow_done_and_failures",
 ]
+
+export class TelegramError extends Schema.TaggedError<TelegramError>()("TelegramError", {
+  operation: Schema.String,
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 export interface TelegramConfig {
   botToken: string
@@ -35,7 +42,7 @@ export interface NotificationContext {
 
 /**
  * Determines whether a notification should be sent based on the notification level.
- * 
+ *
  * @param level - The notification level setting
  * @param oldStatus - The previous task status
  * @param newStatus - The new task status
@@ -51,38 +58,42 @@ export function shouldSendNotification(
   switch (level) {
     case "all":
       return true
-    
+
     case "failures":
       return newStatus === "failed" || newStatus === "stuck"
-    
+
     case "done_and_failures":
       return newStatus === "done" || newStatus === "failed" || newStatus === "stuck"
-    
+
     case "workflow_done_and_failures":
       // Send on workflow completion OR on task failures
       if (context.isWorkflowDone === true) {
         return true
       }
       return newStatus === "failed" || newStatus === "stuck"
-    
+
     default:
-      // Unknown level - treat as 'all' for backwards compatibility
-      return true
+      throw new TelegramError({
+        operation: "shouldSendNotification",
+        message: `Unsupported telegram notification level: ${String(level)}`,
+      })
   }
 }
 
-const STATUS_EMOJI: Record<string, string> = {
+const STATUS_EMOJI: Record<TaskStatus, string> = {
   template: "📄",
   backlog: "📌",
+  queued: "⏳",
   executing: "▶️",
   review: "🧩",
+  "code-style": "🧹",
   done: "✅",
   failed: "❌",
   stuck: "🚫",
 }
 
-function buildMessage(taskName: string, oldStatus: string, newStatus: string): string {
-  const emoji = STATUS_EMOJI[newStatus] ?? "💬"
+function buildMessage(taskName: string, oldStatus: TaskStatus, newStatus: TaskStatus): string {
+  const emoji = STATUS_EMOJI[newStatus]
   const time = formatTimestampForNotification()
   return [
     `${emoji} *Task State Update*`,
@@ -103,7 +114,7 @@ function buildWorkflowSummaryMessage(
 ): string {
   const time = formatTimestampForNotification()
   const status = failedTasks > 0 || stuckTasks > 0 ? "❌ FAILED" : "✅ COMPLETED"
-  
+
   return [
     `🏁 *Workflow ${status}*`,
     ``,
@@ -119,103 +130,80 @@ function buildWorkflowSummaryMessage(
   ].join("\n")
 }
 
-export async function sendTelegramNotification(
+function sendTelegramMessageEffect(
   config: TelegramConfig,
-  taskName: string,
-  oldStatus: string,
-  newStatus: string,
-  logger: (msg: string) => void = console.log
-): Promise<TelegramSendResult> {
-  if (!config.botToken || !config.chatId) {
-    return { success: false, error: "not configured" }
-  }
+  message: string,
+): Effect.Effect<TelegramSendResult, TelegramError> {
+  return Effect.gen(function* () {
+    if (!config.botToken || !config.chatId) {
+      return yield* new TelegramError({
+        operation: "send",
+        message: "Telegram bot token or chat ID not configured",
+      })
+    }
 
-  const message = buildMessage(taskName, oldStatus, newStatus)
-  const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`
+    const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`
 
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: config.chatId,
-        text: message,
-        parse_mode: "Markdown",
-      }),
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const body = new URLSearchParams({
+          chat_id: config.chatId,
+          text: message,
+          parse_mode: "Markdown",
+        })
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+        })
+
+        if (!response.ok) {
+          const body = await response.text()
+          throw new TelegramError({
+            operation: "send",
+            message: `HTTP ${response.status}: ${body}`,
+          })
+        }
+
+        const data = await response.json() as TelegramApiResponse
+        if (!data.ok) {
+          throw new TelegramError({
+            operation: "send",
+            message: "Telegram API returned ok=false for sendMessage",
+            cause: data,
+          })
+        }
+
+        return { success: true, messageId: data.result?.message_id } as TelegramSendResult
+      },
+      catch: (cause) =>
+        new TelegramError({
+          operation: "send",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
     })
-
-    if (!response.ok) {
-      const body = await response.text()
-      logger(`[telegram] send failed: ${response.status} ${body}`)
-      return { success: false, error: `HTTP ${response.status}: ${body}` }
-    }
-
-    let messageId: number | undefined
-    try {
-      const data = await response.json() as TelegramApiResponse
-      messageId = data.result?.message_id
-    } catch {
-      // JSON parsing failed - notification was still sent successfully
-    }
-
-    logger(`[telegram] notification sent for "${taskName}" (${oldStatus} → ${newStatus})`)
-    return { success: true, messageId }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    logger(`[telegram] send error: ${msg}`)
-    return { success: false, error: msg }
-  }
+  })
 }
 
-/**
- * Send a workflow completion summary notification.
- */
-export async function sendTelegramWorkflowSummary(
+export function sendTelegramNotificationEffect(
+  config: TelegramConfig,
+  taskName: string,
+  oldStatus: TaskStatus,
+  newStatus: TaskStatus,
+): Effect.Effect<TelegramSendResult, TelegramError> {
+  const message = buildMessage(taskName, oldStatus, newStatus)
+  return sendTelegramMessageEffect(config, message)
+}
+
+export function sendTelegramWorkflowSummaryEffect(
   config: TelegramConfig,
   runName: string,
   totalTasks: number,
   completedTasks: number,
   failedTasks: number,
   stuckTasks: number,
-  logger: (msg: string) => void = console.log
-): Promise<TelegramSendResult> {
-  if (!config.botToken || !config.chatId) {
-    return { success: false, error: "not configured" }
-  }
-
+): Effect.Effect<TelegramSendResult, TelegramError> {
   const message = buildWorkflowSummaryMessage(runName, totalTasks, completedTasks, failedTasks, stuckTasks)
-  const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: config.chatId,
-        text: message,
-        parse_mode: "Markdown",
-      }),
-    })
-
-    if (!response.ok) {
-      const body = await response.text()
-      logger(`[telegram] workflow summary send failed: ${response.status} ${body}`)
-      return { success: false, error: `HTTP ${response.status}: ${body}` }
-    }
-
-    let messageId: number | undefined
-    try {
-      const data = await response.json() as TelegramApiResponse
-      messageId = data.result?.message_id
-    } catch {
-      // JSON parsing failed - notification was still sent successfully
-    }
-
-    logger(`[telegram] workflow summary sent for "${runName}" (${completedTasks}/${totalTasks} done, ${failedTasks} failed, ${stuckTasks} stuck)`)
-    return { success: true, messageId }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    logger(`[telegram] workflow summary send error: ${msg}`)
-    return { success: false, error: msg }
-  }
+  return sendTelegramMessageEffect(config, message)
 }

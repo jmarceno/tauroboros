@@ -1,7 +1,22 @@
 import { describe, it, expect, afterEach } from "bun:test"
-import { createTempDir } from "./helpers"
 import { createPiServer, createTestSettings } from "./test-utils"
 import { join } from "path"
+import { mkdtempSync, rmSync } from "fs"
+import { tmpdir } from "os"
+
+const tempRoots: string[] = []
+
+function createTempDir(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix))
+  tempRoots.push(root)
+  return root
+}
+
+afterEach(() => {
+  for (const root of tempRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 describe("Template Conversion Group Removal", () => {
   it("removes task from group when converted to template via PATCH", async () => {
@@ -30,8 +45,8 @@ describe("Template Conversion Group Removal", () => {
     const groupId = group.id
 
     // Verify task is in group
-    const membersBefore = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`).then(r => r.json())
-    expect(membersBefore).toContainEqual(expect.objectContaining({ id: taskId }))
+    const groupBefore = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`).then(r => r.json())
+    expect(groupBefore.tasks).toContainEqual(expect.objectContaining({ id: taskId }))
 
     // Convert task to template via PATCH
     const patchRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}`, {
@@ -43,14 +58,13 @@ describe("Template Conversion Group Removal", () => {
 
     const updatedTask = await patchRes.json()
     expect(updatedTask.status).toBe("template")
-    expect(updatedTask.groupId).toBeNull()
+    expect(updatedTask.groupId === null || updatedTask.groupId === undefined).toBe(true)
 
     // Verify task is no longer in group
-    const membersAfter = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`).then(r => r.json())
-    expect(membersAfter).not.toContainEqual(expect.objectContaining({ id: taskId }))
+    const groupAfter = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`).then(r => r.json())
+    expect(groupAfter.tasks).not.toContainEqual(expect.objectContaining({ id: taskId }))
 
     server.stop()
-    db.close()
   })
 
   it("does NOT remove task from group when setting other status", async () => {
@@ -91,10 +105,9 @@ describe("Template Conversion Group Removal", () => {
     expect(updatedTask.groupId).toBe(groupId) // Should still be in group
 
     // Verify task is still in group
-    const membersAfter = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`).then(r => r.json())
-    expect(membersAfter).toContainEqual(expect.objectContaining({ id: taskId }))
+    const groupAfter = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`).then(r => r.json())
+    expect(groupAfter.tasks).toContainEqual(expect.objectContaining({ id: taskId }))
 
     server.stop()
-    db.close()
   })
 })

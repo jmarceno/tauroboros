@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test"
+import { Effect } from "effect"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
@@ -81,6 +82,10 @@ afterEach(() => {
   }
 })
 
+function runEffect<A, E>(effect: Effect.Effect<A, E>) {
+  return Effect.runPromise(effect)
+}
+
 describe("smart repair", () => {
   it("applies each repair action with expected task state updates", () => {
     const root = createTempDir("tauroboros-smart-repair-actions-")
@@ -107,11 +112,11 @@ describe("smart repair", () => {
         planmode: true,
       })
 
-      const updated = service.applyAction(task.id, {
+      const updated = Effect.runSync(service.applyAction(task.id, {
         action: scenario.action,
         reason: "test-reason",
         ...(scenario.action === "fail_task" ? { errorMessage: "explicit failure" } : {}),
-      })
+      }))
 
       expect(updated.status).toBe(scenario.expectedStatus)
       if (scenario.expectedPhase) {
@@ -125,7 +130,6 @@ describe("smart repair", () => {
       }
     }
 
-    db.close()
   })
 
   it("runs Pi-backed smart repair and stores repair session IO", async () => {
@@ -152,14 +156,13 @@ describe("smart repair", () => {
     })
 
     const service = new SmartRepairService(db, settings)
-    const result = await service.repair(task.id)
+    const result = await runEffect(service.repair(task.id))
 
     expect(result.action).toBe("mark_done")
     expect(result.task.status).toBe("done")
     const sessions = db.getWorkflowSessionsByTask(task.id)
     const repairSession = sessions.find((session) => session.sessionKind === "repair")
     expect(repairSession).toBeDefined()
-    db.close()
   })
 
   it("throws explicit error when smart repair JSON is malformed", async () => {
@@ -178,8 +181,7 @@ describe("smart repair", () => {
     const service = new SmartRepairService(db, settings)
 
     // Explicit errors: malformed JSON should throw, not fallback
-    await expect(service.repair(task.id)).rejects.toThrow()
-    db.close()
+    await expect(runEffect(service.repair(task.id))).rejects.toThrow()
   })
 
   describe("code-style phase detection", () => {
@@ -202,7 +204,6 @@ describe("smart repair", () => {
       const updatedTask = db.getTask(task.id)!
       expect(wasInCodeStylePhase(updatedTask)).toBe(true)
 
-      db.close()
     })
 
     it("detects code-style phase from 'code style' text in agent output", () => {
@@ -224,7 +225,6 @@ describe("smart repair", () => {
       const updatedTask = db.getTask(task.id)!
       expect(wasInCodeStylePhase(updatedTask)).toBe(true)
 
-      db.close()
     })
 
     it("detects code-style phase from error message", () => {
@@ -246,7 +246,6 @@ describe("smart repair", () => {
       const updatedTask = db.getTask(task.id)!
       expect(wasInCodeStylePhase(updatedTask)).toBe(true)
 
-      db.close()
     })
 
     it("returns false when codeStyleReview is disabled", () => {
@@ -268,7 +267,6 @@ describe("smart repair", () => {
       const updatedTask = db.getTask(task.id)!
       expect(wasInCodeStylePhase(updatedTask)).toBe(false)
 
-      db.close()
     })
 
     it("returns reset_backlog for stuck tasks in code-style phase", () => {
@@ -294,7 +292,6 @@ describe("smart repair", () => {
       expect(decision.action).toBe("reset_backlog")
       expect(decision.reason).toContain("Code style enforcement failed")
 
-      db.close()
     })
 
     it("skips code-style repair when task is not stuck", () => {
@@ -320,7 +317,6 @@ describe("smart repair", () => {
       expect(decision.action).not.toBe("reset_backlog")
       expect(decision.reason).not.toContain("Code style")
 
-      db.close()
     })
   })
 })

@@ -3,9 +3,12 @@ import { execFileSync } from "child_process"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
+import { Effect } from "effect"
 import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../src/config/settings.ts"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
+
+const runEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect)
 
 function createTestSettings(mockPiBin: string): InfrastructureSettings {
   return {
@@ -135,7 +138,7 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     })
 
     const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
-    const run = await orchestrator.startSingle(taskB.id)
+    const run = await runEffect(orchestrator.startSingle(taskB.id))
 
     await waitFor(() => {
       const latest = db.getWorkflowRun(run.id)
@@ -160,6 +163,186 @@ describe("PiOrchestrator dependency-aware workflow runs", () => {
     expect(sessionsA.length).toBeGreaterThan(0)
     expect(sessionsB.length).toBeGreaterThan(0)
 
-    db.close()
+  })
+
+  it("deploys before-workflow-start templates into the run and executes them", async () => {
+    const root = createTempDir("tauroboros-auto-deploy-before-")
+    initGitRepo(root)
+    const mockPiBin = createMockPiBinary(root)
+    const settings = createTestSettings(mockPiBin)
+
+    const db = new PiKanbanDB(join(root, "tasks.db"))
+    db.updateOptions({ branch: "master", executionModel: "openai/gpt-4", planModel: "openai/gpt-4" })
+
+    const template = db.createTask({
+      id: "tpl-before",
+      name: "Before Workflow Template",
+      prompt: "Run before workflow starts",
+      status: "template",
+      review: false,
+      autoCommit: false,
+      autoDeploy: true,
+      autoDeployCondition: "before_workflow_start",
+      deleteWorktree: true,
+      requirements: [],
+    })
+
+    const backlog = db.createTask({
+      id: "main-backlog",
+      name: "Main Backlog Task",
+      prompt: "Main workflow task",
+      status: "backlog",
+      review: false,
+      autoCommit: false,
+      deleteWorktree: true,
+      requirements: [],
+    })
+
+    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
+    const run = await runEffect(orchestrator.startAll())
+
+    await waitFor(() => {
+      const latest = db.getWorkflowRun(run.id)
+      return Boolean(latest && (latest.status === "completed" || latest.status === "failed"))
+    })
+
+    const deployedTask = db
+      .getTasks()
+      .find((task) => task.id !== template.id && task.name === template.name && task.status === "done")
+
+    expect(deployedTask).toBeTruthy()
+
+    const finalRun = db.getWorkflowRun(run.id)
+    expect(finalRun?.status).toBe("completed")
+    expect(finalRun?.taskOrder[0]).toBe(deployedTask?.id)
+    expect(finalRun?.taskOrder.includes(backlog.id)).toBe(true)
+
+  })
+
+  it("triggers workflow_done auto-deploy tasks only from workflow runs (not single-task runs)", async () => {
+    const root = createTempDir("tauroboros-auto-deploy-done-")
+    initGitRepo(root)
+    const mockPiBin = createMockPiBinary(root)
+    const settings = createTestSettings(mockPiBin)
+
+    const db = new PiKanbanDB(join(root, "tasks.db"))
+    db.updateOptions({ branch: "master", executionModel: "openai/gpt-4", planModel: "openai/gpt-4" })
+
+    db.createTask({
+      id: "tpl-done",
+      name: "Workflow Done Template",
+      prompt: "Run when workflow finishes successfully",
+      status: "template",
+      review: false,
+      autoCommit: false,
+      autoDeploy: true,
+      autoDeployCondition: "workflow_done",
+      deleteWorktree: true,
+      requirements: [],
+    })
+
+    const backlog = db.createTask({
+      id: "done-source",
+      name: "Done Source Task",
+      prompt: "Source task for workflow_done trigger",
+      status: "backlog",
+      review: false,
+      autoCommit: false,
+      deleteWorktree: true,
+      requirements: [],
+    })
+
+    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
+    const workflowRun = await runEffect(orchestrator.startAll())
+
+    await waitFor(() => {
+      const completedRuns = db.getWorkflowRuns().filter((candidate) => candidate.status === "completed")
+      return completedRuns.length >= 2
+    })
+
+    const completedRuns = db.getWorkflowRuns().filter((candidate) => candidate.status === "completed")
+    expect(completedRuns.some((candidate) => candidate.id === workflowRun.id && candidate.kind === "all_tasks")).toBe(true)
+    expect(completedRuns.some((candidate) => candidate.kind === "single_task")).toBe(true)
+
+    const autoDeployedDoneTask = db
+      .getTasks()
+      .find((task) => task.name === "Workflow Done Template" && task.status === "done")
+    expect(autoDeployedDoneTask).toBeTruthy()
+
+    const noTriggerSingle = db.createTask({
+      id: "single-source",
+      name: "Single Source Task",
+      prompt: "Single task run should not trigger auto-deploy checks",
+      status: "backlog",
+      review: false,
+      autoCommit: false,
+      deleteWorktree: true,
+      requirements: [],
+    })
+
+    const beforeSingleTaskCount = db.getTasks().length
+    const singleRun = await runEffect(orchestrator.startSingle(noTriggerSingle.id))
+
+    await waitFor(() => {
+      const latest = db.getWorkflowRun(singleRun.id)
+      return Boolean(latest && (latest.status === "completed" || latest.status === "failed"))
+    })
+
+    const afterSingleTaskCount = db.getTasks().length
+    expect(afterSingleTaskCount).toBe(beforeSingleTaskCount)
+
+  })
+
+  it("checks auto-deploy conditions for group runs", async () => {
+    const root = createTempDir("tauroboros-auto-deploy-group-")
+    initGitRepo(root)
+    const mockPiBin = createMockPiBinary(root)
+    const settings = createTestSettings(mockPiBin)
+
+    const db = new PiKanbanDB(join(root, "tasks.db"))
+    db.updateOptions({ branch: "master", executionModel: "openai/gpt-4", planModel: "openai/gpt-4" })
+
+    db.createTask({
+      id: "tpl-group-done",
+      name: "Group Done Template",
+      prompt: "Run after group workflow success",
+      status: "template",
+      review: false,
+      autoCommit: false,
+      autoDeploy: true,
+      autoDeployCondition: "workflow_done",
+      deleteWorktree: true,
+      requirements: [],
+    })
+
+    const groupTask = db.createTask({
+      id: "group-task-1",
+      name: "Grouped Task",
+      prompt: "Task in virtual workflow",
+      status: "backlog",
+      review: false,
+      autoCommit: false,
+      deleteWorktree: true,
+      requirements: [],
+    })
+
+    const group = db.createTaskGroup({ name: "Virtual Workflow" })
+    db.addTasksToGroup(group.id, [groupTask.id])
+
+    const orchestrator = new PiOrchestrator(db, () => {}, (sessionId) => `/#session/${sessionId}`, root, settings)
+    const run = await runEffect(orchestrator.startGroup(group.id))
+
+    await waitFor(() => {
+      const completedRuns = db.getWorkflowRuns().filter((candidate) => candidate.status === "completed")
+      return completedRuns.length >= 2
+    })
+
+    const completedRuns = db.getWorkflowRuns().filter((candidate) => candidate.status === "completed")
+    expect(completedRuns.some((candidate) => candidate.id === run.id && candidate.kind === "group_tasks")).toBe(true)
+    expect(completedRuns.some((candidate) => candidate.kind === "single_task")).toBe(true)
+
+    const autoTask = db.getTasks().find((task) => task.name === "Group Done Template" && task.status === "done")
+    expect(autoTask).toBeTruthy()
+
   })
 })

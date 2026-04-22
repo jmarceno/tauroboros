@@ -2,12 +2,22 @@
  * Planning Chat Store - Planning chat sessions
  * Replaces: PlanningChatContext
  * Ported from React usePlanningChat hook with full feature parity
+ * Fully migrated to Effect patterns
  */
 
 import { createSignal, createMemo } from 'solid-js'
-import { createQuery, useQueryClient } from '@tanstack/solid-query'
-import type { Session, SessionMessage, PlanningPrompt, PlanningSession, WSMessageType } from '@/types'
+import { createQuery } from '@tanstack/solid-query'
+import { Effect } from 'effect'
+import type { SessionMessage, PlanningSession, WSMessageType } from '@/types'
+import { runApiEffect } from '@/api'
 import * as api from '@/api'
+
+// Extended PlanningSession with runtime properties
+interface PlanningSessionWithDetails extends PlanningSession {
+  status?: string
+  model?: string
+  thinkingLevel?: string
+}
 
 const DEFAULT_WIDTH = 400
 const MIN_WIDTH = 350
@@ -29,7 +39,7 @@ export interface ContextAttachment {
 export interface ChatSession {
   id: string
   name: string
-  session: PlanningSession | null
+  session: PlanningSessionWithDetails | null
   messages: SessionMessage[]
   isMinimized: boolean
   isLoading: boolean
@@ -39,8 +49,6 @@ export interface ChatSession {
 }
 
 export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, handler: (payload: unknown) => void) => () => void }) {
-  const queryClient = useQueryClient()
-
   const [isOpen, setIsOpen] = createSignal(false)
   const [width, setWidth] = createSignal(DEFAULT_WIDTH)
   const [isResizing, setIsResizing] = createSignal(false)
@@ -59,7 +67,7 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
   // Queries
   const planningPromptQuery = createQuery(() => ({
     queryKey: queryKeys.planningPrompt,
-    queryFn: () => api.planningApi.getPrompt(),
+    queryFn: () => runApiEffect(api.planningApi.getPrompt()),
     staleTime: 30000,
   }))
 
@@ -90,18 +98,14 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     setWidth(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, newWidth)))
   }
 
-  const loadPlanningPrompt = async () => {
-    await planningPromptQuery.refetch()
+  const loadPlanningPrompt = () => {
+    return planningPromptQuery.refetch()
   }
 
-  const savePlanningPrompt = async (updates: { name?: string; description?: string; promptText: string }) => {
-    return await api.planningApi.updatePrompt({
-      key: 'default',
-      ...updates,
-    })
-  }
+  const savePlanningPrompt = (updates: { name?: string; description?: string; promptText: string }) =>
+    runApiEffect(api.planningApi.updatePrompt({ key: 'default', ...updates }))
 
-  const createNewSession = async (model?: string, thinkingLevel?: string) => {
+  const createNewSession = (model?: string, thinkingLevel?: string) => {
     const sessionId = `chat-${Date.now()}`
     const newSession: ChatSession = {
       id: sessionId,
@@ -114,34 +118,42 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
       isReconnecting: false,
       error: null,
     }
-
     setSessions(prev => [...prev, newSession])
     setActiveSessionId(sessionId)
 
-    try {
-      const planningSession = await api.planningApi.createSession({
-        model,
-        thinkingLevel: thinkingLevel as import('@/types').ThinkingLevel | undefined,
-      })
+    return runApiEffect(
+      Effect.gen(function* () {
+        const planningSession = yield* api.planningApi.createSession({
+          model,
+          thinkingLevel: thinkingLevel as import('@/types').ThinkingLevel | undefined,
+        })
 
-      setSessions(prev => prev.map(s =>
-        s.id === sessionId
-          ? { ...s, session: planningSession, isLoading: false }
-          : s
-      ))
-    } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : 'Failed to create session'
-      setSessions(prev => prev.map(s =>
-        s.id === sessionId
-          ? { ...s, error: errorMsg, isLoading: false }
-          : s
-      ))
-    }
+        yield* Effect.sync(() => {
+          setSessions(prev => prev.map(s =>
+            s.id === sessionId
+              ? { ...s, session: planningSession, isLoading: false }
+              : s
+          ))
+        })
+
+        return planningSession
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            const errorMsg = error instanceof Error ? error.message : 'Failed to create session'
+            setSessions(prev => prev.map(s =>
+              s.id === sessionId
+                ? { ...s, error: errorMsg, isLoading: false }
+                : s
+            ))
+          }).pipe(Effect.zipRight(Effect.fail(error)))
+        )
+      )
+    )
   }
 
   const switchToSession = (sessionId: string) => {
     setActiveSessionId(sessionId)
-    // Unminimize if minimized
     setSessions(prev => prev.map(s =>
       s.id === sessionId ? { ...s, isMinimized: false } : s
     ))
@@ -156,22 +168,19 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
   const closeSession = (sessionId: string) => {
     const session = sessions().find(s => s.id === sessionId)
     if (session?.session?.id) {
-      api.planningApi.closeSession(session.session.id).catch(console.error)
+      runApiEffect(api.planningApi.closeSession(session.session.id))
     }
 
-    // Clean up refs
     pendingMessagesMap.delete(sessionId)
     reconnectingSet.delete(sessionId)
     sendingSet.delete(sessionId)
 
     setSessions(prev => {
-      // Update active session ID if needed
       if (activeSessionId() === sessionId) {
         const remainingVisible = prev.filter(s => s.id !== sessionId && !s.isMinimized)
         const nextActiveId = remainingVisible.length > 0 ? remainingVisible[0].id : null
         setActiveSessionId(nextActiveId)
       }
-
       return prev.filter(s => s.id !== sessionId)
     })
   }
@@ -186,38 +195,30 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     setSessions(prev => prev.map(s => {
       if (s.id !== sessionId) return s
 
-      // Check for exact duplicate by ID or messageId
       const existingIdx = s.messages.findIndex(m =>
         m.id === message.id ||
         (m.messageId && m.messageId === message.messageId)
       )
 
-      // If exact match found, update it (server confirmation replacing optimistic)
       if (existingIdx >= 0) {
         return { ...s, messages: s.messages.map((m, i) => i === existingIdx ? message : m) }
       }
 
-      // Check for optimistic message to replace (same content, role, similar timestamp)
       if (message.role === 'user' && message.messageType === 'user_prompt') {
         const messageText = (message.contentJson as { text?: string })?.text || ''
         const optimisticIdx = s.messages.findIndex(m => {
           if (m.role !== 'user' || m.messageType !== 'user_prompt') return false
           const mText = (m.contentJson as { text?: string })?.text || ''
-          // Same content and within 30 seconds (reasonable window for network delay)
           const timeDiff = Math.abs(Number(m.timestamp || 0) - Number(message.timestamp || 0))
           return mText === messageText && timeDiff < 30
         })
 
         if (optimisticIdx >= 0) {
-          // Replace optimistic with server-confirmed message
           return { ...s, messages: s.messages.map((m, i) => i === optimisticIdx ? message : m) }
         }
       }
 
-      // New message - add it
       let newMessages = [...s.messages, message]
-
-      // Sort by seq, then timestamp, then id
       newMessages.sort((a, b) => {
         const sa = Number((a as unknown as { seq?: number }).seq || 0)
         const sb = Number((b as unknown as { seq?: number }).seq || 0)
@@ -235,161 +236,149 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     return sessions().find(s => s.id === sessionId)
   }
 
-  const attemptSendMessage = async (
+  const updateSession = (sessionId: string, update: (session: ChatSession) => ChatSession) => {
+    setSessions(prev => prev.map((session) =>
+      session.id === sessionId ? update(session) : session,
+    ))
+  }
+
+  const getErrorMessage = (error: unknown, fallback: string) =>
+    error instanceof Error ? error.message : fallback
+
+  const attemptSendMessageEffect = (
     sessionId: string,
     content: string,
     attachments?: ContextAttachment[],
     isRetry = false
-  ): Promise<void> => {
-    const session = getSession(sessionId)
+  ): Effect.Effect<void, Error> =>
+    Effect.gen(function* () {
+      const session = getSession(sessionId)
 
-    if (!session) {
-      throw new Error('Session not found')
-    }
-
-    if (!session.session?.id) {
-      throw new Error('No active session')
-    }
-
-    // Prevent multiple concurrent sends on the same session
-    if (sendingSet.has(sessionId) && !isRetry) {
-      throw new Error('Already sending a message')
-    }
-
-    // Mark as sending
-    sendingSet.add(sessionId)
-
-    if (!isRetry) {
-      setSessions(prev => prev.map(s =>
-        s.id === sessionId
-          ? { ...s, isSending: true, error: null }
-          : s
-      ))
-    }
-
-    const backendSessionId = session.session.id
-
-    try {
-      await api.planningApi.sendMessage(backendSessionId, content, attachments)
-
-      // Success - clear sending state
-      sendingSet.delete(sessionId)
-      setSessions(prev => prev.map(s =>
-        s.id === sessionId
-          ? { ...s, isSending: false, error: null }
-          : s
-      ))
-    } catch (e) {
-      const errorMsg = e instanceof Error ? e.message : 'Failed to send message'
-
-      // Check if the error indicates session is not active
-      const isSessionNotActive = errorMsg.includes('not active') || errorMsg.includes('PLANNING_SESSION_NOT_ACTIVE')
-
-      if (isSessionNotActive) {
-        // Prevent concurrent reconnect attempts
-        if (reconnectingSet.has(sessionId)) {
-          // Queue the message for retry after reconnect completes
-          const pending = pendingMessagesMap.get(sessionId) || []
-          pendingMessagesMap.set(sessionId, [...pending, {
-            id: `pending-${Date.now()}`,
-            content,
-            attachments,
-            retryCount: 0,
-            maxRetries: 1,
-          }])
-          return
-        }
-
-        reconnectingSet.add(sessionId)
-
-        // Set reconnecting state
-        setSessions(prev => prev.map(s =>
-          s.id === sessionId
-            ? { ...s, isReconnecting: true, error: 'Session not active. Reconnecting automatically...', isSending: false }
-            : s
-        ))
-
-        try {
-          // Attempt to reconnect with the session's current model and thinking level
-          const reconnectedSession = await api.planningApi.reconnectSession(backendSessionId, {
-            model: session.session.model,
-            thinkingLevel: session.session.thinkingLevel,
-          })
-
-          reconnectingSet.delete(sessionId)
-
-          // Update session with reconnected state
-          setSessions(prev => prev.map(s =>
-            s.id === sessionId
-              ? { ...s, session: reconnectedSession, isReconnecting: false, error: null }
-              : s
-          ))
-
-          // Retry sending the message after successful reconnect
-          await api.planningApi.sendMessage(reconnectedSession.id, content, attachments)
-
-          // Success after retry - clear sending state
-          sendingSet.delete(sessionId)
-          setSessions(prev => prev.map(s =>
-            s.id === sessionId
-              ? { ...s, isSending: false, error: null }
-              : s
-          ))
-
-          // Process any queued messages
-          const pending = pendingMessagesMap.get(sessionId) || []
-          pendingMessagesMap.delete(sessionId)
-
-          for (const queuedMsg of pending) {
-            await attemptSendMessage(sessionId, queuedMsg.content, queuedMsg.attachments, true)
-          }
-        } catch (reconnectError) {
-          // Reconnect failed - clear all states and throw
-          reconnectingSet.delete(sessionId)
-          sendingSet.delete(sessionId)
-
-          const reconnectErrorMsg = reconnectError instanceof Error ? reconnectError.message : 'Failed to reconnect session'
-          setSessions(prev => prev.map(s =>
-            s.id === sessionId
-              ? { ...s, isReconnecting: false, error: `Session not active. Reconnect failed: ${reconnectErrorMsg}`, isSending: false }
-              : s
-          ))
-          throw reconnectError
-        }
-      } else {
-        // Other errors - clear sending state and throw
-        sendingSet.delete(sessionId)
-        setSessions(prev => prev.map(s =>
-          s.id === sessionId
-            ? { ...s, error: errorMsg, isSending: false }
-            : s
-        ))
-        throw e
+      if (!session) {
+        return yield* Effect.fail(new Error('Session not found'))
       }
-    }
-  }
 
-  const sendMessage = async (sessionId: string, content: string, attachments?: ContextAttachment[]) => {
+      const sessionData = session.session
+      if (!sessionData?.id) {
+        return yield* Effect.fail(new Error('No active session'))
+      }
+
+      if (sendingSet.has(sessionId) && !isRetry) {
+        return yield* Effect.fail(new Error('Already sending a message'))
+      }
+
+      yield* Effect.sync(() => {
+        sendingSet.add(sessionId)
+        if (!isRetry) {
+          updateSession(sessionId, (current) => ({ ...current, isSending: true, error: null }))
+        }
+      })
+
+      const backendSessionId = sessionData.id
+
+      yield* api.planningApi.sendMessage(backendSessionId, content, attachments).pipe(
+        Effect.catchAll((error) => {
+          const errorMsg = getErrorMessage(error, 'Failed to send message')
+          const isSessionNotActive = errorMsg.includes('not active') || errorMsg.includes('PLANNING_SESSION_NOT_ACTIVE')
+
+          if (!isSessionNotActive) {
+            return Effect.sync(() => {
+              sendingSet.delete(sessionId)
+              updateSession(sessionId, (current) => ({ ...current, error: errorMsg, isSending: false }))
+            }).pipe(Effect.zipRight(Effect.fail(error)))
+          }
+
+          if (reconnectingSet.has(sessionId)) {
+            return Effect.sync(() => {
+              const pending = pendingMessagesMap.get(sessionId) || []
+              pendingMessagesMap.set(sessionId, [...pending, {
+                id: `pending-${Date.now()}`,
+                content,
+                attachments,
+                retryCount: 0,
+                maxRetries: 1,
+              }])
+            })
+          }
+
+          return Effect.gen(function* () {
+            yield* Effect.sync(() => {
+              reconnectingSet.add(sessionId)
+              updateSession(sessionId, (current) => ({
+                ...current,
+                isReconnecting: true,
+                error: 'Session not active. Reconnecting automatically...',
+                isSending: false,
+              }))
+            })
+
+            const reconnectedSession = yield* api.planningApi.reconnectSession(backendSessionId, {
+              model: sessionData.model,
+              thinkingLevel: sessionData.thinkingLevel,
+            })
+
+            yield* Effect.sync(() => {
+              reconnectingSet.delete(sessionId)
+              updateSession(sessionId, (current) => ({
+                ...current,
+                session: reconnectedSession,
+                isReconnecting: false,
+                error: null,
+              }))
+            })
+
+            yield* api.planningApi.sendMessage(reconnectedSession.id, content, attachments)
+
+            const pending = pendingMessagesMap.get(sessionId) || []
+            yield* Effect.sync(() => {
+              pendingMessagesMap.delete(sessionId)
+            })
+
+            for (const queuedMsg of pending) {
+              yield* attemptSendMessageEffect(sessionId, queuedMsg.content, queuedMsg.attachments, true)
+            }
+          }).pipe(
+            Effect.catchAll((reconnectError) =>
+              Effect.sync(() => {
+                reconnectingSet.delete(sessionId)
+                sendingSet.delete(sessionId)
+                const reconnectErrorMsg = getErrorMessage(reconnectError, 'Failed to reconnect session')
+                updateSession(sessionId, (current) => ({
+                  ...current,
+                  isReconnecting: false,
+                  error: `Session not active. Reconnect failed: ${reconnectErrorMsg}`,
+                  isSending: false,
+                }))
+              }).pipe(Effect.zipRight(Effect.fail(reconnectError)))
+            )
+          )
+        }),
+      )
+
+      yield* Effect.sync(() => {
+        sendingSet.delete(sessionId)
+        updateSession(sessionId, (current) => ({ ...current, isSending: false, error: null }))
+      })
+    })
+
+  const sendMessage = (sessionId: string, content: string, attachments?: ContextAttachment[]) => {
     const session = getSession(sessionId)
 
     if (!session) {
-      throw new Error('Session not found')
+      return
     }
 
     if (!session.session?.id) {
-      throw new Error('No active session')
+      return
     }
 
-    // Check if already sending (prevents race conditions)
     if (sendingSet.has(sessionId)) {
-      throw new Error('Already sending a message')
+      return
     }
 
-    // If session is not active, queue the message and trigger reconnect first
     const isSessionNotActive = !session.session || session.error?.includes('not active')
 
     if (isSessionNotActive || session.isReconnecting) {
-      // Queue the message
       const pending = pendingMessagesMap.get(sessionId) || []
       pendingMessagesMap.set(sessionId, [...pending, {
         id: `pending-${Date.now()}`,
@@ -399,103 +388,145 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
         maxRetries: 1,
       }])
 
-      // If not already reconnecting, trigger reconnect
       if (!session.isReconnecting && !reconnectingSet.has(sessionId)) {
-        await attemptSendMessage(sessionId, content, attachments)
+        runApiEffect(attemptSendMessageEffect(sessionId, content, attachments))
       }
       return
     }
 
-    // Normal send flow
-    await attemptSendMessage(sessionId, content, attachments)
+    runApiEffect(attemptSendMessageEffect(sessionId, content, attachments))
   }
 
-  const createTasksFromChat = async (sessionId: string, tasks?: Array<{ name: string; prompt: string; status?: string; requirements?: string[] }>) => {
+  const createTasksFromChat = (sessionId: string, tasks?: Array<{ name: string; prompt: string; status?: string; requirements?: string[] }>) => {
     const session = getSession(sessionId)
     if (!session?.session?.id) {
-      throw new Error('No active session')
+      return Promise.resolve({ ok: false, error: 'No active session' })
     }
 
-    try {
-      return await api.planningApi.createTasksFromSession(session.session.id, tasks)
-    } catch (e) {
-      console.error('Failed to create tasks:', e)
-      throw e
-    }
+    return runApiEffect(
+      Effect.mapError(
+        api.planningApi.createTasksFromSession(session.session.id, tasks),
+        (error) => ({ ok: false, error: error instanceof Error ? error.message : 'Failed to create tasks' } as const)
+      ).pipe(
+        Effect.map((result) => ({ ok: true, result } as const))
+      )
+    )
   }
 
-  const reconnectSession = async (sessionId: string, model?: string, thinkingLevel?: string) => {
+  const reconnectSessionEffect = (sessionId: string, model?: string, thinkingLevel?: string) => {
     const session = getSession(sessionId)
     if (!session?.session?.id) {
-      throw new Error('No session to reconnect')
+      return Effect.fail(new Error('No session to reconnect'))
     }
 
-    // Prevent concurrent reconnect attempts
     if (reconnectingSet.has(sessionId)) {
-      throw new Error('Reconnect already in progress')
+      return Effect.fail(new Error('Reconnect already in progress'))
+    }
+
+    const backendSessionId = session.session.id
+
+    return Effect.gen(function* () {
+      yield* Effect.sync(() => {
+        reconnectingSet.add(sessionId)
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId
+            ? { ...s, isLoading: true, isReconnecting: true, error: null }
+            : s
+        ))
+      })
+
+      const reconnectedSession = yield* api.planningApi.reconnectSession(backendSessionId, { model, thinkingLevel })
+
+      yield* Effect.sync(() => {
+        reconnectingSet.delete(sessionId)
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId
+            ? { ...s, session: reconnectedSession, isLoading: false, isReconnecting: false }
+            : s
+        ))
+      })
+
+      return reconnectedSession
+    })
+  }
+
+  const reconnectSession = (sessionId: string, model?: string, thinkingLevel?: string) => {
+    const session = getSession(sessionId)
+    if (!session?.session?.id) {
+      return Promise.resolve({ ok: false, error: 'No session to reconnect' })
+    }
+
+    if (reconnectingSet.has(sessionId)) {
+      return Promise.resolve({ ok: false, error: 'Reconnect already in progress' })
     }
 
     reconnectingSet.add(sessionId)
-
     setSessions(prev => prev.map(s =>
       s.id === sessionId
         ? { ...s, isLoading: true, isReconnecting: true, error: null }
         : s
     ))
 
-    try {
-      const reconnectedSession = await api.planningApi.reconnectSession(session.session.id, {
-        model,
-        thinkingLevel,
-      })
-
-      reconnectingSet.delete(sessionId)
-
-      setSessions(prev => prev.map(s =>
-        s.id === sessionId
-          ? { ...s, session: reconnectedSession, isLoading: false, isReconnecting: false }
-          : s
-      ))
-      return reconnectedSession
-    } catch (e) {
-      reconnectingSet.delete(sessionId)
-
-      const errorMsg = e instanceof Error ? e.message : 'Failed to reconnect session'
-      setSessions(prev => prev.map(s =>
-        s.id === sessionId
-          ? { ...s, error: errorMsg, isLoading: false, isReconnecting: false }
-          : s
-      ))
-      throw e
-    }
+    return runApiEffect(
+      Effect.mapError(
+        reconnectSessionEffect(sessionId, model, thinkingLevel),
+        (error) => {
+          reconnectingSet.delete(sessionId)
+          const errorMsg = error instanceof Error ? error.message : 'Failed to reconnect session'
+          setSessions(prev => prev.map(s =>
+            s.id === sessionId
+              ? { ...s, error: errorMsg, isLoading: false, isReconnecting: false }
+              : s
+          ))
+          return { ok: false, session: null, error: errorMsg }
+        }
+      ).pipe(
+        Effect.map((session) => ({ ok: true, session } as const))
+      )
+    )
   }
 
-  const setSessionModel = async (sessionId: string, model: string, thinkingLevel?: string) => {
+  const setSessionModelEffect = (sessionId: string, model: string, thinkingLevel?: string) => {
     const session = getSession(sessionId)
     if (!session?.session?.id) {
-      throw new Error('No active session')
+      return Effect.fail(new Error('No active session'))
     }
 
-    try {
-      await api.planningApi.setSessionModel(session.session.id, model, thinkingLevel)
-      setSessions(prev => prev.map(s =>
-        s.id === sessionId
-          ? { ...s, session: s.session ? { ...s.session, model, thinkingLevel } : null }
-          : s
-      ))
-      return { ok: true, model, thinkingLevel }
-    } catch (e) {
-      console.error('Failed to change model:', e)
-      throw e
+    const backendSessionId = session.session.id
+
+    return Effect.gen(function* () {
+      yield* api.planningApi.setSessionModel(backendSessionId, model, thinkingLevel)
+
+      yield* Effect.sync(() => {
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId
+            ? { ...s, session: s.session ? { ...s.session, model, thinkingLevel } : null }
+            : s
+        ))
+      })
+
+      return { ok: true, model, thinkingLevel } as const
+    })
+  }
+
+  const setSessionModel = (sessionId: string, model: string, thinkingLevel?: string) => {
+    const session = getSession(sessionId)
+    if (!session?.session?.id) {
+      return Promise.resolve({ ok: false, error: 'No active session' })
     }
+
+    return runApiEffect(
+      Effect.mapError(
+        setSessionModelEffect(sessionId, model, thinkingLevel),
+        (error) => ({ ok: false, error: error instanceof Error ? error.message : 'Failed to set model' } as const)
+      )
+    )
   }
 
   const addExistingSession = (session: ChatSession) => {
     setSessions(prev => {
-      // Check if session already exists
       const exists = prev.some(s => s.id === session.id || s.session?.id === session.session?.id)
       if (exists) {
-        // If session exists, just switch to it
         const existingSession = prev.find(s => s.session?.id === session.session?.id)
         if (existingSession) {
           setActiveSessionId(existingSession.id)

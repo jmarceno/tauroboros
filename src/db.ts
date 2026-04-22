@@ -2,13 +2,18 @@ import { randomUUID } from "crypto"
 import { Database } from "bun:sqlite"
 import { mkdirSync } from "fs"
 import { dirname } from "path"
+import { Effect, Schema } from "effect"
+import { ErrorCode } from "./shared/error-codes.ts"
 import {
+  type AutoDeployCondition,
   DEFAULT_COMMIT_PROMPT,
   DEFAULT_CODE_STYLE_PROMPT,
+  type BestOfNConfig,
   type ColumnSortPreferences,
   type CreateSessionMessageInput,
   type ExecutionPhase,
   type ExecutionStrategy,
+  type RunExecutionPhase,
   type MessageType,
   type Options,
   type SessionMessage,
@@ -17,6 +22,7 @@ import {
   type TaskCandidate,
   type TaskRun,
   type TaskStatus,
+  type TelegramNotificationLevel,
   type ThinkingLevel,
   type TimelineEntry,
   type WorkflowRun,
@@ -25,7 +31,15 @@ import {
 } from "./types.ts"
 
 export type TaskStatusChangeListener = (taskId: string, oldStatus: TaskStatus, newStatus: TaskStatus) => void
-import { runMigrations, type Migration } from "./db/migrations.ts"
+import { runMigrations, MIGRATIONS, type Migration } from "./db/migrations.ts"
+import {
+  getUsageStats as _getUsageStats,
+  getTaskStats as _getTaskStats,
+  getModelUsageByResponsibility as _getModelUsageByResponsibility,
+  getAverageTaskDuration as _getAverageTaskDuration,
+  getHourlyUsageTimeSeries as _getHourlyUsageTimeSeries,
+  getDailyUsageTimeSeries as _getDailyUsageTimeSeries,
+} from "./db/stats-repository.ts"
 import type {
   CreateTaskCandidateInput,
   CreateTaskRunInput,
@@ -53,9 +67,11 @@ import type {
   ContainerPackage,
   ContainerBuild,
   CreateContainerPackageInput,
+  CreateSelfHealReportInput,
   WorkflowRunIndicators,
   JsonOutFailEntry,
   CreateWorkflowRunIndicatorsInput,
+  SelfHealReport,
   CreateTaskGroupDTO,
   UpdateTaskGroupDTO,
   TaskGroup,
@@ -70,6 +86,18 @@ import type {
 import { renderTemplate } from "./prompts/renderer.ts"
 import { parseModelSelection } from "./runtime/model-utils.ts"
 import { projectPiEventToSessionMessage } from "./runtime/message-projection.ts"
+
+/**
+ * Tagged error for database operations
+ */
+export class DatabaseError extends Schema.TaggedError<DatabaseError>()("DatabaseError", {
+  operation: Schema.String,
+  message: Schema.String,
+  code: Schema.optional(Schema.Enums(ErrorCode)),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
+
+
 
 // Color palette for workflow runs - distinct colors that work well with dark theme
 const RUN_COLORS = [
@@ -117,6 +145,7 @@ const DEFAULT_OPTIONS: Options = {
   telegramChatId: "",
   telegramNotificationLevel: "all",
   maxReviews: 2,
+  maxJsonParseRetries: 5,
   columnSorts: undefined,
 }
 
@@ -412,8 +441,8 @@ function parseJSON<T>(value: unknown): T | null {
   if (typeof value !== "string" || value.length === 0) return null
   try {
     return JSON.parse(value) as T
-  } catch (error) {
-    throw new Error(`Failed to parse JSON: ${error instanceof Error ? error.message : String(error)}`)
+  } catch {
+    return null
   }
 }
 
@@ -421,7 +450,10 @@ function asThinkingLevel(value: unknown): ThinkingLevel {
   if (value === "low" || value === "medium" || value === "high" || value === "default") {
     return value
   }
-  throw new Error(`Invalid thinking level: ${JSON.stringify(value)}. Expected "low", "medium", "high", or "default".`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid thinking level: ${JSON.stringify(value)}. Expected "low", "medium", "high", or "default".`,
+  })
 }
 
 function normalizeBoolean(value: unknown): boolean {
@@ -432,10 +464,20 @@ function normalizeBoolean(value: unknown): boolean {
     if (normalized === "true" || normalized === "1") return true
     if (normalized === "false" || normalized === "0") return false
   }
-  throw new Error(`Invalid boolean value: ${JSON.stringify(value)}. Expected boolean, 0/1, or "true"/"false".`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid boolean value: ${JSON.stringify(value)}. Expected boolean, 0/1, or "true"/"false".`,
+  })
 }
 
-const TASK_STATUSES: TaskStatus[] = ["template", "backlog", "executing", "review", "code-style", "done", "failed", "stuck"]
+const TASK_STATUSES: TaskStatus[] = ["template", "backlog", "queued", "executing", "review", "code-style", "done", "failed", "stuck"]
+
+const AUTO_DEPLOY_CONDITIONS: AutoDeployCondition[] = [
+  "before_workflow_start",
+  "after_workflow_end",
+  "workflow_done",
+  "workflow_failed",
+]
 
 function isTaskStatus(value: unknown): value is TaskStatus {
   return typeof value === "string" && TASK_STATUSES.includes(value as TaskStatus)
@@ -443,7 +485,20 @@ function isTaskStatus(value: unknown): value is TaskStatus {
 
 function asTaskStatus(value: unknown): TaskStatus {
   if (isTaskStatus(value)) return value
-  throw new Error(`Invalid task status: ${JSON.stringify(value)}. Expected one of: ${TASK_STATUSES.join(", ")}.`)
+  throw new DatabaseError({ operation: "validation", message: `Invalid task status: ${JSON.stringify(value)}. Expected one of: ${TASK_STATUSES.join(", ")}.` })
+}
+
+function isAutoDeployCondition(value: unknown): value is AutoDeployCondition {
+  return typeof value === "string" && AUTO_DEPLOY_CONDITIONS.includes(value as AutoDeployCondition)
+}
+
+function asAutoDeployConditionOrNull(value: unknown): AutoDeployCondition | null {
+  if (value === null || value === undefined || value === "") return null
+  if (isAutoDeployCondition(value)) return value
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid auto deploy condition: ${JSON.stringify(value)}. Expected one of: ${AUTO_DEPLOY_CONDITIONS.join(", ")}.`,
+  })
 }
 
 const EXECUTION_PHASES: ExecutionPhase[] = [
@@ -460,7 +515,44 @@ function isExecutionPhase(value: unknown): value is ExecutionPhase {
 
 function asExecutionPhase(value: unknown): ExecutionPhase {
   if (isExecutionPhase(value)) return value
-  throw new Error(`Invalid execution phase: ${JSON.stringify(value)}. Expected one of: ${EXECUTION_PHASES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid execution phase: ${JSON.stringify(value)}. Expected one of: ${EXECUTION_PHASES.join(", ")}.`,
+  })
+}
+
+const RUN_EXECUTION_PHASES: RunExecutionPhase[] = ["not_started", "planning", "executing", "reviewing", "committing"]
+
+function asRunExecutionPhase(value: unknown): RunExecutionPhase {
+  if (typeof value !== "string") {
+    throw new DatabaseError({
+      operation: "validation",
+      message: `Invalid run execution phase: ${JSON.stringify(value)}. Expected a string phase value.`,
+    })
+  }
+
+  if (RUN_EXECUTION_PHASES.includes(value as RunExecutionPhase)) {
+    return value as RunExecutionPhase
+  }
+
+  // Historical rows in paused_run_states may contain task-level execution phases.
+  // Map them explicitly to the run-level pause lifecycle.
+  const legacyMappedPhase: Record<ExecutionPhase, RunExecutionPhase> = {
+    not_started: "planning",
+    plan_complete_waiting_approval: "planning",
+    plan_revision_pending: "planning",
+    implementation_pending: "executing",
+    implementation_done: "reviewing",
+  }
+
+  if (value in legacyMappedPhase) {
+    return legacyMappedPhase[value as ExecutionPhase]
+  }
+
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid run execution phase: ${JSON.stringify(value)}. Expected one of: ${RUN_EXECUTION_PHASES.join(", ")} or a known legacy task phase.`,
+  })
 }
 
 const EXECUTION_STRATEGIES: ExecutionStrategy[] = ["best_of_n", "standard"]
@@ -471,7 +563,10 @@ function isExecutionStrategy(value: unknown): value is ExecutionStrategy {
 
 function asExecutionStrategy(value: unknown): ExecutionStrategy {
   if (isExecutionStrategy(value)) return value
-  throw new Error(`Invalid execution strategy: ${JSON.stringify(value)}. Expected "best_of_n" or "standard".`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid execution strategy: ${JSON.stringify(value)}. Expected "best_of_n" or "standard".`,
+  })
 }
 
 const BEST_OF_N_SUBSTAGES: Task["bestOfNSubstage"][] = [
@@ -489,7 +584,10 @@ function isBestOfNSubstage(value: unknown): value is Task["bestOfNSubstage"] {
 
 function asBestOfNSubstage(value: unknown): Task["bestOfNSubstage"] {
   if (isBestOfNSubstage(value)) return value
-  throw new Error(`Invalid best-of-n substage: ${JSON.stringify(value)}. Expected one of: ${BEST_OF_N_SUBSTAGES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid best-of-n substage: ${JSON.stringify(value)}. Expected one of: ${BEST_OF_N_SUBSTAGES.join(", ")}.`,
+  })
 }
 
 const WORKFLOW_RUN_KINDS: WorkflowRunKind[] = ["all_tasks", "single_task", "workflow_review", "group_tasks"]
@@ -500,10 +598,13 @@ function isWorkflowRunKind(value: unknown): value is WorkflowRunKind {
 
 function asWorkflowRunKind(value: unknown): WorkflowRunKind {
   if (isWorkflowRunKind(value)) return value
-  throw new Error(`Invalid workflow run kind: ${JSON.stringify(value)}. Expected one of: ${WORKFLOW_RUN_KINDS.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid workflow run kind: ${JSON.stringify(value)}. Expected one of: ${WORKFLOW_RUN_KINDS.join(", ")}.`,
+  })
 }
 
-const WORKFLOW_RUN_STATUSES: WorkflowRunStatus[] = ["running", "paused", "stopping", "completed", "failed"]
+const WORKFLOW_RUN_STATUSES: WorkflowRunStatus[] = ["queued", "running", "paused", "stopping", "completed", "failed"]
 
 function isWorkflowRunStatus(value: unknown): value is WorkflowRunStatus {
   return typeof value === "string" && WORKFLOW_RUN_STATUSES.includes(value as WorkflowRunStatus)
@@ -511,7 +612,10 @@ function isWorkflowRunStatus(value: unknown): value is WorkflowRunStatus {
 
 function asWorkflowRunStatus(value: unknown): WorkflowRunStatus {
   if (isWorkflowRunStatus(value)) return value
-  throw new Error(`Invalid workflow run status: ${JSON.stringify(value)}. Expected one of: ${WORKFLOW_RUN_STATUSES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid workflow run status: ${JSON.stringify(value)}. Expected one of: ${WORKFLOW_RUN_STATUSES.join(", ")}.`,
+  })
 }
 
 const PI_SESSION_STATUSES: PiSessionStatus[] = ["starting", "active", "paused", "completed", "failed", "aborted"]
@@ -522,7 +626,10 @@ function isPiSessionStatus(value: unknown): value is PiSessionStatus {
 
 function asPiSessionStatus(value: unknown): PiSessionStatus {
   if (isPiSessionStatus(value)) return value
-  throw new Error(`Invalid Pi session status: ${JSON.stringify(value)}. Expected one of: ${PI_SESSION_STATUSES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid Pi session status: ${JSON.stringify(value)}. Expected one of: ${PI_SESSION_STATUSES.join(", ")}.`,
+  })
 }
 
 const TASK_GROUP_STATUSES: TaskGroup["status"][] = ["active", "completed", "archived"]
@@ -533,7 +640,10 @@ export function isTaskGroupStatus(value: unknown): value is TaskGroup["status"] 
 
 function asTaskGroupStatus(value: unknown): TaskGroup["status"] {
   if (isTaskGroupStatus(value)) return value
-  throw new Error(`Invalid task group status: ${JSON.stringify(value)}. Expected one of: ${TASK_GROUP_STATUSES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid task group status: ${JSON.stringify(value)}. Expected one of: ${TASK_GROUP_STATUSES.join(", ")}.`,
+  })
 }
 
 export function isValidHexColor(value: unknown): value is string {
@@ -592,7 +702,10 @@ function isMessageType(value: unknown): value is MessageType {
 
 function asMessageType(value: unknown): MessageType {
   if (isMessageType(value)) return value
-  throw new Error(`Invalid message type: ${JSON.stringify(value)}. Expected one of: ${MESSAGE_TYPES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid message type: ${JSON.stringify(value)}. Expected one of: ${MESSAGE_TYPES.join(", ")}.`,
+  })
 }
 
 function pickString(...values: unknown[]): string | null {
@@ -602,43 +715,161 @@ function pickString(...values: unknown[]): string | null {
   return null
 }
 
-const SECONDS_IN_DAY = 86400
+// ============================================================================
+// Effect-wrapped validation helpers
+// These wrap the synchronous validation functions in Effect for composability.
+// They preserve the same error semantics (DatabaseError tagged errors).
+// ============================================================================
 
-// Query result row interfaces for type-safe database access
-interface TokenCostRow {
-  total_tokens: number | null
-  total_cost: number | null
-}
+export const asThinkingLevelEffect = (value: unknown): Effect.Effect<ThinkingLevel, DatabaseError> =>
+  Effect.try({
+    try: () => asThinkingLevel(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating thinking level: ${String(error)}`,
+      cause: error,
+    }),
+  })
 
-interface CountRow {
-  cnt: number | null
-}
+export const asTaskStatusEffect = (value: unknown): Effect.Effect<TaskStatus, DatabaseError> =>
+  Effect.try({
+    try: () => asTaskStatus(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating task status: ${String(error)}`,
+      cause: error,
+    }),
+  })
 
-interface AvgReviewsRow {
-  avg_reviews: number | null
-}
+export const asExecutionPhaseEffect = (value: unknown): Effect.Effect<ExecutionPhase, DatabaseError> =>
+  Effect.try({
+    try: () => asExecutionPhase(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating execution phase: ${String(error)}`,
+      cause: error,
+    }),
+  })
 
-interface ModelUsageRow {
-  session_kind: string
-  model: string
-  cnt: number | null
-}
+export const asRunExecutionPhaseEffect = (value: unknown): Effect.Effect<RunExecutionPhase, DatabaseError> =>
+  Effect.try({
+    try: () => asRunExecutionPhase(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating run execution phase: ${String(error)}`,
+      cause: error,
+    }),
+  })
 
-interface AvgDurationRow {
-  avg_duration: number | null
-}
+export const asExecutionStrategyEffect = (value: unknown): Effect.Effect<ExecutionStrategy, DatabaseError> =>
+  Effect.try({
+    try: () => asExecutionStrategy(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating execution strategy: ${String(error)}`,
+      cause: error,
+    }),
+  })
 
-interface HourlyUsageRow {
-  hour_bucket: number
-  tokens: number | null
-  cost: number | null
-}
+export const asBestOfNSubstageEffect = (value: unknown): Effect.Effect<Task["bestOfNSubstage"], DatabaseError> =>
+  Effect.try({
+    try: () => asBestOfNSubstage(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating best-of-n substage: ${String(error)}`,
+      cause: error,
+    }),
+  })
 
-interface DailyUsageRow {
-  date_str: string
-  tokens: number | null
-  cost: number | null
-}
+export const asWorkflowRunKindEffect = (value: unknown): Effect.Effect<WorkflowRunKind, DatabaseError> =>
+  Effect.try({
+    try: () => asWorkflowRunKind(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating workflow run kind: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asWorkflowRunStatusEffect = (value: unknown): Effect.Effect<WorkflowRunStatus, DatabaseError> =>
+  Effect.try({
+    try: () => asWorkflowRunStatus(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating workflow run status: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asPiSessionStatusEffect = (value: unknown): Effect.Effect<PiSessionStatus, DatabaseError> =>
+  Effect.try({
+    try: () => asPiSessionStatus(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating Pi session status: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asPiSessionKindEffect = (value: unknown): Effect.Effect<PiWorkflowSession["sessionKind"], DatabaseError> =>
+  Effect.try({
+    try: () => asPiSessionKind(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating Pi session kind: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asTaskGroupStatusEffect = (value: unknown): Effect.Effect<TaskGroup["status"], DatabaseError> =>
+  Effect.try({
+    try: () => asTaskGroupStatus(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating task group status: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asMessageTypeEffect = (value: unknown): Effect.Effect<MessageType, DatabaseError> =>
+  Effect.try({
+    try: () => asMessageType(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating message type: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asSessionMessageRoleEffect = (value: unknown): Effect.Effect<SessionMessage["role"], DatabaseError> =>
+  Effect.try({
+    try: () => asSessionMessageRole(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating session message role: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const asAutoDeployConditionOrNullEffect = (value: unknown): Effect.Effect<AutoDeployCondition | null, DatabaseError> =>
+  Effect.try({
+    try: () => asAutoDeployConditionOrNull(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating auto deploy condition: ${String(error)}`,
+      cause: error,
+    }),
+  })
+
+export const normalizeBooleanEffect = (value: unknown): Effect.Effect<boolean, DatabaseError> =>
+  Effect.try({
+    try: () => normalizeBoolean(value),
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error normalizing boolean: ${String(error)}`,
+      cause: error,
+    }),
+  })
 
 const SESSION_MESSAGE_SELECT = `
   SELECT
@@ -649,13 +880,8 @@ const SESSION_MESSAGE_SELECT = `
   LEFT JOIN workflow_sessions ws ON ws.id = sm.session_id
 `
 
-function parseJSON<T>(value: unknown): T | null {
-  if (typeof value !== "string" || value.length === 0) return null
-  return JSON.parse(value) as T
-}
-
 function rowToTask(row: Record<string, unknown>): Task {
-  const bestOfNConfigRaw = parseJSON<Record<string, unknown>>(row.best_of_n_config)
+  const bestOfNConfigRaw = parseJSON<BestOfNConfig>(row.best_of_n_config)
 
   return {
     id: String(row.id),
@@ -669,6 +895,8 @@ function rowToTask(row: Record<string, unknown>): Task {
     autoApprovePlan: Number(row.auto_approve_plan ?? 0) === 1,
     review: Number(row.review ?? 1) === 1,
     autoCommit: Number(row.auto_commit ?? 1) === 1,
+    autoDeploy: Number(row.auto_deploy ?? 0) === 1,
+    autoDeployCondition: asAutoDeployConditionOrNull(row.auto_deploy_condition),
     deleteWorktree: Number(row.delete_worktree ?? 1) === 1,
     status: asTaskStatus(row.status),
     requirements: parseJSON<string[]>(row.requirements) ?? [],
@@ -702,6 +930,45 @@ function rowToTask(row: Record<string, unknown>): Task {
     containerImage: row.container_image ? String(row.container_image) : undefined,
     codeStyleReview: Number(row.code_style_review ?? 0) === 1,
     groupId: row.group_id ? String(row.group_id) : undefined,
+    selfHealStatus:
+      row.self_heal_status === "investigating"
+        ? "investigating"
+        : row.self_heal_status === "recovering"
+          ? "recovering"
+          : "idle",
+    selfHealMessage: row.self_heal_message ? String(row.self_heal_message) : null,
+    selfHealReportId: row.self_heal_report_id ? String(row.self_heal_report_id) : null,
+  }
+}
+
+function rowToSelfHealReport(row: Record<string, unknown>): SelfHealReport {
+  return {
+    id: String(row.id),
+    runId: String(row.run_id),
+    taskId: String(row.task_id),
+    taskStatus: asTaskStatus(row.task_status),
+    errorMessage: row.error_message ? String(row.error_message) : null,
+    diagnosticsSummary: String(row.diagnostics_summary ?? ""),
+    rootCauses: parseJSON<string[]>(row.root_causes_json) ?? [],
+    proposedSolution: String(row.proposed_solution ?? ""),
+    implementationPlan: parseJSON<string[]>(row.implementation_plan_json) ?? [],
+    recoverable: Number(row.recoverable ?? 0) === 1,
+    recommendedAction: row.recommended_action === "restart_task" ? "restart_task" : "keep_failed",
+    actionRationale: String(row.action_rationale ?? ""),
+    sourceMode:
+      row.source_mode === "local"
+        ? "local"
+        : row.source_mode === "github_clone"
+          ? "github_clone"
+          : "github_metadata_only",
+    sourcePath: row.source_path ? String(row.source_path) : null,
+    githubUrl: String(row.github_url ?? ""),
+    tauroborosVersion: String(row.tauroboros_version ?? ""),
+    dbPath: String(row.db_path ?? ""),
+    dbSchemaJson: parseJSON<Record<string, unknown>>(row.db_schema_json) ?? {},
+    rawResponse: String(row.raw_response ?? ""),
+    createdAt: Number(row.created_at ?? 0),
+    updatedAt: Number(row.updated_at ?? 0),
   }
 }
 
@@ -782,6 +1049,8 @@ function rowToWorkflowRun(row: Record<string, unknown>): WorkflowRun {
     archivedAt: row.archived_at === null || row.archived_at === undefined ? null : Number(row.archived_at),
     color: row.color ? String(row.color) : "#888888",
     groupId: row.group_id ? String(row.group_id) : undefined,
+    queuedTaskCount: undefined,
+    executingTaskCount: undefined,
   }
 }
 
@@ -804,7 +1073,10 @@ function isPiSessionKind(value: unknown): value is PiWorkflowSession["sessionKin
 
 function asPiSessionKind(value: unknown): PiWorkflowSession["sessionKind"] {
   if (isPiSessionKind(value)) return value
-  throw new Error(`Invalid Pi session kind: ${JSON.stringify(value)}. Expected one of: ${PI_SESSION_KINDS.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid Pi session kind: ${JSON.stringify(value)}. Expected one of: ${PI_SESSION_KINDS.join(", ")}.`,
+  })
 }
 
 const SESSION_MESSAGE_ROLES: SessionMessage["role"][] = ["system", "user", "assistant", "tool"]
@@ -815,7 +1087,10 @@ function isSessionMessageRole(value: unknown): value is SessionMessage["role"] {
 
 function asSessionMessageRole(value: unknown): SessionMessage["role"] {
   if (isSessionMessageRole(value)) return value
-  throw new Error(`Invalid session message role: ${JSON.stringify(value)}. Expected one of: ${SESSION_MESSAGE_ROLES.join(", ")}.`)
+  throw new DatabaseError({
+    operation: "validation",
+    message: `Invalid session message role: ${JSON.stringify(value)}. Expected one of: ${SESSION_MESSAGE_ROLES.join(", ")}.`,
+  })
 }
 
 function rowToWorkflowSession(row: Record<string, unknown>): PiWorkflowSession {
@@ -1078,590 +1353,13 @@ When suggesting packages, categorize them appropriately:
 
 Be conversational but focused. Don't overwhelm with technical details unless asked. Use clear, concise explanations.`
 
-const MIGRATIONS: Migration[] = [
-  {
-    version: 1,
-    description: "Initial Pi workflow storage schema",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        idx INTEGER NOT NULL DEFAULT 0,
-        prompt TEXT NOT NULL,
-        branch TEXT NOT NULL DEFAULT '',
-        plan_model TEXT NOT NULL DEFAULT 'default',
-        execution_model TEXT NOT NULL DEFAULT 'default',
-        planmode INTEGER NOT NULL DEFAULT 0,
-        auto_approve_plan INTEGER NOT NULL DEFAULT 0,
-        review INTEGER NOT NULL DEFAULT 1,
-        auto_commit INTEGER NOT NULL DEFAULT 1,
-        delete_worktree INTEGER NOT NULL DEFAULT 1,
-        status TEXT NOT NULL DEFAULT 'backlog',
-        requirements TEXT NOT NULL DEFAULT '[]',
-        agent_output TEXT NOT NULL DEFAULT '',
-        review_count INTEGER NOT NULL DEFAULT 0,
-        json_parse_retry_count INTEGER NOT NULL DEFAULT 0,
-        session_id TEXT,
-        session_url TEXT,
-        worktree_dir TEXT,
-        error_message TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        completed_at INTEGER,
-        thinking_level TEXT NOT NULL DEFAULT 'default',
-        execution_phase TEXT NOT NULL DEFAULT 'not_started',
-        awaiting_plan_approval INTEGER NOT NULL DEFAULT 0,
-        plan_revision_count INTEGER NOT NULL DEFAULT 0,
-        execution_strategy TEXT NOT NULL DEFAULT 'standard',
-        best_of_n_config TEXT,
-        best_of_n_substage TEXT NOT NULL DEFAULT 'idle',
-        skip_permission_asking INTEGER NOT NULL DEFAULT 1,
-        max_review_runs_override INTEGER,
-        smart_repair_hints TEXT,
-        review_activity TEXT NOT NULL DEFAULT 'idle',
-        is_archived INTEGER NOT NULL DEFAULT 0,
-        archived_at INTEGER
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);`,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_idx ON tasks(idx);`,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_status_idx ON tasks(status, idx);`,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_execution_strategy ON tasks(execution_strategy);`,
-      `
-      CREATE TABLE IF NOT EXISTS workflow_runs (
-        id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'running',
-        display_name TEXT NOT NULL DEFAULT '',
-        target_task_id TEXT,
-        task_order_json TEXT NOT NULL DEFAULT '[]',
-        current_task_id TEXT,
-        current_task_index INTEGER NOT NULL DEFAULT 0,
-        pause_requested INTEGER NOT NULL DEFAULT 0,
-        stop_requested INTEGER NOT NULL DEFAULT 0,
-        error_message TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        started_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        finished_at INTEGER,
-        is_archived INTEGER NOT NULL DEFAULT 0,
-        archived_at INTEGER,
-        color TEXT NOT NULL DEFAULT '#888888'
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);`,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_runs_current_task_id ON workflow_runs(current_task_id);`,
-      `
-      CREATE TABLE IF NOT EXISTS workflow_sessions (
-        id TEXT PRIMARY KEY,
-        task_id TEXT,
-        task_run_id TEXT,
-        session_kind TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'starting',
-        cwd TEXT NOT NULL,
-        worktree_dir TEXT,
-        branch TEXT,
-        pi_session_id TEXT,
-        pi_session_file TEXT,
-        process_pid INTEGER,
-        model TEXT NOT NULL DEFAULT 'default',
-        thinking_level TEXT NOT NULL DEFAULT 'default',
-        started_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        finished_at INTEGER,
-        exit_code INTEGER,
-        exit_signal TEXT,
-        error_message TEXT,
-        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE SET NULL
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_task_id ON workflow_sessions(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_status ON workflow_sessions(status);`,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_task_status ON workflow_sessions(task_id, status);`,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_pi_session ON workflow_sessions(pi_session_id);`,
-      `
-      CREATE TABLE IF NOT EXISTS session_messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        message_id TEXT,
-        session_id TEXT NOT NULL,
-        task_id TEXT,
-        task_run_id TEXT,
-        timestamp INTEGER NOT NULL,
-        role TEXT NOT NULL,
-        message_type TEXT NOT NULL,
-        content_json TEXT NOT NULL,
-        model_provider TEXT,
-        model_id TEXT,
-        agent_name TEXT,
-        prompt_tokens INTEGER,
-        completion_tokens INTEGER,
-        total_tokens INTEGER,
-        tool_name TEXT,
-        tool_args_json TEXT,
-        tool_result_json TEXT,
-        tool_status TEXT,
-        edit_diff TEXT,
-        edit_file_path TEXT,
-        session_status TEXT,
-        workflow_phase TEXT,
-        raw_event_json TEXT,
-        FOREIGN KEY(session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE,
-        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE SET NULL
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_session_messages_session_id ON session_messages(session_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_session_messages_task_id ON session_messages(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_session_messages_timestamp ON session_messages(timestamp);`,
-      `CREATE INDEX IF NOT EXISTS idx_session_messages_session_timestamp ON session_messages(session_id, timestamp);`,
-      `
-      CREATE TABLE IF NOT EXISTS options (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      )
-      `,
-      `
-      CREATE TABLE IF NOT EXISTS prompt_templates (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        key TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '',
-        template_text TEXT NOT NULL,
-        variables_json TEXT NOT NULL DEFAULT '[]',
-        is_active INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_prompt_templates_key ON prompt_templates(key);`,
-      `CREATE INDEX IF NOT EXISTS idx_prompt_templates_active ON prompt_templates(is_active);`,
-      `
-      CREATE TABLE IF NOT EXISTS prompt_template_versions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        prompt_template_id INTEGER NOT NULL,
-        version INTEGER NOT NULL,
-        template_text TEXT NOT NULL,
-        variables_json TEXT NOT NULL DEFAULT '[]',
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        FOREIGN KEY(prompt_template_id) REFERENCES prompt_templates(id) ON DELETE CASCADE,
-        UNIQUE(prompt_template_id, version)
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_prompt_template_versions_template_id ON prompt_template_versions(prompt_template_id);`,
-    ],
-  },
-  {
-    version: 2,
-    description: "Add task_runs and task_candidates for best-of-n APIs",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS task_runs (
-        id TEXT PRIMARY KEY,
-        task_id TEXT NOT NULL,
-        phase TEXT NOT NULL,
-        slot_index INTEGER NOT NULL DEFAULT 0,
-        attempt_index INTEGER NOT NULL DEFAULT 0,
-        model TEXT NOT NULL,
-        task_suffix TEXT,
-        status TEXT NOT NULL DEFAULT 'pending',
-        session_id TEXT,
-        session_url TEXT,
-        worktree_dir TEXT,
-        summary TEXT,
-        error_message TEXT,
-        candidate_id TEXT,
-        metadata_json TEXT NOT NULL DEFAULT '{}',
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        completed_at INTEGER,
-        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_task_runs_task_id ON task_runs(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_runs_phase ON task_runs(phase);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_runs_status ON task_runs(status);`,
-      `
-      CREATE TABLE IF NOT EXISTS task_candidates (
-        id TEXT PRIMARY KEY,
-        task_id TEXT NOT NULL,
-        worker_run_id TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'available',
-        changed_files_json TEXT NOT NULL DEFAULT '[]',
-        diff_stats_json TEXT NOT NULL DEFAULT '{}',
-        verification_json TEXT NOT NULL DEFAULT '{}',
-        summary TEXT,
-        error_message TEXT,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-        FOREIGN KEY(worker_run_id) REFERENCES task_runs(id) ON DELETE CASCADE
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_task_candidates_task_id ON task_candidates(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_candidates_worker_run_id ON task_candidates(worker_run_id);`,
-    ],
-  },
-  {
-    version: 3,
-    description: "Rebuild session_messages into pi-native event schema",
-    statements: [
-      `
-      CREATE TABLE session_messages_v3 (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        seq INTEGER NOT NULL,
-        message_id TEXT,
-        session_id TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        role TEXT NOT NULL,
-        event_name TEXT,
-        message_type TEXT NOT NULL,
-        content_json TEXT NOT NULL,
-        model_provider TEXT,
-        model_id TEXT,
-        agent_name TEXT,
-        prompt_tokens INTEGER,
-        completion_tokens INTEGER,
-        cache_read_tokens INTEGER,
-        cache_write_tokens INTEGER,
-        total_tokens INTEGER,
-        cost_json TEXT,
-        cost_total REAL,
-        tool_call_id TEXT,
-        tool_name TEXT,
-        tool_args_json TEXT,
-        tool_result_json TEXT,
-        tool_status TEXT,
-        edit_diff TEXT,
-        edit_file_path TEXT,
-        session_status TEXT,
-        workflow_phase TEXT,
-        raw_event_json TEXT,
-        FOREIGN KEY(session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE,
-        UNIQUE(session_id, seq)
-      )
-      `,
-      `
-      INSERT INTO session_messages_v3 (
-        id,
-        seq,
-        message_id,
-        session_id,
-        timestamp,
-        role,
-        event_name,
-        message_type,
-        content_json,
-        model_provider,
-        model_id,
-        agent_name,
-        prompt_tokens,
-        completion_tokens,
-        cache_read_tokens,
-        cache_write_tokens,
-        total_tokens,
-        cost_json,
-        cost_total,
-        tool_call_id,
-        tool_name,
-        tool_args_json,
-        tool_result_json,
-        tool_status,
-        edit_diff,
-        edit_file_path,
-        session_status,
-        workflow_phase,
-        raw_event_json
-      )
-      SELECT
-        id,
-        ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY timestamp ASC, id ASC),
-        message_id,
-        session_id,
-        timestamp,
-        role,
-        NULL,
-        message_type,
-        content_json,
-        model_provider,
-        model_id,
-        agent_name,
-        prompt_tokens,
-        completion_tokens,
-        NULL,
-        NULL,
-        total_tokens,
-        NULL,
-        NULL,
-        NULL,
-        tool_name,
-        tool_args_json,
-        tool_result_json,
-        tool_status,
-        edit_diff,
-        edit_file_path,
-        session_status,
-        workflow_phase,
-        raw_event_json
-      FROM session_messages
-      `,
-      `DROP TABLE session_messages;`,
-      `ALTER TABLE session_messages_v3 RENAME TO session_messages;`,
-      `CREATE INDEX idx_session_messages_session_id ON session_messages(session_id);`,
-      `CREATE INDEX idx_session_messages_timestamp ON session_messages(timestamp);`,
-      `CREATE INDEX idx_session_messages_session_timestamp ON session_messages(session_id, timestamp);`,
-      `CREATE INDEX idx_session_messages_session_seq ON session_messages(session_id, seq);`,
-      `CREATE INDEX idx_session_messages_event_name ON session_messages(event_name);`,
-      `CREATE INDEX idx_session_messages_tool_call_id ON session_messages(tool_call_id);`,
-    ],
-  },
-  {
-    version: 4,
-    description: "Add planning_prompts table for customizable planning agent system prompt",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS planning_prompts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        key TEXT UNIQUE NOT NULL DEFAULT 'default',
-        name TEXT NOT NULL DEFAULT 'Default Planning Prompt',
-        description TEXT NOT NULL DEFAULT 'System prompt for the planning assistant agent',
-        prompt_text TEXT NOT NULL,
-        is_active INTEGER NOT NULL DEFAULT 1,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_planning_prompts_key ON planning_prompts(key);`,
-      `CREATE INDEX IF NOT EXISTS idx_planning_prompts_active ON planning_prompts(is_active);`,
-      `
-      CREATE TABLE IF NOT EXISTS planning_prompt_versions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        planning_prompt_id INTEGER NOT NULL,
-        version INTEGER NOT NULL,
-        prompt_text TEXT NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        FOREIGN KEY(planning_prompt_id) REFERENCES planning_prompts(id) ON DELETE CASCADE,
-        UNIQUE(planning_prompt_id, version)
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_planning_prompt_versions_prompt_id ON planning_prompt_versions(planning_prompt_id);`,
-    ],
-  },
-  {
-    version: 5,
-    description: "Add container_packages and container_builds tables for customizable container image system",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS container_packages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        category TEXT NOT NULL,
-        version_constraint TEXT,
-        install_order INTEGER DEFAULT 0,
-        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        source TEXT DEFAULT 'manual'
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_container_packages_category ON container_packages(category);`,
-      `CREATE INDEX IF NOT EXISTS idx_container_packages_order ON container_packages(install_order);`,
-      `
-      CREATE TABLE IF NOT EXISTS container_builds (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        status TEXT NOT NULL,
-        started_at INTEGER,
-        completed_at INTEGER,
-        packages_hash TEXT,
-        error_message TEXT,
-        image_tag TEXT
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_container_builds_status ON container_builds(status);`,
-    ],
-  },
-  {
-    version: 6,
-    description: "Add per-model thinking level columns to tasks and options",
-    statements: [
-      // Add per-model thinking level columns to tasks table
-      `ALTER TABLE tasks ADD COLUMN plan_thinking_level TEXT NOT NULL DEFAULT 'default';`,
-      `ALTER TABLE tasks ADD COLUMN execution_thinking_level TEXT NOT NULL DEFAULT 'default';`,
-      // Add per-model thinking level columns to options
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('plan_thinking_level', 'default');`,
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('execution_thinking_level', 'default');`,
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('review_thinking_level', 'default');`,
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('repair_thinking_level', 'default');`,
-    ],
-  },
-  {
-    version: 7,
-    description: "Add paused_session_states table for workflow pause/resume functionality",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS paused_session_states (
-        session_id TEXT PRIMARY KEY,
-        task_id TEXT,
-        task_run_id TEXT,
-        session_kind TEXT NOT NULL,
-        cwd TEXT,
-        worktree_dir TEXT,
-        branch TEXT,
-        model TEXT NOT NULL,
-        thinking_level TEXT NOT NULL,
-        pi_session_id TEXT,
-        pi_session_file TEXT,
-        container_id TEXT,
-        container_image TEXT,
-        paused_at INTEGER NOT NULL,
-        last_prompt TEXT,
-        execution_phase TEXT,
-        context_json TEXT NOT NULL,
-        pause_reason TEXT,
-        FOREIGN KEY (session_id) REFERENCES workflow_sessions(id) ON DELETE CASCADE
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_paused_sessions_task_id ON paused_session_states(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_paused_sessions_session_id ON paused_session_states(session_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_paused_sessions_paused_at ON paused_session_states(paused_at);`,
-    ],
-  },
-  {
-    version: 8,
-    description: "Add paused_run_states table for workflow-level pause state storage",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS paused_run_states (
-        run_id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL,
-        task_order_json TEXT NOT NULL DEFAULT '[]',
-        current_task_index INTEGER NOT NULL DEFAULT 0,
-        current_task_id TEXT,
-        target_task_id TEXT,
-        paused_at INTEGER NOT NULL,
-        execution_phase TEXT NOT NULL DEFAULT 'executing',
-        FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_paused_run_states_run_id ON paused_run_states(run_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_paused_run_states_paused_at ON paused_run_states(paused_at);`,
-    ],
-  },
-  {
-    version: 9,
-    description: "Add workflow_runs_indicators table for tracking model failure metrics",
-    statements: [
-      `
-      CREATE TABLE IF NOT EXISTS workflow_runs_indicators (
-        id TEXT PRIMARY KEY,
-        json_out_fails TEXT NOT NULL DEFAULT '{"json-output-fails":[]}',
-        FOREIGN KEY (id) REFERENCES workflow_sessions(id) ON DELETE CASCADE
-      )
-      `,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_runs_indicators_id ON workflow_runs_indicators(id);`,
-    ],
-  },
-  {
-    version: 10,
-    description: "Add logs column to container_builds for storing build output",
-    statements: [
-      `ALTER TABLE container_builds ADD COLUMN logs TEXT;`,
-    ],
-  },
-  {
-    version: 11,
-    description: "Add container_image column to tasks table for per-task image selection",
-    statements: [
-      `ALTER TABLE tasks ADD COLUMN container_image TEXT;`,
-    ],
-  },
-  {
-    version: 12,
-    description: "Add code style fields to tasks and options tables",
-    statements: [
-      `ALTER TABLE tasks ADD COLUMN code_style_review INTEGER NOT NULL DEFAULT 0;`,
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('code_style_prompt', '');`,
-    ],
-  },
-  {
-    version: 13,
-    description: "Set default values for existing tasks code style fields",
-    statements: [
-      // Ensure all existing tasks have code_style_review = 0 (false)
-      `UPDATE tasks SET code_style_review = 0 WHERE code_style_review IS NULL;`,
-      // Ensure code_style_prompt exists in options with empty string default
-      `INSERT OR REPLACE INTO options (key, value) VALUES ('code_style_prompt', '');`,
-    ],
-  },
-  {
-    version: 25,
-    description: "Add task_groups and task_group_members tables for task grouping feature",
-    statements: [
-      // task_groups table
-      `
-      CREATE TABLE IF NOT EXISTS task_groups (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        color TEXT NOT NULL DEFAULT '#888888',
-        status TEXT NOT NULL DEFAULT 'active',
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        completed_at INTEGER
-      )
-      `,
-      // task_group_members table
-      `
-      CREATE TABLE IF NOT EXISTS task_group_members (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        group_id TEXT NOT NULL,
-        task_id TEXT NOT NULL,
-        idx INTEGER NOT NULL DEFAULT 0,
-        added_at INTEGER NOT NULL DEFAULT (unixepoch()),
-        FOREIGN KEY(group_id) REFERENCES task_groups(id) ON DELETE CASCADE,
-        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-        UNIQUE(group_id, task_id)
-      )
-      `,
-      // Indexes for task_groups
-      `CREATE INDEX IF NOT EXISTS idx_task_groups_status ON task_groups(status);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_groups_name ON task_groups(name);`,
-      // Indexes for task_group_members
-      `CREATE INDEX IF NOT EXISTS idx_task_group_members_group_id ON task_group_members(group_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_group_members_task_id ON task_group_members(task_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_task_group_members_group_idx ON task_group_members(group_id, idx);`,
-      // Add group_id column to tasks table
-      `ALTER TABLE tasks ADD COLUMN group_id TEXT;`,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_group_id ON tasks(group_id);`,
-      // Add group_id column to workflow_runs table
-      `ALTER TABLE workflow_runs ADD COLUMN group_id TEXT;`,
-      `CREATE INDEX IF NOT EXISTS idx_workflow_runs_group_id ON workflow_runs(group_id);`,
-    ],
-  },
-  {
-    version: 26,
-    description: "Migrate telegram_notifications_enabled to telegram_notification_level for granular notification control",
-    statements: [
-      // Migrate existing boolean value to new level format
-      // true -> 'all' (preserve current behavior for users who had notifications enabled)
-      // false -> 'failures' (minimum useful level for users who had notifications disabled)
-      `UPDATE options SET value = 'all' WHERE key = 'telegram_notifications_enabled' AND value = 'true';`,
-      `UPDATE options SET value = 'failures' WHERE key = 'telegram_notifications_enabled' AND value = 'false';`,
-      // Delete the old boolean key after migration
-      `DELETE FROM options WHERE key = 'telegram_notifications_enabled';`,
-    ],
-  },
-  {
-    version: 27,
-    description: "Add indexes for archived tasks queries",
-    statements: [
-      `CREATE INDEX IF NOT EXISTS idx_tasks_is_archived ON tasks(is_archived);`,
-      `CREATE INDEX IF NOT EXISTS idx_tasks_archived_at ON tasks(archived_at);`,
-    ],
-  },
-]
-
 export class PiKanbanDB {
   private readonly db: Database
+  private readonly dbPath: string
   private _taskStatusChangeListener: TaskStatusChangeListener | null = null
 
   constructor(dbPath: string) {
+    this.dbPath = dbPath
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = new Database(dbPath, { create: true })
     // Use WAL mode for better concurrency and performance
@@ -1696,12 +1394,40 @@ export class PiKanbanDB {
     }
   }
 
-  close(): void {
-    this.db.close(false)
-  }
+  
 
   setTaskStatusChangeListener(listener: TaskStatusChangeListener | null): void {
     this._taskStatusChangeListener = listener
+  }
+
+  getDatabasePath(): string {
+    return this.dbPath
+  }
+
+  getSchemaSnapshot(): Record<string, { sql: string; columns: Array<{ name: string; type: string; notNull: boolean; defaultValue: unknown; pk: boolean }> }> {
+    const tables = this.db
+      .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name ASC")
+      .all() as Array<{ name: string; sql: string | null }>
+
+    const snapshot: Record<string, { sql: string; columns: Array<{ name: string; type: string; notNull: boolean; defaultValue: unknown; pk: boolean }> }> = {}
+    for (const table of tables) {
+      const columns = this.db
+        .prepare(`PRAGMA table_info(${table.name})`)
+        .all() as Array<{ name: string; type: string; notnull: number; dflt_value: unknown; pk: number }>
+
+      snapshot[table.name] = {
+        sql: table.sql ?? "",
+        columns: columns.map((column) => ({
+          name: column.name,
+          type: column.type,
+          notNull: column.notnull === 1,
+          defaultValue: column.dflt_value,
+          pk: column.pk === 1,
+        })),
+      }
+    }
+
+    return snapshot
   }
 
   // ---- tasks ----
@@ -1723,21 +1449,18 @@ export class PiKanbanDB {
 
     // Validate and clean requirements before creating
     const rawRequirements = input.requirements ?? []
-    const { cleaned: validatedRequirements, removed } = this.validateAndCleanRequirements(rawRequirements, input.name)
-    if (removed.length > 0) {
-      console.log(`[db] Task "${input.name}" created with invalid dependencies auto-removed: ${removed.join(', ')}`)
-    }
+    const { cleaned: validatedRequirements } = this.validateAndCleanRequirements(rawRequirements, input.name)
 
     this.db
       .prepare(`
         INSERT INTO tasks (
           id, name, idx, prompt, branch, plan_model, execution_model, planmode,
-          auto_approve_plan, review, auto_commit, delete_worktree, status,
+          auto_approve_plan, review, auto_commit, auto_deploy, auto_deploy_condition, delete_worktree, status,
           requirements, agent_output, review_count, created_at, updated_at,
           thinking_level, plan_thinking_level, execution_thinking_level, execution_phase, awaiting_plan_approval, plan_revision_count,
           execution_strategy, best_of_n_config, best_of_n_substage, skip_permission_asking,
           max_review_runs_override, smart_repair_hints, review_activity, is_archived, archived_at, container_image, code_style_review
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         taskId,
@@ -1751,9 +1474,13 @@ export class PiKanbanDB {
         input.autoApprovePlan ? 1 : 0,
         input.review !== false ? 1 : 0,
         input.autoCommit !== false ? 1 : 0,
+        input.autoDeploy === true ? 1 : 0,
+        input.autoDeployCondition ?? null,
         input.deleteWorktree !== false ? 1 : 0,
         input.status ?? "backlog",
         JSON.stringify(validatedRequirements),
+        "",
+        0,
         now,
         now,
         input.thinkingLevel ?? "default",
@@ -1769,6 +1496,8 @@ export class PiKanbanDB {
         input.maxReviewRunsOverride ?? null,
         input.smartRepairHints ?? null,
         input.reviewActivity ?? "idle",
+        0,
+        null,
         input.containerImage ?? null,
         input.codeStyleReview === true ? 1 : 0,
       )
@@ -1827,16 +1556,21 @@ export class PiKanbanDB {
       sets.push("auto_commit = ?")
       values.push(input.autoCommit ? 1 : 0)
     }
+    if (input.autoDeploy !== undefined) {
+      sets.push("auto_deploy = ?")
+      values.push(input.autoDeploy ? 1 : 0)
+    }
+    if (input.autoDeployCondition !== undefined) {
+      sets.push("auto_deploy_condition = ?")
+      values.push(input.autoDeployCondition)
+    }
     if (input.deleteWorktree !== undefined) {
       sets.push("delete_worktree = ?")
       values.push(input.deleteWorktree ? 1 : 0)
     }
     if (input.requirements !== undefined) {
       // Validate and clean requirements
-      const { cleaned, removed } = this.validateAndCleanRequirements(input.requirements, currentTask?.name)
-      if (removed.length > 0) {
-        console.log(`[db] Task "${currentTask?.name}" updated with invalid dependencies auto-removed: ${removed.join(', ')}`)
-      }
+      const { cleaned } = this.validateAndCleanRequirements(input.requirements, currentTask?.name)
       sets.push("requirements = ?")
       values.push(JSON.stringify(cleaned))
     }
@@ -1940,6 +1674,18 @@ export class PiKanbanDB {
       sets.push("code_style_review = ?")
       values.push(input.codeStyleReview ? 1 : 0)
     }
+    if (input.selfHealStatus !== undefined) {
+      sets.push("self_heal_status = ?")
+      values.push(input.selfHealStatus)
+    }
+    if (input.selfHealMessage !== undefined) {
+      sets.push("self_heal_message = ?")
+      values.push(input.selfHealMessage)
+    }
+    if (input.selfHealReportId !== undefined) {
+      sets.push("self_heal_report_id = ?")
+      values.push(input.selfHealReportId)
+    }
 
     if (sets.length === 0) return this.getTask(id)
 
@@ -1974,10 +1720,6 @@ export class PiKanbanDB {
       } else {
         removed.push(reqId)
       }
-    }
-
-    if (removed.length > 0) {
-      console.log(`[db] Removed invalid dependencies from task "${taskName ?? 'unknown'}": ${removed.join(', ')}`)
     }
 
     return { cleaned, removed }
@@ -2081,10 +1823,11 @@ export class PiKanbanDB {
   }
 
   getActiveWorkflowRunForTask(taskId: string): WorkflowRun | null {
-    const row = this.db
-      .prepare("SELECT * FROM workflow_runs WHERE current_task_id = ? AND status IN ('running', 'stopping') ORDER BY started_at ASC LIMIT 1")
-      .get(taskId) as Record<string, unknown> | null
-    return row ? rowToWorkflowRun(row) : null
+    const runs = this.getWorkflowRuns()
+    return runs.find((run) =>
+      (run.status === "queued" || run.status === "running" || run.status === "stopping" || run.status === "paused")
+      && run.taskOrder.includes(taskId)
+    ) ?? null
   }
 
   // ---- task runs / candidates ----
@@ -2283,7 +2026,7 @@ export class PiKanbanDB {
     selectedCandidates: number
   } {
     const task = this.getTask(taskId)
-    if (!task) throw new Error("Task not found")
+    if (!task) throw new DatabaseError({ operation: "getBestOfNSummary", message: "Task not found" })
 
     const workersTotal = this.db.prepare("SELECT COUNT(*) AS cnt FROM task_runs WHERE task_id = ? AND phase = 'worker'").get(taskId) as { cnt: number }
     const workersDone = this.db.prepare("SELECT COUNT(*) AS cnt FROM task_runs WHERE task_id = ? AND phase = 'worker' AND status = 'done'").get(taskId) as { cnt: number }
@@ -2321,7 +2064,7 @@ export class PiKanbanDB {
   // ---- workflow runs ----
 
   getNextRunColor(): string {
-    const rows = this.db.prepare("SELECT color FROM workflow_runs WHERE is_archived = 0 AND status IN ('running', 'stopping', 'paused')").all() as Record<string, unknown>[]
+    const rows = this.db.prepare("SELECT color FROM workflow_runs WHERE is_archived = 0 AND status IN ('queued', 'running', 'stopping', 'paused')").all() as Record<string, unknown>[]
     const usedColors = rows.map((row) => row.color).filter((c): c is string => typeof c === "string" && c !== "#888888")
     return pickRunColor(usedColors)
   }
@@ -2342,7 +2085,7 @@ export class PiKanbanDB {
       .run(
         input.id,
         input.kind,
-        input.status ?? "running",
+        input.status ?? "queued",
         input.displayName ?? "",
         input.targetTaskId ?? null,
         JSON.stringify(input.taskOrder ?? []),
@@ -2368,8 +2111,70 @@ export class PiKanbanDB {
   }
 
   getWorkflowRuns(): WorkflowRun[] {
-    const rows = this.db.prepare("SELECT * FROM workflow_runs WHERE is_archived = 0 ORDER BY started_at DESC, created_at DESC").all() as Record<string, unknown>[]
+    const rows = this.db.prepare("SELECT * FROM workflow_runs WHERE is_archived = 0 ORDER BY created_at DESC, started_at DESC").all() as Record<string, unknown>[]
     return rows.map(rowToWorkflowRun)
+  }
+
+  createSelfHealReport(input: CreateSelfHealReportInput): SelfHealReport {
+    const now = nowUnix()
+    const id = input.id ?? randomUUID().slice(0, 8)
+    const createdAt = input.createdAt ?? now
+
+    this.db
+      .prepare(`
+        INSERT INTO self_heal_reports (
+          id, run_id, task_id, task_status, error_message,
+          diagnostics_summary, root_causes_json, proposed_solution, implementation_plan_json,
+          recoverable, recommended_action, action_rationale,
+          source_mode, source_path, github_url, tauroboros_version,
+          db_path, db_schema_json, raw_response,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        input.runId,
+        input.taskId,
+        input.taskStatus,
+        input.errorMessage ?? null,
+        input.diagnosticsSummary,
+        JSON.stringify(input.rootCauses),
+        input.proposedSolution,
+        JSON.stringify(input.implementationPlan),
+        input.recoverable ? 1 : 0,
+        input.recommendedAction,
+        input.actionRationale,
+        input.sourceMode,
+        input.sourcePath ?? null,
+        input.githubUrl,
+        input.tauroborosVersion,
+        input.dbPath,
+        JSON.stringify(input.dbSchemaJson),
+        input.rawResponse,
+        createdAt,
+        now,
+      )
+
+    return this.getSelfHealReport(id) as SelfHealReport
+  }
+
+  getSelfHealReport(id: string): SelfHealReport | null {
+    const row = this.db.prepare("SELECT * FROM self_heal_reports WHERE id = ?").get(id) as Record<string, unknown> | null
+    return row ? rowToSelfHealReport(row) : null
+  }
+
+  getSelfHealReportsForRun(runId: string): SelfHealReport[] {
+    const rows = this.db
+      .prepare("SELECT * FROM self_heal_reports WHERE run_id = ? ORDER BY created_at DESC")
+      .all(runId) as Record<string, unknown>[]
+    return rows.map(rowToSelfHealReport)
+  }
+
+  countSelfHealReportsForTaskInRun(runId: string, taskId: string): number {
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS cnt FROM self_heal_reports WHERE run_id = ? AND task_id = ?")
+      .get(runId, taskId) as { cnt: number }
+    return Number(row?.cnt ?? 0)
   }
 
   // ---- Archived Tasks ----
@@ -2377,7 +2182,7 @@ export class PiKanbanDB {
   getArchivedTasks(): Task[] {
     const stmt = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 1 ORDER BY archived_at DESC")
     const rows = stmt.all() as unknown[]
-    if (!Array.isArray(rows)) throw new Error("getArchivedTasks: expected array result from database")
+    if (!Array.isArray(rows)) throw new DatabaseError({ operation: "getArchivedTasks", message: "getArchivedTasks: expected array result from database" })
     return rows.map((r) => rowToTask(r as Record<string, unknown>))
   }
 
@@ -2395,29 +2200,29 @@ export class PiKanbanDB {
       `SELECT * FROM tasks WHERE id IN (${placeholders}) AND is_archived = 1 ORDER BY archived_at DESC`
     )
     const rows = stmt.all(...run.taskOrder) as unknown[]
-    if (!Array.isArray(rows)) throw new Error("getArchivedTasksByRun: expected array result from database")
+    if (!Array.isArray(rows)) throw new DatabaseError({ operation: "getArchivedTasksByRun", message: "getArchivedTasksByRun: expected array result from database" })
     return rows.map((r) => rowToTask(r as Record<string, unknown>))
   }
 
   getWorkflowRunsWithArchivedTasks(): WorkflowRun[] {
     const runsStmt = this.db.prepare("SELECT * FROM workflow_runs ORDER BY finished_at DESC, created_at DESC")
     const runsResult = runsStmt.all() as unknown[]
-    if (!Array.isArray(runsResult)) throw new Error("getWorkflowRunsWithArchivedTasks: expected array result from database")
+    if (!Array.isArray(runsResult)) throw new DatabaseError({ operation: "getWorkflowRunsWithArchivedTasks", message: "getWorkflowRunsWithArchivedTasks: expected array result from database" })
 
     const runsWithArchived: WorkflowRun[] = []
 
     for (const row of runsResult) {
       const runRow = row as Record<string, unknown>
-      const taskOrder = parseJSON<string[]>(runRow.task_order_json, [])
+      const taskOrder = parseJSON<string[]>(runRow.task_order_json) ?? []
       if (taskOrder.length === 0) continue
 
       const placeholders = taskOrder.map(() => "?").join(",")
       const countStmt = this.db.prepare(`SELECT COUNT(*) as cnt FROM tasks WHERE id IN (${placeholders}) AND is_archived = 1`)
       const countResult = countStmt.get(...taskOrder) as unknown
-      if (countResult === null || typeof countResult !== "object") throw new Error("getWorkflowRunsWithArchivedTasks: expected object result for count query")
+      if (countResult === null || typeof countResult !== "object") throw new DatabaseError({ operation: "getWorkflowRunsWithArchivedTasks", message: "getWorkflowRunsWithArchivedTasks: expected object result for count query" })
       const countRow = countResult as Record<string, unknown>
       const cnt = typeof countRow.cnt === "number" ? countRow.cnt : Number(countRow.cnt)
-      if (Number.isNaN(cnt)) throw new Error("getWorkflowRunsWithArchivedTasks: invalid count result from database")
+      if (Number.isNaN(cnt)) throw new DatabaseError({ operation: "getWorkflowRunsWithArchivedTasks", message: "getWorkflowRunsWithArchivedTasks: invalid count result from database" })
 
       if (cnt > 0) {
         runsWithArchived.push(rowToWorkflowRun(runRow))
@@ -2443,7 +2248,7 @@ export class PiKanbanDB {
 
     hasRunningWorkflows(): boolean {
     const row = this.db.prepare(
-      "SELECT COUNT(*) as count FROM workflow_runs WHERE is_archived = 0 AND status IN ('running', 'stopping')"
+      "SELECT COUNT(*) as count FROM workflow_runs WHERE is_archived = 0 AND status IN ('queued', 'running', 'stopping', 'paused')"
     ).get() as { count: number }
     return row.count > 0
   }
@@ -2723,7 +2528,7 @@ export class PiKanbanDB {
         const timestamp = projected?.timestamp
           ?? (row.timestamp === null || row.timestamp === undefined ? nowUnix() : Number(row.timestamp))
 
-        update.run(
+        const updateArgs: (string | number | null)[] = [
           seq,
           projected?.messageId ?? (row.message_id ? String(row.message_id) : null),
           timestamp,
@@ -2739,27 +2544,26 @@ export class PiKanbanDB {
           projected?.cacheReadTokens ?? (row.cache_read_tokens === null || row.cache_read_tokens === undefined ? null : Number(row.cache_read_tokens)),
           projected?.cacheWriteTokens ?? (row.cache_write_tokens === null || row.cache_write_tokens === undefined ? null : Number(row.cache_write_tokens)),
           projected?.totalTokens ?? (row.total_tokens === null || row.total_tokens === undefined ? null : Number(row.total_tokens)),
-          projected?.costJson ? JSON.stringify(projected.costJson) : row.cost_json ?? null,
+          projected?.costJson ? JSON.stringify(projected.costJson) : (row.cost_json as string | null) ?? null,
           projected?.costTotal ?? (row.cost_total === null || row.cost_total === undefined ? null : Number(row.cost_total)),
           projected?.toolCallId ?? (row.tool_call_id ? String(row.tool_call_id) : null),
           projected?.toolName ?? (row.tool_name ? String(row.tool_name) : null),
-          projected?.toolArgsJson ? JSON.stringify(projected.toolArgsJson) : row.tool_args_json ?? null,
-          projected?.toolResultJson ? JSON.stringify(projected.toolResultJson) : row.tool_result_json ?? null,
+          projected?.toolArgsJson ? JSON.stringify(projected.toolArgsJson) : (row.tool_args_json as string | null) ?? null,
+          projected?.toolResultJson ? JSON.stringify(projected.toolResultJson) : (row.tool_result_json as string | null) ?? null,
           projected?.toolStatus ?? (row.tool_status ? String(row.tool_status) : null),
           projected?.editDiff ?? (row.edit_diff ? String(row.edit_diff) : null),
           projected?.editFilePath ?? (row.edit_file_path ? String(row.edit_file_path) : null),
           projected?.sessionStatus ?? (row.session_status ? String(row.session_status) : null),
           projected?.workflowPhase ?? (row.workflow_phase ? String(row.workflow_phase) : null),
-          rawEventJson ? JSON.stringify(rawEventJson) : row.raw_event_json ?? null,
+          rawEventJson ? JSON.stringify(rawEventJson) : (row.raw_event_json as string | null) ?? null,
           Number(row.id),
-        )
+        ]
+        update.run(...(updateArgs as Parameters<typeof update.run>))
       }
     })
 
     tx(rows)
   }
-
-  // ---- normalized session messages ----
 
   createSessionMessage(input: CreateSessionMessageInput): SessionMessage {
     const seq = input.seq ?? this.getNextSessionMessageSeq(input.sessionId)
@@ -3268,7 +3072,7 @@ export class PiKanbanDB {
   renderPrompt(key: PromptTemplateKey | string, variables: Record<string, unknown> = {}): PromptRenderResult {
     const template = this.getPromptTemplate(key)
     if (!template) {
-      throw new Error(`Prompt template not found or inactive: ${key}`)
+      throw new DatabaseError({ operation: "renderPrompt", message: `Prompt template not found or inactive: ${key}` })
     }
 
     const renderedText = renderTemplate(template, variables)
@@ -3278,7 +3082,7 @@ export class PiKanbanDB {
 
   renderPromptAndCapture(input: PromptRenderAndCaptureInput): PromptRenderResult {
     if (input.key == null) {
-      throw new Error(`Prompt render key is required but was not provided`)
+      throw new DatabaseError({ operation: "renderPromptAndCapture", message: "Prompt render key is required but was not provided" })
     }
     return this.renderPrompt(input.key, input.variables)
   }
@@ -3293,7 +3097,7 @@ export class PiKanbanDB {
     if (value === "all" || value === "failures" || value === "done_and_failures" || value === "workflow_done_and_failures") {
       return value
     }
-    throw new Error(`Invalid telegram notification level: ${JSON.stringify(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"`)
+    throw new DatabaseError({ operation: "validation", message: `Invalid telegram notification level: ${JSON.stringify(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"` })
   }
 
   private getNextTaskIndex(): number {
@@ -3785,10 +3589,8 @@ export class PiKanbanDB {
 
     if (!row) return null
 
-    const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(
-      row.context_json,
-      { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
-    )
+    const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(row.context_json)
+      ?? { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
 
     return {
       sessionId: String(row.session_id),
@@ -3843,10 +3645,8 @@ export class PiKanbanDB {
     const rows = this.db.prepare("SELECT * FROM paused_session_states ORDER BY paused_at DESC").all() as Record<string, unknown>[]
 
     return rows.map((row) => {
-      const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(
-        row.context_json,
-        { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
-      )
+      const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(row.context_json)
+        ?? { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
 
       return {
         sessionId: String(row.session_id),
@@ -3900,10 +3700,8 @@ export class PiKanbanDB {
       .all(taskId) as Record<string, unknown>[]
 
     return rows.map((row) => {
-      const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(
-        row.context_json,
-        { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
-      )
+      const context = parseJSON<{ agentOutputSnapshot: string | null; pendingToolCalls: unknown[] | null; reviewCount: number }>(row.context_json)
+        ?? { agentOutputSnapshot: null, pendingToolCalls: null, reviewCount: 0 }
 
       return {
         sessionId: String(row.session_id),
@@ -3946,7 +3744,7 @@ export class PiKanbanDB {
     currentTaskId: string | null
     targetTaskId: string | null
     pausedAt: number
-    executionPhase: "not_started" | "planning" | "executing" | "reviewing" | "committing"
+    executionPhase: RunExecutionPhase
   }): void {
     this.db.run(
       `INSERT INTO paused_run_states (
@@ -3982,7 +3780,7 @@ export class PiKanbanDB {
     currentTaskId: string | null
     targetTaskId: string | null
     pausedAt: number
-    executionPhase: "not_started" | "planning" | "executing" | "reviewing" | "committing"
+    executionPhase: RunExecutionPhase
   } | null {
     const row = this.db
       .prepare("SELECT * FROM paused_run_states WHERE run_id = ?")
@@ -3998,7 +3796,7 @@ export class PiKanbanDB {
       currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
       targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
       pausedAt: Number(row.paused_at),
-      executionPhase: asExecutionPhase(row.execution_phase),
+      executionPhase: asRunExecutionPhase(row.execution_phase),
     }
   }
 
@@ -4008,8 +3806,8 @@ export class PiKanbanDB {
 
   hasPausedRunState(runId: string): boolean {
     const row = this.db
-      .prepare<{ 1: number }>("SELECT 1 FROM paused_run_states WHERE run_id = ?")
-      .get(runId)
+      .prepare("SELECT 1 FROM paused_run_states WHERE run_id = ?")
+      .get(runId) as { 1: number } | null
     return row !== null
   }
 
@@ -4021,9 +3819,9 @@ export class PiKanbanDB {
     currentTaskId: string | null
     targetTaskId: string | null
     pausedAt: number
-    executionPhase: ExecutionPhase
+    executionPhase: RunExecutionPhase
   }> {
-    const rows = this.db.prepare<unknown[], Record<string, unknown>>("SELECT * FROM paused_run_states ORDER BY paused_at DESC").all()
+    const rows = this.db.prepare("SELECT * FROM paused_run_states ORDER BY paused_at DESC").all() as Record<string, unknown>[]
 
     return rows.map((row) => ({
       runId: String(row.run_id),
@@ -4033,7 +3831,7 @@ export class PiKanbanDB {
       currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
       targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
       pausedAt: Number(row.paused_at),
-      executionPhase: asExecutionPhase(row.execution_phase),
+      executionPhase: asRunExecutionPhase(row.execution_phase),
     }))
   }
 
@@ -4146,15 +3944,15 @@ export class PiKanbanDB {
 
     // Validation
     if (!input.name || input.name.trim().length === 0) {
-      throw new Error("Task group name is required and cannot be empty")
+      throw new DatabaseError({ operation: "createTaskGroup", message: "Task group name is required and cannot be empty" })
     }
     if (input.name.length > 100) {
-      throw new Error("Task group name must be 100 characters or less")
+      throw new DatabaseError({ operation: "createTaskGroup", message: "Task group name must be 100 characters or less" })
     }
 
     const color = input.color ?? '#888888'
     if (color && !/^#[0-9A-Fa-f]{6}$/.test(color)) {
-      throw new Error("Color must be a valid hex color format (e.g., #888888)")
+      throw new DatabaseError({ operation: "createTaskGroup", message: "Color must be a valid hex color format (e.g., #888888)" })
     }
 
     // Validate member task IDs if provided
@@ -4163,10 +3961,17 @@ export class PiKanbanDB {
       for (const taskId of memberTaskIds) {
         const task = this.getTask(taskId)
         if (!task) {
-          throw new Error(`Task with ID "${taskId}" does not exist`)
+          throw new DatabaseError({
+            operation: "createTaskGroup",
+            message: `Task with ID "${taskId}" does not exist`,
+          })
         }
         if (task.groupId && task.groupId !== id) {
-          throw new Error(`Task "${taskId}" is already in another group`)
+          throw new DatabaseError({
+            operation: "createTaskGroup",
+            message: `Task "${taskId}" is already in another group`,
+            code: ErrorCode.TASK_ALREADY_IN_GROUP,
+          })
         }
       }
     }
@@ -4220,7 +4025,10 @@ export class PiKanbanDB {
   updateTaskGroup(id: string, input: UpdateTaskGroupDTO): (TaskGroup & { taskIds: string[] }) | null {
     const group = this.getTaskGroup(id)
     if (!group) {
-      throw new Error(`Task group with ID "${id}" does not exist`)
+      throw new DatabaseError({
+        operation: "updateTaskGroup",
+        message: `Task group with ID "${id}" does not exist`,
+      })
     }
 
     const sets: string[] = []
@@ -4228,10 +4036,10 @@ export class PiKanbanDB {
 
     if (input.name !== undefined) {
       if (!input.name || input.name.trim().length === 0) {
-        throw new Error("Task group name cannot be empty")
+        throw new DatabaseError({ operation: "updateTaskGroup", message: "Task group name cannot be empty" })
       }
       if (input.name.length > 100) {
-        throw new Error("Task group name must be 100 characters or less")
+        throw new DatabaseError({ operation: "updateTaskGroup", message: "Task group name must be 100 characters or less" })
       }
       sets.push("name = ?")
       values.push(input.name.trim())
@@ -4239,7 +4047,7 @@ export class PiKanbanDB {
 
     if (input.color !== undefined) {
       if (!/^#[0-9A-Fa-f]{6}$/.test(input.color)) {
-        throw new Error("Color must be a valid hex color format (e.g., #888888)")
+        throw new DatabaseError({ operation: "updateTaskGroup", message: "Color must be a valid hex color format (e.g., #888888)" })
       }
       sets.push("color = ?")
       values.push(input.color)
@@ -4292,17 +4100,27 @@ export class PiKanbanDB {
 
     const group = this.getTaskGroup(groupId)
     if (!group) {
-      throw new Error(`Task group with ID "${groupId}" does not exist`)
+      throw new DatabaseError({
+        operation: "addTasksToGroup",
+        message: `Task group with ID "${groupId}" does not exist`,
+      })
     }
 
     // Validate all tasks
     for (const taskId of taskIds) {
       const task = this.getTask(taskId)
       if (!task) {
-        throw new Error(`Task with ID "${taskId}" does not exist`)
+        throw new DatabaseError({
+          operation: "addTasksToGroup",
+          message: `Task with ID "${taskId}" does not exist`,
+        })
       }
       if (task.groupId && task.groupId !== groupId) {
-        throw new Error(`Task "${taskId}" is already in another group`)
+        throw new DatabaseError({
+          operation: "addTasksToGroup",
+          message: `Task "${taskId}" is already in another group`,
+          code: ErrorCode.TASK_ALREADY_IN_GROUP,
+        })
       }
     }
 
@@ -4343,7 +4161,10 @@ export class PiKanbanDB {
 
     const group = this.getTaskGroup(groupId)
     if (!group) {
-      throw new Error(`Task group with ID "${groupId}" does not exist`)
+      throw new DatabaseError({
+        operation: "removeTasksFromGroup",
+        message: `Task group with ID "${groupId}" does not exist`,
+      })
     }
 
     const tx = this.db.transaction((ids: string[]) => {
@@ -4388,7 +4209,10 @@ export class PiKanbanDB {
   getTaskGroupMembers(groupId: string): TaskGroupMember[] {
     const group = this.getTaskGroup(groupId)
     if (!group) {
-      throw new Error(`Task group with ID "${groupId}" does not exist`)
+      throw new DatabaseError({
+        operation: "getTaskGroupMembers",
+        message: `Task group with ID "${groupId}" does not exist`,
+      })
     }
 
     const rows = this.db
@@ -4417,7 +4241,10 @@ export class PiKanbanDB {
   getTaskGroupMembership(taskId: string): { groupId: string | null; group?: TaskGroup } {
     const task = this.getTask(taskId)
     if (!task) {
-      throw new Error(`Task with ID "${taskId}" does not exist`)
+      throw new DatabaseError({
+        operation: "getTaskGroupMembership",
+        message: `Task with ID "${taskId}" does not exist`,
+      })
     }
 
     if (!task.groupId) {
@@ -4490,220 +4317,51 @@ export class PiKanbanDB {
     return Number(row.max_idx ?? -1) + 1
   }
 
-  private getTimeRangeBoundary(range: StatsTimeRange): { start: number; previousStart: number } {
-    const now = nowUnix()
-    switch (range) {
-      case "24h":
-        return { start: now - SECONDS_IN_DAY, previousStart: now - 2 * SECONDS_IN_DAY }
-      case "7d":
-        return { start: now - 7 * SECONDS_IN_DAY, previousStart: now - 14 * SECONDS_IN_DAY }
-      case "30d":
-        return { start: now - 30 * SECONDS_IN_DAY, previousStart: now - 60 * SECONDS_IN_DAY }
-      case "lifetime":
-        return { start: 0, previousStart: 0 }
-      default:
-        throw new Error(`Invalid time range: ${JSON.stringify(range)}. Expected "24h", "7d", "30d", or "lifetime".`)
-    }
-  }
-
-  private getSessionKindResponsibility(kind: string): "plan" | "execution" | "review" | "other" {
-    if (kind === "plan" || kind === "plan_revision" || kind === "planning") return "plan"
-    if (kind === "task" || kind === "task_run_worker" || kind === "task_run_final_applier" || kind === "repair") return "execution"
-    if (kind === "task_run_reviewer" || kind === "review_scratch") return "review"
-    return "other"
-  }
 
   getUsageStats(range: StatsTimeRange): UsageStats {
-    const { start, previousStart } = this.getTimeRangeBoundary(range)
-
-    const currentRow = this.db
-      .prepare<unknown[], TokenCostRow>(
-        `
-        SELECT 
-          COALESCE(SUM(total_tokens), 0) AS total_tokens,
-          COALESCE(SUM(cost_total), 0) AS total_cost
-        FROM session_messages
-        WHERE timestamp >= ?
-        `
-      )
-      .get(start)!
-
-    let previousTokens = 0
-    let previousCost = 0
-
-    if (range !== "lifetime" && previousStart > 0) {
-      const previousRow = this.db
-        .prepare<unknown[], TokenCostRow>(
-          `
-          SELECT 
-            COALESCE(SUM(total_tokens), 0) AS total_tokens,
-            COALESCE(SUM(cost_total), 0) AS total_cost
-          FROM session_messages
-          WHERE timestamp >= ? AND timestamp < ?
-          `
-        )
-        .get(previousStart, start)!
-
-      previousTokens = Number(previousRow.total_tokens ?? 0)
-      previousCost = Number(previousRow.total_cost ?? 0)
-    }
-
-    const totalTokens = Number(currentRow.total_tokens ?? 0)
-    const totalCost = Number(currentRow.total_cost ?? 0)
-
-    const tokenChange = previousTokens > 0 ? ((totalTokens - previousTokens) / previousTokens) * 100 : 0
-    const costChange = previousCost > 0 ? ((totalCost - previousCost) / previousCost) * 100 : 0
-
-    return {
-      totalTokens,
-      totalCost,
-      tokenChange: Math.round(tokenChange * 100) / 100,
-      costChange: Math.round(costChange * 100) / 100,
-    }
+    return _getUsageStats(this.db, range)
   }
 
   getTaskStats(): TaskStats {
-    const completedRow = this.db
-      .prepare<unknown[], CountRow>("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'done'")
-      .get()!
-
-    const failedRow = this.db
-      .prepare<unknown[], CountRow>("SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'failed'")
-      .get()!
-
-    const avgReviewsRow = this.db
-      .prepare<unknown[], AvgReviewsRow>(
-        `
-        SELECT COALESCE(AVG(review_count), 0) AS avg_reviews
-        FROM tasks
-        WHERE status = 'done'
-        `
-      )
-      .get()!
-
-    return {
-      completed: Number(completedRow.cnt ?? 0),
-      failed: Number(failedRow.cnt ?? 0),
-      averageReviews: Math.round(Number(avgReviewsRow.avg_reviews ?? 0) * 100) / 100,
-    }
+    return _getTaskStats(this.db)
   }
 
   getModelUsageByResponsibility(): ModelUsageStats {
-    const rows = this.db
-      .prepare<unknown[], ModelUsageRow>(
-        `
-        SELECT 
-          session_kind,
-          model,
-          COUNT(*) AS cnt
-        FROM workflow_sessions
-        WHERE model IS NOT NULL AND model != '' AND model != 'default'
-        GROUP BY session_kind, model
-        `
-      )
-      .all()
-
-    const plan: Array<{ model: string; count: number }> = []
-    const execution: Array<{ model: string; count: number }> = []
-    const review: Array<{ model: string; count: number }> = []
-
-    for (const row of rows) {
-      const responsibility = this.getSessionKindResponsibility(row.session_kind)
-      const entry = { model: row.model, count: Number(row.cnt ?? 0) }
-
-      switch (responsibility) {
-        case "plan":
-          plan.push(entry)
-          break
-        case "execution":
-          execution.push(entry)
-          break
-        case "review":
-          review.push(entry)
-          break
-        case "other":
-          break
-      }
-    }
-
-    const sortByCount = (a: { count: number }, b: { count: number }) => b.count - a.count
-    plan.sort(sortByCount)
-    execution.sort(sortByCount)
-    review.sort(sortByCount)
-
-    return { plan, execution, review }
+    return _getModelUsageByResponsibility(this.db)
   }
 
   getAverageTaskDuration(): number {
-    const row = this.db
-      .prepare<unknown[], AvgDurationRow>(
-        `
-        SELECT 
-          COALESCE(AVG(completed_at - created_at), 0) AS avg_duration
-        FROM tasks
-        WHERE completed_at IS NOT NULL AND created_at IS NOT NULL
-        `
-      )
-      .get()!
-
-    // Convert from seconds to minutes for display
-    const seconds = Number(row.avg_duration ?? 0)
-    return Math.round(seconds / 60)
+    return _getAverageTaskDuration(this.db)
   }
 
   getHourlyUsageTimeSeries(): HourlyUsage[] {
-    const now = nowUnix()
-    const twentyFourHoursAgo = now - SECONDS_IN_DAY
-
-    const rows = this.db
-      .prepare<unknown[], HourlyUsageRow>(
-        `
-        SELECT 
-          (timestamp / 3600) * 3600 AS hour_bucket,
-          COALESCE(SUM(total_tokens), 0) AS tokens,
-          COALESCE(SUM(cost_total), 0) AS cost
-        FROM session_messages
-        WHERE timestamp >= ?
-        GROUP BY hour_bucket
-        ORDER BY hour_bucket ASC
-        `
-      )
-      .all(twentyFourHoursAgo)
-
-    return rows.map((row) => ({
-      hour: new Date(row.hour_bucket * 1000).toISOString(),
-      tokens: Number(row.tokens ?? 0),
-      cost: Number(row.cost ?? 0),
-    }))
+    return _getHourlyUsageTimeSeries(this.db)
   }
 
   getDailyUsageTimeSeries(days: number): DailyUsage[] {
-    const now = nowUnix()
-    const startTime = now - days * SECONDS_IN_DAY
-
-    const rows = this.db
-      .prepare<unknown[], DailyUsageRow>(
-        `
-        SELECT 
-          date(timestamp, 'unixepoch') AS date_str,
-          COALESCE(SUM(total_tokens), 0) AS tokens,
-          COALESCE(SUM(cost_total), 0) AS cost
-        FROM session_messages
-        WHERE timestamp >= ?
-        GROUP BY date_str
-        ORDER BY date_str ASC
-        `
-      )
-      .all(startTime)
-
-    return rows.map((row) => ({
-      date: row.date_str,
-      tokens: Number(row.tokens ?? 0),
-      cost: Number(row.cost ?? 0),
-    }))
+    return _getDailyUsageTimeSeries(this.db, days)
   }
 
 }
+
+// Effect wrapper for telegram notification level validation (mirrors private asTelegramNotificationLevel)
+export const asTelegramNotificationLevelEffect = (value: unknown): Effect.Effect<TelegramNotificationLevel, DatabaseError> =>
+  Effect.try({
+    try: () => {
+      if (value === "all" || value === "failures" || value === "done_and_failures" || value === "workflow_done_and_failures") {
+        return value
+      }
+      throw new DatabaseError({
+        operation: "validation",
+        message: `Invalid telegram notification level: ${JSON.stringify(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"`,
+      })
+    },
+    catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
+      operation: "validation",
+      message: `Unexpected error validating telegram notification level: ${String(error)}`,
+      cause: error,
+    }),
+  })
 
 const CONTAINER_BUILD_STATUSES: ContainerBuild["status"][] = ["pending", "running", "success", "failed", "cancelled"]
 
@@ -4770,3 +4428,4 @@ function rowToTaskGroupMember(row: Record<string, unknown>): TaskGroupMember {
     addedAt: Number(row.added_at ?? 0),
   }
 }
+

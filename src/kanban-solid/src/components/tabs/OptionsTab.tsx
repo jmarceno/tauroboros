@@ -10,7 +10,7 @@ import { HelpButton } from '@/components/common/HelpButton'
 import { ModelPicker } from '@/components/common/ModelPicker'
 import { ThinkingLevelSelect } from '@/components/common/ThinkingLevelSelect'
 import { uiStore } from '@/stores'
-import { optionsApi, referenceApi } from '@/api'
+import { optionsApi, referenceApi, runApiEffect } from '@/api'
 import type { Options, ThinkingLevel, TelegramNotificationLevel } from '@/types'
 import { DEFAULT_CODE_STYLE_PROMPT } from '@/types'
 
@@ -62,13 +62,13 @@ export function OptionsTab() {
   // Queries
   const optionsQuery = createQuery(() => ({
     queryKey: ['options'],
-    queryFn: () => optionsApi.get(),
+    queryFn: () => runApiEffect(optionsApi.get()),
     staleTime: 10000,
   }))
 
   const branchesQuery = createQuery(() => ({
     queryKey: ['branches'],
-    queryFn: () => referenceApi.getBranches(),
+    queryFn: () => runApiEffect(referenceApi.getBranches()),
     staleTime: 60000,
   }))
 
@@ -170,7 +170,7 @@ export function OptionsTab() {
         ...formData(),
         codeStylePrompt: formData().codeStylePrompt?.trim() ? formData().codeStylePrompt : DEFAULT_CODE_STYLE_PROMPT,
       }
-      await optionsApi.update(optionsToSave)
+      await runApiEffect(optionsApi.update(optionsToSave))
       await queryClient.invalidateQueries({ queryKey: ['options'] })
       uiStore.showToast('Options saved successfully', 'success')
     } catch (e) {
@@ -185,7 +185,7 @@ export function OptionsTab() {
     try {
       const opts = await queryClient.fetchQuery({
         queryKey: ['options'],
-        queryFn: () => optionsApi.get(),
+        queryFn: () => runApiEffect(optionsApi.get()),
       })
       if (opts) {
         setFormData({

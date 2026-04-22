@@ -87,6 +87,16 @@ for (const item of itemsToCopy) {
   }
 }
 
+console.log('[PREPARE] Installing Bun dependencies in prepared project...');
+execSync('bun install', { cwd: projectDir, stdio: 'inherit' });
+console.log('[PREPARE] ✓ Bun dependencies installed');
+
+console.log('[PREPARE] Building Kanban frontend assets...');
+const kanbanDir = join(projectDir, 'src/kanban-solid');
+execSync('npm install', { cwd: kanbanDir, stdio: 'inherit' });
+execSync('npm run build', { cwd: kanbanDir, stdio: 'inherit' });
+console.log('[PREPARE] ✓ Kanban frontend assets built');
+
 // Initialize git repo in the temp project (at root, not in subdirectory)
 console.log('[PREPARE] Initializing git repository...');
 execSync('git init', { cwd: projectDir, stdio: 'ignore' });
@@ -171,6 +181,11 @@ if (useMockLLM) {
 
   try {
     const mockLlmServerPath = join(PROJECT_ROOT, 'mock-llm-server');
+    if (!existsSync(join(mockLlmServerPath, 'node_modules'))) {
+      console.log('[PREPARE] Installing mock LLM server dependencies...');
+      execSync('npm install', { cwd: mockLlmServerPath, stdio: 'inherit' });
+      console.log('[PREPARE] ✓ Mock LLM server dependencies installed');
+    }
     await mockServer.start(mockLlmServerPath, { detached: true });
     console.log('[PREPARE] ✓ Mock LLM server started on port 9999');
 

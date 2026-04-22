@@ -4,6 +4,7 @@
  */
 
 import { createSignal, createMemo } from 'solid-js'
+import { Effect } from 'effect'
 import type { WorkflowRun, ControlState } from '@/types'
 import * as api from '@/api'
 
@@ -11,6 +12,7 @@ export function createWorkflowControlStore(
   onStateChange?: (state: ControlState) => void,
   onRunUpdate?: (run: WorkflowRun) => void
 ) {
+  const runApi = api.runApiEffect
   const [currentRunId, setCurrentRunId] = createSignal<string | null>(null)
   const [controlState, setControlState] = createSignal<ControlState>('idle')
   const [isLoading, setIsLoading] = createSignal(false)
@@ -44,7 +46,7 @@ export function createWorkflowControlStore(
   }
 
   const updateStateFromRuns = (runs: WorkflowRun[]) => {
-    const active = runs.find(r => r.status === 'running' || r.status === 'paused')
+    const active = runs.find(r => r.status === 'queued' || r.status === 'running' || r.status === 'paused')
     if (!active) {
       setControlState('idle')
       return
@@ -66,9 +68,12 @@ export function createWorkflowControlStore(
     updateStateFromRuns([run])
   }
 
-  const checkPausedState = async (): Promise<boolean> => {
-    try {
-      const paused = await api.runsApi.getPausedState()
+  const getErrorMessage = (error: unknown, fallback: string) =>
+    error instanceof Error ? error.message : fallback
+
+  const checkPausedStateEffect = () =>
+    api.runsApi.getPausedState().pipe(
+      Effect.map((paused) => {
       const pausedState = paused.state as { runId?: unknown } | null
 
       if (paused.hasPausedRun && pausedState && typeof pausedState.runId === 'string') {
@@ -77,149 +82,182 @@ export function createWorkflowControlStore(
         return true
       }
       return false
-    } catch (e) {
-      return false
-    }
-  }
+      }),
+      Effect.catchAll(() => Effect.succeed(false)),
+    )
 
-  const pause = async (runId?: string): Promise<boolean> => {
+  const checkPausedState = () => runApi(checkPausedStateEffect())
+
+  const pauseEffect = (runId?: string) => {
     const targetId = runId || currentRunId()
     if (!targetId) {
-      setError('No active run to pause')
-      return false
+      return Effect.sync(() => {
+        setError('No active run to pause')
+        return false
+      })
     }
 
-    setIsLoading(true)
-    setError(null)
-    setControlState('pausing')
+    return Effect.sync(() => {
+      setIsLoading(true)
+      setError(null)
+      setControlState('pausing')
+    }).pipe(
+      Effect.flatMap(() => api.runsApi.pause(targetId)),
+      Effect.map((result) => {
+        if (result.success) {
+          setControlState('paused')
+          onStateChange?.('paused')
+          return true
+        }
 
-    try {
-      const result = await api.runsApi.pause(targetId)
-      if (result.success) {
-        setControlState('paused')
-        onStateChange?.('paused')
-        return true
-      } else {
         setError('Failed to pause run')
         setControlState('running')
         return false
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Pause failed')
-      setControlState('running')
-      return false
-    } finally {
-      setIsLoading(false)
-    }
+      }),
+      Effect.catchAll((error) =>
+        Effect.sync(() => {
+          setError(getErrorMessage(error, 'Pause failed'))
+          setControlState('running')
+          return false
+        })
+      ),
+      Effect.ensuring(Effect.sync(() => setIsLoading(false))),
+    )
   }
 
-  const resume = async (runId?: string): Promise<boolean> => {
+  const pause = (runId?: string) => runApi(pauseEffect(runId))
+
+  const resumeEffect = (runId?: string) => {
     const targetId = runId || currentRunId()
     if (!targetId) {
-      setError('No active run to resume')
-      return false
+      return Effect.sync(() => {
+        setError('No active run to resume')
+        return false
+      })
     }
 
-    setIsLoading(true)
-    setError(null)
-    setControlState('resuming')
+    return Effect.sync(() => {
+      setIsLoading(true)
+      setError(null)
+      setControlState('resuming')
+    }).pipe(
+      Effect.flatMap(() => api.runsApi.resume(targetId)),
+      Effect.map((result) => {
+        if (result.success) {
+          setControlState('running')
+          onStateChange?.('running')
+          return true
+        }
 
-    try {
-      const result = await api.runsApi.resume(targetId)
-      if (result.success) {
-        setControlState('running')
-        onStateChange?.('running')
-        return true
-      } else {
         setError('Failed to resume run')
         setControlState('paused')
         return false
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Resume failed')
-      setControlState('paused')
-      return false
-    } finally {
-      setIsLoading(false)
-    }
+      }),
+      Effect.catchAll((error) =>
+        Effect.sync(() => {
+          setError(getErrorMessage(error, 'Resume failed'))
+          setControlState('paused')
+          return false
+        })
+      ),
+      Effect.ensuring(Effect.sync(() => setIsLoading(false))),
+    )
   }
 
-  const stop = async (runId?: string): Promise<boolean> => {
+  const resume = (runId?: string) => runApi(resumeEffect(runId))
+
+  const stopEffect = (runId?: string) => {
     const targetId = runId || currentRunId()
     if (!targetId) {
-      setError('No active run to stop')
-      return false
+      return Effect.sync(() => {
+        setError('No active run to stop')
+        return false
+      })
     }
 
-    setIsLoading(true)
-    setError(null)
+    return Effect.sync(() => {
+      setIsLoading(true)
+      setError(null)
+    }).pipe(
+      Effect.flatMap(() => api.runsApi.stop(targetId)),
+      Effect.map((result) => {
+        if (result.success) {
+          setControlState('idle')
+          setCurrentRunId(null)
+          onStateChange?.('idle')
+          return true
+        }
 
-    try {
-      const result = await api.runsApi.stop(targetId)
-      if (result.success) {
-        setControlState('idle')
-        setCurrentRunId(null)
-        onStateChange?.('idle')
-        return true
-      } else {
         setError('Failed to stop run')
         return false
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Stop failed')
-      return false
-    } finally {
-      setIsLoading(false)
-    }
+      }),
+      Effect.catchAll((error) =>
+        Effect.sync(() => {
+          setError(getErrorMessage(error, 'Stop failed'))
+          return false
+        })
+      ),
+      Effect.ensuring(Effect.sync(() => setIsLoading(false))),
+    )
   }
 
-  const forceStop = async (runId?: string): Promise<boolean> => {
+  const stop = (runId?: string) => runApi(stopEffect(runId))
+
+  const forceStopEffect = (runId?: string) => {
     const targetId = runId || currentRunId()
     if (!targetId) {
-      setError('No active run to stop')
-      return false
+      return Effect.sync(() => {
+        setError('No active run to stop')
+        return false
+      })
     }
 
-    setIsLoading(true)
-    setError(null)
+    return Effect.sync(() => {
+      setIsLoading(true)
+      setError(null)
+    }).pipe(
+      Effect.flatMap(() => api.runsApi.forceStop(targetId)),
+      Effect.map((result) => {
+        if (result.success) {
+          setLastResult({ killed: result.killed, cleaned: result.cleaned })
+          setControlState('idle')
+          setCurrentRunId(null)
+          onStateChange?.('idle')
+          return true
+        }
 
-    try {
-      const result = await api.runsApi.forceStop(targetId)
-      if (result.success) {
-        setLastResult({ killed: result.killed, cleaned: result.cleaned })
-        setControlState('idle')
-        setCurrentRunId(null)
-        onStateChange?.('idle')
-        return true
-      } else {
         setError('Failed to force stop')
         return false
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Force stop failed')
-      return false
-    } finally {
-      setIsLoading(false)
-    }
+      }),
+      Effect.catchAll((error) =>
+        Effect.sync(() => {
+          setError(getErrorMessage(error, 'Force stop failed'))
+          return false
+        })
+      ),
+      Effect.ensuring(Effect.sync(() => setIsLoading(false))),
+    )
   }
+
+  const forceStop = (runId?: string) => runApi(forceStopEffect(runId))
 
   const requestStop = (type: 'graceful' | 'destructive') => {
     setIsConfirmingStop(true)
     setStopType(type)
   }
 
-  const confirmStop = async (runId?: string): Promise<boolean> => {
+  const confirmStop = (runId?: string) => {
     const type = stopType()
     if (!type) {
       setError('No stop type specified')
-      return false
+      return Promise.resolve(false)
     }
 
     if (type === 'graceful') {
-      return await pause(runId)
-    } else {
-      return await forceStop(runId)
+      return runApi(pauseEffect(runId))
     }
+
+    return runApi(forceStopEffect(runId))
   }
 
   const cancelStop = () => {

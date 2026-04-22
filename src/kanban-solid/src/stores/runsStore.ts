@@ -5,7 +5,8 @@
 
 import { createMemo } from 'solid-js'
 import { createQuery, useQueryClient, createMutation } from '@tanstack/solid-query'
-import type { WorkflowRun, Task } from '@/types'
+import { Effect } from 'effect'
+import type { WorkflowRun } from '@/types'
 import * as api from '@/api'
 
 const queryKeys = {
@@ -17,12 +18,12 @@ const queryKeys = {
 
 export function createRunsStore() {
   const queryClient = useQueryClient()
-  const setTasksRef = (_tasks: Task[]) => {}
+  const runApi = api.runApiEffect
 
   // Query
   const runsQuery = createQuery(() => ({
     queryKey: queryKeys.runs.lists(),
-    queryFn: () => api.runsApi.getAll(),
+    queryFn: () => runApi(api.runsApi.getAll()),
     staleTime: 3000,
   }))
 
@@ -32,7 +33,7 @@ export function createRunsStore() {
 
   // Derived state
   const activeRuns = createMemo(() => 
-    runs().filter(r => r.status === 'running' || r.status === 'paused')
+    runs().filter(r => r.status === 'queued' || r.status === 'running' || r.status === 'paused')
   )
 
   const staleRuns = createMemo(() => 
@@ -54,7 +55,7 @@ export function createRunsStore() {
 
   const isTaskMutationLocked = (taskId: string): boolean => {
     const run = getTaskRunLock(taskId)
-    return run !== null && run.status === 'running'
+    return run !== null && (run.status === 'queued' || run.status === 'running')
   }
 
   const getTaskRunColor = (taskId: string): string | null => {
@@ -70,15 +71,13 @@ export function createRunsStore() {
 
   const getRunProgressLabel = (run: WorkflowRun): string => {
     if (!run) return ''
-    const current = run.currentTaskIndex + 1
+    const current = Math.min(run.currentTaskIndex + (run.currentTaskId ? 1 : 0), run.taskOrder.length)
     const total = run.taskOrder.length
     return `${current}/${total}`
   }
 
   // Actions
-  const loadRuns = async () => {
-    await queryClient.invalidateQueries({ queryKey: queryKeys.runs.lists() })
-  }
+  const loadRuns = () => runApi(Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.runs.lists() })))
 
   const updateRunFromWebSocket = (run: WorkflowRun) => {
     queryClient.setQueryData(queryKeys.runs.lists(), (old: WorkflowRun[] | undefined) => {
@@ -102,40 +101,40 @@ export function createRunsStore() {
 
   // Mutations
   const pauseRunMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.runsApi.pause(id),
-    onSuccess: () => loadRuns(),
+    mutationFn: (id: string) => runApi(api.runsApi.pause(id)),
+    onSuccess: () => {
+      void loadRuns()
+    },
   }))
 
   const resumeRunMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.runsApi.resume(id),
-    onSuccess: () => loadRuns(),
+    mutationFn: (id: string) => runApi(api.runsApi.resume(id)),
+    onSuccess: () => {
+      void loadRuns()
+    },
   }))
 
   const stopRunMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.runsApi.stop(id),
-    onSuccess: () => loadRuns(),
+    mutationFn: (id: string) => runApi(api.runsApi.stop(id)),
+    onSuccess: () => {
+      void loadRuns()
+    },
   }))
 
   const archiveRunMutation = createMutation(() => ({
-    mutationFn: (id: string) => api.runsApi.archive(id),
-    onSuccess: () => loadRuns(),
+    mutationFn: (id: string) => runApi(api.runsApi.archive(id)),
+    onSuccess: () => {
+      void loadRuns()
+    },
   }))
 
-  const pauseRun = async (id: string) => {
-    return await pauseRunMutation.mutateAsync(id)
-  }
+  const pauseRun = (id: string) => pauseRunMutation.mutateAsync(id)
 
-  const resumeRun = async (id: string) => {
-    return await resumeRunMutation.mutateAsync(id)
-  }
+  const resumeRun = (id: string) => resumeRunMutation.mutateAsync(id)
 
-  const stopRun = async (id: string) => {
-    return await stopRunMutation.mutateAsync(id)
-  }
+  const stopRun = (id: string) => stopRunMutation.mutateAsync(id)
 
-  const archiveRun = async (id: string) => {
-    await archiveRunMutation.mutateAsync(id)
-  }
+  const archiveRun = (id: string) => archiveRunMutation.mutateAsync(id)
 
   return {
     runs,
@@ -145,7 +144,6 @@ export function createRunsStore() {
     consumedRunSlots,
     isLoading,
     error,
-    setTasksRef,
     isStaleRun,
     getTaskRunLock,
     isTaskMutationLocked,

@@ -14,6 +14,8 @@ function createMockTask(status: Task["status"], groupId?: string | null): Task {
     autoApprovePlan: false,
     review: false,
     autoCommit: false,
+    autoDeploy: false,
+    autoDeployCondition: null,
     deleteWorktree: false,
     skipPermissionAsking: false,
     requirements: [],

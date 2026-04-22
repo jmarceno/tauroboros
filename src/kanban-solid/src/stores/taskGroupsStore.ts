@@ -18,6 +18,7 @@ const queryKeys = {
 
 export function createTaskGroupsStore() {
   const queryClient = useQueryClient()
+  const runApi = api.runApiEffect
   const [activeGroupId, setActiveGroupId] = createSignal<string | null>(null)
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
@@ -25,7 +26,7 @@ export function createTaskGroupsStore() {
   // Query
   const groupsQuery = createQuery(() => ({
     queryKey: queryKeys.groups.lists(),
-    queryFn: () => api.taskGroupsApi.getAll(),
+    queryFn: () => runApi(api.taskGroupsApi.getAll()),
     staleTime: 5000,
   }))
 
@@ -76,7 +77,7 @@ export function createTaskGroupsStore() {
   // Mutations
   const createGroupMutation = createMutation(() => ({
     mutationFn: ({ taskIds, name }: { taskIds: string[]; name?: string }) => 
-      api.taskGroupsApi.create({ taskIds, name }),
+      runApi(api.taskGroupsApi.create({ taskIds, name })),
     onSuccess: (group, variables) => {
       queryClient.setQueryData(['tasks', 'list'], (old: Array<{ id: string; groupId?: string }> | undefined) => {
         if (!old) {
@@ -96,14 +97,14 @@ export function createTaskGroupsStore() {
 
   const updateGroupMutation = createMutation(() => ({
     mutationFn: ({ groupId, updates }: { groupId: string; updates: Partial<TaskGroup> }) => 
-      api.taskGroupsApi.update(groupId, updates),
+      runApi(api.taskGroupsApi.update(groupId, updates)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.lists() })
     },
   }))
 
   const deleteGroupMutation = createMutation(() => ({
-    mutationFn: (groupId: string) => api.taskGroupsApi.delete(groupId),
+    mutationFn: (groupId: string) => runApi(api.taskGroupsApi.delete(groupId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.lists() })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
@@ -115,7 +116,7 @@ export function createTaskGroupsStore() {
 
   const addTasksToGroupMutation = createMutation(() => ({
     mutationFn: ({ groupId, taskIds }: { groupId: string; taskIds: string[] }) => 
-      api.taskGroupsApi.addTasks(groupId, taskIds),
+      runApi(api.taskGroupsApi.addTasks(groupId, taskIds)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.lists() })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
@@ -124,7 +125,7 @@ export function createTaskGroupsStore() {
 
   const removeTasksFromGroupMutation = createMutation(() => ({
     mutationFn: ({ groupId, taskIds }: { groupId: string; taskIds: string[] }) => 
-      api.taskGroupsApi.removeTasks(groupId, taskIds),
+      runApi(api.taskGroupsApi.removeTasks(groupId, taskIds)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.lists() })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
@@ -132,7 +133,7 @@ export function createTaskGroupsStore() {
   }))
 
   const startGroupMutation = createMutation(() => ({
-    mutationFn: (groupId: string) => api.taskGroupsApi.start(groupId),
+    mutationFn: (groupId: string) => runApi(api.taskGroupsApi.start(groupId)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.groups.lists() })
     },
@@ -163,9 +164,7 @@ export function createTaskGroupsStore() {
     return await startGroupMutation.mutateAsync(groupId)
   }
 
-  const loadGroupDetails = async (groupId: string): Promise<TaskGroupWithTasks> => {
-    return await api.taskGroupsApi.getById(groupId)
-  }
+  const loadGroupDetails = (groupId: string) => runApi(api.taskGroupsApi.getById(groupId))
 
   return {
     groups,

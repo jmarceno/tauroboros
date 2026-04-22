@@ -71,7 +71,6 @@ describe("Code Style Orchestrator Integration", () => {
   })
 
   afterEach(() => {
-    db.close()
     for (const dir of tempDirs.splice(0, tempDirs.length)) {
       rmSync(dir, { recursive: true, force: true })
     }

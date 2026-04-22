@@ -4,6 +4,7 @@
  */
 
 import { createSignal, createMemo } from 'solid-js'
+import { sleepMs } from '@/api'
 import type { Toast, LogEntry, ToastVariant } from '@/types'
 
 // Modal Types
@@ -16,6 +17,7 @@ function createToastStore() {
   const [toasts, setToasts] = createSignal<Toast[]>([])
   const [logs, setLogs] = createSignal<LogEntry[]>([])
   let nextToastId = 1
+  const toastTokens = new Map<number, number>()
 
   const showToast = (message: string, variant: ToastVariant = 'info', duration = 3000): number => {
     const id = nextToastId++
@@ -27,12 +29,21 @@ function createToastStore() {
     const ts = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
     setLogs(prev => [...prev, { ts, message, variant }])
     
-    // Auto-remove
-    setTimeout(() => removeToast(id), duration)
+    // Auto-remove with token guard so manual removal cancels pending timer work.
+    const token = (toastTokens.get(id) ?? 0) + 1
+    toastTokens.set(id, token)
+    sleepMs(duration)
+      .then(() => {
+        if (toastTokens.get(id) === token) {
+          removeToast(id)
+        }
+      })
+      .catch(() => undefined)
     return id
   }
 
   const removeToast = (id: number) => {
+    toastTokens.delete(id)
     setToasts(prev => prev.filter(t => t.id !== id))
   }
 
@@ -60,7 +71,6 @@ function createToastStore() {
 function createModalStore() {
   const [activeModal, setActiveModal] = createSignal<ModalType | null>(null)
   const [modalData, setModalData] = createSignal<Record<string, unknown>>({})
-  const [showContainerConfigModal, setShowContainerConfigModal] = createSignal(false)
   const [showStopConfirmModal, setShowStopConfirmModal] = createSignal(false)
   const [showConfirmModal, setShowConfirmModal] = createSignal(false)
   const [confirmModalAction, setConfirmModalAction] = createSignal<'delete' | 'archive' | 'convertToTemplate'>('delete')
@@ -72,7 +82,6 @@ function createModalStore() {
 
   const isAnyModalOpen = createMemo(() => 
     activeModal() !== null || 
-    showContainerConfigModal() || 
     showStopConfirmModal() || 
     showConfirmModal() || 
     showGroupCreateModal() || 
@@ -81,7 +90,8 @@ function createModalStore() {
 
   const openModal = (name: string, data?: Record<string, unknown>) => {
     if (!VALID_MODALS.has(name as ModalType)) {
-      throw new Error(`Invalid modal name: ${name}. Expected one of: ${Array.from(VALID_MODALS).join(', ')}`)
+      // Invalid modal name - ignore silently
+      return
     }
     setActiveModal(name as ModalType)
     setModalData(data ?? {})
@@ -99,10 +109,6 @@ function createModalStore() {
     }
     if (showRestoreModal()) {
       setShowRestoreModal(false)
-      return true
-    }
-    if (showContainerConfigModal()) {
-      setShowContainerConfigModal(false)
       return true
     }
     if (showStopConfirmModal()) {
@@ -125,8 +131,6 @@ function createModalStore() {
     activeModal,
     modalData,
     setModalData,
-    showContainerConfigModal,
-    setShowContainerConfigModal,
     showStopConfirmModal,
     setShowStopConfirmModal,
     showConfirmModal,

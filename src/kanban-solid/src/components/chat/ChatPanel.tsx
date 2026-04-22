@@ -127,8 +127,8 @@ export function ChatPanel(props: ChatPanelProps) {
       if (messagesContainerRef) {
         messagesContainerRef.scrollTop = messagesContainerRef.scrollHeight
       }
-    } catch (e) {
-      console.error('Failed to send message:', e)
+    } catch {
+      // Message send failed - error handled by store
     }
   }
 
@@ -147,8 +147,8 @@ export function ChatPanel(props: ChatPanelProps) {
     try {
       await props.onChangeModel(pendingModel(), pendingThinkingLevel())
       setShowModelMenu(false)
-    } catch (e) {
-      console.error('Failed to change model:', e)
+    } catch {
+      // Model change failed - error handled by store
     } finally {
       setIsChangingModel(false)
     }

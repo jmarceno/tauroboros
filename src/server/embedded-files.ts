@@ -8,8 +8,10 @@
 
 import { existsSync } from "fs"
 import * as generatedAssetsModule from "./generated-assets.ts"
+import type { GeneratedAssetsModule } from "./generated-assets.ts"
 import { dirname, join, basename } from "path"
 import { fileURLToPath } from "url"
+import { Effect, Schema } from "effect"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -18,10 +20,20 @@ export const KANBAN_DIST = join(__dirname, "..", "kanban-solid", "dist")
 export const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
 // Static import ensures Bun compile captures generated assets at compile time.
-const generatedAssets =
+const generatedAssets: GeneratedAssetsModule | null =
   typeof generatedAssetsModule.getEmbeddedAsset === "function"
-    ? generatedAssetsModule
+    ? (generatedAssetsModule as unknown as GeneratedAssetsModule)
     : null
+
+/**
+ * Error for embedded file operations
+ */
+export class EmbeddedFileError extends Schema.TaggedError<EmbeddedFileError>()("EmbeddedFileError", {
+  operation: Schema.String,
+  message: Schema.String,
+  path: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 /**
  * Extract asset key from full path
@@ -43,77 +55,134 @@ function extractAssetKey(path: string): string | null {
 }
 
 /**
- * Read a file using either embedded assets or filesystem
+ * Read a file using either embedded assets or filesystem (Effect version)
  */
-export async function readEmbeddedFile(path: string): Promise<Uint8Array> {
-  // First try embedded assets if available
-  if (generatedAssets) {
-    const key = extractAssetKey(path)
-    if (key) {
-      const asset = generatedAssets.getEmbeddedAsset(key)
-      if (asset) {
-        if (asset.isText) {
-          return new TextEncoder().encode(asset.data)
-        } else {
-          // Decode base64
-          const binary = atob(asset.data)
-          const bytes = new Uint8Array(binary.length)
-          for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i)
+export function readEmbeddedFileEffect(path: string): Effect.Effect<Uint8Array, EmbeddedFileError> {
+  return Effect.gen(function* () {
+    // First try embedded assets if available
+    if (generatedAssets) {
+      const key = extractAssetKey(path)
+      if (key) {
+        const asset = generatedAssets.getEmbeddedAsset(key)
+        if (asset) {
+          if (asset.isText) {
+            return new TextEncoder().encode(asset.data)
+          } else {
+            // Decode base64
+            const binary = atob(asset.data)
+            const bytes = new Uint8Array(binary.length)
+            for (let i = 0; i < binary.length; i++) {
+              bytes[i] = binary.charCodeAt(i)
+            }
+            return bytes
           }
-          return bytes
         }
       }
     }
-  }
 
-  // Fallback to filesystem using Bun.file()
-  const file = Bun.file(path)
-  if (!(await file.exists())) {
-    throw new Error(`File not found: ${path}`)
-  }
-  return await file.bytes()
+    // Fallback to filesystem using Bun.file()
+    const file = Bun.file(path)
+    const exists = yield* Effect.tryPromise({
+      try: () => file.exists(),
+      catch: (cause) => new EmbeddedFileError({
+        operation: "readEmbeddedFile",
+        message: `Failed to check file existence: ${path}`,
+        path,
+        cause,
+      }),
+    })
+
+    if (!exists) {
+      return yield* new EmbeddedFileError({
+        operation: "readEmbeddedFile",
+        message: `File not found: ${path}`,
+        path,
+      })
+    }
+
+    return yield* Effect.tryPromise({
+      try: () => file.bytes(),
+      catch: (cause) => new EmbeddedFileError({
+        operation: "readEmbeddedFile",
+        message: `Failed to read file: ${path}`,
+        path,
+        cause,
+      }),
+    })
+  })
 }
 
 /**
- * Read a file as text using either embedded assets or filesystem
+ * Read a file as text using either embedded assets or filesystem (Effect version)
  */
-export async function readEmbeddedText(path: string): Promise<string> {
-  // First try embedded assets if available
-  if (generatedAssets) {
-    const key = extractAssetKey(path)
-    if (key) {
-      const asset = generatedAssets.getEmbeddedAsset(key)
-      if (asset?.isText) {
-        return asset.data
+export function readEmbeddedTextEffect(path: string): Effect.Effect<string, EmbeddedFileError> {
+  return Effect.gen(function* () {
+    // First try embedded assets if available
+    if (generatedAssets) {
+      const key = extractAssetKey(path)
+      if (key) {
+        const asset = generatedAssets.getEmbeddedAsset(key)
+        if (asset?.isText) {
+          return asset.data
+        }
       }
     }
-  }
 
-  // Fallback to filesystem using Bun.file()
-  const file = Bun.file(path)
-  if (!(await file.exists())) {
-    throw new Error(`File not found: ${path}`)
-  }
-  return await file.text()
+    // Fallback to filesystem using Bun.file()
+    const file = Bun.file(path)
+    const exists = yield* Effect.tryPromise({
+      try: () => file.exists(),
+      catch: (cause) => new EmbeddedFileError({
+        operation: "readEmbeddedText",
+        message: `Failed to check file existence: ${path}`,
+        path,
+        cause,
+      }),
+    })
+
+    if (!exists) {
+      return yield* new EmbeddedFileError({
+        operation: "readEmbeddedText",
+        message: `File not found: ${path}`,
+        path,
+      })
+    }
+
+    return yield* Effect.tryPromise({
+      try: () => file.text(),
+      catch: (cause) => new EmbeddedFileError({
+        operation: "readEmbeddedText",
+        message: `Failed to read file: ${path}`,
+        path,
+        cause,
+      }),
+    })
+  })
 }
 
 /**
  * Check if an embedded file exists (in memory or filesystem)
  */
-export async function embeddedFileExists(path: string): Promise<boolean> {
-  // First check embedded assets
-  if (generatedAssets) {
-    const key = extractAssetKey(path)
-    if (key) {
-      const asset = generatedAssets.getEmbeddedAsset(key)
-      if (asset) return true
-    }
-  }
+export function embeddedFileExistsEffect(path: string): Effect.Effect<boolean, EmbeddedFileError> {
+  return Effect.tryPromise({
+    try: async () => {
+      if (generatedAssets) {
+        const key = extractAssetKey(path)
+        if (key) {
+          const asset = generatedAssets.getEmbeddedAsset(key)
+          if (asset) return true
+        }
+      }
 
-  // Fallback to filesystem
-  const file = Bun.file(path)
-  return await file.exists()
+      return await Bun.file(path).exists()
+    },
+    catch: (cause) => new EmbeddedFileError({
+      operation: "embeddedFileExists",
+      message: `Failed to check embedded file existence: ${path}`,
+      path,
+      cause,
+    }),
+  })
 }
 
 /**
@@ -142,18 +211,37 @@ export function getContentType(filename: string): string {
 /**
  * Get index.html content
  */
-export async function getIndexHtml(): Promise<string | undefined> {
-  // First try embedded assets
-  if (generatedAssets) {
-    return generatedAssets.getIndexHtml()
-  }
+export function getIndexHtmlEffect(): Effect.Effect<string | undefined, EmbeddedFileError> {
+  return Effect.gen(function* () {
+    if (generatedAssets) {
+      return generatedAssets.getIndexHtml()
+    }
 
-  // Fallback to filesystem
-  try {
-    return await Bun.file(KANBAN_INDEX).text()
-  } catch {
-    return undefined
-  }
+    const file = Bun.file(KANBAN_INDEX)
+    const exists = yield* Effect.tryPromise({
+      try: () => file.exists(),
+      catch: (cause) => new EmbeddedFileError({
+        operation: "getIndexHtml",
+        message: "Failed to check index.html existence",
+        path: KANBAN_INDEX,
+        cause,
+      }),
+    })
+
+    if (!exists) {
+      return undefined
+    }
+
+    return yield* Effect.tryPromise({
+      try: () => file.text(),
+      catch: (cause) => new EmbeddedFileError({
+        operation: "getIndexHtml",
+        message: "Failed to load index.html",
+        path: KANBAN_INDEX,
+        cause,
+      }),
+    })
+  })
 }
 
 /**

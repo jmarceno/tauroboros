@@ -4,27 +4,48 @@
  * for user-visible output (e.g., Telegram notifications).
  */
 
+import { Schema } from "effect"
 import { getServerTimezone, getTimezoneAbbreviation } from "./timezone.ts"
 
 /**
+ * Error for date formatting operations
+ */
+export class DateFormatError extends Schema.TaggedError<DateFormatError>()("DateFormatError", {
+  operation: Schema.String,
+  message: Schema.String,
+  input: Schema.optional(Schema.Unknown),
+}) {}
+
+/**
  * Converts a timestamp (Unix epoch in seconds) or Date to a Date object.
- * Throws if input is invalid.
  */
 function toDate(input: number | Date): Date {
   if (input instanceof Date) {
     if (Number.isNaN(input.getTime())) {
-      throw new Error("Invalid date object provided")
+      throw new DateFormatError({
+        operation: "toDate",
+        message: "Invalid date object provided",
+        input,
+      })
     }
     return input
   }
 
   if (typeof input !== "number" || !Number.isFinite(input)) {
-    throw new Error("Timestamp must be a number")
+    throw new DateFormatError({
+      operation: "toDate",
+      message: "Timestamp must be a number",
+      input,
+    })
   }
 
   const date = new Date(input * 1000)
   if (Number.isNaN(date.getTime())) {
-    throw new Error(`Invalid timestamp: ${input}`)
+    throw new DateFormatError({
+      operation: "toDate",
+      message: `Invalid timestamp: ${input}`,
+      input,
+    })
   }
   return date
 }

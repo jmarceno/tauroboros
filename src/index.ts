@@ -1,9 +1,11 @@
 import { resolve } from "path"
 import { existsSync } from "fs"
-import { ensureInfrastructureSettings, saveInfrastructureSettings, type InfrastructureSettings } from "./config/settings.ts"
-import { createPiServer, findProjectRoot } from "./server.ts"
+import { Effect, Schema } from "effect"
+import { ensureSettingsEffect, saveSettingsEffect, type InfrastructureSettings } from "./config/settings.ts"
+import { createPiServerScopedEffect, findProjectRootEffect } from "./server.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
 import { ContainerImageManager } from "./runtime/container-image-manager.ts"
+import { validateContainerSetupEffect } from "./runtime/pi-process-factory.ts"
 import { extractEmbeddedResources } from "./resource-extractor.ts"
 import { BASE_IMAGES } from "./config/base-images.ts"
 
@@ -11,229 +13,242 @@ interface CliArgs {
   native: boolean
 }
 
+type ContainerSetupStatus = {
+  ready: boolean
+  podmanAvailable: boolean
+  imageReady: boolean
+  error?: string
+}
+
+class StartupError extends Schema.TaggedError<StartupError>()("StartupError", {
+  message: Schema.String,
+}) {}
+
 function parseCliArgs(args: string[]): CliArgs {
   return {
     native: args.includes("--native"),
   }
 }
 
-async function checkAndPrepareContainer(projectRoot: string): Promise<{
-  ready: boolean
-  podmanAvailable: boolean
-  imageReady: boolean
-  error?: string
-}> {
-  // Check if podman is available
-  const podmanAvailable = PiContainerManager.isAvailable()
+const checkAndPrepareContainerEffect = Effect.fn("checkAndPrepareContainerEffect")(
+  function* (projectRoot: string) {
+    // Check if podman is available
+    const podmanAvailable = PiContainerManager.isAvailable()
 
-  if (!podmanAvailable) {
-    return {
-      ready: false,
-      podmanAvailable: false,
-      imageReady: false,
-      error: "Podman is not available. Install Podman or run with --native flag to use native mode.",
-    }
-  }
-
-  // Check if image exists
-  const manager = new PiContainerManager()
-  const setupStatus = await manager.validateSetup()
-
-  if (!setupStatus.image) {
-    // Image not found, need to auto-build
-    console.log("[tauroboros] Building container image for first run (this may take a minute)...")
-    const cacheDir = resolve(projectRoot, ".tauroboros")
-    const imageManager = new ContainerImageManager({
-      imageName: BASE_IMAGES.piAgent,
-      imageSource: "dockerfile",
-      dockerfilePath: "docker/pi-agent/Dockerfile",
-      cacheDir,
-      onStatusChange: (event) => {
-        if (event.status === "error") {
-          console.error(`[tauroboros] ${event.message}`)
-
-        }
-      },
-    })
-
-    try {
-      await imageManager.prepare()
-
-      return {
-        ready: true,
-        podmanAvailable: true,
-        imageReady: true,
-      }
-
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-
+    if (!podmanAvailable) {
       return {
         ready: false,
-        podmanAvailable: true,
+        podmanAvailable: false,
         imageReady: false,
-        error: `Failed to build container image: ${message}`,
-      }
-
+        error: "Podman is not available. Install Podman or run with --native flag to use native mode.",
+      } as const satisfies ContainerSetupStatus
     }
-  }
 
-  return {
-    ready: true,
-    podmanAvailable: true,
-    imageReady: true,
-  }
-}
+    // Check if image exists
+    const manager = new PiContainerManager()
+    const setupStatus = yield* manager.validateSetup().pipe(
+      Effect.mapError((cause) => new StartupError({ message: `Failed to validate container setup: ${String(cause)}` })),
+      Effect.map((status) => ({
+        ready: status.podman && status.image,
+        podmanAvailable: status.podman,
+        imageReady: status.image,
+        error: status.errors.length > 0 ? status.errors.join("\n") : undefined,
+      }) as const satisfies ContainerSetupStatus),
+    )
 
-async function createInitialSettings(
+    if (!setupStatus.imageReady) {
+      // Image not found, need to auto-build
+      yield* Effect.logInfo("[tauroboros] Building container image for first run (this may take a minute)...")
+      const cacheDir = resolve(projectRoot, ".tauroboros")
+      const imageManager = new ContainerImageManager({
+        imageName: BASE_IMAGES.piAgent,
+        imageSource: "dockerfile",
+        dockerfilePath: "docker/pi-agent/Dockerfile",
+        cacheDir,
+        onStatusChange: (event) => {
+          if (event.status === "error") {
+            process.stderr.write(`[tauroboros] ${event.message}\n`)
+          }
+        }
+      })
+
+      return yield* imageManager.prepare().pipe(
+        Effect.map(() => ({
+          ready: true,
+          podmanAvailable: true,
+          imageReady: true,
+        } as const satisfies ContainerSetupStatus)),
+        Effect.mapError((error) => {
+          const message = error instanceof Error ? error.message : String(error)
+          return new StartupError({ message: `Failed to build container image: ${message}` })
+        }),
+        Effect.catchTag("StartupError", (error) =>
+          Effect.succeed({
+            ready: false,
+            podmanAvailable: true,
+            imageReady: false,
+            error: error.message,
+          } as const satisfies ContainerSetupStatus),
+        ),
+      )
+    }
+
+    return {
+      ready: true,
+      podmanAvailable: true,
+      imageReady: true,
+    } as const satisfies ContainerSetupStatus
+  },
+)
+
+function createInitialSettings(
   projectRoot: string,
   preferContainer: boolean,
-): Promise<{ settings: InfrastructureSettings; warnings: string[] }> {
-  const result = ensureInfrastructureSettings(projectRoot, { preferContainer })
-
-  return { settings: result.settings, warnings: result.warnings }
+): Effect.Effect<{ settings: InfrastructureSettings; warnings: string[] }, StartupError> {
+  return ensureSettingsEffect(projectRoot, { preferContainer }).pipe(
+    Effect.map((result) => ({ settings: result.settings, warnings: result.warnings })),
+    Effect.mapError((cause) => new StartupError({ message: cause.message })),
+  )
 
 }
 
-export async function main(): Promise<void> {
-  const projectRoot = findProjectRoot()
-  // Extract embedded resources (skills) to .pi/
-  // This works in both binary mode (extracts embedded) and source mode (copies from source)
+const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, args: CliArgs) {
+  const settingsPath = resolve(projectRoot, ".tauroboros", "settings.json")
+  const isFirstStart = !existsSync(settingsPath)
+
+  if (isFirstStart) {
+    if (args.native) {
+      yield* Effect.logInfo("[tauroboros] First run - creating settings with native mode...")
+      return yield* createInitialSettings(projectRoot, false)
+    }
+
+    yield* Effect.logInfo("[tauroboros] First run detected - setting up container mode...")
+    const containerCheck = yield* checkAndPrepareContainerEffect(projectRoot)
+
+    if (!containerCheck.ready) {
+        return yield* new StartupError({ message: `${containerCheck.error}\n[tauroboros] To start in native mode instead, run: bun run start -- --native` })
+    }
+
+    const created = yield* createInitialSettings(projectRoot, true)
+    yield* Effect.logInfo("[tauroboros] Settings created with container mode enabled")
+    return created
+  }
+
+  const result = yield* ensureSettingsEffect(projectRoot).pipe(
+    Effect.mapError((cause) => new StartupError({ message: cause.message })),
+  )
+  const settings = result.settings
+
+  if (settings.workflow.container.enabled !== false) {
+    yield* Effect.logInfo("[tauroboros] Validating container runtime availability...")
+
+    if (!PiContainerManager.isAvailable()) {
+        return yield* new StartupError({ message: "CRITICAL: Container mode is enabled but Podman is not available.\n[tauroboros] Install Podman or explicitly disable container mode by running with --native flag:\n[tauroboros]   bun run start -- --native\n[tauroboros] Or set workflow.container.enabled to false in .tauroboros/settings.json" })
+    }
+
+    const containerRuntime = yield* validateContainerSetupEffect(new PiContainerManager(), settings).pipe(
+      Effect.mapError((cause) => new StartupError({ message: `Failed to validate container runtime: ${cause.message}` })),
+    )
+
+    if (!containerRuntime.available) {
+      const runtimeIssues = containerRuntime.issues.join("\n")
+      return yield* new StartupError({
+        message:
+          `CRITICAL: Container mode is enabled but runtime validation failed.\n${runtimeIssues}\n` +
+          `[tauroboros] Build it with: podman build -t ${settings.workflow.container.image} -f docker/pi-agent/Dockerfile .\n` +
+          `[tauroboros] Or disable container mode by running with --native flag:\n[tauroboros]   bun run start -- --native`,
+      })
+    }
+
+    yield* Effect.logInfo("[tauroboros] Container runtime validated successfully")
+  }
+
+  return result
+})
+
+const waitForShutdownSignalEffect = Effect.async<void>((resume) => {
+  let done = false
+
+  const cleanup = () => {
+    process.off("SIGINT", handleSignal)
+    process.off("SIGTERM", handleSignal)
+  }
+
+  const handleSignal = () => {
+    if (done) {
+      return
+    }
+    done = true
+    cleanup()
+    resume(Effect.void)
+  }
+
+  process.on("SIGINT", handleSignal)
+  process.on("SIGTERM", handleSignal)
+
+  return Effect.sync(() => {
+    done = true
+    cleanup()
+  })
+})
+
+const runProgram = Effect.fn("runProgram")(function* () {
+  const projectRoot = yield* findProjectRootEffect()
   const extractionResult = extractEmbeddedResources(projectRoot)
   if (extractionResult.mode === "binary") {
-    console.log(`[tauroboros] Extracted ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from binary`)
-
+    yield* Effect.logInfo(`[tauroboros] Extracted ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from binary`)
   } else if (extractionResult.mode === "source") {
-    console.log(`[tauroboros] Copied ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from source`)
-
+    yield* Effect.logInfo(`[tauroboros] Copied ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from source`)
   }
 
   const args = parseCliArgs(process.argv.slice(2))
-  const settingsPath = resolve(projectRoot, ".tauroboros", "settings.json")
+  const { settings, warnings } = yield* loadSettings(projectRoot, args)
 
-  const isFirstStart = !existsSync(settingsPath)
-  let settings: InfrastructureSettings
-  let warnings: string[]
-
-  if (isFirstStart) {
-    // First start - determine mode based on CLI args and container availability
-    if (args.native) {
-      // User explicitly requested native mode
-      console.log("[tauroboros] First run - creating settings with native mode...")
-
-      ;({ settings, warnings } = await createInitialSettings(projectRoot, false))
-
-    } else {
-      // Default to container mode - check requirements
-      console.log("[tauroboros] First run detected - setting up container mode...")
-
-      const containerCheck = await checkAndPrepareContainer(projectRoot)
-      if (!containerCheck.ready) {
-        console.error(`[tauroboros] ${containerCheck.error}`)
-
-        console.error("[tauroboros] To start in native mode instead, run: bun run start -- --native")
-
-        process.exit(1)
-
-      }
-
-      // Container is ready, create settings with container enabled
-      ;({ settings, warnings } = await createInitialSettings(projectRoot, true))
-
-      console.log("[tauroboros] Settings created with container mode enabled")
-
-    }
-  } else {
-    // Existing settings - load and validate
-    const result = ensureInfrastructureSettings(projectRoot)
-
-    settings = result.settings
-
-    warnings = result.warnings
-    // CRITICAL: If container mode is enabled (default), verify podman is available
-    if (settings.workflow.container.enabled !== false) {
-      console.log("[tauroboros] Validating container runtime availability...")
-
-      const podmanAvailable = PiContainerManager.isAvailable()
-
-      if (!podmanAvailable) {
-        console.error("[tauroboros] CRITICAL: Container mode is enabled but Podman is not available.")
-
-        console.error("[tauroboros] Install Podman or explicitly disable container mode by running with --native flag:")
-
-        console.error("[tauroboros]   bun run start -- --native")
-
-        console.error("[tauroboros] Or set workflow.container.enabled to false in .tauroboros/settings.json")
-
-        process.exit(1)
-
-      }
-
-      // Also verify image exists
-      const manager = new PiContainerManager()
-
-      const setupStatus = await manager.validateSetup()
-
-      if (!setupStatus.image) {
-        console.error("[tauroboros] CRITICAL: Container mode is enabled but container image is not available.")
-
-        console.error(`[tauroboros] Build it with: podman build -t ${settings.workflow.container.image} -f docker/pi-agent/Dockerfile .`)
-
-        console.error("[tauroboros] Or disable container mode by running with --native flag:")
-
-        console.error("[tauroboros]   bun run start -- --native")
-
-        process.exit(1)
-
-      }
-
-      console.log("[tauroboros] Container runtime validated successfully")
-
-    }
-  }
-
-  // Report any warnings about settings
   for (const warning of warnings) {
-    console.warn(`[tauroboros] ${warning}`)
-
+    yield* Effect.logWarning(`[tauroboros] ${warning}`)
   }
 
-  // Resolve dbPath relative to project root
   const dbPath = resolve(projectRoot, settings.workflow.server.dbPath)
-  // Support SERVER_PORT environment variable override
   const envPort = process.env.SERVER_PORT
-
   const port = envPort ? parseInt(envPort, 10) : settings.workflow.server.port
-  const { db, server } = createPiServer({
+  if (Number.isNaN(port)) {
+    return yield* new StartupError({ message: `Invalid SERVER_PORT value '${envPort ?? ""}'. Expected an integer.` })
+  }
+
+  const { server } = yield* createPiServerScopedEffect({
     port,
     dbPath,
     settings,
   })
-  const actualPort = await server.start(port)
 
-  console.log(`[tauroboros] server started on http://0.0.0.0:${actualPort}`)
-  // Persist the assigned port to settings.json for subsequent runs
+  const actualPort = yield* server.startEffect(port).pipe(
+    Effect.mapError((cause) => new StartupError({ message: cause.message })),
+  )
+
+  yield* Effect.logInfo(`[tauroboros] server started on http://0.0.0.0:${actualPort}`)
+  const devPort = process.env.DEV_PORT?.trim()
+  if (devPort) {
+    yield* Effect.logInfo(`[tauroboros] frontend dev server (hot reload) is expected at http://0.0.0.0:${devPort}`)
+    yield* Effect.logInfo(`[tauroboros] open the frontend URL above for UI changes; backend API remains on http://0.0.0.0:${actualPort}`)
+  }
+
   if (actualPort !== settings.workflow.server.port) {
     settings.workflow.server.port = actualPort
-
-    saveInfrastructureSettings(projectRoot, settings)
-
+    yield* saveSettingsEffect(projectRoot, settings).pipe(
+      Effect.mapError((cause) => new StartupError({ message: cause.message })),
+    )
   }
 
-  const shutdown = () => {
-    try {
-      server.stop()
+  yield* waitForShutdownSignalEffect
+})
 
-    } finally {
-      db.close()
-
-    }
-  }
-  process.on("SIGINT", shutdown)
-
-  process.on("SIGTERM", shutdown)
-
-}
-
-void main()
+void Effect.runPromise(Effect.scoped(runProgram())).catch((error) => {
+  const message = error instanceof StartupError
+    ? error.message
+    : error instanceof Error
+      ? error.message
+      : String(error)
+  process.stderr.write(`[tauroboros] ${message}\n`)
+  process.exit(1)
+})
 

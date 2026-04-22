@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test"
-import { PiKanbanDB } from "../src/db.ts"
-import { PiKanbanServer } from "../src/server/server.ts"
+import { Effect } from "effect"
+import { createPiServerScopedEffect, type PiKanbanServer } from "../src/server.ts"
+import { createTestSettings } from "./test-utils.ts"
+import type { PiKanbanDB } from "../src/db.ts"
 import { mkdirSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 
 describe("Archived Tasks API", () => {
-  let db: PiKanbanDB
   let server: PiKanbanServer
+  let db: PiKanbanDB
   let port: number
   let tempDir: string
 
@@ -15,22 +17,18 @@ describe("Archived Tasks API", () => {
     tempDir = join(tmpdir(), `archived-api-test-${Date.now()}`)
     mkdirSync(tempDir, { recursive: true })
     const dbPath = join(tempDir, "test.db")
-    db = new PiKanbanDB(dbPath)
 
-    server = new PiKanbanServer(db, {
-      port: 0, // Let the system assign an available port
-      settings: {
-        workflow: {
-          container: { enabled: false }
-        }
-      }
-    })
-    port = await server.start(0)
+    const runtime = Effect.runSync(Effect.scoped(createPiServerScopedEffect({
+      ...createTestSettings(),
+      dbPath,
+    })))
+    server = runtime.server
+    db = runtime.db
+    port = await Effect.runPromise(Effect.scoped(server.startEffect(0)))
   })
 
   afterEach(() => {
     server.stop()
-    db.close()
     rmSync(tempDir, { recursive: true, force: true })
   })
 

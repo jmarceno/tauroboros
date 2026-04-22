@@ -2,6 +2,8 @@
 .tauroboros
 .tauroboros/settings.json
 .worktrees
+plans/reports
+.codex
 
 .playwright-mcp
 test-results
@@ -47,3 +49,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+tsconfig.tsbuildinfo

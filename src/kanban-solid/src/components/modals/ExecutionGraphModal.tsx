@@ -6,7 +6,7 @@
 import { createSignal, createEffect, Show, For } from 'solid-js'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { uiStore } from '@/stores'
-import { optionsApi, referenceApi } from '@/api'
+import { optionsApi, referenceApi, runApiEffect } from '@/api'
 import type { ExecutionGraph } from '@/types'
 
 interface ExecutionGraphModalProps {
@@ -22,7 +22,7 @@ export function ExecutionGraphModal(props: ExecutionGraphModalProps) {
   createEffect(() => {
     const loadGraph = async () => {
       try {
-        const data = await referenceApi.getExecutionGraph()
+        const data = await runApiEffect(referenceApi.getExecutionGraph())
         setGraph(data)
       } catch (e) {
         uiStore.showToast('Failed to load execution graph: ' + (e instanceof Error ? e.message : String(e)), 'error')
@@ -39,7 +39,7 @@ export function ExecutionGraphModal(props: ExecutionGraphModalProps) {
       return
     }
     try {
-      await optionsApi.startExecution()
+      await runApiEffect(optionsApi.startExecution())
       props.onClose()
       uiStore.showToast('Workflow run started', 'success')
     } catch (e) {
@@ -78,17 +78,19 @@ export function ExecutionGraphModal(props: ExecutionGraphModalProps) {
               {(node) => (
                 <div class="border border-dark-surface3 rounded-lg p-3 bg-dark-bg">
                   <div class="text-xs font-semibold text-accent-primary mb-2">
-                    {node.label}
+                    {node.name}
                   </div>
                   <div class="flex flex-col gap-1.5">
                     <div class="flex items-center gap-2 py-1">
                       <span class="text-dark-text-muted text-xs">●</span>
-                      <span class="text-sm">Type: {node.type}</span>
-                    </div>
-                    <div class="flex items-center gap-2 py-1">
-                      <span class="text-dark-text-muted text-xs">●</span>
                       <span class="text-sm">Status: {node.status}</span>
                     </div>
+                    <Show when={node.estimatedRunCount !== undefined}>
+                      <div class="flex items-center gap-2 py-1">
+                        <span class="text-dark-text-muted text-xs">●</span>
+                        <span class="text-sm">Estimated runs: {node.estimatedRunCount}</span>
+                      </div>
+                    </Show>
                     <Show when={graph()!.edges.some(edge => edge.to === node.id)}>
                       <div class="flex items-start gap-2 py-1">
                         <span class="text-dark-text-muted text-xs mt-0.5">●</span>
@@ -97,7 +99,7 @@ export function ExecutionGraphModal(props: ExecutionGraphModalProps) {
                           {graph()!
                             .edges
                             .filter(edge => edge.to === node.id)
-                            .map(edge => graph()!.nodes.find(candidate => candidate.id === edge.from)?.label ?? edge.from)
+                            .map(edge => graph()!.nodes.find(candidate => candidate.id === edge.from)?.name ?? edge.from)
                             .join(', ')}
                         </div>
                       </div>

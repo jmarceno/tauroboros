@@ -1,37 +1,53 @@
 import { existsSync, mkdirSync } from "fs"
 import { dirname, resolve } from "path"
 import { fileURLToPath } from "url"
+import { Context, Effect, Layer } from "effect"
 import type { InfrastructureSettings } from "./config/settings.ts"
+import type { WSMessage } from "./types.ts"
 import { PiKanbanDB } from "./db.ts"
 import { PiKanbanServer } from "./server/server.ts"
-import { PiOrchestrator } from "./orchestrator.ts"
+import { WebSocketHub } from "./server/websocket.ts"
+import { PiOrchestrator, OrchestratorOperationError } from "./orchestrator.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
+import { ContainerImageManager } from "./runtime/container-image-manager.ts"
+import { PlanningSessionManager } from "./runtime/planning-session.ts"
+import { SmartRepairService } from "./runtime/smart-repair.ts"
+import { MockServerManager } from "./runtime/mock-server-manager.ts"
 import { BASE_IMAGES } from "./config/base-images.ts"
 
 export interface CreateServerOptions {
+  projectRoot?: string
   dbPath?: string
   port?: number
   settings?: InfrastructureSettings
 }
 
-/**
- * Find the project root by looking for a .git directory or .pi directory.
- * Checks current working directory first, then falls back to walking up
- * from the script location.
- */
+export interface PiServerRuntime {
+  db: PiKanbanDB
+  server: PiKanbanServer
+  orchestrator: PiOrchestrator
+}
+
+interface RuntimeManagers {
+  smartRepair: SmartRepairService
+  planningSessionManager: PlanningSessionManager
+  imageManager?: ContainerImageManager
+  containerManager?: PiContainerManager
+}
+
+export const ProjectRootContext = Context.GenericTag<string>("ProjectRootContext")
+export const CreateServerOptionsContext = Context.GenericTag<CreateServerOptions>("CreateServerOptionsContext")
+export const PiServerRuntimeContext = Context.GenericTag<PiServerRuntime>("PiServerRuntimeContext")
+
 export function findProjectRoot(): string {
-  // First, check if current working directory has .git or .pi
-  // This is important for E2E tests that run from a temp directory
   const cwd = process.cwd()
   if (existsSync(resolve(cwd, ".git")) || existsSync(resolve(cwd, ".pi"))) {
     return cwd
   }
 
-  // Start from the directory of this script
   const scriptDir = dirname(fileURLToPath(import.meta.url))
   let currentDir = scriptDir
 
-  // Walk up looking for .git or .pi directory
   while (currentDir !== dirname(currentDir)) {
     if (existsSync(resolve(currentDir, ".git")) || existsSync(resolve(currentDir, ".pi"))) {
       return currentDir
@@ -39,91 +55,229 @@ export function findProjectRoot(): string {
     currentDir = dirname(currentDir)
   }
 
-  // Fallback to process.cwd() if no project root found
   return cwd
 }
 
-export function createPiServer(options: CreateServerOptions = {}): {
-  db: PiKanbanDB
-  server: PiKanbanServer
-  orchestrator: PiOrchestrator
+function resolveContainerSettings(projectRoot: string, options: CreateServerOptions): {
+  imageManager?: ContainerImageManager
+  containerManager?: PiContainerManager
+  mockServerManager?: MockServerManager
 } {
-  // Use explicit dbPath, or find project root for consistent location
-  const projectRoot = findProjectRoot()
-  const defaultDbPath = resolve(projectRoot, ".pi", "tauroboros", "tasks.db")
-  const dbPath = options.dbPath ?? defaultDbPath
-  mkdirSync(dirname(dbPath), { recursive: true })
+  const containerSettings = options.settings?.workflow?.container ?? {
+    image: BASE_IMAGES.piAgent,
+    imageSource: "dockerfile" as const,
+    dockerfilePath: "docker/pi-agent/Dockerfile",
+    registryUrl: null,
+  }
 
-  const db = new PiKanbanDB(dbPath)
-  let orchestrator: PiOrchestrator | null = null
+  const imageManager = options.settings?.workflow?.container?.enabled === false
+    ? undefined
+    : new ContainerImageManager({
+        imageName: containerSettings.image,
+        imageSource: containerSettings.imageSource,
+        dockerfilePath: containerSettings.dockerfilePath,
+        registryUrl: containerSettings.registryUrl,
+        cacheDir: resolve(projectRoot, ".tauroboros"),
+        projectRoot,
+        onStatusChange: () => {},
+      })
 
-  const server = new PiKanbanServer(db, {
-    port: options.port,
-    settings: options.settings,
-    projectRoot: projectRoot,
-    onStart: async () => {
-      if (!orchestrator) throw new Error("Orchestrator unavailable")
-      return await orchestrator.startAll()
-    },
-    onStartSingle: async (taskId: string) => {
-      if (!orchestrator) throw new Error("Orchestrator unavailable")
-      return await orchestrator.startSingle(taskId)
-    },
-    onStartGroup: async (groupId: string) => {
-      if (!orchestrator) throw new Error("Orchestrator unavailable")
-      return await orchestrator.startGroup(groupId)
-    },
-    onStop: async () => {
-      if (!orchestrator) throw new Error("Orchestrator unavailable")
-      await orchestrator.stop()
-      return { ok: true }
-    },
-    onPauseRun: async (runId: string) => {
-      if (!orchestrator) throw new Error("Orchestrator unavailable")
-      const success = await orchestrator.pauseRun(runId)
-      const run = db.getWorkflowRun(runId)
-      return { success, run }
-    },
-    onResumeRun: async (runId: string) => {
-      if (!orchestrator) throw new Error("Orchestrator unavailable")
-      return await orchestrator.resumeRun(runId)
-    },
-    onStopRun: async (runId: string, options?: { destructive?: boolean }) => {
-      if (!orchestrator) throw new Error("Orchestrator unavailable")
-      if (options?.destructive) {
-        const result = await orchestrator.destructiveStop(runId)
-        const run = db.getWorkflowRun(runId)
-        return { success: true, run, killed: result.killed, cleaned: result.cleaned }
-      } else {
-        await orchestrator.stopRun(runId)
-        const run = db.getWorkflowRun(runId)
-        return { success: true, run }
-      }
-    },
-  })
+  const containerManager = options.settings?.workflow?.container?.enabled === false
+    ? undefined
+    : new PiContainerManager(containerSettings.image, imageManager)
 
-  orchestrator = new PiOrchestrator(
+  // Set up mock server manager if USE_MOCK_LLM is enabled
+  const mockServerManager = process.env.USE_MOCK_LLM === 'true'
+    ? new MockServerManager(9999)
+    : undefined
+
+  if (containerManager && mockServerManager) {
+    containerManager.setMockServerManager(mockServerManager)
+  }
+
+  return { imageManager, containerManager, mockServerManager }
+}
+
+function buildPiServerRuntime(
+  projectRoot: string,
+  options: CreateServerOptions,
+  db: PiKanbanDB,
+  wsHub: WebSocketHub,
+  managers: RuntimeManagers,
+): PiServerRuntime {
+  const { smartRepair, planningSessionManager, imageManager, containerManager } = managers
+
+  let server: PiKanbanServer | null = null
+  const broadcast = (message: WSMessage): void => {
+    server?.broadcast(message)
+  }
+  const sessionUrlFor = (sessionId: string): string => `/#session/${encodeURIComponent(sessionId)}`
+
+  const orchestrator = new PiOrchestrator(
     db,
-    (message) => server.broadcast(message),
-    (sessionId) => `/#session/${encodeURIComponent(sessionId)}`,
+    broadcast,
+    sessionUrlFor,
     projectRoot,
     options.settings,
-    (() => {
-      // Container mode is the default - only skip when explicitly disabled
-      if (options.settings?.workflow?.container?.enabled === false) return undefined
-      const containerSettings = options.settings?.workflow?.container ?? {
-        image: BASE_IMAGES.piAgent,
-      }
-      const containerManager = new PiContainerManager(
-        containerSettings.image,
-        server.getImageManager() ?? undefined,
-      )
-      console.log("[server] PiContainerManager created for orchestrator (image:", containerSettings.image + ")")
-      return containerManager
-    })(),
+    containerManager,
   )
+
+  server = new PiKanbanServer(db, {
+    port: options.port,
+    settings: options.settings,
+    projectRoot,
+    smartRepair,
+    planningSessionManager,
+    imageManager,
+    containerManager,
+    wsHub,
+    onStart: () => orchestrator.startAll(),
+    onStartSingle: (taskId: string) => orchestrator.startSingle(taskId),
+    onStartGroup: (groupId: string) => orchestrator.startGroup(groupId),
+    onStop: () =>
+      orchestrator.stop().pipe(
+        Effect.as({ ok: true }),
+      ),
+    onPauseRun: (runId: string) =>
+      orchestrator.pauseRun(runId).pipe(
+        Effect.map((success) => {
+          const run = db.getWorkflowRun(runId)
+          return { success, run }
+        }),
+      ),
+    onResumeRun: (runId: string) => orchestrator.resumeRun(runId),
+    onStopRun: (runId: string, stopOptions?: { destructive?: boolean }) => Effect.gen(function* () {
+      if (stopOptions?.destructive) {
+        const result = yield* orchestrator.destructiveStop(runId)
+        const run = db.getWorkflowRun(runId)!
+        return { success: true, run, killed: result.killed, cleaned: result.cleaned }
+      }
+
+      yield* orchestrator.stopRun(runId)
+      const run = db.getWorkflowRun(runId)!
+      return { success: true, run }
+    }),
+    onGetSlots: () => orchestrator.getSlotUtilization().pipe(
+      Effect.mapError((cause) => new OrchestratorOperationError({ operation: "getSlotUtilization", message: cause.message })),
+    ),
+    onGetRunQueueStatus: (runId: string) => orchestrator.getRunQueueStatus(runId),
+    onManualSelfHealRecover: (taskId: string, reportId: string, action: "restart_task" | "keep_failed") =>
+      orchestrator.manualSelfHealRecover(taskId, reportId, action),
+  })
 
   return { db, server, orchestrator }
 }
+
+export const makePiServerRuntime = Effect.fn("makePiServerRuntime")(
+  function* (projectRoot: string, options: CreateServerOptions) {
+    const defaultDbPath = resolve(projectRoot, ".pi", "tauroboros", "tasks.db")
+    const dbPath = options.dbPath ?? defaultDbPath
+    mkdirSync(dirname(dbPath), { recursive: true })
+
+    const db = new PiKanbanDB(dbPath)
+    const wsHub = new WebSocketHub()
+    const { imageManager, containerManager } = resolveContainerSettings(projectRoot, options)
+    const smartRepair = new SmartRepairService(db, options.settings, containerManager)
+    const planningSessionManager = yield* PlanningSessionManager.make(db, containerManager, options.settings)
+
+    return buildPiServerRuntime(projectRoot, options, db, wsHub, {
+      smartRepair,
+      planningSessionManager,
+      imageManager,
+      containerManager,
+    })
+  },
+)
+
+const makeScopedPiServerRuntime = Effect.fn("makeScopedPiServerRuntime")(
+  function* (projectRoot: string, options: CreateServerOptions) {
+    const defaultDbPath = resolve(projectRoot, ".pi", "tauroboros", "tasks.db")
+    const dbPath = options.dbPath ?? defaultDbPath
+
+    const db = yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        mkdirSync(dirname(dbPath), { recursive: true })
+        return new PiKanbanDB(dbPath)
+      }),
+      () => Effect.void,
+    )
+
+    const wsHub = yield* Effect.acquireRelease(
+      Effect.sync(() => new WebSocketHub()),
+      (hub) => Effect.sync(() => hub.close()),
+    )
+
+    const { imageManager: resolvedImageManager, containerManager: resolvedContainerManager } = resolveContainerSettings(projectRoot, options)
+
+    const imageManager = resolvedImageManager
+      ? yield* Effect.acquireRelease(
+          Effect.succeed(resolvedImageManager),
+          (manager) => manager.close().pipe(Effect.orDie),
+        )
+      : undefined
+
+    const containerManager = resolvedContainerManager
+      ? yield* Effect.acquireRelease(
+          Effect.succeed(resolvedContainerManager),
+          (manager) => manager.close().pipe(Effect.orDie),
+        )
+      : undefined
+
+    const smartRepair = new SmartRepairService(db, options.settings, containerManager)
+    const planningSessionManager = yield* PlanningSessionManager.makeScoped(db, containerManager, options.settings)
+
+    return yield* Effect.acquireRelease(
+      Effect.sync(() => buildPiServerRuntime(projectRoot, options, db, wsHub, {
+        smartRepair,
+        planningSessionManager,
+        imageManager,
+        containerManager,
+      })),
+      (runtime) => Effect.sync(() => runtime.server.stop()),
+    )
+  },
+)
+
+export const findProjectRootEffect = Effect.fn("findProjectRootEffect")(
+  function* () {
+    return findProjectRoot()
+  },
+)
+
+export const ProjectRootLayer = Layer.effect(
+  ProjectRootContext,
+  findProjectRootEffect(),
+)
+
+export const CreateServerOptionsLayer = (options: CreateServerOptions = {}) =>
+  Layer.succeed(CreateServerOptionsContext, options)
+
+export const PiServerRuntimeLayer = Layer.effect(
+  PiServerRuntimeContext,
+  Effect.gen(function* () {
+    const projectRoot = yield* ProjectRootContext
+    const options = yield* CreateServerOptionsContext
+    return yield* makePiServerRuntime(projectRoot, options)
+  }),
+)
+
+export const createPiServerEffect = Effect.fn("createPiServerEffect")(
+  function* (options: CreateServerOptions = {}) {
+    const projectRootLayer = Layer.succeed(ProjectRootContext, options.projectRoot ?? findProjectRoot())
+    const runtimeLayer = PiServerRuntimeLayer.pipe(
+      Layer.provideMerge(projectRootLayer),
+      Layer.provideMerge(CreateServerOptionsLayer(options)),
+    )
+
+    return yield* PiServerRuntimeContext.pipe(Effect.provide(runtimeLayer))
+  },
+)
+
+export const createPiServerScopedEffect = Effect.fn("createPiServerScopedEffect")(
+  function* (options: CreateServerOptions = {}) {
+    const projectRoot = options.projectRoot ?? findProjectRoot()
+    return yield* makeScopedPiServerRuntime(projectRoot, options)
+  },
+)
 
 export { PiKanbanServer }

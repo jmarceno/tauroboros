@@ -1,5 +1,17 @@
 import type { Task } from "./types.ts"
 import { getPlanExecutionEligibility } from "./task-state.ts"
+import { Schema } from "effect"
+
+/**
+ * Error for execution plan operations
+ */
+export class ExecutionPlanError extends Schema.TaggedError<ExecutionPlanError>()("ExecutionPlanError", {
+  operation: Schema.String,
+  message: Schema.String,
+  taskId: Schema.optional(Schema.String),
+  taskName: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 export function getExecutableTasks(tasks: Task[]): Task[] {
   const taskMap = new Map<string, Task>()
@@ -34,8 +46,6 @@ function areTaskRequirementsDone(task: Task, taskMap: Map<string, Task>): boolea
   for (const depId of task.requirements) {
     const dep = taskMap.get(depId)
     if (!dep) {
-      // Log warning about invalid dependency and treat it as satisfied
-      console.warn(`[execution-plan] Task "${task.name}" has invalid dependency "${depId}" - ignoring`)
       continue
     }
     if (dep.status !== "done") {
@@ -45,28 +55,38 @@ function areTaskRequirementsDone(task: Task, taskMap: Map<string, Task>): boolea
   return true
 }
 
-function collectTaskAndDependencyIds(taskId: string, taskMap: Map<string, Task>, allowedTaskIds?: Set<string>): string[] {
+function collectTaskAndDependencyIds(
+  taskId: string,
+  taskMap: Map<string, Task>,
+  allowedTaskIds?: Set<string>
+): string[] {
   const visited = new Set<string>()
   const visiting = new Set<string>()
   const ordered: string[] = []
 
-  const visit = (id: string, chain: string[]) => {
+  const visit = (id: string, chain: string[]): void => {
     if (visiting.has(id)) {
       const cycleStart = chain.indexOf(id)
       const cycleIds = cycleStart >= 0 ? [...chain.slice(cycleStart), id] : [...chain, id]
       const cycleNames = cycleIds.map((cycleId) => taskMap.get(cycleId)?.name ?? cycleId)
-      throw new Error(`Circular dependency detected: ${cycleNames.join(" -> ")}`)
+      throw new ExecutionPlanError({
+        operation: "collectTaskAndDependencyIds",
+        message: `Circular dependency detected: ${cycleNames.join(" -> ")}`,
+        taskId: id,
+      })
     }
 
     if (visited.has(id)) return
 
     const task = taskMap.get(id)
     if (!task) {
-      throw new Error(`Task not found: ${id}`)
+      throw new ExecutionPlanError({
+        operation: "collectTaskAndDependencyIds",
+        message: `Task not found: ${id}`,
+        taskId: id,
+      })
     }
 
-    // Skip dependencies not in allowedTaskIds (new tasks added during execution)
-    // Their dependencies are treated as satisfied
     if (allowedTaskIds && !allowedTaskIds.has(id) && id !== taskId) {
       return
     }
@@ -74,11 +94,8 @@ function collectTaskAndDependencyIds(taskId: string, taskMap: Map<string, Task>,
     visiting.add(id)
     for (const depId of task.requirements) {
       if (!taskMap.has(depId)) {
-        // Log warning about invalid dependency and skip it
-        console.warn(`[execution-plan] Task "${task.name}" depends on missing task "${depId}" - ignoring`)
         continue
       }
-      // If depId is not in allowedTaskIds, skip it (treat as satisfied)
       if (!(allowedTaskIds && !allowedTaskIds.has(depId))) {
         visit(depId, [...chain, id])
       }
@@ -92,11 +109,15 @@ function collectTaskAndDependencyIds(taskId: string, taskMap: Map<string, Task>,
   return ordered
 }
 
-export function resolveExecutionTasks(tasks: Task[], taskId?: string, allowedTaskIds?: Set<string>): Task[] {
+export function resolveExecutionTasks(
+  tasks: Task[],
+  taskId?: string,
+  allowedTaskIds?: Set<string>
+): Task[] {
   if (!taskId) {
     let executable = getExecutableTasks(tasks)
     if (allowedTaskIds) {
-      executable = executable.filter(t => allowedTaskIds.has(t.id))
+      executable = executable.filter((task) => allowedTaskIds.has(task.id))
     }
     return executable
   }
@@ -106,7 +127,11 @@ export function resolveExecutionTasks(tasks: Task[], taskId?: string, allowedTas
 
   const targetTask = taskMap.get(taskId)
   if (!targetTask) {
-    throw new Error(`Task not found: ${taskId}`)
+    throw new ExecutionPlanError({
+      operation: "resolveExecutionTasks",
+      message: `Task not found: ${taskId}`,
+      taskId,
+    })
   }
 
   const candidateIds = collectTaskAndDependencyIds(taskId, taskMap, allowedTaskIds)
@@ -115,60 +140,72 @@ export function resolveExecutionTasks(tasks: Task[], taskId?: string, allowedTas
   for (const candidateId of candidateIds) {
     const candidate = taskMap.get(candidateId)!
     if (candidate.status === "done") continue
-
-    // Skip tasks not in the allowed set (new tasks added during execution)
     if (allowedTaskIds && !allowedTaskIds.has(candidateId)) continue
 
     if (!isTaskExecutable(candidate)) {
       if (candidate.id === taskId) {
-        throw new Error(
-          `Task \"${candidate.name}\" is not runnable from status \"${candidate.status}\" (phase: ${candidate.executionPhase})`,
-        )
+        throw new ExecutionPlanError({
+          operation: "resolveExecutionTasks",
+          message: `Task "${candidate.name}" is not runnable from status "${candidate.status}" (phase: ${candidate.executionPhase})`,
+          taskId: candidate.id,
+          taskName: candidate.name,
+        })
       }
-      throw new Error(
-        `Dependency \"${candidate.name}\" is not done and cannot run from status \"${candidate.status}\" (phase: ${candidate.executionPhase})`,
-      )
+      throw new ExecutionPlanError({
+        operation: "resolveExecutionTasks",
+        message: `Dependency "${candidate.name}" is not done and cannot run from status "${candidate.status}" (phase: ${candidate.executionPhase})`,
+        taskId: candidate.id,
+        taskName: candidate.name,
+      })
     }
 
     executionTasks.push(candidate)
   }
 
   if (executionTasks.length === 0) {
-    throw new Error(`Task \"${targetTask.name}\" and its dependencies are already done`)
+    throw new ExecutionPlanError({
+      operation: "resolveExecutionTasks",
+      message: `Task "${targetTask.name}" and its dependencies are already done`,
+      taskId: targetTask.id,
+      taskName: targetTask.name,
+    })
   }
 
   return executionTasks
 }
 
-export function resolveBatches(tasks: Task[], parallelLimit: number): Task[][] {
+export function resolveBatches(
+  tasks: Task[],
+  parallelLimit: number
+): Task[][] {
   const taskMap = new Map<string, Task>()
-  for (const t of tasks) taskMap.set(t.id, t)
+  for (const task of tasks) taskMap.set(task.id, task)
 
   const inDegree = new Map<string, number>()
   const dependents = new Map<string, string[]>()
-  for (const t of tasks) {
-    inDegree.set(t.id, 0)
-    dependents.set(t.id, [])
+  for (const task of tasks) {
+    inDegree.set(task.id, 0)
+    dependents.set(task.id, [])
   }
-  for (const t of tasks) {
-    for (const dep of t.requirements) {
+  for (const task of tasks) {
+    for (const dep of task.requirements) {
       if (taskMap.has(dep)) {
-        inDegree.set(t.id, (inDegree.get(t.id) ?? 0) + 1)
-        dependents.get(dep)!.push(t.id)
+        inDegree.set(task.id, (inDegree.get(task.id) ?? 0) + 1)
+        dependents.get(dep)!.push(task.id)
       }
     }
   }
 
   const batches: Task[][] = []
-  let queue = tasks.filter(t => (inDegree.get(t.id) ?? 0) === 0)
+  let queue = tasks.filter((task) => (inDegree.get(task.id) ?? 0) === 0)
 
   while (queue.length > 0) {
     queue.sort((a, b) => a.idx - b.idx)
     batches.push([...queue])
 
     const nextQueue: Task[] = []
-    for (const t of queue) {
-      for (const depId of dependents.get(t.id) ?? []) {
+    for (const task of queue) {
+      for (const depId of dependents.get(task.id) ?? []) {
         const newDeg = (inDegree.get(depId) ?? 1) - 1
         inDegree.set(depId, newDeg)
         if (newDeg === 0) {
@@ -179,20 +216,23 @@ export function resolveBatches(tasks: Task[], parallelLimit: number): Task[][] {
     queue = nextQueue
   }
 
-  const totalInBatch = batches.reduce((sum, b) => sum + b.length, 0)
+  const totalInBatch = batches.reduce((sum, batch) => sum + batch.length, 0)
   if (totalInBatch < tasks.length) {
-    const stuck = tasks.filter(t => !batches.some(b => b.some(bt => bt.id === t.id)))
-    throw new Error(`Circular dependency detected among: ${stuck.map(t => t.name).join(", ")}`)
+    const stuck = tasks.filter((task) => !batches.some((batch) => batch.some((batchedTask) => batchedTask.id === task.id)))
+    throw new ExecutionPlanError({
+      operation: "resolveBatches",
+      message: `Circular dependency detected among: ${stuck.map((task) => task.name).join(", ")}`,
+    })
   }
 
   const finalBatches: Task[][] = []
   for (const batch of batches) {
     if (batch.length <= parallelLimit) {
       finalBatches.push(batch)
-    } else {
-      for (let i = 0; i < batch.length; i += parallelLimit) {
-        finalBatches.push(batch.slice(i, i + parallelLimit))
-      }
+      continue
+    }
+    for (let i = 0; i < batch.length; i += parallelLimit) {
+      finalBatches.push(batch.slice(i, i + parallelLimit))
     }
   }
 
@@ -214,6 +254,7 @@ export interface ExecutionGraph {
   edges: { from: string; to: string }[]
   totalTasks: number
   parallelLimit: number
+  warnings?: string[]
   pendingApprovals?: {
     id: string
     name: string
@@ -223,7 +264,11 @@ export interface ExecutionGraph {
   }[]
 }
 
-export function resolveDependencyChain(targetTaskId: string, allTasks: Task[], allowedTaskIds?: Set<string>): Task[] {
+export function resolveDependencyChain(
+  targetTaskId: string,
+  allTasks: Task[],
+  allowedTaskIds?: Set<string>
+): Task[] {
   return resolveExecutionTasks(allTasks, targetTaskId, allowedTaskIds)
 }
 
@@ -244,8 +289,6 @@ export function getExecutionGraphTasks(tasks: Task[]): Task[] {
       const requirementsSatisfied = task.requirements.every(depId => {
         const dependency = taskMap.get(depId)
         if (!dependency) {
-          // Log warning about invalid dependency and treat it as satisfied
-          console.warn(`[execution-plan] Task "${task.name}" has invalid dependency "${depId}" - ignoring`)
           return true
         }
         return dependency.status === "done" || scheduledIds.has(depId)

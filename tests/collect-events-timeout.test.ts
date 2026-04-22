@@ -63,7 +63,11 @@ describe("CollectEventsTimeoutError", () => {
       { type: "tool_start", tool: "read_file" },
       { type: "tool_complete", tool: "read_file" },
     ]
-    const error = new CollectEventsTimeoutError(events, 600000)
+    const error = new CollectEventsTimeoutError({
+      message: `Timeout collecting events after 600000ms`,
+      collectedEvents: events,
+      originalTimeoutMs: 600000,
+    })
 
     expect(error.name).toBe("CollectEventsTimeoutError")
     expect(error.message).toContain("Timeout collecting events")
@@ -73,7 +77,11 @@ describe("CollectEventsTimeoutError", () => {
   })
 
   test("should be instanceof Error", () => {
-    const error = new CollectEventsTimeoutError([], 1000)
+    const error = new CollectEventsTimeoutError({
+      message: "Timeout collecting events after 1000ms",
+      collectedEvents: [],
+      originalTimeoutMs: 1000,
+    })
     expect(error).toBeInstanceOf(Error)
   })
 })

@@ -3,7 +3,7 @@
  * Ported from React to SolidJS - Full feature parity
  */
 
-import { Show, For, createMemo, createSignal, createEffect, onMount, onCleanup } from 'solid-js'
+import { Show, createMemo, createSignal, onMount, onCleanup } from 'solid-js'
 import type { Task, BestOfNSummary } from '@/types'
 import type { createDragDropStore } from '@/stores'
 import type { createSessionUsageStore } from '@/stores/sessionUsageStore'
@@ -56,7 +56,7 @@ function getUpdateAgeClass(timestamp: number): string {
 
 export function TaskCard(props: TaskCardProps) {
   let cardRef: HTMLDivElement | undefined
-  const [hasBeenVisible, setHasBeenVisible] = createSignal(false)
+  const [isDragging, setIsDragging] = createSignal(false)
 
   // Badges MUST always show for non-backlog, non-template tasks
   const shouldShowBadges = createMemo(() => 
@@ -73,7 +73,6 @@ export function TaskCard(props: TaskCardProps) {
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
-          setHasBeenVisible(true)
           // Start watching task for usage updates
           props.sessionUsage.startWatchingTask(props.task.id)
           // Load last update from backend
@@ -173,6 +172,13 @@ export function TaskCard(props: TaskCardProps) {
   const isAtReviewLimit = createMemo(() => props.task.reviewCount >= effectiveMaxReviews())
   const hasJsonParseRetries = createMemo(() => props.task.jsonParseRetryCount > 0 && props.task.status === 'review')
   const isNearJsonParseLimit = createMemo(() => props.task.jsonParseRetryCount >= effectiveMaxJsonParseRetries() - 1)
+  const autoDeployConditionLabel = createMemo(() => {
+    if (props.task.autoDeployCondition === 'before_workflow_start') return 'before start'
+    if (props.task.autoDeployCondition === 'after_workflow_end') return 'after end'
+    if (props.task.autoDeployCondition === 'workflow_done') return 'workflow done'
+    if (props.task.autoDeployCondition === 'workflow_failed') return 'workflow failed'
+    return 'unknown'
+  })
 
   // Dependency IDs
   const depIds = createMemo(() => {
@@ -223,6 +229,7 @@ export function TaskCard(props: TaskCardProps) {
     const context = props.group ? 'group' : 'column'
 
     props.dragDrop.handleDragStart(props.task.id, props.task.status, context)
+    setIsDragging(true)
     ;(e.currentTarget as HTMLDivElement).classList.add('dragging')
 
     // Set data transfer with context for external handling
@@ -239,6 +246,7 @@ export function TaskCard(props: TaskCardProps) {
 
   const handleDragEnd = (e: DragEvent) => {
     props.dragDrop.handleDragEnd()
+    setIsDragging(false)
     ;(e.currentTarget as HTMLDivElement).classList.remove('dragging')
   }
 
@@ -293,8 +301,10 @@ export function TaskCard(props: TaskCardProps) {
       ref={cardRef}
       class="task-card"
       classList={{
-        'dragging': props.isSelected,
+        'dragging': isDragging(),
+        'selected': Boolean(props.isSelected),
         'highlighted': props.isHighlighted,
+        'auto-deploy-template': props.task.status === 'template' && props.task.autoDeploy === true,
       }}
       data-task-id={props.task.id}
       data-task-status={props.task.status}
@@ -391,9 +401,29 @@ export function TaskCard(props: TaskCardProps) {
           </span>
         </Show>
 
+        <Show when={props.task.status === 'template' && props.task.autoDeploy === true}>
+          <span
+            class="task-tag border-accent-success/30 text-accent-success"
+            title={`Auto deploy condition: ${autoDeployConditionLabel()}`}
+          >
+            auto deploy: {autoDeployConditionLabel()}
+          </span>
+        </Show>
+
         <Show when={props.task.errorMessage}>
           <span class="task-tag border-accent-danger/30 text-accent-danger">
             error
+          </span>
+        </Show>
+
+        <Show when={props.task.selfHealStatus !== 'idle'}>
+          <span
+            class={`task-tag ${props.task.selfHealStatus === 'investigating'
+              ? 'border-accent-info/30 text-accent-info animate-pulse'
+              : 'border-accent-warning/30 text-accent-warning'}`}
+            title={props.task.selfHealMessage || 'Self-healing in progress'}
+          >
+            self-healing: {props.task.selfHealStatus}
           </span>
         </Show>
 

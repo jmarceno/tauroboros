@@ -1,5 +1,52 @@
 import type { PiSessionKind } from "../db/types.ts"
 import type { PiKanbanDB } from "../db.ts"
+import type { RunExecutionPhase } from "../types.ts"
+import { Effect, Schema } from "effect"
+
+export class PausedSessionStateError extends Schema.TaggedError<PausedSessionStateError>()("PausedSessionStateError", {
+  operation: Schema.String,
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
+
+type DbPausedSessionState = NonNullable<ReturnType<PiKanbanDB["loadPausedSessionState"]>>
+
+function mapDbPausedSessionState(
+  dbState: DbPausedSessionState,
+  operation: string,
+): Effect.Effect<PausedSessionState, PausedSessionStateError> {
+  return Effect.gen(function* () {
+    const cwd = dbState.cwd ?? dbState.worktreeDir
+    if (!cwd) {
+      return yield* new PausedSessionStateError({
+        operation,
+        message: `Paused session ${dbState.sessionId} is missing both cwd and worktreeDir`,
+      })
+    }
+
+    return {
+      sessionId: dbState.sessionId,
+      taskId: dbState.taskId,
+      taskRunId: dbState.taskRunId,
+      sessionKind: dbState.sessionKind as PiSessionKind,
+      cwd,
+      worktreeDir: dbState.worktreeDir,
+      branch: dbState.branch,
+      model: dbState.model,
+      thinkingLevel: dbState.thinkingLevel,
+      lastPrompt: dbState.lastPrompt,
+      lastPromptTimestamp: dbState.pausedAt,
+      containerId: dbState.containerId,
+      containerName: null,
+      containerImage: dbState.containerImage,
+      piSessionId: dbState.piSessionId,
+      piSessionFile: dbState.piSessionFile,
+      context: dbState.context,
+      executionPhase: dbState.executionPhase,
+      pauseReason: dbState.pauseReason,
+    }
+  })
+}
 
 /**
  * Context captured when pausing a session for richer resume
@@ -82,31 +129,15 @@ export function savePausedSessionState(
 export function loadPausedSessionState(
   db: PiKanbanDB,
   sessionId: string
-): PausedSessionState | null {
-  const dbState = db.loadPausedSessionState(sessionId)
-  if (!dbState) return null
+): Effect.Effect<PausedSessionState | null, PausedSessionStateError> {
+  return Effect.gen(function* () {
+    const dbState = db.loadPausedSessionState(sessionId)
+    if (!dbState) {
+      return null
+    }
 
-  return {
-    sessionId: dbState.sessionId,
-    taskId: dbState.taskId,
-    taskRunId: dbState.taskRunId,
-    sessionKind: dbState.sessionKind as PiSessionKind,
-    cwd: dbState.cwd ?? dbState.worktreeDir ?? "",
-    worktreeDir: dbState.worktreeDir,
-    branch: dbState.branch,
-    model: dbState.model,
-    thinkingLevel: dbState.thinkingLevel,
-    lastPrompt: dbState.lastPrompt,
-    lastPromptTimestamp: dbState.pausedAt,
-    containerId: dbState.containerId,
-    containerName: null,
-    containerImage: dbState.containerImage,
-    piSessionId: dbState.piSessionId,
-    piSessionFile: dbState.piSessionFile,
-    context: dbState.context,
-    executionPhase: dbState.executionPhase,
-    pauseReason: dbState.pauseReason,
-  }
+    return yield* mapDbPausedSessionState(dbState, "loadPausedSessionState")
+  })
 }
 
 /**
@@ -122,29 +153,12 @@ export function clearPausedSessionState(
 /**
  * List all paused sessions from the database.
  */
-export function listPausedSessions(db: PiKanbanDB): PausedSessionState[] {
-  const dbSessions = db.listPausedSessions()
-  return dbSessions.map((s) => ({
-    sessionId: s.sessionId,
-    taskId: s.taskId,
-    taskRunId: s.taskRunId,
-    sessionKind: s.sessionKind as PiSessionKind,
-    cwd: s.cwd ?? s.worktreeDir ?? "",
-    worktreeDir: s.worktreeDir,
-    branch: s.branch,
-    model: s.model,
-    thinkingLevel: s.thinkingLevel,
-    lastPrompt: s.lastPrompt,
-    lastPromptTimestamp: s.pausedAt,
-    containerId: s.containerId,
-    containerName: null,
-    containerImage: s.containerImage,
-    piSessionId: s.piSessionId,
-    piSessionFile: s.piSessionFile,
-    context: s.context,
-    executionPhase: s.executionPhase,
-    pauseReason: s.pauseReason,
-  }))
+export function listPausedSessions(db: PiKanbanDB): Effect.Effect<PausedSessionState[], PausedSessionStateError> {
+  return Effect.forEach(
+    db.listPausedSessions(),
+    (dbState) => mapDbPausedSessionState(dbState, "listPausedSessions"),
+    { concurrency: 1 },
+  )
 }
 
 /**
@@ -153,29 +167,12 @@ export function listPausedSessions(db: PiKanbanDB): PausedSessionState[] {
 export function getPausedSessionsByTask(
   db: PiKanbanDB,
   taskId: string
-): PausedSessionState[] {
-  const dbSessions = db.getPausedSessionsByTask(taskId)
-  return dbSessions.map((s) => ({
-    sessionId: s.sessionId,
-    taskId: s.taskId,
-    taskRunId: s.taskRunId,
-    sessionKind: s.sessionKind as PiSessionKind,
-    cwd: s.cwd ?? s.worktreeDir ?? "",
-    worktreeDir: s.worktreeDir,
-    branch: s.branch,
-    model: s.model,
-    thinkingLevel: s.thinkingLevel,
-    lastPrompt: s.lastPrompt,
-    lastPromptTimestamp: s.pausedAt,
-    containerId: s.containerId,
-    containerName: null,
-    containerImage: s.containerImage,
-    piSessionId: s.piSessionId,
-    piSessionFile: s.piSessionFile,
-    context: s.context,
-    executionPhase: s.executionPhase,
-    pauseReason: s.pauseReason,
-  }))
+): Effect.Effect<PausedSessionState[], PausedSessionStateError> {
+  return Effect.forEach(
+    db.getPausedSessionsByTask(taskId),
+    (dbState) => mapDbPausedSessionState(dbState, "getPausedSessionsByTask"),
+    { concurrency: 1 },
+  )
 }
 
 /**
@@ -186,9 +183,8 @@ export function clearAllPausedSessionStates(db: PiKanbanDB): void {
 }
 
 /**
- * Paused run state - tracks the entire workflow run pause state
- * Now stored in database for ACID guarantees and consistency with session-level state.
- * @deprecated The file-based PausedRunState is replaced by database storage. Use the DB methods directly.
+ * Paused run state - tracks the entire workflow run pause state.
+ * Stored in the database for ACID guarantees and consistency with session-level state.
  */
 export interface PausedRunState {
   runId: string
@@ -199,158 +195,42 @@ export interface PausedRunState {
   targetTaskId: string | null
   pausedAt: number
   sessions: PausedSessionState[]
-  executionPhase: "not_started" | "planning" | "executing" | "reviewing" | "committing"
-}
-
-// Legacy file-based imports - kept for backward compatibility during migration
-import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from "fs"
-import { join } from "path"
-
-const PAUSE_STATE_DIR = ".tauroboros/pause-state"
-const PAUSE_STATE_FILE = "paused-run.json"
-
-function getPauseStatePath(): string {
-  return join(process.cwd(), PAUSE_STATE_DIR, PAUSE_STATE_FILE)
-}
-
-function ensurePauseStateDir(): void {
-  const dir = join(process.cwd(), PAUSE_STATE_DIR)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
+  executionPhase: RunExecutionPhase
 }
 
 /**
  * Save paused run state to database.
- * Replaces file-based storage with database storage for ACID guarantees.
  */
-export function savePausedRunState(state: PausedRunState, db?: PiKanbanDB): void {
-  if (db) {
-    // Use database storage (preferred)
-    db.savePausedRunState({
-      runId: state.runId,
-      kind: state.kind,
-      taskOrder: state.taskOrder,
-      currentTaskIndex: state.currentTaskIndex,
-      currentTaskId: state.currentTaskId,
-      targetTaskId: state.targetTaskId,
-      pausedAt: state.pausedAt,
-      executionPhase: state.executionPhase,
-    })
-  } else {
-    // Fallback to file-based storage for backward compatibility
-    ensurePauseStateDir()
-    const path = getPauseStatePath()
-    writeFileSync(path, JSON.stringify(state, null, 2), "utf-8")
-  }
+export function savePausedRunState(state: PausedRunState, db: PiKanbanDB): void {
+  db.savePausedRunState({
+    runId: state.runId,
+    kind: state.kind,
+    taskOrder: state.taskOrder,
+    currentTaskIndex: state.currentTaskIndex,
+    currentTaskId: state.currentTaskId,
+    targetTaskId: state.targetTaskId,
+    pausedAt: state.pausedAt,
+    executionPhase: state.executionPhase,
+  })
 }
 
 /**
  * Load paused run state from database.
- * Falls back to file-based storage for backward compatibility.
  */
-export function loadPausedRunState(runId?: string, db?: PiKanbanDB): PausedRunState | null {
-  if (db && runId) {
-    // Use database storage (preferred)
+export function loadPausedRunState(
+  runId: string,
+  db: PiKanbanDB,
+): Effect.Effect<PausedRunState | null, PausedSessionStateError> {
+  return Effect.gen(function* () {
     const dbState = db.loadPausedRunState(runId)
-    if (dbState) {
-      // Get associated paused sessions for this run
-      const pausedSessions = db.listPausedSessions().filter(s =>
-        s.taskId && dbState.taskOrder.includes(s.taskId)
-      )
-
-      return {
-        runId: dbState.runId,
-        kind: dbState.kind,
-        taskOrder: dbState.taskOrder,
-        currentTaskIndex: dbState.currentTaskIndex,
-        currentTaskId: dbState.currentTaskId,
-        targetTaskId: dbState.targetTaskId,
-        pausedAt: dbState.pausedAt,
-        sessions: pausedSessions.map(s => ({
-          sessionId: s.sessionId,
-          taskId: s.taskId,
-          taskRunId: s.taskRunId,
-          sessionKind: s.sessionKind as PiSessionKind,
-          cwd: s.cwd ?? s.worktreeDir ?? "",
-          worktreeDir: s.worktreeDir,
-          branch: s.branch,
-          model: s.model,
-          thinkingLevel: s.thinkingLevel,
-          lastPrompt: s.lastPrompt,
-          lastPromptTimestamp: s.pausedAt,
-          containerId: s.containerId,
-          containerName: null,
-          containerImage: s.containerImage,
-          piSessionId: s.piSessionId,
-          piSessionFile: s.piSessionFile,
-          context: s.context,
-          executionPhase: s.executionPhase,
-          pauseReason: s.pauseReason,
-        })),
-        executionPhase: dbState.executionPhase,
-      }
+    if (!dbState) {
+      return null
     }
-    return null
-  }
 
-  // Fallback to file-based storage for backward compatibility
-  const path = getPauseStatePath()
-  if (!existsSync(path)) {
-    return null
-  }
-  try {
-    const content = readFileSync(path, "utf-8")
-    return JSON.parse(content) as PausedRunState
-  } catch {
-    return null
-  }
-}
-
-/**
- * Clear paused run state from database.
- * Also clears from file-based storage for cleanup.
- */
-export function clearPausedRunState(runId?: string, db?: PiKanbanDB): void {
-  if (db && runId) {
-    // Clear from database
-    db.clearPausedRunState(runId)
-  }
-
-  // Also clear from file-based storage for cleanup
-  const path = getPauseStatePath()
-  if (existsSync(path)) {
-    try {
-      unlinkSync(path)
-    } catch {
-      // Ignore errors
-    }
-  }
-}
-
-/**
- * Check if there's a paused run state in database or on disk.
- */
-export function hasPausedRunState(runId?: string, db?: PiKanbanDB): boolean {
-  if (db && runId) {
-    // Check database first (preferred)
-    if (db.hasPausedRunState(runId)) {
-      return true
-    }
-  }
-  // Fallback to file-based check
-  return existsSync(getPauseStatePath())
-}
-
-/**
- * List all paused run states from database.
- */
-export function listPausedRunStates(db: PiKanbanDB): PausedRunState[] {
-  const dbStates = db.listPausedRunStates()
-  return dbStates.map(dbState => {
-    // Get associated paused sessions for this run
-    const pausedSessions = db.listPausedSessions().filter(s =>
-      s.taskId && dbState.taskOrder.includes(s.taskId)
+    const pausedSessions = yield* listPausedSessions(db).pipe(
+      Effect.map((sessions) =>
+        sessions.filter((session) => session.taskId !== null && dbState.taskOrder.includes(session.taskId)),
+      ),
     )
 
     return {
@@ -361,29 +241,47 @@ export function listPausedRunStates(db: PiKanbanDB): PausedRunState[] {
       currentTaskId: dbState.currentTaskId,
       targetTaskId: dbState.targetTaskId,
       pausedAt: dbState.pausedAt,
-      sessions: pausedSessions.map(s => ({
-        sessionId: s.sessionId,
-        taskId: s.taskId,
-        taskRunId: s.taskRunId,
-        sessionKind: s.sessionKind as PiSessionKind,
-        cwd: s.cwd ?? s.worktreeDir ?? "",
-        worktreeDir: s.worktreeDir,
-        branch: s.branch,
-        model: s.model,
-        thinkingLevel: s.thinkingLevel,
-        lastPrompt: s.lastPrompt,
-        lastPromptTimestamp: s.pausedAt,
-        containerId: s.containerId,
-        containerName: null,
-        containerImage: s.containerImage,
-        piSessionId: s.piSessionId,
-        piSessionFile: s.piSessionFile,
-        context: s.context,
-        executionPhase: s.executionPhase,
-        pauseReason: s.pauseReason,
-      })),
+      sessions: pausedSessions,
       executionPhase: dbState.executionPhase,
     }
+  })
+}
+
+/**
+ * Clear paused run state from database.
+ */
+export function clearPausedRunState(runId: string, db: PiKanbanDB): void {
+  db.clearPausedRunState(runId)
+}
+
+/**
+ * Check if there's a paused run state in the database.
+ */
+export function hasPausedRunState(runId: string, db: PiKanbanDB): boolean {
+  return db.hasPausedRunState(runId)
+}
+
+/**
+ * List all paused run states from database.
+ */
+export function listPausedRunStates(db: PiKanbanDB): Effect.Effect<PausedRunState[], PausedSessionStateError> {
+  return Effect.gen(function* () {
+    const dbStates = db.listPausedRunStates()
+    const pausedSessions = yield* listPausedSessions(db)
+
+    return dbStates.map((dbState) => ({
+      runId: dbState.runId,
+      kind: dbState.kind,
+      taskOrder: dbState.taskOrder,
+      currentTaskIndex: dbState.currentTaskIndex,
+      currentTaskId: dbState.currentTaskId,
+      targetTaskId: dbState.targetTaskId,
+      pausedAt: dbState.pausedAt,
+      sessions: pausedSessions.filter(
+        (session) => session.taskId !== null && dbState.taskOrder.includes(session.taskId),
+      ),
+      executionPhase: dbState.executionPhase,
+    }))
   })
 }
 
