@@ -3,7 +3,7 @@
  * Replaces: ModalContext, ToastContext
  */
 
-import { createSignal, createMemo } from 'solid-js'
+import { createSignal, createMemo, createRoot } from 'solid-js'
 import { sleepMs } from '@/api'
 import type { Toast, LogEntry, ToastVariant } from '@/types'
 
@@ -154,8 +154,12 @@ function createModalStore() {
   }
 }
 
-// Export singleton stores
-export const uiStore = {
-  ...createToastStore(),
-  ...createModalStore(),
-}
+// Export singleton stores - wrapped in createRoot for proper disposal
+export const uiStore = createRoot((dispose) => {
+  const toastStore = createToastStore()
+  const modalStore = createModalStore()
+  return {
+    ...toastStore,
+    ...modalStore,
+  }
+})

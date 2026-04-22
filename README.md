@@ -23,8 +23,10 @@ TaurOboros is an agent orchestration system, that uses a Kanban style board to v
 
 ### Quality Assurance
 - **Automated Reviews** – AI-powered code review that checks for bugs, security issues, and completeness
+- **Code Style Review** – Describe the code style you want to enforced in the code, an agent validades and apply those rules after Review phase is done.
 - **Configurable Review Cycles** – Set how many review iterations each task should undergo
 - **Smart Repair** – Automatic detection and recovery from failed or stuck task states
+- **Self Healing** – When in Dev mode, Tauroboros use an AI agent to diagnostics task failures, analyzes root causes, and proposes permanent source-code fixes
 
 ### Isolation & Security
 - **Git Worktree Isolation** – Each task runs in its own git worktree for clean separation
@@ -35,13 +37,6 @@ TaurOboros is an agent orchestration system, that uses a Kanban style board to v
 - **Session Logging** – Full capture of all AI interactions with token usage and cost tracking
 - **Execution Graph Visualization** – See task dependencies and parallelization opportunities
 - **Telegram Notifications** – Get notified when tasks complete or fail
-
-### Integration
-- **Pi RPC Integration** – Works with Pi AI agents via RPC protocol
-- **Model Discovery** – Automatic detection of available AI models
-- **Branch Management** – Flexible git branch selection per task or globally
-- **Auto-commit** – Optional automatic commit and merge of changes
-
 
 ## Quick Start
 
