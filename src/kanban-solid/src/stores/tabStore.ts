@@ -3,7 +3,7 @@
  * Replaces: TabContext
  */
 
-import { createSignal } from 'solid-js'
+import { createSignal, createRoot } from 'solid-js'
 
 export type MainTabId = 'kanban' | 'options' | 'containers' | 'archived' | 'stats' | 'self-heal'
 
@@ -16,4 +16,8 @@ function createTabStore() {
   }
 }
 
-export const tabStore = createTabStore()
+// Export singleton store - wrapped in createRoot for proper disposal
+export const tabStore = createRoot((dispose) => {
+  const store = createTabStore()
+  return store
+})

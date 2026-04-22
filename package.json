@@ -12,7 +12,7 @@
     "compile": "bun run scripts/compile.ts",
     "compile:test": "bun run scripts/test-binary.ts",
     "kanban:build": "cd src/kanban-solid && npm install && npm run build",
-    "kanban:dev": "SERVER_PORT=3789 DEV_PORT=5174 bun run src/index.ts & sleep 3 && cd src/kanban-solid && npm install && SERVER_PORT=3789 DEV_PORT=5174 npm run dev",
+    "kanban:dev": "SERVER_PORT=3789 DEV_PORT=5174 bun run src/index.ts & sleep 7 && cd src/kanban-solid && npm install && SERVER_PORT=3789 DEV_PORT=5174 npm run dev",
     "test": "bun test tests/*.test.ts",
     "test:e2e": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test",
     "test:e2e:ui": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --ui",
@@ -39,7 +39,7 @@
     "@effect/language-service": "^0.85.1",
     "@playwright/test": "^1.51.0",
     "@types/bun": "latest",
-    "bun-types": "^1.3.11",
+    "bun-types": "^1.3.13",
     "typescript": "^6.0.3"
   },
   "dependencies": {
