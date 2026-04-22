@@ -12,6 +12,7 @@ import { PiContainerManager } from "./runtime/container-manager.ts"
 import { ContainerImageManager } from "./runtime/container-image-manager.ts"
 import { PlanningSessionManager } from "./runtime/planning-session.ts"
 import { SmartRepairService } from "./runtime/smart-repair.ts"
+import { MockServerManager } from "./runtime/mock-server-manager.ts"
 import { BASE_IMAGES } from "./config/base-images.ts"
 
 export interface CreateServerOptions {
@@ -60,6 +61,7 @@ export function findProjectRoot(): string {
 function resolveContainerSettings(projectRoot: string, options: CreateServerOptions): {
   imageManager?: ContainerImageManager
   containerManager?: PiContainerManager
+  mockServerManager?: MockServerManager
 } {
   const containerSettings = options.settings?.workflow?.container ?? {
     image: BASE_IMAGES.piAgent,
@@ -84,7 +86,16 @@ function resolveContainerSettings(projectRoot: string, options: CreateServerOpti
     ? undefined
     : new PiContainerManager(containerSettings.image, imageManager)
 
-  return { imageManager, containerManager }
+  // Set up mock server manager if USE_MOCK_LLM is enabled
+  const mockServerManager = process.env.USE_MOCK_LLM === 'true'
+    ? new MockServerManager(9999)
+    : undefined
+
+  if (containerManager && mockServerManager) {
+    containerManager.setMockServerManager(mockServerManager)
+  }
+
+  return { imageManager, containerManager, mockServerManager }
 }
 
 function buildPiServerRuntime(
@@ -165,8 +176,8 @@ export const makePiServerRuntime = Effect.fn("makePiServerRuntime")(
 
     const db = new PiKanbanDB(dbPath)
     const wsHub = new WebSocketHub()
-    const smartRepair = new SmartRepairService(db, options.settings)
     const { imageManager, containerManager } = resolveContainerSettings(projectRoot, options)
+    const smartRepair = new SmartRepairService(db, options.settings, containerManager)
     const planningSessionManager = yield* PlanningSessionManager.make(db, containerManager, options.settings)
 
     return buildPiServerRuntime(projectRoot, options, db, wsHub, {
@@ -196,7 +207,6 @@ const makeScopedPiServerRuntime = Effect.fn("makeScopedPiServerRuntime")(
       (hub) => Effect.sync(() => hub.close()),
     )
 
-    const smartRepair = new SmartRepairService(db, options.settings)
     const { imageManager: resolvedImageManager, containerManager: resolvedContainerManager } = resolveContainerSettings(projectRoot, options)
 
     const imageManager = resolvedImageManager
@@ -213,6 +223,7 @@ const makeScopedPiServerRuntime = Effect.fn("makeScopedPiServerRuntime")(
         )
       : undefined
 
+    const smartRepair = new SmartRepairService(db, options.settings, containerManager)
     const planningSessionManager = yield* PlanningSessionManager.makeScoped(db, containerManager, options.settings)
 
     return yield* Effect.acquireRelease(

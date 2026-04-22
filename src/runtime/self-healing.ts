@@ -10,6 +10,7 @@ import { VERSION, IS_COMPILED } from "../server/version.ts"
 import { PiSessionManager, SessionManagerExecuteError } from "./session-manager.ts"
 import { parseStrictJsonObject } from "./strict-json.ts"
 import { PiProcessError } from "./pi-process.ts"
+import type { PiContainerManager } from "./container-manager.ts"
 
 export class SelfHealingError extends Schema.TaggedError<SelfHealingError>()("SelfHealingError", {
   operation: Schema.String,
@@ -51,8 +52,9 @@ export class SelfHealingService {
     private readonly db: PiKanbanDB,
     private readonly projectRoot: string,
     private readonly settings?: InfrastructureSettings,
+    private readonly containerManager?: PiContainerManager,
   ) {
-    this.sessions = new PiSessionManager(db, undefined, settings)
+    this.sessions = new PiSessionManager(db, containerManager, settings)
   }
 
   investigateFailure(input: InvestigateFailureInput): Effect.Effect<SelfHealingInvestigationResult, SelfHealingError> {

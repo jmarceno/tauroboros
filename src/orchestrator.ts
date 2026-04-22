@@ -226,7 +226,7 @@ export class PiOrchestrator {
       ? configuredParallelTasks
       : 1
     this.scheduler = new GlobalScheduler(maxSlots)
-    this.selfHealingService = new SelfHealingService(this.db, this.projectRoot, this.settings)
+    this.selfHealingService = new SelfHealingService(this.db, this.projectRoot, this.settings, containerManager)
   }
 
   private toOperationError(operation: string, cause: unknown): OrchestratorOperationError {

@@ -11,6 +11,7 @@ import { PiSessionManager, SessionManagerExecuteError } from "./session-manager.
 import { parseStrictJsonObject } from "./strict-json.ts"
 import { formatLocalDateTime } from "../utils/date-format.ts"
 import { PiProcessError } from "./pi-process.ts"
+import type { PiContainerManager } from "./container-manager.ts"
 
 export type SmartRepairAction = TaskRepairAction
 
@@ -130,8 +131,9 @@ export class SmartRepairService {
   constructor(
     private readonly db: PiKanbanDB,
     private readonly settings?: InfrastructureSettings,
+    private readonly containerManager?: PiContainerManager,
   ) {
-    this.sessions = new PiSessionManager(db, undefined, settings)
+    this.sessions = new PiSessionManager(db, containerManager, settings)
   }
 
   decide(taskId: string): Effect.Effect<SmartRepairDecision, SmartRepairError> {
