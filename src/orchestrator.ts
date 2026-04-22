@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto"
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "fs"
 import { join } from "path"
-import { Effect, Fiber, Schema, Either } from "effect"
+import { Effect, Fiber, Either } from "effect"
 import { ErrorCode } from "./shared/error-codes.ts"
 import type { InfrastructureSettings } from "./config/settings.ts"
 import { BASE_IMAGES } from "./config/base-images.ts"
@@ -48,135 +48,34 @@ import {
   clearAllPausedSessionStates,
 } from "./runtime/session-pause-state.ts"
 
-function nowUnix(): number {
-  return Math.floor(Date.now() / 1000)
-}
-
-function stripAndNormalize(value: string): string {
-  return value.trim().replace(/\n{3,}/g, "\n\n")
-}
-
-function tagOutput(tag: string, text: string): string {
-  return text.trim() ? `\n[${tag}]\n${text.trim()}\n` : ""
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
-}
-
-/**
- * Determine if a task that timed out was "essentially complete" based on collected events.
- * This heuristic checks if meaningful work was done before the timeout occurred.
- */
-/**
- * Check if an error is an explicit merge-failure worktree error.
- */
-function isMergeConflictWorktreeError(error: unknown): error is WorktreeError {
-  return error instanceof WorktreeError && error.code === "MERGE_FAILED"
-}
-
-function checkEssentialCompletion(collectedEvents: readonly unknown[]): {
-  isEssentiallyComplete: boolean
-  reason: string
-} {
-  if (collectedEvents.length === 0) {
-    return { isEssentiallyComplete: false, reason: "No events collected" }
-  }
-
-  // Event types that indicate substantial work was done
-  const workIndicators = new Set([
-    "tool_start",      // Tool execution started
-    "tool_complete",   // Tool execution completed
-    "text",            // Text output
-    "message_update",  // Assistant message
-    "file_write",      // File was written
-    "bash_command",    // Bash command executed
-    "git_commit",      // Git commit was made
-  ])
-
-  // Count meaningful events
-  let workEventCount = 0
-  let hasFileWrite = false
-  let hasGitCommit = false
-  let hasToolComplete = false
-  let hasMessageUpdate = false
-
-  for (const event of collectedEvents) {
-    const eventRecord = asRecord(event)
-    const eventType = typeof eventRecord.type === "string" ? eventRecord.type : ""
-    if (workIndicators.has(eventType)) {
-      workEventCount++
-    }
-    if (eventType === "file_write") hasFileWrite = true
-    if (eventType === "git_commit") hasGitCommit = true
-    if (eventType === "tool_complete") hasToolComplete = true
-    if (eventType === "message_update") hasMessageUpdate = true
-  }
-
-  // Heuristic: If we have at least 5 work events AND
-  // either a file write, git commit, tool completion, or substantial messages,
-  // consider the task essentially complete
-  if (workEventCount >= 5 && (hasFileWrite || hasGitCommit || hasToolComplete || hasMessageUpdate)) {
-    return {
-      isEssentiallyComplete: true,
-      reason: `Task made substantial progress (${workEventCount} work events, fileWrite=${hasFileWrite}, gitCommit=${hasGitCommit}, toolComplete=${hasToolComplete})`,
-    }
-  }
-
-  // Lower threshold for git commit specifically (if commit happened, task is essentially done)
-  if (hasGitCommit) {
-    return { isEssentiallyComplete: true, reason: "Git commit was made before timeout" }
-  }
-
-  return {
-    isEssentiallyComplete: false,
-    reason: `Insufficient progress indicators (${workEventCount} work events, need at least 5 with file/tool/message activity)`,
-  }
-}
-
-function runShellCommandEffect(command: string, cwd: string): Effect.Effect<{ stdout: string; stderr: string; exitCode: number }, OrchestratorOperationError> {
-  return Effect.tryPromise({
-    try: async () => {
-      const proc = Bun.spawn(["sh", "-c", command], {
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-      })
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-      ])
-      return { stdout, stderr, exitCode }
-    },
-    catch: (cause) =>
-      cause instanceof OrchestratorOperationError
-        ? cause
-        : new OrchestratorOperationError({
-            operation: "runShellCommand",
-            message: cause instanceof Error ? cause.message : String(cause),
-          }),
-  })
-}
-
-export class OrchestratorOperationError extends Schema.TaggedError<OrchestratorOperationError>()(
-  "OrchestratorOperationError",
-  {
-    operation: Schema.String,
-    message: Schema.String,
-    code: Schema.optional(Schema.Enums(ErrorCode)),
-    cause: Schema.optional(Schema.Unknown),
-  },
-) {}
-
-
-
-type ContainerImageOperations = {
-  checkImageExists(imageName: string): Effect.Effect<boolean, unknown>
-  deleteImage(imageName: string): Effect.Effect<{ success: boolean; error?: string }, unknown>
-}
+// Import from new orchestrator modules
+import {
+  OrchestratorOperationError,
+  type ContainerImageOperations,
+  nowUnix,
+  stripAndNormalize,
+  tagOutput,
+  asRecord,
+  isMergeConflictWorktreeError,
+  checkEssentialCompletion,
+  runShellCommandEffect,
+  getAutoDeployTemplates,
+  shouldCheckAutoDeploy,
+  deployTemplateTask,
+  deployTemplatesForCondition,
+  launchAutoDeployPostRunTasks,
+  isDependencySatisfiedByAnotherRun,
+  resolveExecutionTasksWithActiveDependencies,
+  getExecutionGraphTasksWithActiveDependencies,
+  validateGroupTasksExist,
+  findExternalDependencies,
+  checkImageExistsEffect,
+  validateWorkflowImagesEffect,
+  isCustomImage,
+  getContainerImageOperations as getContainerImageOps,
+  manualSelfHealRecover,
+  maybeSelfHealTask,
+} from "./orchestrator/index.ts"
 
 export class PiOrchestrator {
   private running = false
@@ -242,15 +141,8 @@ export class PiOrchestrator {
     return effect.pipe(Effect.mapError((cause) => this.toOperationError(operation, cause)))
   }
 
-  private getContainerImageOperations(operation: string): Effect.Effect<PiContainerManager & ContainerImageOperations, OrchestratorOperationError> {
-    if (!this.containerManager) {
-      return Effect.fail(new OrchestratorOperationError({
-        operation,
-        message: "Container manager is not configured",
-      }))
-    }
-
-    return Effect.succeed(this.containerManager as PiContainerManager & ContainerImageOperations)
+  private getContainerImageOperations(operation: string): Effect.Effect<ContainerImageOperations, OrchestratorOperationError> {
+    return getContainerImageOps(operation, this.containerManager)
   }
 
   private updateSchedulerCapacityEffect(): Effect.Effect<void, GlobalSchedulerError> {
@@ -294,84 +186,30 @@ export class PiOrchestrator {
   }
 
   private shouldCheckAutoDeploy(kind: WorkflowRun["kind"]): boolean {
-    return kind !== "single_task"
+    return shouldCheckAutoDeploy(kind)
   }
 
   private getAutoDeployTemplates(condition: AutoDeployCondition): Task[] {
-    return this.db.getTasks().filter((task) => task.status === "template" && task.autoDeploy === true && task.autoDeployCondition === condition)
+    return getAutoDeployTemplates(condition, this.db)
   }
 
   private deployTemplateTask(template: Task): Task {
-    const deployed = this.db.createTask({
-      name: template.name,
-      prompt: template.prompt,
-      status: "backlog",
-      branch: template.branch,
-      planModel: template.planModel,
-      executionModel: template.executionModel,
-      planmode: template.planmode,
-      autoApprovePlan: template.autoApprovePlan,
-      review: template.review,
-      autoCommit: template.autoCommit,
-      autoDeploy: false,
-      autoDeployCondition: null,
-      deleteWorktree: template.deleteWorktree,
-      requirements: [...template.requirements],
-      thinkingLevel: template.thinkingLevel,
-      planThinkingLevel: template.planThinkingLevel,
-      executionThinkingLevel: template.executionThinkingLevel,
-      executionPhase: "not_started",
-      awaitingPlanApproval: false,
-      planRevisionCount: 0,
-      executionStrategy: template.executionStrategy,
-      bestOfNConfig: template.bestOfNConfig,
-      bestOfNSubstage: "idle",
-      skipPermissionAsking: template.skipPermissionAsking,
-      maxReviewRunsOverride: template.maxReviewRunsOverride,
-      smartRepairHints: template.smartRepairHints,
-      reviewActivity: "idle",
-      containerImage: template.containerImage,
-      codeStyleReview: template.codeStyleReview,
-    })
-
-    this.broadcast({ type: "task_created", payload: deployed })
-    return deployed
+    return deployTemplateTask(template, { db: this.db, broadcast: this.broadcast })
   }
 
   private deployTemplatesForCondition(condition: AutoDeployCondition): Task[] {
-    const templates = this.getAutoDeployTemplates(condition)
-    if (templates.length === 0) {
-      return []
-    }
-
-    const deployedTasks: Task[] = []
-    for (const template of templates) {
-      deployedTasks.push(this.deployTemplateTask(template))
-    }
-
-    return deployedTasks
+    return deployTemplatesForCondition(condition, { db: this.db, broadcast: this.broadcast })
   }
 
   private launchAutoDeployPostRunTasks(runKind: WorkflowRun["kind"], hasFailures: boolean): Effect.Effect<void, OrchestratorOperationError> {
-    return Effect.gen(this, function* () {
-      if (!this.shouldCheckAutoDeploy(runKind)) {
-        return
-      }
-
-      const condition: AutoDeployCondition = hasFailures ? "workflow_failed" : "workflow_done"
-      const deployedTasks = [
-        ...this.deployTemplatesForCondition(condition),
-        ...this.deployTemplatesForCondition("after_workflow_end"),
-      ]
-
-      if (deployedTasks.length === 0) {
-        return
-      }
-
-      for (const deployedTask of deployedTasks) {
-        yield* this.startSingle(deployedTask.id)
-      }
-    })
+    return launchAutoDeployPostRunTasks(
+      runKind,
+      hasFailures,
+      { db: this.db, broadcast: this.broadcast },
+      (taskId) => this.startSingle(taskId),
+    ).pipe(
+      Effect.mapError((cause) => this.toOperationError("launchAutoDeployPostRunTasks", cause)),
+    )
   }
 
   private finalizeRunIfCompleteEffect(runId: string): Effect.Effect<void, OrchestratorOperationError, never> {
@@ -543,136 +381,35 @@ export class PiOrchestrator {
     })
   }
 
+  private getDependencyResolutionContext() {
+    return {
+      getTask: (taskId: string) => this.db.getTask(taskId),
+      getWorkflowRun: (runId: string) => this.db.getWorkflowRun(runId),
+      getTasks: () => this.db.getTasks(),
+      isRunActiveStatus: (status: WorkflowRun["status"]) => this.isRunActiveStatus(status),
+      taskRunLookup: this.taskRunLookup,
+    }
+  }
+
   private isDependencySatisfiedByAnotherRun(taskId: string): boolean {
-    const runId = this.taskRunLookup.get(taskId)
-    if (!runId) return false
-    const run = this.db.getWorkflowRun(runId)
-    return Boolean(run && this.isRunActiveStatus(run.status))
+    return isDependencySatisfiedByAnotherRun(taskId, this.getDependencyResolutionContext())
   }
 
   private resolveExecutionTasksWithActiveDependencies(allTasks: Task[], taskId: string): Effect.Effect<Task[], OrchestratorOperationError> {
-    return Effect.gen(this, function* () {
-      const taskMap = new Map(allTasks.map((task) => [task.id, task]))
-      const ordered: Task[] = []
-      const visited = new Set<string>()
-      const visiting = new Set<string>()
-      let error: OrchestratorOperationError | null = null
-
-      const visit = (candidateId: string, isTarget = false): boolean => {
-        if (error) return false
-        if (visiting.has(candidateId)) {
-          error = new OrchestratorOperationError({
-            operation: "resolveExecutionTasksWithActiveDependencies",
-            message: `Circular dependency detected while resolving ${candidateId}`,
-          })
-          return false
-        }
-        if (visited.has(candidateId)) return true
-
-        const candidate = taskMap.get(candidateId)
-        if (!candidate) {
-          error = new OrchestratorOperationError({
-            operation: "resolveExecutionTasksWithActiveDependencies",
-            message: `Task not found: ${candidateId}`,
-          })
-          return false
-        }
-
-        visiting.add(candidateId)
-        for (const depId of candidate.requirements) {
-          const dependency = taskMap.get(depId)
-          if (!dependency) continue
-          if (dependency.status === "done" || this.isDependencySatisfiedByAnotherRun(depId)) {
-            continue
-          }
-          if (dependency.status === "failed" || dependency.status === "stuck") {
-            error = new OrchestratorOperationError({
-              operation: "resolveExecutionTasksWithActiveDependencies",
-              message: `Dependency "${dependency.name}" is not done (status: ${dependency.status})`,
-            })
-            return false
-          }
-          if (!isTaskExecutable(dependency)) {
-            error = new OrchestratorOperationError({
-              operation: "resolveExecutionTasksWithActiveDependencies",
-              message: isTarget
-                ? `Task "${candidate.name}" is blocked by dependency "${dependency.name}" in status "${dependency.status}"`
-                : `Dependency "${dependency.name}" is not done and cannot run from status "${dependency.status}" (phase: ${dependency.executionPhase})`,
-            })
-            return false
-          }
-          if (!visit(depId)) return false
-        }
-        visiting.delete(candidateId)
-        visited.add(candidateId)
-
-        if (candidate.status === "done") return true
-        if (!isTaskExecutable(candidate)) {
-          error = new OrchestratorOperationError({
-            operation: "resolveExecutionTasksWithActiveDependencies",
-            message: isTarget
-              ? `Task "${candidate.name}" is not runnable from status "${candidate.status}" (phase: ${candidate.executionPhase})`
-              : `Dependency "${candidate.name}" is not done and cannot run from status "${candidate.status}" (phase: ${candidate.executionPhase})`,
-          })
-          return false
-        }
-        ordered.push(candidate)
-        return true
-      }
-
-      visit(taskId, true)
-      
-      if (error) {
-        return yield* Effect.fail(error)
-      }
-      
-      return ordered
-    })
+    return resolveExecutionTasksWithActiveDependencies(
+      allTasks,
+      taskId,
+      this.getDependencyResolutionContext(),
+    )
   }
 
   private getExecutionGraphTasksWithActiveDependencies(
     tasks: Task[],
   ): Effect.Effect<Task[], OrchestratorOperationError> {
-    return Effect.gen(this, function* () {
-      const taskMap = new Map(tasks.map((task) => [task.id, task]))
-      const selectedIds = new Set<string>()
-      let madeProgress = true
-
-      while (madeProgress) {
-        madeProgress = false
-
-        for (const task of tasks) {
-          if (selectedIds.has(task.id) || task.status === "done" || !isTaskExecutable(task)) {
-            continue
-          }
-
-          const canQueue = task.requirements.every((depId) => {
-            const dependency = taskMap.get(depId)
-            if (!dependency) return true
-            if (dependency.status === "failed" || dependency.status === "stuck") return false
-            return dependency.status === "done" || selectedIds.has(depId) || this.isDependencySatisfiedByAnotherRun(depId)
-          })
-
-          if (!canQueue) continue
-
-          selectedIds.add(task.id)
-          madeProgress = true
-        }
-      }
-
-      const result: Task[] = []
-      for (const taskId of selectedIds) {
-        const task = taskMap.get(taskId)
-        if (!task) {
-          return yield* new OrchestratorOperationError({
-            operation: "getExecutionGraphTasksWithActiveDependencies",
-            message: `Task not found while building execution graph: ${taskId}`,
-          })
-        }
-        result.push(task)
-      }
-      return result
-    })
+    return getExecutionGraphTasksWithActiveDependencies(
+      tasks,
+      this.getDependencyResolutionContext(),
+    )
   }
 
   private startRunEffect(input: {
@@ -1259,28 +996,7 @@ export class PiOrchestrator {
    * Throws an error if any task is not found.
    */
   private validateGroupTasksExist(taskIds: string[]): Effect.Effect<Task[], OrchestratorOperationError> {
-    return Effect.gen(this, function* () {
-      const tasks: Task[] = []
-      const missingIds: string[] = []
-
-      for (const taskId of taskIds) {
-        const task = this.db.getTask(taskId)
-        if (!task) {
-          missingIds.push(taskId)
-        } else {
-          tasks.push(task)
-        }
-      }
-
-      if (missingIds.length > 0) {
-        return yield* new OrchestratorOperationError({
-          operation: "validateGroupTasksExist",
-          message: `One or more tasks in group were not found in database: ${missingIds.join(', ')}`,
-        })
-      }
-
-      return tasks
-    })
+    return validateGroupTasksExist(taskIds, (taskId) => this.db.getTask(taskId))
   }
 
   /**
@@ -1291,20 +1007,7 @@ export class PiOrchestrator {
     groupTasks: Task[],
     allTasks: Task[],
   ): Array<{ task: Task; dependency: string }> {
-    const groupTaskIds = new Set(groupTasks.map((t) => t.id))
-    const allTaskIds = new Set(allTasks.map((t) => t.id))
-    const externalDeps: Array<{ task: Task; dependency: string }> = []
-
-    for (const task of groupTasks) {
-      for (const depId of task.requirements) {
-        // Check if dependency is NOT in the group AND is a valid task (exists in allTasks)
-        if (!groupTaskIds.has(depId) && allTaskIds.has(depId)) {
-          externalDeps.push({ task, dependency: depId })
-        }
-      }
-    }
-
-    return externalDeps
+    return findExternalDependencies(groupTasks, allTasks)
   }
 
   /**
@@ -2988,78 +2691,33 @@ export class PiOrchestrator {
     reportId: string,
     action: "restart_task" | "keep_failed",
   ): Effect.Effect<{ ok: boolean; message: string }, OrchestratorOperationError> {
-    return this.wrapOperation("manualSelfHealRecover", Effect.gen(this, function* () {
-        const task = this.db.getTask(taskId)
-        if (!task) {
-          return yield* new OrchestratorOperationError({
-            operation: "manualSelfHealRecover",
-            message: `Task not found: ${taskId}`,
-          })
-        }
-
-        const report = this.db.getSelfHealReport(reportId)
-        if (!report) {
-          return yield* new OrchestratorOperationError({
-            operation: "manualSelfHealRecover",
-            message: `Self-heal report not found: ${reportId}`,
-          })
-        }
-        if (report.taskId !== taskId) {
-          return yield* new OrchestratorOperationError({
-            operation: "manualSelfHealRecover",
-            message: `Report ${reportId} does not belong to task ${taskId}`,
-          })
-        }
-
-        const runId = report.runId
-
-        if (action === "restart_task") {
-          const requeued = yield* this.scheduler.requeueExecutingTask(taskId).pipe(Effect.orDie)
-          if (!requeued) {
-            yield* this.scheduler.enqueueTask(runId, taskId).pipe(Effect.orDie)
-          }
-
-          this.db.updateTask(taskId, {
-            status: "queued",
-            errorMessage: null,
-            selfHealStatus: "idle",
-            selfHealMessage: "Manually recovered: task requeued",
-            sessionId: null,
-            sessionUrl: null,
-          })
-          this.broadcastTask(taskId)
-          this.broadcast({
-            type: "self_heal_status",
-            payload: {
-              runId,
-              taskId,
-              status: "recovered",
-              message: "Task manually requeued from self-heal report",
-              reportId,
-            },
-          })
-          yield* this.refreshRunProgressEffect(runId)
-          yield* this.triggerSchedulingEffect()
-          return { ok: true, message: "Task requeued successfully" }
-        }
-
-        this.db.updateTask(taskId, {
-          selfHealStatus: "idle",
-          selfHealMessage: null,
-        })
-        this.broadcastTask(taskId)
-        this.broadcast({
-          type: "self_heal_status",
-          payload: {
-            runId,
-            taskId,
-            status: "manual_required",
-            message: "Manual recovery dismissed — task remains failed",
-            reportId,
-          },
-        })
-        return { ok: true, message: "Task kept as failed" }
+    const report = this.db.getSelfHealReport(reportId)
+    if (!report) {
+      return Effect.fail(new OrchestratorOperationError({
+        operation: "manualSelfHealRecover",
+        message: `Self-heal report not found: ${reportId}`,
       }))
+    }
+    
+    return manualSelfHealRecover(
+      taskId,
+      reportId,
+      action,
+      { db: this.db, selfHealingService: this.selfHealingService, broadcast: this.broadcast },
+      {
+        requeueExecutingTask: (taskId) => this.scheduler.requeueExecutingTask(taskId).pipe(
+          Effect.map(result => result !== null),
+          Effect.orDie
+        ),
+        enqueueTask: (runId, taskId) => this.scheduler.enqueueTask(runId, taskId).pipe(Effect.orDie),
+        getExecutingStates: (runId) => this.scheduler.getExecutingStates(runId).pipe(Effect.orDie),
+        getQueuedTasks: (runId) => this.scheduler.getQueuedTasks(runId),
+      },
+      report.runId,
+      (taskId) => this.broadcastTask(taskId),
+      (runId) => this.refreshRunProgressEffect(runId),
+      () => this.triggerSchedulingEffect(),
+    )
   }
 
   private broadcastTask(taskId: string): void {
@@ -3069,144 +2727,20 @@ export class PiOrchestrator {
   }
 
   private maybeSelfHealTask(runId: string, task: Task): Effect.Effect<boolean, OrchestratorOperationError> {
-    return Effect.gen(this, function* () {
-      const reportCount = this.db.countSelfHealReportsForTaskInRun(runId, task.id)
-      if (reportCount >= 2) {
-        this.db.updateTask(task.id, {
-          selfHealStatus: "idle",
-          selfHealMessage: "Self-healing retry limit reached for this task in this run",
-        })
-        this.broadcastTask(task.id)
-        this.broadcast({
-          type: "self_heal_status",
-          payload: {
-            runId,
-            taskId: task.id,
-            status: "skipped",
-            message: "Self-healing retry limit reached",
-          },
-        })
-        return false
-      }
-
-      const run = this.db.getWorkflowRun(runId)
-      if (!run) {
-        return yield* new OrchestratorOperationError({
-          operation: "maybeSelfHealTask",
-          message: `Run not found for self-heal flow: ${runId}`,
-        })
-      }
-
-      const executingForSelfHeal = yield* this.scheduler.getExecutingStates(runId).pipe(Effect.orDie)
-      const queuedForSelfHeal = yield* this.scheduler.getQueuedTasks(runId)
-      const hasOtherActiveTasks =
-        executingForSelfHeal.some((state) => state.taskId !== task.id)
-        || queuedForSelfHeal.some((queuedTaskId) => queuedTaskId !== task.id)
-
-      this.db.updateTask(task.id, {
-        selfHealStatus: "investigating",
-        selfHealMessage: "Investigating failure and drafting permanent fix...",
-      })
-      this.broadcastTask(task.id)
-      this.broadcast({
-        type: "self_heal_status",
-        payload: {
-          runId,
-          taskId: task.id,
-          status: "investigating",
-          message: "Self-healing investigation started",
-        },
-      })
-
-      const result = yield* this.selfHealingService.investigateFailure({
-        run,
-        task,
-        errorMessage: task.errorMessage ?? "Task failed without explicit error message",
-        hasOtherActiveTasks,
-      }).pipe(
-        Effect.mapError((cause) => this.toOperationError("maybeSelfHealTask", cause)),
-      )
-
-      this.db.updateTask(task.id, {
-        selfHealStatus: "recovering",
-        selfHealMessage: result.diagnosticsSummary,
-        selfHealReportId: result.reportId,
-      })
-      this.broadcastTask(task.id)
-      this.broadcast({
-        type: "self_heal_status",
-        payload: {
-          runId,
-          taskId: task.id,
-          status: "recovering",
-          message: "Self-healing generated diagnostics and recovery decision",
-          reportId: result.reportId,
-        },
-      })
-
-      if (result.recoverable && result.recommendedAction === "restart_task") {
-        const requeued = yield* this.scheduler.requeueExecutingTask(task.id).pipe(Effect.orDie)
-        if (!requeued) {
-          yield* this.scheduler.enqueueTask(runId, task.id).pipe(Effect.orDie)
-        }
-
-        this.db.updateTask(task.id, {
-          status: "queued",
-          errorMessage: null,
-          selfHealStatus: "idle",
-          selfHealMessage: "Auto-recovered: task requeued",
-          sessionId: null,
-          sessionUrl: null,
-        })
-        this.broadcastTask(task.id)
-        this.broadcast({
-          type: "self_heal_status",
-          payload: {
-            runId,
-            taskId: task.id,
-            status: "recovered",
-            message: "Task requeued after self-healing",
-            reportId: result.reportId,
-          },
-        })
-        return true
-      }
-
-      this.db.updateTask(task.id, {
-        selfHealStatus: "idle",
-        selfHealMessage: `Manual recovery required: ${result.actionRationale}`,
-      })
-      this.broadcastTask(task.id)
-      this.broadcast({
-        type: "self_heal_status",
-        payload: {
-          runId,
-          taskId: task.id,
-          status: "manual_required",
-          message: result.actionRationale,
-          reportId: result.reportId,
-        },
-      })
-      return false
-    }).pipe(
-      Effect.catchAll((error) => {
-        const message = error instanceof Error ? error.message : String(error)
-        this.db.updateTask(task.id, {
-          selfHealStatus: "idle",
-          selfHealMessage: `Self-healing failed: ${message}`,
-        })
-        this.broadcastTask(task.id)
-        this.broadcast({
-          type: "self_heal_status",
-          payload: {
-            runId,
-            taskId: task.id,
-            status: "error",
-            message,
-          },
-        })
-        return Effect.succeed(false)
-      }),
+    return maybeSelfHealTask(
+      runId,
+      task,
+      { db: this.db, selfHealingService: this.selfHealingService, broadcast: this.broadcast },
+      {
+        requeueExecutingTask: (taskId) => this.scheduler.requeueExecutingTask(taskId).pipe(
+          Effect.map(result => result !== null),
+          Effect.orDie
+        ),
+        enqueueTask: (runId, taskId) => this.scheduler.enqueueTask(runId, taskId).pipe(Effect.orDie),
+        getExecutingStates: (runId) => this.scheduler.getExecutingStates(runId).pipe(Effect.orDie),
+        getQueuedTasks: (runId) => this.scheduler.getQueuedTasks(runId),
+      },
+      (taskId) => this.broadcastTask(taskId),
     )
   }
 
@@ -3301,6 +2835,14 @@ export class PiOrchestrator {
     })
   }
 
+  private getImageValidationContext(): import("./orchestrator/container-images.ts").ImageValidationContext {
+    return {
+      containerManager: this.containerManager,
+      settingsWorkflowContainer: this.settings?.workflow?.container,
+      getTask: (taskId: string) => this.db.getTask(taskId),
+    }
+  }
+
   /**
    * Validate that all container images for the given tasks exist.
    * Returns an object with valid flag and list of invalid tasks.
@@ -3310,34 +2852,7 @@ export class PiOrchestrator {
     valid: boolean
     invalid: { taskId: string; taskName: string; image: string }[]
   }, OrchestratorOperationError> {
-    return Effect.gen(this, function* () {
-      const containerEnabled = this.settings?.workflow?.container?.enabled !== false
-      if (!containerEnabled) {
-        return { valid: true, invalid: [] }
-      }
-
-      const invalid: { taskId: string; taskName: string; image: string }[] = []
-
-      for (const taskId of taskIds) {
-        const task = this.db.getTask(taskId)
-        if (!task) continue
-
-        const imageToCheck = resolveContainerImage(task, this.settings?.workflow?.container?.image)
-
-        if (imageToCheck) {
-          const exists = yield* this.checkImageExistsEffect(imageToCheck)
-          if (!exists) {
-            invalid.push({
-              taskId,
-              taskName: task.name,
-              image: imageToCheck,
-            })
-          }
-        }
-      }
-
-      return { valid: invalid.length === 0, invalid }
-    })
+    return validateWorkflowImagesEffect(taskIds, this.getImageValidationContext())
   }
 
   /**
@@ -3345,27 +2860,7 @@ export class PiOrchestrator {
    * Uses the container manager if available, otherwise falls back to podman check.
    */
   private checkImageExistsEffect(imageName: string): Effect.Effect<boolean, OrchestratorOperationError> {
-    if (this.containerManager) {
-      return this.getContainerImageOperations("checkImageExists").pipe(
-        Effect.flatMap((containerManager) =>
-          containerManager.checkImageExists(imageName).pipe(
-            Effect.mapError((cause) => this.toOperationError("checkImageExists", cause)),
-          )
-        ),
-      )
-    }
-
-    return Effect.tryPromise({
-      try: async () => {
-        const proc = Bun.spawn(["podman", "image", "exists", imageName], {
-          stdout: "pipe",
-          stderr: "pipe",
-        })
-        const exitCode = await proc.exited
-        return exitCode === 0
-      },
-      catch: (cause) => this.toOperationError("checkImageExists", cause),
-    })
+    return checkImageExistsEffect(imageName, this.getImageValidationContext())
   }
 
   /**
@@ -3377,10 +2872,7 @@ export class PiOrchestrator {
    * The default base image is NOT considered custom and should never be deleted.
    */
   private isCustomImage(imageName: string): boolean {
-    if (!imageName) return false
-    if (imageName === BASE_IMAGES.piAgent) return false
-    const customPattern = /^pi-agent:[a-zA-Z]+-\d+$/
-    return customPattern.test(imageName)
+    return isCustomImage(imageName)
   }
 
   /**
