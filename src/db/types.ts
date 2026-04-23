@@ -289,12 +289,16 @@ export interface SelfHealReport {
   taskStatus: TaskStatus
   errorMessage: string | null
   diagnosticsSummary: string
-  rootCauses: string[]
+  isTauroborosBug: boolean
+  rootCause: {
+    description: string
+    affectedFiles: string[]
+    codeSnippet: string
+  }
   proposedSolution: string
   implementationPlan: string[]
-  recoverable: boolean
-  recommendedAction: "restart_task" | "keep_failed"
-  actionRationale: string
+  confidence: "high" | "medium" | "low"
+  externalFactors: string[]
   sourceMode: "local" | "github_clone" | "github_metadata_only"
   sourcePath: string | null
   githubUrl: string
@@ -313,12 +317,16 @@ export interface CreateSelfHealReportInput {
   taskStatus: TaskStatus
   errorMessage?: string | null
   diagnosticsSummary: string
-  rootCauses: string[]
+  isTauroborosBug: boolean
+  rootCause: {
+    description: string
+    affectedFiles: string[]
+    codeSnippet: string
+  }
   proposedSolution: string
   implementationPlan: string[]
-  recoverable: boolean
-  recommendedAction: "restart_task" | "keep_failed"
-  actionRationale: string
+  confidence: "high" | "medium" | "low"
+  externalFactors: string[]
   sourceMode: "local" | "github_clone" | "github_metadata_only"
   sourcePath?: string | null
   githubUrl: string

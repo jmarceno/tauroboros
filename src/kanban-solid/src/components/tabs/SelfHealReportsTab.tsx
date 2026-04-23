@@ -1,5 +1,5 @@
 /**
- * SelfHealReportsTab Component - Browse and act on self-heal diagnostic reports
+ * SelfHealReportsTab Component - Browse self-heal diagnostic reports
  */
 
 import { createSignal, createMemo, For, Show } from 'solid-js'
@@ -22,6 +22,12 @@ const SOURCE_MODE_LABELS: Record<SelfHealReport['sourceMode'], string> = {
   github_metadata_only: 'GitHub metadata',
 }
 
+const CONFIDENCE_LABELS: Record<SelfHealReport['confidence'], string> = {
+  high: 'High confidence',
+  medium: 'Medium confidence',
+  low: 'Low confidence',
+}
+
 // ---- sub-components ---------------------------------------------------------
 
 function ReportBadge(props: { label: string; variant: 'success' | 'warning' | 'error' | 'info' }) {
@@ -41,12 +47,8 @@ function ReportBadge(props: { label: string; variant: 'success' | 'warning' | 'e
 function SelfHealReportCard(props: {
   report: SelfHealReport
   taskName: string
-  onRecover: (reportId: string, action: 'restart_task' | 'keep_failed') => Promise<void>
-  recoveringId: string | null
 }) {
   const [expanded, setExpanded] = createSignal(false)
-
-  const isRecovering = () => props.recoveringId === props.report.id
 
   return (
     <div class="border border-dark-border rounded-lg bg-dark-surface overflow-hidden">
@@ -60,12 +62,12 @@ function SelfHealReportCard(props: {
           <div class="flex items-center gap-2 flex-wrap mb-1">
             <span class="text-sm font-medium text-dark-text-primary truncate">{props.taskName}</span>
             <ReportBadge
-              label={props.report.recoverable ? 'Recoverable' : 'Not recoverable'}
-              variant={props.report.recoverable ? 'success' : 'warning'}
+              label={props.report.isTauroborosBug ? 'Tauroboros Bug' : 'External Issue'}
+              variant={props.report.isTauroborosBug ? 'error' : 'warning'}
             />
             <ReportBadge
-              label={props.report.recommendedAction === 'restart_task' ? 'Restart' : 'Keep failed'}
-              variant={props.report.recommendedAction === 'restart_task' ? 'info' : 'warning'}
+              label={CONFIDENCE_LABELS[props.report.confidence]}
+              variant={props.report.confidence === 'high' ? 'success' : props.report.confidence === 'medium' ? 'warning' : 'info'}
             />
             <ReportBadge label={SOURCE_MODE_LABELS[props.report.sourceMode]} variant="info" />
           </div>
@@ -92,30 +94,37 @@ function SelfHealReportCard(props: {
         <div class="border-t border-dark-border divide-y divide-dark-border/50">
           {/* Diagnostics summary */}
           <div class="p-4">
-            <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-2">Diagnostics</h4>
+            <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-2">Diagnostics Summary</h4>
             <p class="text-sm text-dark-text-primary whitespace-pre-wrap">{props.report.diagnosticsSummary}</p>
           </div>
 
-          {/* Root causes */}
-          <Show when={props.report.rootCauses.length > 0}>
-            <div class="p-4">
-              <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-2">Root Causes</h4>
-              <ul class="space-y-1">
-                <For each={props.report.rootCauses}>
-                  {(cause) => (
-                    <li class="flex items-start gap-2 text-sm text-dark-text-primary">
-                      <span class="text-accent-warning mt-0.5 flex-shrink-0">•</span>
-                      <span>{cause}</span>
-                    </li>
-                  )}
-                </For>
-              </ul>
-            </div>
-          </Show>
+          {/* Root cause */}
+          <div class="p-4">
+            <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-2">Root Cause</h4>
+            <p class="text-sm text-dark-text-primary mb-2">{props.report.rootCause.description}</p>
+            <Show when={props.report.rootCause.affectedFiles.length > 0}>
+              <div class="mt-2">
+                <span class="text-xs text-dark-text-secondary">Affected files:</span>
+                <ul class="mt-1 space-y-0.5">
+                  <For each={props.report.rootCause.affectedFiles}>
+                    {(file) => (
+                      <li class="text-xs text-dark-text-primary font-mono bg-dark-bg rounded px-2 py-1">{file}</li>
+                    )}
+                  </For>
+                </ul>
+              </div>
+            </Show>
+            <Show when={props.report.rootCause.codeSnippet}>
+              <div class="mt-2">
+                <span class="text-xs text-dark-text-secondary">Code snippet:</span>
+                <pre class="text-xs text-dark-text-primary bg-dark-bg rounded p-2 mt-1 overflow-auto whitespace-pre-wrap font-mono">{props.report.rootCause.codeSnippet}</pre>
+              </div>
+            </Show>
+          </div>
 
           {/* Proposed solution */}
           <div class="p-4">
-            <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-2">Proposed Permanent Fix</h4>
+            <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-2">Proposed Solution</h4>
             <p class="text-sm text-dark-text-primary whitespace-pre-wrap">{props.report.proposedSolution}</p>
           </div>
 
@@ -133,38 +142,49 @@ function SelfHealReportCard(props: {
             </div>
           </Show>
 
-          {/* Rationale */}
-          <div class="p-4">
-            <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-2">Recovery Rationale</h4>
-            <p class="text-sm text-dark-text-primary">{props.report.actionRationale}</p>
-          </div>
+          {/* External factors */}
+          <Show when={props.report.externalFactors.length > 0}>
+            <div class="p-4">
+              <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-2">External Factors</h4>
+              <ul class="space-y-1">
+                <For each={props.report.externalFactors}>
+                  {(factor) => (
+                    <li class="flex items-start gap-2 text-sm text-dark-text-primary">
+                      <span class="text-accent-warning mt-0.5 flex-shrink-0">•</span>
+                      <span>{factor}</span>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </div>
+          </Show>
 
           {/* Error context */}
           <Show when={props.report.errorMessage}>
             <div class="p-4">
-              <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-2">Original Error</h4>
+              <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-2">Original Task Error</h4>
               <pre class="text-xs text-red-400 bg-red-500/10 rounded p-3 overflow-auto whitespace-pre-wrap">{props.report.errorMessage}</pre>
             </div>
           </Show>
 
-          {/* Recovery actions */}
+          {/* Metadata */}
           <div class="p-4">
-            <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-3">Manual Recovery Action</h4>
-            <div class="flex items-center gap-2 flex-wrap">
-              <button
-                class="px-3 py-1.5 text-sm rounded border border-accent-primary text-accent-primary hover:bg-accent-primary/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                disabled={isRecovering()}
-                onClick={() => props.onRecover(props.report.id, 'restart_task')}
-              >
-                {isRecovering() ? 'Applying…' : 'Restart task'}
-              </button>
-              <button
-                class="px-3 py-1.5 text-sm rounded border border-dark-border text-dark-text-secondary hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                disabled={isRecovering()}
-                onClick={() => props.onRecover(props.report.id, 'keep_failed')}
-              >
-                Keep failed
-              </button>
+            <h4 class="text-xs font-semibold text-dark-text-secondary uppercase tracking-wide mb-2">Report Metadata</h4>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span class="text-dark-text-secondary">Tauroboros Version:</span>
+                <span class="text-dark-text-primary ml-1">{props.report.tauroborosVersion}</span>
+              </div>
+              <div>
+                <span class="text-dark-text-secondary">Source Mode:</span>
+                <span class="text-dark-text-primary ml-1">{SOURCE_MODE_LABELS[props.report.sourceMode]}</span>
+              </div>
+              <Show when={props.report.sourcePath}>
+                <div class="col-span-2">
+                  <span class="text-dark-text-secondary">Source Path:</span>
+                  <span class="text-dark-text-primary ml-1 font-mono">{props.report.sourcePath}</span>
+                </div>
+              </Show>
             </div>
           </div>
         </div>
@@ -178,7 +198,6 @@ function SelfHealReportCard(props: {
 export function SelfHealReportsTab() {
   const queryClient = useQueryClient()
   const [selectedRunId, setSelectedRunId] = createSignal<string | 'all'>('all')
-  const [recoveringId, setRecoveringId] = createSignal<string | null>(null)
 
   const runsQuery = createQuery(() => ({
     queryKey: ['runs'],
@@ -238,19 +257,6 @@ export function SelfHealReportsTab() {
     return map
   })
 
-  const handleRecover = async (taskId: string, reportId: string, action: 'restart_task' | 'keep_failed') => {
-    setRecoveringId(reportId)
-    try {
-      const result = await runApiEffect(selfHealApi.manualRecover(taskId, reportId, action))
-      uiStore.showToast(result.message, 'success')
-      await queryClient.invalidateQueries({ queryKey: ['self-heal-reports'] })
-    } catch (e) {
-      uiStore.showToast(`Recovery failed: ${e instanceof Error ? e.message : String(e)}`, 'error')
-    } finally {
-      setRecoveringId(null)
-    }
-  }
-
   const isLoading = () => runsQuery.isLoading || allReportsQuery.isLoading
   const isEmpty = () => !isLoading() && filteredEntries().length === 0
 
@@ -260,7 +266,7 @@ export function SelfHealReportsTab() {
       <div class="flex items-center justify-between px-6 py-4 border-b border-dark-border flex-shrink-0">
         <div>
           <h2 class="text-base font-semibold text-dark-text-primary">Self-Heal Reports</h2>
-          <p class="text-xs text-dark-text-muted mt-0.5">Diagnostic reports generated when tasks fail</p>
+          <p class="text-xs text-dark-text-muted mt-0.5">Tauroboros bug investigation reports generated when tasks fail</p>
         </div>
         <div class="flex items-center gap-3">
           {/* Run filter */}
@@ -319,7 +325,7 @@ export function SelfHealReportsTab() {
               <path d="M12 8h.01" />
             </svg>
             <p class="text-sm text-dark-text-muted">No self-heal reports found</p>
-            <p class="text-xs text-dark-text-muted">Reports are generated automatically when tasks fail</p>
+            <p class="text-xs text-dark-text-muted">Reports are generated automatically when tasks fail and self-healing investigates</p>
           </div>
         </Show>
 
@@ -330,8 +336,6 @@ export function SelfHealReportsTab() {
                 <SelfHealReportCard
                   report={report}
                   taskName={`${taskNameMap()[report.taskId] ?? report.taskId.slice(0, 8)} — ${run.displayName || run.id.slice(0, 8)}`}
-                  onRecover={(reportId, action) => handleRecover(report.taskId, reportId, action)}
-                  recoveringId={recoveringId()}
                 />
               )}
             </For>

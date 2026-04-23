@@ -42,11 +42,6 @@ export type StopRunFn = (
 ) => OrchestratorRouteEffect<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>
 export type GetSlotsFn = () => OrchestratorRouteEffect<SlotUtilization>
 export type GetRunQueueStatusFn = (runId: string) => OrchestratorRouteEffect<RunQueueStatus>
-export type ManualSelfHealRecoverFn = (
-  taskId: string,
-  reportId: string,
-  action: "restart_task" | "keep_failed",
-) => OrchestratorRouteEffect<{ ok: boolean; message: string }>
 export type CleanRunFn = (runId: string) => OrchestratorRouteEffect<CleanRunResult>
 
 /**
@@ -65,7 +60,6 @@ export interface ServerRouteContext {
   onStopRun: StopRunFn | null
   onGetSlots: GetSlotsFn | null
   onGetRunQueueStatus: GetRunQueueStatusFn | null
-  onManualSelfHealRecover: ManualSelfHealRecoverFn | null
   onCleanRun: CleanRunFn | null
   imageManager?: ContainerImageManager
   containerManager?: PiContainerManager

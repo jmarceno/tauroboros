@@ -72,7 +72,6 @@ import {
   validateWorkflowImagesEffect,
   isCustomImage,
   getContainerImageOperations as getContainerImageOps,
-  manualSelfHealRecover,
   maybeSelfHealTask,
   cleanWorkflowRun,
   type CleanRunResult,
@@ -2779,43 +2778,7 @@ export class PiOrchestrator {
     })
   }
 
-  /**
-   * Apply a manual self-heal recovery action from the UI.
-   * This is called when the user explicitly selects a recovery action from a self-heal report.
-   */
-  manualSelfHealRecover(
-    taskId: string,
-    reportId: string,
-    action: "restart_task" | "keep_failed",
-  ): Effect.Effect<{ ok: boolean; message: string }, OrchestratorOperationError> {
-    const report = this.db.getSelfHealReport(reportId)
-    if (!report) {
-      return Effect.fail(new OrchestratorOperationError({
-        operation: "manualSelfHealRecover",
-        message: `Self-heal report not found: ${reportId}`,
-      }))
-    }
-    
-    return manualSelfHealRecover(
-      taskId,
-      reportId,
-      action,
-      { db: this.db, selfHealingService: this.selfHealingService, broadcast: this.broadcast },
-      {
-        requeueExecutingTask: (taskId) => this.scheduler.requeueExecutingTask(taskId).pipe(
-          Effect.map(result => result !== null),
-          Effect.orDie
-        ),
-        enqueueTask: (runId, taskId) => this.scheduler.enqueueTask(runId, taskId).pipe(Effect.orDie),
-        getExecutingStates: (runId) => this.scheduler.getExecutingStates(runId).pipe(Effect.orDie),
-        getQueuedTasks: (runId) => this.scheduler.getQueuedTasks(runId),
-      },
-      report.runId,
-      (taskId) => this.broadcastTask(taskId),
-      (runId) => this.refreshRunProgressEffect(runId),
-      () => this.triggerSchedulingEffect(),
-    )
-  }
+
 
   /**
    * Clean/reset a workflow run and all its tasks
@@ -2844,17 +2807,12 @@ export class PiOrchestrator {
     this.broadcast({ type: "task_updated", payload: updated })
   }
 
-  private maybeSelfHealTask(runId: string, task: Task): Effect.Effect<boolean, OrchestratorOperationError> {
+  private maybeSelfHealTask(runId: string, task: Task): Effect.Effect<import("./orchestrator/self-healing.ts").SelfHealInvestigationResult, OrchestratorOperationError> {
     return maybeSelfHealTask(
       runId,
       task,
       { db: this.db, selfHealingService: this.selfHealingService, broadcast: this.broadcast },
       {
-        requeueExecutingTask: (taskId) => this.scheduler.requeueExecutingTask(taskId).pipe(
-          Effect.map(result => result !== null),
-          Effect.orDie
-        ),
-        enqueueTask: (runId, taskId) => this.scheduler.enqueueTask(runId, taskId).pipe(Effect.orDie),
         getExecutingStates: (runId) => this.scheduler.getExecutingStates(runId).pipe(Effect.orDie),
         getQueuedTasks: (runId) => this.scheduler.getQueuedTasks(runId),
       },

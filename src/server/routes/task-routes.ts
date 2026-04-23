@@ -141,12 +141,12 @@ function parseTaskInputFields(
       autoCommit,
       deleteWorktree,
       requirements,
-      thinkingLevel: thinkingLevel as CreateTaskInput["thinkingLevel"],
-      planThinkingLevel: planThinkingLevel as CreateTaskInput["planThinkingLevel"],
-      executionThinkingLevel: executionThinkingLevel as CreateTaskInput["executionThinkingLevel"],
-      executionStrategy: executionStrategy as CreateTaskInput["executionStrategy"],
-      bestOfNConfig: bestOfNConfigValue as CreateTaskInput["bestOfNConfig"],
-      bestOfNSubstage: bestOfNSubstage as CreateTaskInput["bestOfNSubstage"],
+      thinkingLevel: thinkingLevel === "low" || thinkingLevel === "medium" || thinkingLevel === "high" || thinkingLevel === "default" ? thinkingLevel : undefined,
+      planThinkingLevel: planThinkingLevel === "low" || planThinkingLevel === "medium" || planThinkingLevel === "high" || planThinkingLevel === "default" ? planThinkingLevel : undefined,
+      executionThinkingLevel: executionThinkingLevel === "low" || executionThinkingLevel === "medium" || executionThinkingLevel === "high" || executionThinkingLevel === "default" ? executionThinkingLevel : undefined,
+      executionStrategy: executionStrategy === "best_of_n" || executionStrategy === "standard" ? executionStrategy : undefined,
+      bestOfNConfig: bestOfNConfigValue === null || bestOfNConfigValue === undefined ? undefined : bestOfNConfigValue as CreateTaskInput["bestOfNConfig"],
+      bestOfNSubstage: bestOfNSubstage === "idle" || bestOfNSubstage === "workers_running" || bestOfNSubstage === "reviewers_running" || bestOfNSubstage === "final_apply_running" || bestOfNSubstage === "blocked_for_manual_review" || bestOfNSubstage === "completed" ? bestOfNSubstage : undefined,
       skipPermissionAsking,
       containerImage,
     }
@@ -192,14 +192,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       Effect.mapError((error) => mapOrchestratorRouteError(taskId, "Failed to start task", error)),
     )
 
-  const manualSelfHealRecoverEffect = (
-    taskId: string,
-    reportId: string,
-    action: "restart_task" | "keep_failed",
-  ): Effect.Effect<{ ok: boolean; message: string }, HttpRouteError> =>
-    ctx.onManualSelfHealRecover!(taskId, reportId, action).pipe(
-      Effect.mapError((error) => mapOrchestratorRouteError(taskId, "Failed manual self-heal recovery for task", error)),
-    )
+
 
   const buildPlanRevisionResponse = (
     taskId: string,
@@ -1081,38 +1074,5 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     }),
   )
 
-  router.post("/api/tasks/:id/self-heal-recover", ({ params, req, json, db }) =>
-    Effect.gen(function* () {
-      if (!ctx.onManualSelfHealRecover) {
-        return yield* serviceUnavailableError("Manual self-heal recovery not available", ErrorCode.SERVICE_UNAVAILABLE)
-      }
-      yield* requireTask(db, params.id)
 
-      const body = yield* parseJsonRecord(req)
-      const reportId = typeof body.reportId === "string" ? body.reportId.trim() : ""
-      if (!reportId) {
-        return yield* badRequestError("reportId is required", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id })
-      }
-
-      const action = body.action
-      if (action !== "restart_task" && action !== "keep_failed") {
-        return yield* badRequestError(
-          "action must be 'restart_task' or 'keep_failed'",
-          ErrorCode.INVALID_REQUEST_BODY,
-          { taskId: params.id },
-        )
-      }
-
-      const report = db.getSelfHealReport(reportId)
-      if (!report) {
-        return yield* notFoundError("Self-heal report not found", ErrorCode.TASK_NOT_FOUND, { taskId: params.id, reportId })
-      }
-      if (report.taskId !== params.id) {
-        return yield* badRequestError("Report does not belong to this task", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id, reportId })
-      }
-
-      const result = yield* manualSelfHealRecoverEffect(params.id, reportId, action)
-      return json(result)
-    }),
-  )
 }

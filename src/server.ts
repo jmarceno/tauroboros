@@ -189,8 +189,7 @@ function buildPiServerRuntime(
       Effect.mapError((cause) => new OrchestratorOperationError({ operation: "getSlotUtilization", message: cause.message })),
     ),
     onGetRunQueueStatus: (runId: string) => orchestrator.getRunQueueStatus(runId),
-    onManualSelfHealRecover: (taskId: string, reportId: string, action: "restart_task" | "keep_failed") =>
-      orchestrator.manualSelfHealRecover(taskId, reportId, action),
+
     onCleanRun: (runId: string) => orchestrator.cleanRun(runId),
   })
 

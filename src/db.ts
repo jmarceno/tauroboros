@@ -100,7 +100,6 @@ export class DatabaseError extends Schema.TaggedError<DatabaseError>()("Database
 
 
 
-// Color palette for workflow runs - distinct colors that work well with dark theme
 const RUN_COLORS = [
   "#ff6b6b", // Red
   "#4ecdc4", // Teal
@@ -158,10 +157,6 @@ type PromptSeed = {
   variablesJson: string[]
 }
 
-/**
- * Get default prompt templates from the catalog.
- * Templates are loaded from prompt-catalog.json for centralized control.
- */
 function getDefaultPromptTemplates(): PromptSeed[] {
   const templates = getAllPromptTemplates()
   return templates.map((template) => ({
@@ -177,13 +172,25 @@ function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
 }
 
-function parseJSON<T>(value: unknown): T | null {
+function parseJSON(value: unknown): unknown | null {
   if (typeof value !== "string" || value.length === 0) return null
   try {
-    return JSON.parse(value) as T
+    return JSON.parse(value)
   } catch {
     return null
   }
+}
+
+function parseStringArray(value: unknown): string[] | null {
+  const parsed = parseJSON(value)
+  if (!Array.isArray(parsed)) return null
+  return parsed.filter((item): item is string => typeof item === "string")
+}
+
+function parseRecord(value: unknown): Record<string, unknown> | null {
+  const parsed = parseJSON(value)
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  return parsed as Record<string, unknown>
 }
 
 function asThinkingLevel(value: unknown): ThinkingLevel {
@@ -455,11 +462,7 @@ function pickString(...values: unknown[]): string | null {
   return null
 }
 
-// ============================================================================
-// Effect-wrapped validation helpers
-// These wrap the synchronous validation functions in Effect for composability.
-// They preserve the same error semantics (DatabaseError tagged errors).
-// ============================================================================
+
 
 export const asThinkingLevelEffect = (value: unknown): Effect.Effect<ThinkingLevel, DatabaseError> =>
   Effect.try({
@@ -620,9 +623,21 @@ const SESSION_MESSAGE_SELECT = `
   LEFT JOIN workflow_sessions ws ON ws.id = sm.session_id
 `
 
-function rowToTask(row: Record<string, unknown>): Task {
-  const bestOfNConfigRaw = parseJSON<BestOfNConfig>(row.best_of_n_config)
+function parseThinkingLevel(value: unknown): ThinkingLevel {
+  const str = String(value)
+  if (str === "low" || str === "medium" || str === "high" || str === "default") {
+    return str
+  }
+  return "default"
+}
 
+function parseBestOfNConfig(value: unknown): BestOfNConfig | null {
+  const parsed = parseJSON(value)
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  return parsed as BestOfNConfig
+}
+
+function rowToTask(row: Record<string, unknown>): Task {
   return {
     id: String(row.id),
     name: String(row.name),
@@ -639,7 +654,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     autoDeployCondition: asAutoDeployConditionOrNull(row.auto_deploy_condition),
     deleteWorktree: Number(row.delete_worktree ?? 1) === 1,
     status: isTaskStatus(row.status) ? row.status : "template",
-    requirements: parseJSON<string[]>(row.requirements) ?? [],
+    requirements: parseStringArray(row.requirements) ?? [],
     agentOutput: String(row.agent_output ?? ""),
     reviewCount: Number(row.review_count ?? 0),
     jsonParseRetryCount: Number(row.json_parse_retry_count ?? 0),
@@ -650,14 +665,14 @@ function rowToTask(row: Record<string, unknown>): Task {
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at),
-    thinkingLevel: ["low", "medium", "high", "default"].includes(String(row.thinking_level)) ? String(row.thinking_level) as ThinkingLevel : "default",
-    planThinkingLevel: ["low", "medium", "high", "default"].includes(String(row.plan_thinking_level)) ? String(row.plan_thinking_level) as ThinkingLevel : "default",
-    executionThinkingLevel: ["low", "medium", "high", "default"].includes(String(row.execution_thinking_level)) ? String(row.execution_thinking_level) as ThinkingLevel : "default",
+    thinkingLevel: parseThinkingLevel(row.thinking_level),
+    planThinkingLevel: parseThinkingLevel(row.plan_thinking_level),
+    executionThinkingLevel: parseThinkingLevel(row.execution_thinking_level),
     executionPhase: isExecutionPhase(row.execution_phase) ? row.execution_phase : "not_started",
     awaitingPlanApproval: Number(row.awaiting_plan_approval ?? 0) === 1,
     planRevisionCount: Number(row.plan_revision_count ?? 0),
     executionStrategy: isExecutionStrategy(row.execution_strategy) ? row.execution_strategy : "standard",
-    bestOfNConfig: bestOfNConfigRaw ?? null,
+    bestOfNConfig: parseBestOfNConfig(row.best_of_n_config),
     bestOfNSubstage: isBestOfNSubstage(row.best_of_n_substage) ? row.best_of_n_substage : "idle",
     skipPermissionAsking: Number(row.skip_permission_asking ?? 1) === 1,
     maxReviewRunsOverride: row.max_review_runs_override === null || row.max_review_runs_override === undefined
@@ -681,6 +696,29 @@ function rowToTask(row: Record<string, unknown>): Task {
   }
 }
 
+function parseConfidence(value: unknown): SelfHealReport["confidence"] {
+  const str = String(value ?? "low")
+  if (str === "high" || str === "medium" || str === "low") return str
+  return "low"
+}
+
+function parseSourceMode(value: unknown): SelfHealReport["sourceMode"] {
+  if (value === "local") return "local"
+  if (value === "github_clone") return "github_clone"
+  return "github_metadata_only"
+}
+
+function parseRootCause(value: unknown): SelfHealReport["rootCause"] {
+  const parsed = parseRecord(value) ?? {}
+  const affectedFilesRaw = Array.isArray(parsed.affectedFiles) ? parsed.affectedFiles : []
+
+  return {
+    description: typeof parsed.description === "string" ? parsed.description : "",
+    affectedFiles: affectedFilesRaw.filter((f): f is string => typeof f === "string"),
+    codeSnippet: typeof parsed.codeSnippet === "string" ? parsed.codeSnippet : "",
+  }
+}
+
 function rowToSelfHealReport(row: Record<string, unknown>): SelfHealReport {
   return {
     id: String(row.id),
@@ -689,23 +727,18 @@ function rowToSelfHealReport(row: Record<string, unknown>): SelfHealReport {
     taskStatus: isTaskStatus(row.task_status) ? row.task_status : "failed",
     errorMessage: row.error_message ? String(row.error_message) : null,
     diagnosticsSummary: String(row.diagnostics_summary ?? ""),
-    rootCauses: parseJSON<string[]>(row.root_causes_json) ?? [],
+    isTauroborosBug: Number(row.is_tauroboros_bug ?? 0) === 1,
+    rootCause: parseRootCause(row.root_cause_json),
     proposedSolution: String(row.proposed_solution ?? ""),
-    implementationPlan: parseJSON<string[]>(row.implementation_plan_json) ?? [],
-    recoverable: Number(row.recoverable ?? 0) === 1,
-    recommendedAction: row.recommended_action === "restart_task" ? "restart_task" : "keep_failed",
-    actionRationale: String(row.action_rationale ?? ""),
-    sourceMode:
-      row.source_mode === "local"
-        ? "local"
-        : row.source_mode === "github_clone"
-          ? "github_clone"
-          : "github_metadata_only",
+    implementationPlan: parseStringArray(row.implementation_plan_json) ?? [],
+    confidence: parseConfidence(row.confidence),
+    externalFactors: parseStringArray(row.external_factors_json) ?? [],
+    sourceMode: parseSourceMode(row.source_mode),
     sourcePath: row.source_path ? String(row.source_path) : null,
     githubUrl: String(row.github_url ?? ""),
     tauroborosVersion: String(row.tauroboros_version ?? ""),
     dbPath: String(row.db_path ?? ""),
-    dbSchemaJson: parseJSON<Record<string, unknown>>(row.db_schema_json) ?? {},
+    dbSchemaJson: parseRecord(row.db_schema_json) ?? {},
     rawResponse: String(row.raw_response ?? ""),
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
@@ -739,7 +772,7 @@ function rowToTaskRun(row: Record<string, unknown>): TaskRun {
     summary: row.summary ? String(row.summary) : null,
     errorMessage: row.error_message ? String(row.error_message) : null,
     candidateId: row.candidate_id ? String(row.candidate_id) : null,
-    metadataJson: parseJSON<Record<string, unknown>>(row.metadata_json) ?? {},
+    metadataJson: parseRecord(row.metadata_json) ?? {},
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at),
@@ -752,15 +785,25 @@ function isTaskCandidateStatus(value: unknown): value is TaskCandidate["status"]
   return typeof value === "string" && TASK_CANDIDATE_STATUSES.includes(value as TaskCandidate["status"])
 }
 
+function parseDiffStats(value: unknown): Record<string, number> | null {
+  const parsed = parseRecord(value)
+  if (parsed === null) return null
+  const result: Record<string, number> = {}
+  for (const [key, val] of Object.entries(parsed)) {
+    if (typeof val === "number") result[key] = val
+  }
+  return result
+}
+
 function rowToTaskCandidate(row: Record<string, unknown>): TaskCandidate {
   return {
     id: String(row.id),
     taskId: String(row.task_id),
     workerRunId: String(row.worker_run_id),
     status: isTaskCandidateStatus(row.status) ? row.status : "available",
-    changedFilesJson: parseJSON<string[]>(row.changed_files_json) ?? [],
-    diffStatsJson: parseJSON<Record<string, number>>(row.diff_stats_json) ?? {},
-    verificationJson: parseJSON<Record<string, unknown>>(row.verification_json) ?? {},
+    changedFilesJson: parseStringArray(row.changed_files_json) ?? [],
+    diffStatsJson: parseDiffStats(row.diff_stats_json) ?? {},
+    verificationJson: parseRecord(row.verification_json) ?? {},
     summary: row.summary ? String(row.summary) : null,
     errorMessage: row.error_message ? String(row.error_message) : null,
     createdAt: Number(row.created_at ?? 0),
@@ -775,7 +818,7 @@ function rowToWorkflowRun(row: Record<string, unknown>): WorkflowRun {
     status: asWorkflowRunStatus(row.status),
     displayName: String(row.display_name ?? ""),
     targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
-    taskOrder: parseJSON<string[]>(row.task_order_json) ?? [],
+    taskOrder: parseStringArray(row.task_order_json) ?? [],
     currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
     currentTaskIndex: Number(row.current_task_index ?? 0),
     pauseRequested: Number(row.pause_requested ?? 0) === 1,
@@ -870,7 +913,7 @@ function rowToSessionMessage(row: Record<string, unknown>): SessionMessage {
     role: asSessionMessageRole(row.role),
     eventName: row.event_name ? String(row.event_name) : null,
     messageType: asMessageType(row.message_type),
-    contentJson: parseJSON<Record<string, unknown>>(row.content_json) ?? {},
+    contentJson: parseRecord(row.content_json) ?? {},
     modelProvider: row.model_provider ? String(row.model_provider) : null,
     modelId: row.model_id ? String(row.model_id) : null,
     agentName: row.agent_name ? String(row.agent_name) : null,
@@ -879,11 +922,11 @@ function rowToSessionMessage(row: Record<string, unknown>): SessionMessage {
     cacheReadTokens: row.cache_read_tokens === null || row.cache_read_tokens === undefined ? null : Number(row.cache_read_tokens),
     cacheWriteTokens: row.cache_write_tokens === null || row.cache_write_tokens === undefined ? null : Number(row.cache_write_tokens),
     totalTokens: row.total_tokens === null || row.total_tokens === undefined ? null : Number(row.total_tokens),
-    costJson: parseJSON<Record<string, unknown>>(row.cost_json),
+    costJson: parseRecord(row.cost_json),
     costTotal: row.cost_total === null || row.cost_total === undefined ? null : Number(row.cost_total),
     toolCallId: row.tool_call_id ? String(row.tool_call_id) : null,
     toolName: row.tool_name ? String(row.tool_name) : null,
-    toolArgsJson: parseJSON<Record<string, unknown>>(row.tool_args_json),
+    toolArgsJson: parseRecord(row.tool_args_json),
     toolResultJson: parseJSON<Record<string, unknown>>(row.tool_result_json),
     toolStatus: row.tool_status ? String(row.tool_status) : null,
     editDiff: row.edit_diff ? String(row.edit_diff) : null,
@@ -1730,8 +1773,8 @@ export class PiKanbanDB {
       .prepare(`
         INSERT INTO self_heal_reports (
           id, run_id, task_id, task_status, error_message,
-          diagnostics_summary, root_causes_json, proposed_solution, implementation_plan_json,
-          recoverable, recommended_action, action_rationale,
+          diagnostics_summary, is_tauroboros_bug, root_cause_json, proposed_solution, implementation_plan_json,
+          confidence, external_factors_json,
           source_mode, source_path, github_url, tauroboros_version,
           db_path, db_schema_json, raw_response,
           created_at, updated_at
@@ -1744,12 +1787,12 @@ export class PiKanbanDB {
         input.taskStatus,
         input.errorMessage ?? null,
         input.diagnosticsSummary,
-        JSON.stringify(input.rootCauses),
+        input.isTauroborosBug ? 1 : 0,
+        JSON.stringify(input.rootCause),
         input.proposedSolution,
         JSON.stringify(input.implementationPlan),
-        input.recoverable ? 1 : 0,
-        input.recommendedAction,
-        input.actionRationale,
+        input.confidence,
+        JSON.stringify(input.externalFactors),
         input.sourceMode,
         input.sourcePath ?? null,
         input.githubUrl,

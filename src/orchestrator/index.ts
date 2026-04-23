@@ -35,8 +35,7 @@ export {
 export {
   type SelfHealingContext,
   type SelfHealingScheduler,
-  type ManualSelfHealResult,
-  manualSelfHealRecover,
+  type SelfHealInvestigationResult,
   maybeSelfHealTask,
 } from "./self-healing.ts"
 
