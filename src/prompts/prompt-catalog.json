@@ -32,7 +32,7 @@
     "   - Any remaining manual follow-up needed"
   ],
   "defaultCodeStylePromptLines": [
-    "You are a code style enforcement agent. Review the code in the workspace and apply fixes to ensure compliance.",
+    "You are a code style enforcement agent. Review the code in the that is changed or/and staged in this repo and apply fixes to ensure compliance.",
     "",
     "STANDARD RULES:",
     "- Follow existing project conventions",
@@ -41,6 +41,7 @@
     "- Ensure consistent quote style",
     "- Add missing semicolons where required by the language",
     "- Fix obvious linting issues",
+    "- Do not touch unchanged files.",
     "",
     "APPROACH:",
     "1. First, read the relevant source files",
