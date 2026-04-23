@@ -1804,7 +1804,7 @@ export class PiOrchestrator {
               }),
             ),
           )
-          worktreeInfo = yield* this.worktree.createForTask(task.id, undefined, targetBranch).pipe(
+          worktreeInfo = yield* this.worktree.createForTask(task.id, task.name, undefined, targetBranch).pipe(
             Effect.mapError((error) =>
               new OrchestratorOperationError({
                 operation: "executeTask.createWorktree",
@@ -1875,6 +1875,7 @@ export class PiOrchestrator {
           targetBranch,
           shouldMerge: true,
           shouldRemove: task.deleteWorktree !== false,
+          customMessage: `${task.name} (${task.id})`,
         }).pipe(
           Effect.mapError((error) =>
             new OrchestratorOperationError({
@@ -2449,7 +2450,7 @@ export class PiOrchestrator {
         taskBranch: task.branch,
         optionBranch: options.branch,
       }).pipe(Effect.mapError((error) => this.toOperationError("runCommitPrompt", error)))
-      const commitPrompt = this.db.renderPrompt("commit", buildCommitVariables(targetBranch, task.deleteWorktree !== false))
+      const commitPrompt = this.db.renderPrompt("commit", buildCommitVariables(targetBranch, task.deleteWorktree !== false, task.name, task.id))
 
       const commit = yield* this.runSessionPrompt({
         task,

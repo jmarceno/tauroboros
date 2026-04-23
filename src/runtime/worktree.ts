@@ -25,6 +25,7 @@ export interface MergeWorktreeOptions {
   branch: string
   targetBranch: string
   noEdit?: boolean
+  customMessage?: string
 }
 
 export interface WorktreeStatus {
@@ -61,6 +62,7 @@ export interface CompleteWorktreeOptions {
   targetBranch: string
   shouldMerge: boolean
   shouldRemove: boolean
+  customMessage?: string
 }
 
 export interface CompleteWorktreeResult {
@@ -96,6 +98,18 @@ function normalizeBranchName(value: string | undefined): string | null {
   if (!value) return null
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : null
+}
+
+function sanitizeForGit(value: string): string {
+  return value
+    .trim()
+    .replace(/[\s]+/g, '-')
+    .replace(/[*?"~^:\\]/g, '-')
+    .replace(/[\/\\]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase()
+    .slice(0, 50)
 }
 
 function runGit(args: string[], cwd: string): GitCommandResult {
@@ -548,7 +562,11 @@ export function mergeWorktree(options: MergeWorktreeOptions): Effect.Effect<void
     }
 
     const mergeArgs = ["merge", prepared.branch]
-    if (options.noEdit !== false) mergeArgs.push("--no-edit")
+    if (options.customMessage) {
+      mergeArgs.push("-m", options.customMessage)
+    } else if (options.noEdit !== false) {
+      mergeArgs.push("--no-edit")
+    }
 
     yield* tryWorktree("MERGE_FAILED", () => {
       try {
@@ -617,20 +635,22 @@ export class WorktreeLifecycle {
     this.keepWorktrees = options.keepWorktrees === true
   }
 
-  /** Creates task worktree with `task-<taskId>-<random>` naming. */
-  createForTask(taskId: string, branch?: string, baseRef?: string): Effect.Effect<WorktreeInfo, WorktreeError> {
+  /** Creates task worktree with `<sanitized-taskName>-<taskId>` naming. */
+  createForTask(taskId: string, taskName?: string, branch?: string, baseRef?: string): Effect.Effect<WorktreeInfo, WorktreeError> {
     const normalizedTaskId = taskId.trim()
     if (!normalizedTaskId) return Effect.fail(new WorktreeError({ message: "taskId cannot be empty", code: "INVALID_TASK_ID" }))
-    // Add random suffix to ensure unique worktree names for task reruns
-    const randomSuffix = Math.random().toString(36).substring(2, 8)
-    const name = `task-${normalizedTaskId}-${randomSuffix}`
-    return createWorktree({
-      name,
-      branch,
-      baseRef,
-      baseDirectory: this.baseDirectory,
-      worktreeBaseDir: this.worktreeBaseDir,
-    })
+    if (taskName) {
+      const sanitizedTaskName = sanitizeForGit(taskName)
+      const name = `${sanitizedTaskName}-${normalizedTaskId}`
+      return createWorktree({
+        name,
+        branch,
+        baseRef,
+        baseDirectory: this.baseDirectory,
+        worktreeBaseDir: this.worktreeBaseDir,
+      })
+    }
+    return Effect.fail(new WorktreeError({ message: "taskName is required for worktree naming", code: "TASK_NAME_REQUIRED" }))
   }
 
   /** Creates run worktree with `<prefix>-<runId>-<random>` naming. */
@@ -664,6 +684,7 @@ export class WorktreeLifecycle {
           worktreeDir,
           branch: options.branch,
           targetBranch: options.targetBranch,
+          customMessage: options.customMessage,
         })
         merged = true
       }

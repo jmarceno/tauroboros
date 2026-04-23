@@ -247,7 +247,7 @@ describe("WorktreeLifecycle", () => {
       worktreeBaseDir: join(repo, ".tmp-worktrees"),
     })
 
-    const taskWorktree = await runEffectOrThrow(lifecycle.createForTask("abc", "task-abc", "master"))
+    const taskWorktree = await runEffectOrThrow(lifecycle.createForTask("abc", "fix login bug", "task-abc", "master"))
     commitFile(taskWorktree.directory, "task.txt", "done\n", "task commit")
 
     const result = await runEffectOrThrow(lifecycle.complete(taskWorktree.directory, {
@@ -259,6 +259,7 @@ describe("WorktreeLifecycle", () => {
 
     expect(result).toEqual({ merged: true, removed: true, kept: false })
     expect(existsSync(taskWorktree.directory)).toBe(false)
+    expect(basename(taskWorktree.directory)).toBe("fix-login-bug-abc")
 
     const runWorktree = await runEffectOrThrow(lifecycle.createForRun("r1", "worker", "master"))
     expect(basename(runWorktree.directory)).toMatch(/^worker-r1-[a-z0-9]+$/)
@@ -271,7 +272,7 @@ describe("WorktreeLifecycle", () => {
       keepWorktrees: true,
     })
 
-    const kept = await runEffectOrThrow(lifecycle.createForTask("keep", "task-keep", "master"))
+    const kept = await runEffectOrThrow(lifecycle.createForTask("keep", "fix login bug", "task-keep", "master"))
     const completion = await runEffectOrThrow(lifecycle.complete(kept.directory, {
       branch: "task-keep",
       targetBranch: "master",
