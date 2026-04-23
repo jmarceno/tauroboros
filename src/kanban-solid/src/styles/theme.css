@@ -565,8 +565,8 @@
   }
 
   .task-card.auto-deploy-template {
-    border-color: rgba(0, 255, 136, 0.5);
-    background-color: rgba(0, 255, 136, 0.1);
+    border-color: rgba(0, 212, 255, 0.4);
+    background-color: rgba(181, 10, 87, 0.089);
   }
 
   .task-card:hover {
