@@ -84,6 +84,7 @@ import type {
   DailyUsage,
 } from "./db/types.ts"
 import { renderTemplate } from "./prompts/renderer.ts"
+import { getAllPromptTemplates, getSystemPrompt } from "./prompts/catalog.ts"
 import { parseModelSelection } from "./runtime/model-utils.ts"
 import { projectPiEventToSessionMessage } from "./runtime/message-projection.ts"
 
@@ -157,281 +158,20 @@ type PromptSeed = {
   variablesJson: string[]
 }
 
-const DEFAULT_PROMPT_TEMPLATES: PromptSeed[] = [
-  {
-    key: "execution",
-    name: "Task Execution",
-    description: "Core implementation prompt for standard and approved-plan execution.",
-    templateText: [
-      "EXECUTE END-TO-END. Do not ask follow-up questions unless blocked by: missing credentials, missing required external input, or an irreversible product decision. Make reasonable assumptions from the codebase.",
-      "",
-      "{{execution_intro}}",
-      "",
-      "Task:",
-      "{{task.prompt}}",
-      "",
-      "{{approved_plan_block}}",
-      "{{user_guidance_block}}",
-      "{{additional_context_block}}",
-      "",
-      "Implementation requirements:",
-      "- Make concrete code changes in this worktree.",
-      "- Keep changes scoped to the task goals.",
-      "- Validate your result with focused checks before finishing.",
-      "- Report concise progress and outcomes.",
-    ].join("\n"),
-    variablesJson: [
-      "task",
-      "execution_intro",
-      "approved_plan_block",
-      "user_guidance_block",
-      "additional_context_block",
-    ],
-  },
-  {
-    key: "planning",
-    name: "Plan Generation",
-    description: "Planning-only prompt used before implementation begins.",
-    templateText: [
-      "PREPARE PLAN ONLY. Do not ask follow-up questions. Make reasonable assumptions from the codebase. Output only the plan — do not proceed to implementation.",
-      "",
-      "Task:",
-      "{{task.prompt}}",
-      "",
-      "{{additional_context_block}}",
-      "",
-      "Plan requirements:",
-      "- Break work into clear, ordered implementation steps.",
-      "- Include validation and verification approach.",
-      "- Keep scope aligned to task goals and constraints.",
-    ].join("\n"),
-    variablesJson: ["task", "additional_context_block"],
-  },
-  {
-    key: "plan_revision",
-    name: "Plan Revision",
-    description: "Revises a captured plan using user feedback while staying in planning mode.",
-    templateText: [
-      "PREPARE PLAN ONLY. Do not ask follow-up questions. Make reasonable assumptions from the codebase. Output only the plan — do not proceed to implementation.",
-      "",
-      "The user has reviewed your plan and requested changes. Revise the plan based on feedback.",
-      "",
-      "Task:",
-      "{{task.prompt}}",
-      "",
-      "Previous plan:",
-      "{{current_plan}}",
-      "",
-      "User feedback:",
-      "{{revision_feedback}}",
-      "",
-      "{{additional_context_block}}",
-      "",
-      "Provide a revised plan that directly addresses the feedback.",
-    ].join("\n"),
-    variablesJson: ["task", "current_plan", "revision_feedback", "additional_context_block"],
-  },
-  {
-    key: "review",
-    name: "Review",
-    description: "Strict repository review prompt with JSON output contract.",
-    templateText: [
-      "You are the workflow review agent. You are strict and thorough.",
-      "",
-      "Review the current repository state against the task review file named in the user prompt.",
-      "Use that review file as the source of truth for goals and review instructions.",
-      "Inspect the codebase and branch state directly.",
-      "Do not rely on prior session history.",
-      "Do not make code changes.",
-      "",
-      "Review the task review file at: {{review_file_path}}",
-      "",
-      "Review Criteria:",
-      "1) Goal completeness: every goal must map to verified working code.",
-      "2) Errors and bugs: logic issues, null handling, boundary failures, race conditions, exceptions.",
-      "3) Security flaws: injection, missing validation, hardcoded secrets, unsafe file/path operations.",
-      "4) Best practices: error handling, type safety, cleanup, edge cases, project conventions.",
-      "5) Test coverage: critical paths and new behavior should be testable and covered.",
-      "",
-      "Strictness directive: default to finding gaps. Only return pass when all goals are complete and no unresolved defects remain.",
-      "",
-      "IMPORTANT: Your ENTIRE response must be a single JSON object. Do NOT include any text before or after the JSON. Do NOT wrap it in markdown code blocks. Output ONLY the JSON object:",
-      "",
-      "{\"status\": \"pass|gaps_found|blocked\", \"summary\": \"<brief summary of review findings>\", \"gaps\": [\"<first gap if any>\", \"<second gap if any>\"], \"recommendedPrompt\": \"<specific prompt to address gaps, or empty string if no gaps>\"}",
-      "",
-      "Context:",
-      "Task ID: {{task.id}}",
-      "Task Name: {{task.name}}",
-    ].join("\n"),
-    variablesJson: ["task", "review_file_path"],
-  },
-  {
-    key: "review_fix",
-    name: "Review Fix",
-    description: "Follow-up prompt that fixes issues identified by review.",
-    templateText: [
-      "Address the issues found during review and update the implementation.",
-      "",
-      "Task:",
-      "{{task.prompt}}",
-      "",
-      "Review summary:",
-      "{{review_summary}}",
-      "",
-      "Gaps:",
-      "{{review_gaps}}",
-      "",
-      "Requirements:",
-      "- Fix all listed gaps completely.",
-      "- Preserve existing correct behavior.",
-      "- Keep the solution scoped and production-ready.",
-    ].join("\n"),
-    variablesJson: ["task", "review_summary", "review_gaps"],
-  },
-  {
-    key: "repair",
-    name: "Repair",
-    description: "Deterministic workflow state repair analysis prompt.",
-    templateText: [
-      "You repair workflow task states.",
-      "",
-      "Analyze the task state, worktree git status, session history, and latest output. Choose what ACTUALLY happened and the right repair action.",
-      "",
-      "Choose exactly one action:",
-      "- queue_implementation",
-      "- restore_plan_approval",
-      "- reset_backlog",
-      "- mark_done",
-      "- fail_task",
-      "- continue_with_more_reviews",
-      "",
-      "Decision guidelines:",
-      "- Prefer queue_implementation when a usable [plan] exists and worktree shows real code changes.",
-      "- Prefer mark_done only when output and worktree both confirm completion.",
-      "- Use restore_plan_approval when plan should return to human review.",
-      "- Use reset_backlog when there are no meaningful changes and task should restart.",
-      "- Use fail_task when state is invalid and should remain visible with actionable error.",
-      "- Use continue_with_more_reviews when task is stuck only due to review limit and gaps seem fixable.",
-      "",
-      "Critical verification steps:",
-      "1) Check worktree git status.",
-      "2) Check session messages for where execution stopped.",
-      "3) Check workflow session history patterns.",
-      "4) Compare latest output claims with actual worktree changes.",
-      "",
-      "Context:",
-      "{{repair_context}}",
-      "",
-      "Return strict JSON: {\"action\":\"...\",\"reason\":\"...\",\"errorMessage\":\"optional\"}",
-    ].join("\n"),
-    variablesJson: ["task", "repair_context"],
-  },
-  {
-    key: "best_of_n_worker",
-    name: "Best-of-N Worker",
-    description: "Worker prompt for candidate implementation generation in best-of-n.",
-    templateText: [
-      "EXECUTE END-TO-END. Do not ask follow-up questions unless blocked by: missing credentials, missing required external input, or an irreversible product decision. Make reasonable assumptions from the codebase.",
-      "",
-      "You are one candidate implementation worker in a best-of-n workflow.",
-      "Produce the best complete solution you can in this worktree.",
-      "",
-      "Task:",
-      "{{task.prompt}}",
-      "",
-      "{{additional_context_block}}",
-      "",
-      "Worker metadata:",
-      "- Slot index: {{slot_index}}",
-      "- Model: {{model}}",
-      "- Worker instructions: {{task_suffix}}",
-      "",
-      "Deliver complete implementation and a concise summary of what changed.",
-    ].join("\n"),
-    variablesJson: ["task", "slot_index", "model", "task_suffix", "additional_context_block"],
-  },
-  {
-    key: "best_of_n_reviewer",
-    name: "Best-of-N Reviewer",
-    description: "Reviewer prompt for evaluating best-of-n candidates with strict JSON output.",
-    templateText: [
-      "You are a reviewer in a best-of-n workflow.",
-      "Your job is to evaluate the candidate implementations and provide structured guidance.",
-      "",
-      "Original Task:",
-      "{{task.prompt}}",
-      "",
-      "{{additional_context_block}}",
-      "",
-      "Candidates:",
-      "{{candidate_summaries}}",
-      "",
-      "Your response must be valid JSON with fields:",
-      '"status": "pass|needs_manual_review",',
-      '"summary": "<short evaluation summary>",',
-      '"bestCandidateIds": ["<candidate-id-1>", "<candidate-id-2>"],',
-      '"gaps": ["<issue 1>", "<issue 2>"],',
-      '"recommendedFinalStrategy": "pick_best|synthesize|pick_or_synthesize",',
-      '"recommendedPrompt": "<optional instructions for the final applier, or null>"',
-      "",
-      "Additional reviewer instructions:",
-      "{{task_suffix}}",
-    ].join("\n"),
-    variablesJson: ["task", "candidate_summaries", "task_suffix", "additional_context_block"],
-  },
-  {
-    key: "best_of_n_final_applier",
-    name: "Best-of-N Final Applier",
-    description: "Final applier prompt to produce final implementation from best-of-n results.",
-    templateText: [
-      "EXECUTE END-TO-END. Do not ask follow-up questions unless blocked by: missing credentials, missing required external input, or an irreversible product decision. Make reasonable assumptions from the codebase.",
-      "",
-      "You are the final applier in a best-of-n workflow.",
-      "Produce the final implementation based on the original task and reviewer guidance.",
-      "",
-      "Original Task:",
-      "{{task.prompt}}",
-      "",
-      "{{additional_context_block}}",
-      "",
-      "Selection mode:",
-      "{{selection_mode}}",
-      "",
-      "Candidate guidance:",
-      "{{candidate_guidance}}",
-      "",
-      "Recurring reviewer gaps:",
-      "{{recurring_gaps}}",
-      "",
-      "Reviewer recommended prompts:",
-      "{{reviewer_recommended_prompts}}",
-      "",
-      "Consensus reached: {{consensus_reached}}",
-      "",
-      "Additional final-applier instructions:",
-      "{{task_suffix}}",
-      "",
-      "Produce the final implementation now.",
-    ].join("\n"),
-    variablesJson: [
-      "task",
-      "selection_mode",
-      "candidate_guidance",
-      "recurring_gaps",
-      "reviewer_recommended_prompts",
-      "consensus_reached",
-      "task_suffix",
-      "additional_context_block",
-    ],
-  },
-  {
-    key: "commit",
-    name: "Commit",
-    description: "Commit instructions executed after task completion.",
-    templateText: `${DEFAULT_COMMIT_PROMPT}\n\n{{keep_worktree_note}}`,
-    variablesJson: ["base_ref", "keep_worktree_note"],
-  },
-]
+/**
+ * Get default prompt templates from the catalog.
+ * Templates are loaded from prompt-catalog.json for centralized control.
+ */
+function getDefaultPromptTemplates(): PromptSeed[] {
+  const templates = getAllPromptTemplates()
+  return templates.map((template) => ({
+    key: template.key,
+    name: template.name,
+    description: template.description,
+    templateText: template.templateText,
+    variablesJson: template.variablesJson,
+  }))
+}
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -898,7 +638,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     autoDeploy: Number(row.auto_deploy ?? 0) === 1,
     autoDeployCondition: asAutoDeployConditionOrNull(row.auto_deploy_condition),
     deleteWorktree: Number(row.delete_worktree ?? 1) === 1,
-    status: asTaskStatus(row.status),
+    status: isTaskStatus(row.status) ? row.status : "template",
     requirements: parseJSON<string[]>(row.requirements) ?? [],
     agentOutput: String(row.agent_output ?? ""),
     reviewCount: Number(row.review_count ?? 0),
@@ -910,15 +650,15 @@ function rowToTask(row: Record<string, unknown>): Task {
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at),
-    thinkingLevel: asThinkingLevel(row.thinking_level),
-    planThinkingLevel: asThinkingLevel(row.plan_thinking_level),
-    executionThinkingLevel: asThinkingLevel(row.execution_thinking_level),
-    executionPhase: asExecutionPhase(row.execution_phase),
+    thinkingLevel: ["low", "medium", "high", "default"].includes(String(row.thinking_level)) ? String(row.thinking_level) as ThinkingLevel : "default",
+    planThinkingLevel: ["low", "medium", "high", "default"].includes(String(row.plan_thinking_level)) ? String(row.plan_thinking_level) as ThinkingLevel : "default",
+    executionThinkingLevel: ["low", "medium", "high", "default"].includes(String(row.execution_thinking_level)) ? String(row.execution_thinking_level) as ThinkingLevel : "default",
+    executionPhase: isExecutionPhase(row.execution_phase) ? row.execution_phase : "not_started",
     awaitingPlanApproval: Number(row.awaiting_plan_approval ?? 0) === 1,
     planRevisionCount: Number(row.plan_revision_count ?? 0),
-    executionStrategy: asExecutionStrategy(row.execution_strategy),
+    executionStrategy: isExecutionStrategy(row.execution_strategy) ? row.execution_strategy : "standard",
     bestOfNConfig: bestOfNConfigRaw ?? null,
-    bestOfNSubstage: asBestOfNSubstage(row.best_of_n_substage),
+    bestOfNSubstage: isBestOfNSubstage(row.best_of_n_substage) ? row.best_of_n_substage : "idle",
     skipPermissionAsking: Number(row.skip_permission_asking ?? 1) === 1,
     maxReviewRunsOverride: row.max_review_runs_override === null || row.max_review_runs_override === undefined
       ? null
@@ -946,7 +686,7 @@ function rowToSelfHealReport(row: Record<string, unknown>): SelfHealReport {
     id: String(row.id),
     runId: String(row.run_id),
     taskId: String(row.task_id),
-    taskStatus: asTaskStatus(row.task_status),
+    taskStatus: isTaskStatus(row.task_status) ? row.task_status : "failed",
     errorMessage: row.error_message ? String(row.error_message) : null,
     diagnosticsSummary: String(row.diagnostics_summary ?? ""),
     rootCauses: parseJSON<string[]>(row.root_causes_json) ?? [],
@@ -1202,156 +942,21 @@ function rowToPlanningPromptVersion(row: Record<string, unknown>): PlanningPromp
 }
 
 // Default planning system prompt - can be customized by user via UI
-const DEFAULT_PLANNING_SYSTEM_PROMPT = `You are a specialized Planning Assistant for software development task management.
+/**
+ * Get default planning system prompt from the catalog.
+ * Loaded from prompt-catalog.json for centralized control.
+ */
+function getDefaultPlanningSystemPrompt(): string {
+  return getSystemPrompt("planning").promptText
+}
 
-Your role is to help users create well-structured implementation plans before they become kanban tasks.
-
-## Core Capabilities
-
-1. **Task Planning**: Break down complex requirements into actionable, well-defined tasks
-2. **Architecture Design**: Suggest component structures, APIs, and data models
-3. **Dependency Analysis**: Identify task dependencies and execution order
-4. **Estimation Guidance**: Provide complexity assessments and implementation hints
-5. **Visual Explanation**: Use diagrams and visual aids to explain complex concepts
-
-## Interaction Guidelines
-
-- Ask clarifying questions when requirements are ambiguous
-- Suggest concrete next steps and validation approaches
-- Reference existing codebase patterns when relevant
-- Keep responses focused on planning and design
-- Do NOT write actual implementation code unless specifically requested for prototyping
-- **ALWAYS** try to visually explain things when possible using Mermaid charts
-- **NEVER** use ASCII charts or text-based diagrams - always use Mermaid syntax instead
-
-## Visual Explanations with Mermaid
-
-When explaining:
-- System architecture or component relationships
-- Data flow between components
-- Task dependencies and execution order
-- State machines or workflows
-- Class hierarchies or module structures
-- Sequence of operations
-
-Always use Mermaid chart syntax. Examples:
-
-**Flowchart:**
-\`\`\`mermaid
-flowchart TD
-    A[Start] --> B{Decision}
-    B -->|Yes| C[Action 1]
-    B -->|No| D[Action 2]
-    C --> E[End]
-    D --> E
-\`\`\`
-
-**Sequence Diagram:**
-\`\`\`mermaid
-sequenceDiagram
-    User->>+API: Request
-    API->>+Database: Query
-    Database-->>-API: Results
-    API-->>-User: Response
-\`\`\`
-
-**Class Diagram:**
-\`\`\`mermaid
-classDiagram
-    class User {
-        +String name
-        +login()
-    }
-    class Order {
-        +int id
-        +place()
-    }
-    User "1" --> "*" Order : has
-\`\`\`
-
-## Output Format for Task Creation
-
-When the user is ready to create tasks, help them structure:
-- Clear task names
-- Detailed prompts with context
-- Suggested task dependencies
-- Recommended execution order
-
-## Tool Access
-
-You have access to file exploration tools to understand the codebase structure when needed. Use them to provide context-aware planning suggestions.`
-
-// Container Configuration Assistant system prompt
-const CONTAINER_CONFIG_SYSTEM_PROMPT = `You are a Container Configuration Assistant helping users customize their Pi Agent container image.
-
-Your goal is to understand what tools the user needs and help them configure the container image accordingly.
-
-## Available Profiles
-
-- **web-dev**: Chrome, Playwright, web testing tools
-  - Packages: chromium, chromium-chromedriver, nss, freetype, harfbuzz, ttf-freefont
-
-- **rust-dev**: Rust compiler, Cargo, build tools
-  - Packages: rust, cargo, build-base, openssl-dev, pkgconfig
-
-- **python-dev**: Python 3, pip, development headers
-  - Packages: python3, py3-pip, python3-dev, gcc, musl-dev
-
-- **data-science**: Python with NumPy/SciPy/pandas support
-  - Extends python-dev, adds: lapack-dev, openblas-dev, libffi-dev
-
-- **go-dev**: Go compiler and standard tools
-  - Packages: go, git, make
-
-- **node-dev**: Additional Node.js development tools
-  - Packages: yarn, npm, nodejs
-
-- **docker-tools**: Tools for working with Docker/Podman
-  - Packages: docker-cli, buildah, skopeo
-
-- **cloud-cli**: AWS, Azure, and GCP CLI tools
-  - Packages: aws-cli, azure-cli, google-cloud-sdk
-
-- **database-tools**: Database clients and tools
-  - Packages: postgresql-client, mysql-client, redis, sqlite
-
-## Capabilities
-
-1. **Recommend profiles** based on user needs and development work
-2. **Suggest specific Alpine packages** for common tools and libraries
-3. **Explain what each package does** and why it's needed
-4. **Validate package names** against Alpine repositories
-5. **Guide users through the build process** and explain what to expect
-
-## Interaction Flow
-
-1. Ask what kind of development work they do
-2. Suggest appropriate profile(s) based on their needs
-3. Ask about specific tools they need
-4. Build package list with explanations
-5. Confirm before they trigger the rebuild
-
-## Package Categories
-
-When suggesting packages, categorize them appropriately:
-- **browser**: Chrome, Chromium, and related browser tools
-- **language**: Programming language runtimes and compilers (Rust, Python, Go, etc.)
-- **tool**: CLI tools, utilities, and general purpose software
-- **build**: Build tools, compilers, dev headers, libraries
-- **system**: System libraries, fonts, security tools
-- **math**: Math and science libraries (lapack, openblas, etc.)
-
-## Tips
-
-- Alpine packages are typically lowercase
-- Common prefixes: lib*, py3-*, nodejs-*, *-dev, *-doc
-- When a user mentions a tool, try to suggest the Alpine package name
-- Warn about package availability - some packages may not be in Alpine repos
-- Building can take several minutes - set expectations appropriately
-
-## Response Style
-
-Be conversational but focused. Don't overwhelm with technical details unless asked. Use clear, concise explanations.`
+/**
+ * Get container config system prompt from the catalog.
+ * Loaded from prompt-catalog.json for centralized control.
+ */
+function getContainerConfigSystemPrompt(): string {
+  return getSystemPrompt("container_config").promptText
+}
 
 export class PiKanbanDB {
   private readonly db: Database
@@ -3142,7 +2747,8 @@ export class PiKanbanDB {
   }
 
   private seedPromptTemplates(): void {
-    for (const template of DEFAULT_PROMPT_TEMPLATES) {
+    const templates = getDefaultPromptTemplates()
+    for (const template of templates) {
       this.upsertPromptTemplate(template)
     }
   }
@@ -3167,7 +2773,8 @@ export class PiKanbanDB {
   // ---- planning prompts ----
 
   private seedPlanningPrompts(): void {
-    // Seed default planning prompt
+    // Seed default planning prompt from catalog
+    const defaultPlanningPrompt = getSystemPrompt("planning")
     const existingDefault = this.db.prepare("SELECT 1 FROM planning_prompts WHERE key = 'default'").get()
     if (!existingDefault) {
       this.db
@@ -3179,13 +2786,14 @@ export class PiKanbanDB {
         )
         .run(
           "default",
-          "Default Planning Prompt",
-          "System prompt for the planning assistant agent",
-          DEFAULT_PLANNING_SYSTEM_PROMPT,
+          defaultPlanningPrompt.name,
+          defaultPlanningPrompt.description,
+          defaultPlanningPrompt.promptText,
         )
     }
 
-    // Seed container config prompt
+    // Seed container config prompt from catalog
+    const containerConfigPrompt = getSystemPrompt("container_config")
     const existingContainer = this.db.prepare("SELECT 1 FROM planning_prompts WHERE key = 'container_config'").get()
     if (!existingContainer) {
       this.db
@@ -3197,9 +2805,9 @@ export class PiKanbanDB {
         )
         .run(
           "container_config",
-          "Container Configuration Prompt",
-          "System prompt for the container configuration assistant agent",
-          CONTAINER_CONFIG_SYSTEM_PROMPT,
+          containerConfigPrompt.name,
+          containerConfigPrompt.description,
+          containerConfigPrompt.promptText,
         )
     }
   }

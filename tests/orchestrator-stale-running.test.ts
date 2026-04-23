@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it } from "bun:test"
+import { beforeEach, afterEach, describe, expect, it } from "bun:test"
 import { Effect } from "effect"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
 import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../src/config/settings.ts"
+import { execFileSync } from "child_process"
+import { existsSync } from "fs"
 
 const runEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect)
 
@@ -19,11 +21,57 @@ function createSettings(): InfrastructureSettings {
   }
 }
 
+function cleanupWorktrees(): void {
+  try {
+    // List all worktrees and remove non-main ones
+    const output = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: process.cwd(),
+      encoding: "utf-8",
+    })
+    
+    const worktrees = output.trim().split(/\n\s*\n/)
+    for (const block of worktrees) {
+      const lines = block.split("\n")
+      let worktreePath = ""
+      let isMain = false
+      
+      for (const line of lines) {
+        if (line.startsWith("worktree ")) {
+          worktreePath = line.slice("worktree ".length).trim()
+        }
+        if (line === "bare") {
+          isMain = true
+        }
+      }
+      
+      // Remove non-main worktrees in the .worktrees directory
+      if (worktreePath && !isMain && worktreePath.includes(".worktrees")) {
+        try {
+          execFileSync("git", ["worktree", "remove", "--force", worktreePath], {
+            cwd: process.cwd(),
+            stdio: "pipe",
+          })
+        } catch {
+          // Ignore errors - worktree might already be gone
+        }
+      }
+    }
+    
+    // Prune any stale worktree references
+    execFileSync("git", ["worktree", "prune"], { cwd: process.cwd(), stdio: "pipe" })
+  } catch {
+    // Ignore cleanup errors
+  }
+}
+
 describe("PiOrchestrator multi-workflow scheduling", () => {
   let db: PiKanbanDB
   let orchestrator: PiOrchestrator
 
   beforeEach(() => {
+    // Clean up any leftover worktrees from previous test runs
+    cleanupWorktrees()
+    
     db = new PiKanbanDB(":memory:")
     db.updateOptions({ parallelTasks: 2, branch: "master", executionModel: "openai/gpt-4", planModel: "openai/gpt-4" })
 
@@ -38,6 +86,11 @@ describe("PiOrchestrator multi-workflow scheduling", () => {
     // Keep tests deterministic and isolated from worktree/git execution side effects.
     ;(orchestrator as any).triggerScheduling = async () => {}
     ;(orchestrator as any).validateWorkflowImages = async () => ({ valid: true, invalid: [] })
+  })
+
+  afterEach(() => {
+    // Clean up any worktrees created during tests
+    cleanupWorktrees()
   })
 
   it("allows starting multiple workflows without Already executing", async () => {

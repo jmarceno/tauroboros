@@ -11,6 +11,7 @@ import { PiSessionManager, SessionManagerExecuteError } from "./session-manager.
 import { parseStrictJsonObject } from "./strict-json.ts"
 import { PiProcessError } from "./pi-process.ts"
 import type { PiContainerManager } from "./container-manager.ts"
+import { getSystemPrompt, renderPromptTemplate } from "../prompts/catalog.ts"
 
 export class SelfHealingError extends Schema.TaggedError<SelfHealingError>()("SelfHealingError", {
   operation: Schema.String,
@@ -66,48 +67,23 @@ export class SelfHealingService {
       const schemaSnapshot = self.db.getSchemaSnapshot()
       const schemaJson = inspect(schemaSnapshot, { depth: null, breakLength: Infinity })
 
-      const prompt = [
-        "You are the TaurOboros self-healing diagnostics agent.",
-        "Investigate a workflow failure and propose a permanent source-code fix.",
-        "Do not modify code. Analyze and return strict JSON.",
-        "",
-        "Context:",
-        `- Run ID: ${input.run.id}`,
-        `- Task ID: ${input.task.id}`,
-        `- Task Name: ${input.task.name}`,
-        `- Task Status: ${input.task.status}`,
-        `- Run Status: ${input.run.status}`,
-        `- Error Message: ${input.errorMessage}`,
-        `- Has Other Active Tasks In Same Run: ${input.hasOtherActiveTasks ? "yes" : "no"}`,
-        `- DB Path: ${self.db.getDatabasePath()}`,
-        `- TaurOboros Version: ${VERSION}`,
-        `- Is Compiled Binary: ${IS_COMPILED ? "yes" : "no"}`,
-        `- GitHub Repository: ${self.githubUrl}`,
-        `- Source Mode: ${source.sourceMode}`,
-        `- Source Notes: ${source.notes}`,
-        "",
-        "Database Schema (JSON):",
-        schemaJson,
-        "",
-        "Output requirements:",
-        "1) Explain likely root causes in source code terms.",
-        "2) Propose a permanent fix with concrete implementation details.",
-        "3) Decide if this run can safely continue without discarding work.",
-        "4) If other tasks are still active, prefer task-level restart over run reset.",
-        "",
-        "Return ONLY this JSON object shape:",
-        "{",
-        '  "diagnosticsSummary": "string",',
-        '  "rootCauses": ["string"],',
-        '  "proposedSolution": "string",',
-        '  "implementationPlan": ["string"],',
-        '  "recoverability": {',
-        '    "recoverable": true,',
-        '    "recommendedAction": "restart_task|keep_failed",',
-        '    "rationale": "string"',
-        "  }",
-        "}",
-      ].join("\n")
+      const selfHealingPrompt = getSystemPrompt("self_healing")
+      const prompt = renderPromptTemplate(selfHealingPrompt.promptText, {
+        run_id: input.run.id,
+        task_id: input.task.id,
+        task_name: input.task.name,
+        task_status: input.task.status,
+        run_status: input.run.status,
+        error_message: input.errorMessage,
+        has_other_active_tasks: input.hasOtherActiveTasks ? "yes" : "no",
+        db_path: self.db.getDatabasePath(),
+        version: VERSION,
+        is_compiled: IS_COMPILED ? "yes" : "no",
+        github_url: self.githubUrl,
+        source_mode: source.sourceMode,
+        source_notes: source.notes,
+        schema_json: schemaJson,
+      })
 
       const imageToUse = resolveContainerImage(input.task, self.settings?.workflow?.container?.image)
 
