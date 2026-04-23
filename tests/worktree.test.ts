@@ -259,10 +259,10 @@ describe("WorktreeLifecycle", () => {
 
     expect(result).toEqual({ merged: true, removed: true, kept: false })
     expect(existsSync(taskWorktree.directory)).toBe(false)
-    expect(basename(taskWorktree.directory)).toBe("fix-login-bug-abc")
+    expect(basename(taskWorktree.directory)).toMatch(/^fix-login-bug-abc-[a-z0-9]{6}$/)
 
     const runWorktree = await runEffectOrThrow(lifecycle.createForRun("r1", "worker", "master"))
-    expect(basename(runWorktree.directory)).toMatch(/^worker-r1-[a-z0-9]+$/)
+    expect(basename(runWorktree.directory)).toMatch(/^worker-r1-[a-z0-9]{6}$/)
   })
 
   it("respects keepWorktrees and cleanupOrphaned prefix", async () => {

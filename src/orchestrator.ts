@@ -589,26 +589,21 @@ export class PiOrchestrator {
         return
       }
 
-      for (const runTaskId of run.taskOrder) {
-        const runTask = this.db.getTask(runTaskId)
-        if (yield* this.scheduler.isTaskExecuting(runTaskId)) {
-          yield* this.scheduler.completeTask(runTaskId, "failed", runTask?.sessionId ?? null).pipe(Effect.orDie)
-        } else if (yield* this.scheduler.isTaskQueued(runTaskId)) {
-          yield* this.scheduler.removeQueuedTask(runTaskId)
-        }
+      // Only fail the specific task that had the lifecycle failure
+      // Other tasks should remain queued/backlog for retry
+      const failedTask = this.db.getTask(taskId)
+      if (yield* this.scheduler.isTaskExecuting(taskId)) {
+        yield* this.scheduler.completeTask(taskId, "failed", failedTask?.sessionId ?? null).pipe(Effect.orDie)
+      } else if (yield* this.scheduler.isTaskQueued(taskId)) {
+        yield* this.scheduler.removeQueuedTask(taskId)
+      }
 
-        if (!runTask || this.isTaskRunTerminal(runTask)) {
-          continue
-        }
-
-        this.db.updateTask(runTaskId, {
+      if (failedTask && !this.isTaskRunTerminal(failedTask)) {
+        this.db.updateTask(taskId, {
           status: "failed",
-          errorMessage:
-            runTaskId === taskId
-              ? `Workflow orchestration failed: ${error.message}`
-              : `Workflow aborted because orchestration failed while processing task ${taskId}: ${error.message}`,
+          errorMessage: `Workflow orchestration failed: ${error.message}`,
         })
-        this.broadcastTask(runTaskId)
+        this.broadcastTask(taskId)
       }
 
       const completedCount = run.taskOrder.reduce((count, runTaskId) => {
