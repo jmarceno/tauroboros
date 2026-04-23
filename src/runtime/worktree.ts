@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "fs"
+import { existsSync, mkdirSync, renameSync, rmSync } from "fs"
 import { basename, join, resolve } from "path"
 import { execFileSync } from "child_process"
 import { Effect, Schema } from "effect"
@@ -434,25 +434,49 @@ export function createWorktree(options: CreateWorktreeOptions): Effect.Effect<Wo
         })
       }
 
-      const directory = buildWorktreePath(repoRoot, name, options.worktreeBaseDir)
-      if (existsSync(directory)) {
-        throw new WorktreeError({ message: `Worktree directory already exists: ${directory}`, code: "WORKTREE_ALREADY_EXISTS" })
+      // Use atomic creation: build temp path first, only move to final location on success
+      const worktreeBaseDir = options.worktreeBaseDir ? resolve(options.worktreeBaseDir) : join(repoRoot, ".worktrees")
+      const finalDirectory = join(worktreeBaseDir, name)
+      
+      // Check if final location already exists
+      if (existsSync(finalDirectory)) {
+        throw new WorktreeError({ message: `Worktree directory already exists: ${finalDirectory}`, code: "WORKTREE_ALREADY_EXISTS" })
       }
 
-      const createArgs = branchExists(branch, repoRoot)
-        ? ["worktree", "add", directory, branch]
-        : ["worktree", "add", "-b", branch, directory, baseRef]
+      // Create a unique temp directory for atomic creation
+      const tempDirectory = join(worktreeBaseDir, `.tmp-${name}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+      
+      // Ensure base directory exists
+      mkdirSync(worktreeBaseDir, { recursive: true })
 
+      const createArgs = branchExists(branch, repoRoot)
+        ? ["worktree", "add", tempDirectory, branch]
+        : ["worktree", "add", "-b", branch, tempDirectory, baseRef]
+
+      let gitSucceeded = false
       try {
         runGit(createArgs, repoRoot)
+        gitSucceeded = true
+        
+        // Atomically move temp to final location
+        renameSync(tempDirectory, finalDirectory)
       } catch (error) {
+        // Clean up temp directory on any failure to prevent orphaned directories
+        if (existsSync(tempDirectory)) {
+          try {
+            rmSync(tempDirectory, { recursive: true, force: true })
+          } catch {
+            // Best effort cleanup - ignore errors
+          }
+        }
+        
         if (error instanceof WorktreeError) {
           throw new WorktreeError({ message: `Failed to create worktree '${name}': ${error.message}`, code: "CREATE_WORKTREE_FAILED", gitOutput: error.gitOutput })
         }
         throw error
       }
 
-      return { repoRoot, directory, branch, baseRef }
+      return { repoRoot, directory: finalDirectory, branch, baseRef }
     })
 
     const listed = yield* listWorktrees(prepared.repoRoot)

@@ -345,6 +345,7 @@ export type WSMessageType =
   | "execution_complete"
   | "execution_paused"
   | "execution_resumed"
+  | "execution_failed"
   | "run_created"
   | "run_archived"
   | "run_updated"

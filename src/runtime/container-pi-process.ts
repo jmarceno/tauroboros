@@ -1,4 +1,6 @@
 import { Effect, Fiber, Scope } from "effect"
+import { existsSync, readdirSync, statSync } from "fs"
+import { join } from "path"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { PiWorkflowSession } from "../db/types.ts"
@@ -13,6 +15,89 @@ import { MessageStreamer } from "./message-streamer.ts"
 import type { PiEventListener, ExtensionUIRequestHandler } from "./pi-process.ts"
 import { PiProcessError, CollectEventsTimeoutError } from "./pi-process.ts"
 import type { PiRpcRequest, PiRpcResponse } from "./pi-rpc.ts"
+
+/**
+ * Verifies that a worktree directory is properly populated before container mount.
+ * Returns Effect that fails with PiProcessError if verification fails.
+ * 
+ * Checks:
+ * 1. Directory exists
+ * 2. .git file exists (indicates valid worktree)
+ * 3. Contains source files (not empty)
+ */
+const verifyWorktreePopulated = (worktreeDir: string): Effect.Effect<void, PiProcessError> =>
+  Effect.gen(function* () {
+    // Check directory exists
+    const dirExists = yield* Effect.try({
+      try: () => existsSync(worktreeDir),
+      catch: (cause) => new PiProcessError({
+        operation: "verifyWorktreePopulated",
+        message: `Failed to check worktree existence: ${cause}`,
+        cause,
+      }),
+    })
+    
+    if (!dirExists) {
+      return yield* new PiProcessError({
+        operation: "verifyWorktreePopulated",
+        message: `Worktree directory does not exist: ${worktreeDir}`,
+      })
+    }
+    
+    // Check it's a directory
+    const isDirectory = yield* Effect.try({
+      try: () => statSync(worktreeDir).isDirectory(),
+      catch: (cause) => new PiProcessError({
+        operation: "verifyWorktreePopulated",
+        message: `Failed to stat worktree directory: ${cause}`,
+        cause,
+      }),
+    })
+    
+    if (!isDirectory) {
+      return yield* new PiProcessError({
+        operation: "verifyWorktreePopulated",
+        message: `Worktree path is not a directory: ${worktreeDir}`,
+      })
+    }
+    
+    // Check for .git file (git worktree marker)
+    const gitPath = join(worktreeDir, ".git")
+    const gitExists = yield* Effect.try({
+      try: () => existsSync(gitPath),
+      catch: (cause) => new PiProcessError({
+        operation: "verifyWorktreePopulated",
+        message: `Failed to check .git file: ${cause}`,
+        cause,
+      }),
+    })
+    
+    if (!gitExists) {
+      return yield* new PiProcessError({
+        operation: "verifyWorktreePopulated",
+        message: `Worktree missing .git file (not a valid git worktree): ${worktreeDir}`,
+      })
+    }
+    
+    // Check directory is not empty (has source files)
+    const entries = yield* Effect.try({
+      try: () => readdirSync(worktreeDir),
+      catch: (cause) => new PiProcessError({
+        operation: "verifyWorktreePopulated",
+        message: `Failed to read worktree directory: ${cause}`,
+        cause,
+      }),
+    })
+    
+    // Filter out .git - check for any other files
+    const sourceFiles = entries.filter(entry => entry !== ".git")
+    if (sourceFiles.length === 0) {
+      return yield* new PiProcessError({
+        operation: "verifyWorktreePopulated",
+        message: `Worktree directory is empty (no source files): ${worktreeDir}`,
+      })
+    }
+  })
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -127,6 +212,9 @@ export class ContainerPiProcess {
           message: "ContainerPiProcess requires a worktree directory",
         })
       }
+
+      // Verify worktree is populated before mounting to prevent race conditions
+      yield* verifyWorktreePopulated(worktreeDir)
 
       const repoRoot = worktreeDir.replace(/\/\.worktrees\/[^/]+$/, "")
 

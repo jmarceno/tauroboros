@@ -48,7 +48,6 @@ import {
   clearAllPausedSessionStates,
 } from "./runtime/session-pause-state.ts"
 
-// Import from new orchestrator modules
 import {
   OrchestratorOperationError,
   type ContainerImageOperations,
@@ -76,6 +75,8 @@ import {
   manualSelfHealRecover,
   maybeSelfHealTask,
 } from "./orchestrator/index.ts"
+
+export { OrchestratorOperationError }
 
 export class PiOrchestrator {
   private running = false
@@ -543,33 +544,125 @@ export class PiOrchestrator {
       const run = this.db.getWorkflowRun(runId)
       if (!run) return
 
-      let changed = true
-      while (changed) {
-        changed = false
+      // Check if any task has a failed/stuck dependency
+      let hasFailedDependency = false
+      let failedDependencyName = ""
+      let failedTaskId = ""
 
-        for (const taskId of run.taskOrder) {
-          if (!(yield* this.scheduler.isTaskQueued(taskId))) continue
-          const task = this.db.getTask(taskId)
-          if (!task) continue
+      for (const taskId of run.taskOrder) {
+        if (!(yield* this.scheduler.isTaskQueued(taskId))) continue
+        const task = this.db.getTask(taskId)
+        if (!task) continue
 
-          const failedDependency = task.requirements
-            .map((depId) => this.db.getTask(depId))
-            .find((dep) => dep && (dep.status === "failed" || dep.status === "stuck"))
+        const failedDependency = task.requirements
+          .map((depId) => this.db.getTask(depId))
+          .find((dep) => dep && (dep.status === "failed" || dep.status === "stuck"))
 
-          if (!failedDependency) continue
-
-          yield* this.scheduler.removeQueuedTask(taskId)
-          this.db.updateTask(taskId, {
-            status: "failed",
-            errorMessage: `Dependency \"${failedDependency.name}\" did not complete successfully`,
-          })
-          this.broadcastTask(taskId)
-          changed = true
+        if (failedDependency) {
+          hasFailedDependency = true
+          failedDependencyName = failedDependency.name
+          failedTaskId = taskId
+          break // Stop at first failed dependency - we need to stop the run
         }
+      }
+
+      // If a failed dependency was found, stop the run immediately
+      // This keeps dependent tasks in backlog instead of marking them as failed
+      if (hasFailedDependency) {
+        yield* Effect.logWarning(
+          `[orchestrator] Run ${runId} stopped due to dependency failure: ${failedDependencyName} (blocking task ${failedTaskId})`,
+        )
+        yield* this.stopRunDueToFailure(runId, failedDependencyName)
       }
     }).pipe(
       Effect.mapError((cause) => this.toOperationError("failTasksBlockedByDependency", cause)),
     )
+  }
+
+  /**
+   * Stops a workflow run due to a task failure.
+   * Unlike stopRun(), this marks the run as failed and preserves dependent tasks in backlog.
+   * Dependent tasks remain in "backlog" status instead of being marked as "failed".
+   */
+  private stopRunDueToFailure(runId: string, failedDependencyName: string): Effect.Effect<void, OrchestratorOperationError> {
+    return this.wrapOperation("stopRunDueToFailure", Effect.gen(this, function* () {
+      const run = this.db.getWorkflowRun(runId)
+      if (!run) {
+        yield* Effect.logError(`[orchestrator] Cannot stop run due to failure: run ${runId} not found`)
+        return
+      }
+
+      // Only stop if the run is still active
+      if (run.status !== "queued" && run.status !== "running" && run.status !== "paused") {
+        yield* Effect.logInfo(`[orchestrator] Run ${runId} already terminal (status: ${run.status}), skipping failure stop`)
+        return
+      }
+
+      yield* Effect.logInfo(`[orchestrator] Stopping run ${runId} due to task failure`)
+      
+      const control = this.getRunControl(runId)
+      control.shouldStop = true
+      yield* this.interruptRunTaskFibers(runId)
+
+      // Kill active processes for this run
+      for (const [sessionId, activeProcess] of [...this.activeSessionProcesses]) {
+        const taskId = activeProcess.session.taskId
+        if (!taskId || !run.taskOrder.includes(taskId)) continue
+        if ("forceKill" in activeProcess.process) {
+          yield* activeProcess.process.forceKill("SIGKILL")
+        }
+        this.activeSessionProcesses.delete(sessionId)
+      }
+
+      // Move all non-terminal tasks to backlog (not failed!)
+      // This prevents cascade failures - dependent tasks stay in backlog for retry
+      for (const taskId of run.taskOrder ?? []) {
+        const task = this.db.getTask(taskId)
+        if (!task) continue
+
+        // Only process tasks that aren't already in a terminal state
+        const isTerminal = task.status === "done" || task.status === "failed" || task.status === "stuck"
+        if (isTerminal) continue
+
+        if (yield* this.scheduler.isTaskExecuting(taskId)) {
+          yield* this.scheduler.completeTask(taskId, "failed", task?.sessionId ?? null).pipe(Effect.orDie)
+        } else if (yield* this.scheduler.isTaskQueued(taskId)) {
+          yield* this.scheduler.removeQueuedTask(taskId)
+        }
+
+        // Move to backlog instead of failed - this is the key change for cascade prevention
+        if (task.status === "queued" || task.status === "executing" || task.status === "review") {
+          this.db.updateTask(taskId, {
+            status: "backlog",
+            errorMessage: `Workflow stopped: dependency "${failedDependencyName}" failed`,
+            sessionId: null,
+            sessionUrl: null,
+          })
+          this.broadcastTask(taskId)
+        }
+      }
+
+      // Mark run as failed (not completed like stopRun does)
+      const updated = this.db.updateWorkflowRun(runId, {
+        status: "failed",
+        currentTaskId: null,
+        currentTaskIndex: run.taskOrder.length,
+        finishedAt: nowUnix(),
+        errorMessage: `Task failed: ${failedDependencyName}`,
+      })
+
+      if (updated) {
+        const enriched = yield* this.enrichWorkflowRunEffect(updated)
+        if (enriched) {
+          this.broadcast({ type: "run_updated", payload: enriched })
+        }
+        this.broadcast({ type: "execution_failed", payload: { runId, reason: "task_failure" } })
+        yield* Effect.logInfo(`[orchestrator] Run ${runId} stopped due to failure, dependent tasks preserved in backlog`)
+      }
+
+      yield* this.scheduler.removeRun(runId).pipe(Effect.orDie)
+      this.unregisterRun(runId)
+    }))
   }
 
   private handleScheduledTaskLifecycleFailureEffect(
@@ -650,9 +743,11 @@ export class PiOrchestrator {
       let latestTask: Task | null
       try {
         latestTask = this.db.getTask(taskId)
-      } catch {
-        // DB was closed (e.g. during test teardown) before the background task completed; abort gracefully.
-        return
+      } catch (error) {
+        return yield* new OrchestratorOperationError({
+          operation: "startScheduledTaskEffect",
+          message: `Failed to load task ${taskId} after execution: ${error instanceof Error ? error.message : String(error)}`,
+        })
       }
       if (!latestTask) {
         return yield* new OrchestratorOperationError({
@@ -667,17 +762,19 @@ export class PiOrchestrator {
         return
       }
 
-      if (latestTask.status === "failed" || latestTask.status === "stuck") {
-        const selfHealResult = yield* this.maybeSelfHealTask(runId, latestTask).pipe(Effect.either)
-        if (Either.isRight(selfHealResult) && selfHealResult.right) {
-          yield* this.refreshRunProgressEffect(runId)
-          yield* this.triggerSchedulingEffect()
-          return
-        }
-        if (Either.isLeft(selfHealResult)) {
-          yield* Effect.logError(`[orchestrator] Self-heal failed for task ${taskId}: ${selfHealResult.left.message}`)
-        }
-      }
+      // Self-healing temporarily disabled until architecture is fixed
+      // See: plans/fix-self-healing.md for the full refactoring plan
+      // if (latestTask.status === "failed" || latestTask.status === "stuck") {
+      //   const selfHealResult = yield* this.maybeSelfHealTask(runId, latestTask).pipe(Effect.either)
+      //   if (Either.isRight(selfHealResult) && selfHealResult.right) {
+      //     yield* this.refreshRunProgressEffect(runId)
+      //     yield* this.triggerSchedulingEffect()
+      //     return
+      //   }
+      //   if (Either.isLeft(selfHealResult)) {
+      //     yield* Effect.logError(`[orchestrator] Self-heal failed for task ${taskId}: ${selfHealResult.left.message}`)
+      //   }
+      // }
 
       const finalStatus = latestTask.status === "done"
         ? "done"
@@ -1900,7 +1997,7 @@ export class PiOrchestrator {
           }
 
           // Special handling for CollectEventsTimeoutError
-          if (error._tag === "CollectEventsTimeoutError") {
+          if (error instanceof CollectEventsTimeoutError) {
             const completionCheck = checkEssentialCompletion(error.collectedEvents)
             if (completionCheck.isEssentiallyComplete) {
               return Effect.gen(this, function* () {
@@ -2214,7 +2311,9 @@ export class PiOrchestrator {
         this.broadcastTask(taskId)
         try {
           unlinkSync(reviewFilePath)
-        } catch {}
+        } catch (error) {
+          yield* Effect.logWarning(`Failed to cleanup review file ${reviewFilePath}: ${error instanceof Error ? error.message : String(error)}`)
+        }
       }
     })
   }
