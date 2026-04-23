@@ -16,6 +16,7 @@ interface MarkdownEditorProps {
   placeholder?: string
   onUpdate?: (value: string) => void
   onKeyDown?: (event: KeyboardEvent) => void
+  ref?: (el: HTMLDivElement) => void
 }
 
 export interface MarkdownEditorRef {
@@ -177,6 +178,9 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     if (containerRef) {
       ;(containerRef as any).clear = clear
       ;(containerRef as any).focus = focus
+      if (props.ref) {
+        props.ref(containerRef)
+      }
     }
   })
 

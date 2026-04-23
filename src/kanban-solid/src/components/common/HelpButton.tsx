@@ -50,7 +50,7 @@ export function HelpButton(props: HelpButtonProps) {
         class="help-btn"
         aria-label={props['aria-label']}
         role="button"
-        tabIndex={0}
+        tabIndex={-1}
         onMouseEnter={showTooltip}
         onMouseLeave={hideTooltip}
         onFocus={showTooltip}
