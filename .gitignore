@@ -5,6 +5,9 @@
 plans/reports
 .codex
 
+generated-assets.ts
+version.ts
+
 .playwright-mcp
 test-results
 tauroboros

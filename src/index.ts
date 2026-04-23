@@ -2,7 +2,7 @@ import { resolve } from "path"
 import { existsSync } from "fs"
 import { Effect, Schema } from "effect"
 import { ensureSettingsEffect, saveSettingsEffect, type InfrastructureSettings } from "./config/settings.ts"
-import { createPiServerScopedEffect, findProjectRootEffect } from "./server.ts"
+import { createPiServerScopedEffect, findProjectRootEffect, NotAGitRepositoryError } from "./server.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
 import { ContainerImageManager } from "./runtime/container-image-manager.ts"
 import { validateContainerSetupEffect } from "./runtime/pi-process-factory.ts"
@@ -193,7 +193,22 @@ const waitForShutdownSignalEffect = Effect.async<void>((resume) => {
 })
 
 const runProgram = Effect.fn("runProgram")(function* () {
-  const projectRoot = yield* findProjectRootEffect()
+  const projectRoot = yield* findProjectRootEffect().pipe(
+    Effect.catchTag("NotAGitRepositoryError", (error) =>
+      new StartupError({
+        message: `\n❌ Not a Git Repository\n` +
+          `========================\n\n` +
+          `TaurOboros must be run from within a git repository.\n\n` +
+          `Current directory: ${error.cwd}\n\n` +
+          `To use TaurOboros:\n` +
+          `  1. Navigate to a git repository:\n` +
+          `     cd /path/to/your/git/repo\n\n` +
+          `  2. Or initialize a new git repository:\n` +
+          `     git init\n\n` +
+          `  3. Then run tauroboros again\n`,
+      }),
+    ),
+  )
   const extractionResult = extractEmbeddedResources(projectRoot)
   if (extractionResult.mode === "binary") {
     yield* Effect.logInfo(`[tauroboros] Extracted ${extractionResult.skills} skills, ${extractionResult.config} configs, and ${extractionResult.docker} docker files from binary`)
@@ -243,6 +258,26 @@ const runProgram = Effect.fn("runProgram")(function* () {
 })
 
 void Effect.runPromise(Effect.scoped(runProgram())).catch((error) => {
+  // Handle NotAGitRepositoryError with a friendly message
+  // Check for _tag property as Effect Schema errors may be serialized
+  const errorTag = typeof error === "object" && error !== null ? (error as { _tag?: string })._tag : undefined
+  const errorCwd = typeof error === "object" && error !== null ? (error as { cwd?: string }).cwd : undefined
+  
+  if (error instanceof NotAGitRepositoryError || errorTag === "NotAGitRepositoryError") {
+    const cwd = error instanceof NotAGitRepositoryError ? error.cwd : errorCwd ?? process.cwd()
+    process.stderr.write(`\n❌ Not a Git Repository\n`)
+    process.stderr.write(`========================\n\n`)
+    process.stderr.write(`TaurOboros must be run from within a git repository.\n\n`)
+    process.stderr.write(`Current directory: ${cwd}\n\n`)
+    process.stderr.write(`To use TaurOboros:\n`)
+    process.stderr.write(`  1. Navigate to a git repository:\n`)
+    process.stderr.write(`     cd /path/to/your/git/repo\n\n`)
+    process.stderr.write(`  2. Or initialize a new git repository:\n`)
+    process.stderr.write(`     git init\n\n`)
+    process.stderr.write(`  3. Then run tauroboros again\n\n`)
+    process.exit(1)
+  }
+
   const message = error instanceof StartupError
     ? error.message
     : error instanceof Error

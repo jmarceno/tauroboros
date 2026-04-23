@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync } from "fs"
 import { dirname, resolve } from "path"
 import { fileURLToPath } from "url"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import type { InfrastructureSettings } from "./config/settings.ts"
 import type { WSMessage } from "./types.ts"
 import { PiKanbanDB } from "./db.ts"
@@ -15,6 +15,10 @@ import { PlanningSessionManager } from "./runtime/planning-session.ts"
 import { SmartRepairService } from "./runtime/smart-repair.ts"
 import { MockServerManager } from "./runtime/mock-server-manager.ts"
 import { BASE_IMAGES } from "./config/base-images.ts"
+
+export class NotAGitRepositoryError extends Schema.TaggedError<NotAGitRepositoryError>()("NotAGitRepositoryError", {
+  cwd: Schema.String,
+}) {}
 
 export interface CreateServerOptions {
   projectRoot?: string
@@ -57,6 +61,29 @@ export function findProjectRoot(): string {
   }
 
   return cwd
+}
+
+export function validateGitRepository(): Effect.Effect<string, NotAGitRepositoryError> {
+  return Effect.gen(function* () {
+    const cwd = process.cwd()
+    let currentDir = cwd
+
+    // Walk up the directory tree looking for .git
+    while (currentDir !== dirname(currentDir)) {
+      if (existsSync(resolve(currentDir, ".git"))) {
+        return currentDir
+      }
+      currentDir = dirname(currentDir)
+    }
+
+    // Also check if .git exists in cwd (in case cwd is root)
+    if (existsSync(resolve(cwd, ".git"))) {
+      return cwd
+    }
+
+    // No .git directory found
+    return yield* new NotAGitRepositoryError({ cwd })
+  })
 }
 
 function resolveContainerSettings(projectRoot: string, options: CreateServerOptions): {
@@ -241,7 +268,18 @@ const makeScopedPiServerRuntime = Effect.fn("makeScopedPiServerRuntime")(
 
 export const findProjectRootEffect = Effect.fn("findProjectRootEffect")(
   function* () {
-    return findProjectRoot()
+    // First validate we're in a git repository
+    const gitRoot = yield* validateGitRepository().pipe(
+      Effect.mapError((error) => error),
+    )
+    
+    // Also check for .pi directory or fall back to git root
+    const cwd = process.cwd()
+    if (existsSync(resolve(cwd, ".pi"))) {
+      return cwd
+    }
+    
+    return gitRoot
   },
 )
 
