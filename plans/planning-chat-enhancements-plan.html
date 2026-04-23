@@ -1,0 +1,1275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Planning Chat Enhancements - Implementation Plan</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --surface: #1a1d24;
+      --surface-2: #22262e;
+      --surface-3: #2a2f38;
+      --border: rgba(255, 255, 255, 0.08);
+      --text: #e8eaed;
+      --text-dim: #9aa0a6;
+      --text-muted: #5f6368;
+      
+      --accent-teal: #14b8a6;
+      --accent-teal-dim: rgba(20, 184, 166, 0.15);
+      --accent-amber: #f59e0b;
+      --accent-amber-dim: rgba(245, 158, 11, 0.15);
+      --accent-rose: #f43f5e;
+      --accent-rose-dim: rgba(244, 63, 94, 0.15);
+      --accent-slate: #64748b;
+      --accent-indigo: #6366f1;
+      --accent-indigo-dim: rgba(99, 102, 241, 0.15);
+      
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      
+      --font-body: 'DM Sans', system-ui, sans-serif;
+      --font-mono: 'Fira Code', ui-monospace, monospace;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* Background Grid */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* Navigation */
+    .nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      z-index: 100;
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-title {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .nav-title::before {
+      content: '';
+      width: 8px;
+      height: 8px;
+      background: var(--accent-teal);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--accent-teal);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.75rem;
+    }
+
+    .nav-links a {
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--accent-teal);
+    }
+
+    /* Main Container */
+    .main {
+      position: relative;
+      z-index: 1;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 5rem 1.5rem 3rem;
+    }
+
+    /* Hero Section */
+    .hero {
+      text-align: center;
+      padding: 3rem 0 4rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 3rem;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.375rem 0.875rem;
+      background: var(--accent-teal-dim);
+      border: 1px solid rgba(20, 184, 166, 0.3);
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--accent-teal);
+      margin-bottom: 1.5rem;
+    }
+
+    .hero h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 1rem;
+      background: linear-gradient(135deg, var(--text) 0%, var(--accent-teal) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero p {
+      font-size: 1.125rem;
+      color: var(--text-dim);
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    /* Feature Cards Grid */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.5rem;
+      margin-bottom: 3rem;
+    }
+
+    @media (max-width: 900px) {
+      .features-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      transition: all 0.3s ease;
+    }
+
+    .feature-card:hover {
+      border-color: rgba(20, 184, 166, 0.3);
+      transform: translateY(-2px);
+    }
+
+    .feature-card--primary {
+      border-color: var(--accent-teal);
+      background: linear-gradient(135deg, var(--surface) 0%, rgba(20, 184, 166, 0.05) 100%);
+    }
+
+    .feature-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .feature-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .feature-icon--clipboard { background: var(--accent-indigo-dim); color: var(--accent-indigo); }
+    .feature-icon--indicator { background: var(--accent-amber-dim); color: var(--accent-amber); }
+    .feature-icon--mermaid { background: var(--accent-teal-dim); color: var(--accent-teal); }
+    .feature-icon--rename { background: var(--accent-rose-dim); color: var(--accent-rose); }
+
+    .feature-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .feature-desc {
+      font-size: 0.875rem;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+
+    .feature-meta {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .feature-meta span {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+    }
+
+    /* Section Styles */
+    .section {
+      margin-bottom: 3rem;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-num {
+      width: 28px;
+      height: 28px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      color: var(--accent-teal);
+    }
+
+    .section h2 {
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+
+    /* Diagram Container */
+    .diagram-shell {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      position: relative;
+    }
+
+    .diagram-label {
+      position: absolute;
+      top: -10px;
+      left: 1rem;
+      background: var(--surface);
+      padding: 0 0.5rem;
+      font-size: 0.7rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .mermaid-wrap {
+      display: flex;
+      justify-content: center;
+      min-height: 200px;
+    }
+
+    /* Table Styles */
+    .table-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    thead {
+      background: var(--surface-2);
+    }
+
+    th {
+      padding: 0.875rem 1rem;
+      text-align: left;
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: 0.875rem 1rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Status Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.375rem;
+      padding: 0.25rem 0.625rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    .badge--new {
+      background: var(--accent-teal-dim);
+      color: var(--accent-teal);
+    }
+
+    .badge--modify {
+      background: var(--accent-amber-dim);
+      color: var(--accent-amber);
+    }
+
+    .badge--db {
+      background: var(--accent-indigo-dim);
+      color: var(--accent-indigo);
+    }
+
+    .badge--api {
+      background: var(--accent-rose-dim);
+      color: var(--accent-rose);
+    }
+
+    /* Code Block */
+    .code-block {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+
+    .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.625rem 1rem;
+      background: var(--surface-3);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    .code-content {
+      padding: 1rem;
+      overflow-x: auto;
+    }
+
+    .code-content pre {
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .code-content .comment { color: var(--text-muted); }
+    .code-content .keyword { color: var(--accent-teal); }
+    .code-content .string { color: var(--accent-amber); }
+    .code-content .function { color: var(--accent-indigo); }
+
+    /* Timeline */
+    .timeline {
+      position: relative;
+      padding-left: 2rem;
+    }
+
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 0.5rem;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, var(--accent-teal) 0%, var(--accent-indigo) 100%);
+      border-radius: 1px;
+    }
+
+    .timeline-item {
+      position: relative;
+      padding-bottom: 2rem;
+    }
+
+    .timeline-item::before {
+      content: '';
+      position: absolute;
+      left: -1.5rem;
+      top: 0.25rem;
+      width: 10px;
+      height: 10px;
+      background: var(--surface);
+      border: 2px solid var(--accent-teal);
+      border-radius: 50%;
+    }
+
+    .timeline-item--complete::before {
+      background: var(--accent-teal);
+    }
+
+    .timeline-title {
+      font-weight: 600;
+      margin-bottom: 0.375rem;
+    }
+
+    .timeline-desc {
+      font-size: 0.875rem;
+      color: var(--text-dim);
+    }
+
+    .timeline-deps {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    .dep-tag {
+      font-size: 0.7rem;
+      padding: 0.25rem 0.5rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-dim);
+    }
+
+    /* Two Column Layout */
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 900px) {
+      .two-col {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Info Box */
+    .info-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .info-box--warning {
+      border-color: var(--accent-amber);
+      background: var(--accent-amber-dim);
+    }
+
+    .info-box--tip {
+      border-color: var(--accent-teal);
+      background: var(--accent-teal-dim);
+    }
+
+    /* Collapsible Section */
+    details {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+
+    summary {
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      list-style: none;
+    }
+
+    summary::-webkit-details-marker {
+      display: none;
+    }
+
+    summary::after {
+      content: '▼';
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      transition: transform 0.2s;
+    }
+
+    details[open] summary::after {
+      transform: rotate(180deg);
+    }
+
+    details > div {
+      padding: 0 1.25rem 1.25rem;
+    }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      padding: 3rem 0;
+      border-top: 1px solid var(--border);
+      margin-top: 3rem;
+      color: var(--text-muted);
+      font-size: 0.875rem;
+    }
+
+    /* Print Styles */
+    @media print {
+      .nav { display: none; }
+      .main { padding-top: 1rem; }
+      .feature-card { break-inside: avoid; }
+      .code-block { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-title">Planning Chat Enhancements</div>
+    <div class="nav-links">
+      <a href="#overview">Overview</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#implementation">Implementation</a>
+      <a href="#timeline">Timeline</a>
+    </div>
+  </nav>
+
+  <main class="main">
+    <!-- Hero Section -->
+    <section class="hero" id="overview">
+      <div class="hero-badge">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+          <path d="M2 17l10 5 10-5"/>
+          <path d="M2 12l10 5 10-5"/>
+        </svg>
+        Sprint Implementation Plan
+      </div>
+      <h1>Planning Chat Enhancements</h1>
+      <p>Four feature implementations for improved user experience: clipboard image paste, agent working indicators, mermaid diagram maximization, and session renaming.</p>
+    </section>
+
+    <!-- Feature Overview Cards -->
+    <div class="features-grid">
+      <div class="feature-card feature-card--primary">
+        <div class="feature-header">
+          <div class="feature-icon feature-icon--clipboard">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M9 3v3m6-3v3M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/>
+            </svg>
+          </div>
+          <div>
+            <div class="feature-title">Clipboard Image Paste</div>
+            <div class="feature-desc">Allow users to paste images from clipboard directly into planning chat. Convert to base64 and send as attachments.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-header">
+          <div class="feature-icon feature-icon--indicator">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 6v6l4 2"/>
+            </svg>
+          </div>
+          <div>
+            <div class="feature-title">Agent Working Indicator</div>
+            <div class="feature-desc">Show clear indicator when Pi AI is actively working. Track agent_start, tool_execution_start, and agent_end events.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-header">
+          <div class="feature-icon feature-icon--mermaid">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+            </svg>
+          </div>
+          <div>
+            <div class="feature-title">Maximize Mermaid Diagrams</div>
+            <div class="feature-desc">Add maximize/expand button to mermaid diagrams. View in fullscreen modal for better visibility.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-header">
+          <div class="feature-icon feature-icon--rename">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </div>
+          <div>
+            <div class="feature-title">Rename Planning Sessions</div>
+            <div class="feature-desc">Allow users to rename planning chat sessions. Add name field to workflow_sessions table and UI for editing.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Architecture Diagram -->
+    <section class="section" id="architecture">
+      <div class="section-header">
+        <span class="section-num">01</span>
+        <h2>System Architecture & Data Flow</h2>
+      </div>
+
+      <div class="diagram-shell">
+        <span class="diagram-label">Component Interaction</span>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+flowchart TB
+    subgraph Frontend["Frontend - SolidJS"]
+        CP[ChatPanel.tsx]
+        CM[ChatMessage.tsx]
+        CCS[ChatContainer.tsx]
+        Store[planningChatStore.ts]
+        API[planningApi.ts]
+    end
+
+    subgraph Backend["Backend - Bun/Effect"]
+        Routes[planning-routes.ts]
+        PS[planning-session.ts]
+        DB[(Database)]
+        WS[WebSocket Broadcaster]
+    end
+
+    subgraph External["External - Pi Mono"]
+        Pi[Pi Agent]
+    end
+
+    CP -->|paste event| CP
+    CP -->|send with attachments| Store
+    CM -->|render mermaid| CM
+    CM -->|maximize| CM
+    CCS -->|rename| Store
+    Store -->|HTTP + WS| API
+    API -->|REST| Routes
+    Routes -->|Effect| PS
+    PS -->|SQLite| DB
+    PS <-->|RPC| Pi
+    PS -->|events| WS
+    WS -->|push| Store
+          </pre>
+        </div>
+      </div>
+
+      <div class="diagram-shell">
+        <span class="diagram-label">Pi Agent Event Flow</span>
+        <div class="mermaid-wrap">
+          <pre class="mermaid">
+sequenceDiagram
+    participant Pi as Pi Agent
+    participant PS as PlanningSession
+    participant Store as planningChatStore
+    participant UI as ChatPanel
+
+    Note over Pi,UI: Agent Working Indicator Flow
+    
+    Pi->>PS: agent_start event
+    PS->>Store: setAgentWorking(true)
+    Store->>UI: update state
+    UI->>UI: show "Working..." indicator
+    
+    Pi->>PS: tool_execution_start
+    PS->>Store: setAgentTool("exploring")
+    Store->>UI: update tool name
+    UI->>UI: show "Exploring codebase..."
+    
+    Pi->>PS: message_update (thinking)
+    PS->>Store: append thinking
+    Store->>UI: stream thinking
+    
+    Pi->>PS: agent_end event
+    PS->>Store: setAgentWorking(false)
+    Store->>UI: hide indicator
+          </pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- File Changes -->
+    <section class="section" id="implementation">
+      <div class="section-header">
+        <span class="section-num">02</span>
+        <h2>Implementation Details</h2>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>Change Type</th>
+              <th>Feature</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>src/kanban-solid/src/components/chat/ChatPanel.tsx</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Clipboard</td>
+              <td>Add paste event handler, convert images to base64</td>
+            </tr>
+            <tr>
+              <td><code>src/kanban-solid/src/stores/planningChatStore.ts</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Clipboard</td>
+              <td>Extend ContextAttachment type for image data</td>
+            </tr>
+            <tr>
+              <td><code>src/types.ts</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Clipboard</td>
+              <td>Add image attachment schema</td>
+            </tr>
+            <tr>
+              <td><code>src/kanban-solid/src/components/chat/ChatMessage.tsx</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Agent Indicator</td>
+              <td>Show working status with tool context</td>
+            </tr>
+            <tr>
+              <td><code>src/runtime/planning-session.ts</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Agent Indicator</td>
+              <td>Track agent_start, tool_execution_start, agent_end</td>
+            </tr>
+            <tr>
+              <td><code>src/kanban-solid/src/stores/planningChatStore.ts</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Agent Indicator</td>
+              <td>Add agentWorking state and actions</td>
+            </tr>
+            <tr>
+              <td><code>src/kanban-solid/src/components/chat/ChatMessage.tsx</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Mermaid</td>
+              <td>Add maximize button and modal</td>
+            </tr>
+            <tr>
+              <td><code>src/kanban-solid/src/components/chat/MermaidModal.tsx</code></td>
+              <td><span class="badge badge--new">Create</span></td>
+              <td>Mermaid</td>
+              <td>Fullscreen modal for mermaid diagrams</td>
+            </tr>
+            <tr>
+              <td><code>src/db/migrations.ts</code></td>
+              <td><span class="badge badge--db">Migration</span></td>
+              <td>Rename</td>
+              <td>Add name column to workflow_sessions</td>
+            </tr>
+            <tr>
+              <td><code>src/db.ts</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Rename</td>
+              <td>Add updateSessionName method</td>
+            </tr>
+            <tr>
+              <td><code>src/db/types.ts</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Rename</td>
+              <td>Add name field to PiWorkflowSession</td>
+            </tr>
+            <tr>
+              <td><code>src/server/routes/planning-routes.ts</code></td>
+              <td><span class="badge badge--api">API</span></td>
+              <td>Rename</td>
+              <td>PUT /api/planning/sessions/:id/name</td>
+            </tr>
+            <tr>
+              <td><code>src/kanban-solid/src/api/planning.ts</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Rename</td>
+              <td>Add updateSessionName API function</td>
+            </tr>
+            <tr>
+              <td><code>src/kanban-solid/src/stores/planningChatStore.ts</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Rename</td>
+              <td>Make renameSession persist to backend</td>
+            </tr>
+            <tr>
+              <td><code>src/runtime/planning-session.ts</code></td>
+              <td><span class="badge badge--modify">Modify</span></td>
+              <td>Rename</td>
+              <td>Set default name on session create</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Effect Patterns Section -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-num">03</span>
+        <h2>Effect Patterns to Follow</h2>
+      </div>
+
+      <div class="two-col">
+        <div class="code-block">
+          <div class="code-header">
+            <span>Error Handling Pattern</span>
+          </div>
+          <div class="code-content">
+            <pre><span class="comment">// Define tagged error for the feature</span>
+<span class="keyword">class</span> <span class="function">SessionRenameError</span> <span class="keyword">extends</span> Schema.<span class="function">TaggedError</span>&lt;
+  SessionRenameError
+&gt;(<span class="string">"SessionRenameError"</span>, {
+  operation: Schema.String,
+  message: Schema.String,
+  cause: Schema.<span class="function">optional</span>(Schema.Unknown),
+}) {}
+
+<span class="comment">// Use in Effect pipeline</span>
+<span class="function">renameSessionEffect</span>(sessionId: string, name: string) {
+  <span class="keyword">return</span> Effect.<span class="function">gen</span>(<span class="keyword">function</span>* () {
+    <span class="keyword">const</span> session = <span class="function">getSession</span>(sessionId)
+    <span class="keyword">if</span> (!session) {
+      <span class="keyword">return</span> <span class="keyword">yield</span>* <span class="keyword">new</span> <span class="function">SessionRenameError</span>({
+        operation: <span class="string">"rename"</span>,
+        message: <span class="string">"Session not found"</span>,
+      })
+    }
+    <span class="comment">// ... continue with rename logic</span>
+  })
+}</pre>
+          </div>
+        </div>
+
+        <div class="code-block">
+          <div class="code-header">
+            <span>API Effect Pattern</span>
+          </div>
+          <div class="code-content">
+            <pre><span class="comment">// Frontend API wrapper using Effect</span>
+<span class="keyword">export const</span> <span class="function">updateSessionName</span> = (
+  sessionId: string,
+  name: string
+): Effect.Effect&lt;<span class="keyword">void</span>, ApiError&gt; =&gt; {
+  <span class="keyword">return</span> Effect.<span class="function">tryPromise</span>({
+    <span class="function">try</span>: async () =&gt; {
+      <span class="keyword">const</span> response = <span class="keyword">await</span> <span class="function">fetch</span>(
+        `/api/planning/sessions/${sessionId}/name`,
+        {
+          method: <span class="string">"PUT"</span>,
+          headers: { <span class="string">"Content-Type"</span>: <span class="string">"application/json"</span> },
+          body: JSON.<span class="function">stringify</span>({ name }),
+        }
+      )
+      <span class="keyword">if</span> (!response.ok) {
+        <span class="keyword">throw</span> <span class="keyword">new</span> <span class="function">Error</span>(<span class="string">"Failed to rename session"</span>)
+      }
+    },
+    <span class="function">catch</span>: (error) =&gt;
+      <span class="keyword">new</span> <span class="function">ApiError</span>({
+        message: error instanceof Error ? error.message : <span class="string">"Unknown error"</span>,
+      }),
+  })
+}</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Database Migration -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-num">04</span>
+        <h2>Database Migration</h2>
+      </div>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span>Version 31 - Add session name column</span>
+        </div>
+        <div class="code-content">
+          <pre>{
+  version: <span class="number">31</span>,
+  description: <span class="string">"Add name column to workflow_sessions for custom session names"</span>,
+  statements: [
+    <span class="comment">// Add name column with default NULL (generates names on creation)</span>
+    `ALTER TABLE workflow_sessions ADD COLUMN name TEXT;`,
+    <span class="comment">// Create index for name-based queries</span>
+    `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_name ON workflow_sessions(name);`,
+    <span class="comment">// Migrate existing sessions: set name based on session kind and id</span>
+    `UPDATE workflow_sessions 
+     SET name = CASE 
+       WHEN session_kind = 'planning' THEN 'Planning ' || substr(id, 1, 4)
+       WHEN session_kind = 'container_config' THEN 'Container ' || substr(id, 1, 4)
+       ELSE 'Session ' || substr(id, 1, 4)
+     END
+     WHERE name IS NULL;`,
+  ],
+}</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- API Endpoints -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-num">05</span>
+        <h2>API Endpoint Additions</h2>
+      </div>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th>Endpoint</th>
+              <th>Feature</th>
+              <th>Request Body</th>
+              <th>Response</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>PUT</code></td>
+              <td><code>/api/planning/sessions/:id/name</code></td>
+              <td>Rename</td>
+              <td><code>{ name: string }</code></td>
+              <td><code>{ id, name, ...session }</code></td>
+            </tr>
+            <tr>
+              <td><code>POST</code></td>
+              <td><code>/api/planning/sessions/:id/messages</code></td>
+              <td>Clipboard</td>
+              <td><code>{ content, contextAttachments }</code></td>
+              <td><code>{ ok: true }</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span>Backend Route Implementation - Rename</span>
+        </div>
+        <div class="code-content">
+          <pre>router.<span class="function">put</span>(<span class="string">"/api/planning/sessions/:id/name"</span>, ({ params, req, json, broadcast, db }) =&gt;
+  Effect.<span class="function">gen</span>(<span class="keyword">function</span>* () {
+    <span class="keyword">const</span> session = db.<span class="function">getWorkflowSession</span>(params.id)
+    <span class="keyword">if</span> (!session) {
+      <span class="keyword">return</span> <span class="keyword">yield</span>* Effect.<span class="function">fail</span>(<span class="function">notFoundError</span>(<span class="string">"Session not found"</span>))
+    }
+
+    <span class="keyword">const</span> body = (<span class="keyword">yield</span>* Effect.<span class="function">tryPromise</span>({
+      <span class="function">try</span>: () =&gt; req.<span class="function">json</span>() <span class="keyword">as</span> Promise&lt;{ name?: string }&gt;,
+      <span class="function">catch</span>: (cause) =&gt; <span class="function">badRequestError</span>(<span class="string">"Invalid JSON"</span>),
+    }))
+
+    <span class="keyword">if</span> (!body.name || body.name.<span class="function">trim</span>() === <span class="string">""</span>) {
+      <span class="keyword">return</span> <span class="keyword">yield</span>* Effect.<span class="function">fail</span>(<span class="function">badRequestError</span>(<span class="string">"Name is required"</span>))
+    }
+
+    <span class="keyword">const</span> updated = db.<span class="function">updateWorkflowSession</span>(params.id, {
+      name: body.name.<span class="function">trim</span>(),
+    })
+
+    <span class="function">broadcast</span>({ type: <span class="string">"planning_session_updated"</span>, payload: updated })
+    <span class="keyword">return</span> <span class="function">json</span>(updated)
+  }),
+)</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Implementation Timeline -->
+    <section class="section" id="timeline">
+      <div class="section-header">
+        <span class="section-num">06</span>
+        <h2>Implementation Order</h2>
+      </div>
+
+      <div class="timeline">
+        <div class="timeline-item timeline-item--complete">
+          <div class="timeline-title">Phase 1: Database Migration</div>
+          <div class="timeline-desc">Add name column to workflow_sessions table. Create migration v31. Update DB types and add updateSessionName method.</div>
+          <div class="timeline-deps">
+            <span class="dep-tag">migrations.ts</span>
+            <span class="dep-tag">db.ts</span>
+            <span class="dep-tag">types.ts</span>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-title">Phase 2: Rename Backend</div>
+          <div class="timeline-desc">Add PUT endpoint for session renaming. Update planning-session.ts to set default name on creation. Add broadcast for name changes.</div>
+          <div class="timeline-deps">
+            <span class="dep-tag">planning-routes.ts</span>
+            <span class="dep-tag">planning-session.ts</span>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-title">Phase 3: Rename Frontend</div>
+          <div class="timeline-desc">Update planningChatStore.ts renameSession to persist to backend. Add API function. Update ChatContainer session list to display names.</div>
+          <div class="timeline-deps">
+            <span class="dep-tag">planningChatStore.ts</span>
+            <span class="dep-tag">planning.ts (api)</span>
+            <span class="dep-tag">ChatContainer.tsx</span>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-title">Phase 4: Clipboard Images</div>
+          <div class="timeline-desc">Add paste event handler to ChatPanel. Convert images to base64. Extend ContextAttachment type. Update message sending with attachments.</div>
+          <div class="timeline-deps">
+            <span class="dep-tag">ChatPanel.tsx</span>
+            <span class="dep-tag">planningChatStore.ts</span>
+            <span class="dep-tag">types.ts</span>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-title">Phase 5: Agent Working Indicator</div>
+          <div class="timeline-desc">Track agent_start, tool_execution_start, agent_end in planning-session.ts. Add agentWorking state to store. Show indicator in ChatPanel header.</div>
+          <div class="timeline-deps">
+            <span class="dep-tag">planning-session.ts</span>
+            <span class="dep-tag">planningChatStore.ts</span>
+            <span class="dep-tag">ChatPanel.tsx</span>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-title">Phase 6: Mermaid Maximize</div>
+          <div class="timeline-desc">Create MermaidModal component. Add maximize button to ChatMessage mermaid blocks. Implement zoom controls in modal.</div>
+          <div class="timeline-deps">
+            <span class="dep-tag">MermaidModal.tsx</span>
+            <span class="dep-tag">ChatMessage.tsx</span>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-title">Phase 7: Testing & Polish</div>
+          <div class="timeline-desc">Test all features together. Verify WebSocket updates work. Check mobile responsiveness. Final polish.</div>
+          <div class="timeline-deps">
+            <span class="dep-tag">e2e tests</span>
+            <span class="dep-tag">manual testing</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Key Implementation Notes -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-num">07</span>
+        <h2>Key Implementation Notes</h2>
+      </div>
+
+      <details>
+        <summary>Clipboard Image Paste - Technical Details</summary>
+        <div>
+          <p style="margin-bottom: 1rem; color: var(--text-dim);">Listen for <code>paste</code> event on textarea, check for <code>e.clipboardData.files</code>. Images are processed through a pipeline: resized to 1024px on the largest dimension (maintaining aspect ratio), encoded as JPEG at 90% quality, then converted to base64 for transmission. Show thumbnail preview in attachment list.</p>
+          <div class="code-block">
+            <div class="code-header"><span>Image Processing Pipeline</span></div>
+            <div class="code-content">
+              <pre><span class="keyword">async function</span> <span class="function">processImage</span>(file: File): Promise&lt;<span class="keyword">string</span>&gt; {
+  <span class="keyword">return</span> <span class="keyword">new</span> <span class="function">Promise</span>((resolve, reject) =&gt; {
+    <span class="keyword">const</span> img = <span class="keyword">new</span> <span class="function">Image</span>()
+    <span class="keyword">const</span> canvas = document.<span class="function">createElement</span>(<span class="string">'canvas'</span>)
+    <span class="keyword">const</span> ctx = canvas.<span class="function">getContext</span>(<span class="string">'2d'</span>)
+    
+    img.<span class="function">onload</span> = () =&gt; {
+      <span class="keyword">const</span> MAX_SIZE = <span class="number">1024</span>
+      <span class="keyword">let</span> { width, height } = img
+      
+      <span class="comment">// Resize maintaining aspect ratio</span>
+      <span class="keyword">if</span> (width &gt; height && width &gt; MAX_SIZE) {
+        height = (height * MAX_SIZE) / width
+        width = MAX_SIZE
+      } <span class="keyword">else if</span> (height &gt; MAX_SIZE) {
+        width = (width * MAX_SIZE) / height
+        height = MAX_SIZE
+      }
+      
+      canvas.width = width
+      canvas.height = height
+      ctx?.<span class="function">drawImage</span>(img, <span class="number">0</span>, <span class="number">0</span>, width, height)
+      
+      <span class="comment">// Encode as JPEG 90% quality, convert to base64</span>
+      <span class="keyword">const</span> base64 = canvas.<span class="function">toDataURL</span>(<span class="string">'image/jpeg'</span>, <span class="number">0.9</span>)
+      <span class="function">resolve</span>(base64)
+    }
+    
+    img.<span class="function">onerror</span> = reject
+    img.src = URL.<span class="function">createObjectURL</span>(file)
+  })
+}</pre>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>Agent Working Indicator - Event Tracking</summary>
+        <div>
+          <p style="margin-bottom: 1rem; color: var(--text-dim);">The Pi agent sends events via RPC. Currently handled in <code>installStreamingSubscription</code>. Extend to capture:</p>
+          <ul style="margin-left: 1.5rem; color: var(--text-dim); line-height: 1.8;">
+            <li><code>agent_start</code> - Set working state true, clear tool context</li>
+            <li><code>tool_execution_start</code> - Set current tool name (e.g., "exploring", "searching")</li>
+            <li><code>tool_execution_end</code> - Keep working true, clear tool context</li>
+            <li><code>agent_end</code> - Set working state false</li>
+          </ul>
+        </div>
+      </details>
+
+      <details>
+        <summary>Mermaid Maximize - Modal Approach</summary>
+        <div>
+          <p style="margin-bottom: 1rem; color: var(--text-dim);">Create portal-based modal for fullscreen viewing. Use SolidJS <code>&lt;Portal&gt;</code> to render outside component tree. Include zoom controls (+, -, reset, fit) using mermaid's native zoom API or CSS transform scale.</p>
+          <div class="code-block">
+            <div class="code-header"><span>MermaidModal Component Structure</span></div>
+            <div class="code-content">
+              <pre><span class="keyword">interface</span> MermaidModalProps {
+  isOpen: <span class="keyword">boolean</span>
+  content: string
+  onClose: () =&gt; <span class="keyword">void</span>
+  title?: string
+}
+
+<span class="comment">// Render via Portal to document.body</span>
+<span class="comment">// Use mermaid.render() inside modal</span>
+<span class="comment">// Add zoom/pan controls</span></pre>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>Session Rename - State Synchronization</summary>
+        <div>
+          <p style="margin-bottom: 1rem; color: var(--text-dim);">Current <code>renameSession</code> in store only updates local state. Need to:</p>
+          <ol style="margin-left: 1.5rem; color: var(--text-dim); line-height: 1.8;">
+            <li>Call backend PUT endpoint first</li>
+            <li>Update local state on success</li>
+            <li>Listen for WebSocket <code>planning_session_updated</code> to sync other tabs</li>
+            <li>Show inline edit UI (already partially implemented in ChatPanel)</li>
+          </ol>
+        </div>
+      </details>
+    </section>
+
+    <!-- Risk Assessment -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-num">08</span>
+        <h2>Risk Assessment & Mitigation</h2>
+      </div>
+
+      <div class="two-col">
+        <div class="info-box info-box--warning">
+          <div style="font-weight: 600; margin-bottom: 0.5rem; color: var(--accent-amber);">Potential Risks</div>
+          <ul style="margin-left: 1rem; color: var(--text-dim); line-height: 1.8; font-size: 0.875rem;">
+            <li>Base64 images may exceed message size limits</li>
+            <li>Agent events may fire rapidly - need debouncing</li>
+            <li>Multiple sessions renaming simultaneously could cause race conditions</li>
+            <li>Mermaid modal needs to handle large diagrams</li>
+          </ul>
+        </div>
+
+        <div class="info-box info-box--tip">
+          <div style="font-weight: 600; margin-bottom: 0.5rem; color: var(--accent-teal);">Mitigation Strategies</div>
+          <ul style="margin-left: 1rem; color: var(--text-dim); line-height: 1.8; font-size: 0.875rem;">
+            <li>Limit images to 1MB, compress if larger</li>
+            <li>Use SolidJS createEffect with proper cleanup</li>
+            <li>Use unique request IDs for idempotency</li>
+            <li>Virtualize large diagrams, add zoom controls</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <p>TaurOboros Planning Chat Enhancements • Sprint Implementation Plan</p>
+      <p style="margin-top: 0.5rem; font-size: 0.75rem;">SolidJS + Effect + SQLite Architecture</p>
+    </footer>
+  </main>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'base',
+      themeVariables: {
+        primaryColor: '#1a1d24',
+        primaryTextColor: '#e8eaed',
+        primaryBorderColor: 'rgba(255,255,255,0.1)',
+        lineColor: '#5f6368',
+        secondaryColor: '#22262e',
+        tertiaryColor: '#2a2f38',
+        fontFamily: 'DM Sans, system-ui, sans-serif',
+        fontSize: '14px'
+      },
+      flowchart: {
+        useMaxWidth: true,
+        htmlLabels: true,
+        curve: 'basis'
+      },
+      sequence: {
+        useMaxWidth: true,
+        wrap: true,
+        width: 150
+      }
+    });
+  </script>
+</body>
+</html>
