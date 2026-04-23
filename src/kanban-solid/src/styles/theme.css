@@ -908,7 +908,7 @@
     border-left: 1px solid var(--color-dark-border);
     display: flex;
     flex-direction: column;
-    z-index: 40;
+    z-index: 60;
     box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
     transition: right 0.3s ease;
   }
@@ -1274,11 +1274,12 @@
     color: var(--color-dark-bg);
     font-size: 0.875rem;
     font-weight: 600;
-    cursor: pointer;
+    cursor: pointer !important;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
+    transition: opacity 0.2s ease, filter 0.2s ease;
   }
 
   .chat-send-btn:hover:not(:disabled) {
@@ -1287,7 +1288,7 @@
 
   .chat-send-btn:disabled {
     opacity: 0.5;
-    cursor: not-allowed;
+    cursor: not-allowed !important;
   }
 
   .minimized-dock {

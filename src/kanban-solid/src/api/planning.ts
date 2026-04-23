@@ -13,11 +13,13 @@ import type {
 } from '@/types'
 
 export interface ContextAttachment {
-  type: 'file' | 'screenshot' | 'task'
+  type: 'file' | 'screenshot' | 'task' | 'image'
   name: string
   content?: string
   filePath?: string
   taskId?: string
+  imageData?: string // Base64 encoded image data
+  mimeType?: string
 }
 
 export const planningApi = {
@@ -40,6 +42,9 @@ export const planningApi = {
   
   updateSession: (id: string, data: { status?: string; errorMessage?: string }) =>
     apiClient.patch<PlanningSession>(`/api/planning/sessions/${id}`, data),
+  
+  renameSession: (id: string, name: string) =>
+    apiClient.put<PlanningSession>(`/api/planning/sessions/${id}/name`, { name }),
   
   reconnectSession: (id: string, data?: { model?: string; thinkingLevel?: string }) =>
     apiClient.post<PlanningSession>(`/api/planning/sessions/${id}/reconnect`, data),

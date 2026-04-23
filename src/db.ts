@@ -854,6 +854,7 @@ function rowToWorkflowSession(row: Record<string, unknown>): PiWorkflowSession {
     exitCode: row.exit_code === null || row.exit_code === undefined ? null : Number(row.exit_code),
     exitSignal: row.exit_signal ? String(row.exit_signal) : null,
     errorMessage: row.error_message ? String(row.error_message) : null,
+    name: row.name ? String(row.name) : null,
   }
 }
 
@@ -1927,14 +1928,21 @@ export class PiKanbanDB {
   createWorkflowSession(input: CreatePiWorkflowSessionInput): PiWorkflowSession {
     const now = nowUnix()
     const startedAt = input.startedAt ?? now
+    
+    // Generate default name if not provided
+    const defaultName = input.name ?? (() => {
+      const prefix = input.sessionKind === 'planning' ? 'Planning' : 
+                     input.sessionKind === 'container_config' ? 'Container' : 'Session'
+      return `${prefix} ${input.id.slice(0, 4)}`
+    })()
 
     this.db
       .prepare(`
         INSERT INTO workflow_sessions (
           id, task_id, task_run_id, session_kind, status, cwd, worktree_dir, branch,
           pi_session_id, pi_session_file, process_pid, model, thinking_level,
-          started_at, updated_at, finished_at, exit_code, exit_signal, error_message
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          started_at, updated_at, finished_at, exit_code, exit_signal, error_message, name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         input.id,
@@ -1956,6 +1964,7 @@ export class PiKanbanDB {
         input.exitCode ?? null,
         input.exitSignal ?? null,
         input.errorMessage ?? null,
+        defaultName,
       )
 
     return this.getWorkflowSession(input.id) as PiWorkflowSession
@@ -2043,6 +2052,10 @@ export class PiKanbanDB {
     if (input.errorMessage !== undefined) {
       sets.push("error_message = ?")
       values.push(input.errorMessage)
+    }
+    if (input.name !== undefined) {
+      sets.push("name = ?")
+      values.push(input.name)
     }
 
     if (sets.length === 0) return this.getWorkflowSession(id)

@@ -622,6 +622,11 @@ export interface PlanningSession {
   title: string
   createdAt: number
   updatedAt: number
+  name?: string | null
+  sessionUrl?: string
+  status?: string
+  model?: string
+  thinkingLevel?: string
 }
 
 export interface ModelEntry {

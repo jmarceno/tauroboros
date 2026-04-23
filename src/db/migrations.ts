@@ -677,4 +677,22 @@ export const MIGRATIONS: Migration[] = [
       `ALTER TABLE tasks ADD COLUMN auto_deploy_condition TEXT;`,
     ],
   },
+  {
+    version: 31,
+    description: "Add name column to workflow_sessions for custom session names",
+    statements: [
+      // Add name column with default NULL (generates names on creation)
+      `ALTER TABLE workflow_sessions ADD COLUMN name TEXT;`,
+      // Create index for name-based queries
+      `CREATE INDEX IF NOT EXISTS idx_workflow_sessions_name ON workflow_sessions(name);`,
+      // Migrate existing sessions: set name based on session kind and id
+      `UPDATE workflow_sessions 
+       SET name = CASE 
+         WHEN session_kind = 'planning' THEN 'Planning ' || substr(id, 1, 4)
+         WHEN session_kind = 'container_config' THEN 'Container ' || substr(id, 1, 4)
+         ELSE 'Session ' || substr(id, 1, 4)
+       END
+       WHERE name IS NULL;`,
+    ],
+  },
 ]
