@@ -79,6 +79,15 @@ export function ChatPanel(props: ChatPanelProps) {
     }
   })
 
+  const agentWorking = () => props.session()?.agentWorking || false
+  const currentTool = () => props.session()?.currentTool
+
+  const agentWorkingText = createMemo(() => {
+    const tool = currentTool()
+    if (tool) return `Using ${tool}...`
+    return 'Working...'
+  })
+
   const sessionId = () => props.session()?.id
   const sessionObj = () => props.session()?.session
   const isLoading = () => props.session()?.isLoading || false
@@ -107,6 +116,74 @@ export function ChatPanel(props: ChatPanelProps) {
       const session = props.session()
       if (messageInput().trim() && !isSending() && session?.session?.id && session?.session?.status === 'active') {
         handleSend()
+      }
+    }
+  }
+
+  // Process pasted image: resize to 1024px max, encode as JPEG 90%
+  const processImage = async (file: File): Promise<{ imageData: string; mimeType: string }> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      
+      if (!ctx) {
+        reject(new Error('Could not get canvas context'))
+        return
+      }
+
+      img.onload = () => {
+        const MAX_SIZE = 1024
+        let { width, height } = img
+        
+        // Resize maintaining aspect ratio
+        if (width > height && width > MAX_SIZE) {
+          height = (height * MAX_SIZE) / width
+          width = MAX_SIZE
+        } else if (height > MAX_SIZE) {
+          width = (width * MAX_SIZE) / height
+          height = MAX_SIZE
+        }
+        
+        canvas.width = width
+        canvas.height = height
+        ctx.drawImage(img, 0, 0, width, height)
+        
+        // Encode as JPEG 90% quality, convert to base64
+        const base64 = canvas.toDataURL('image/jpeg', 0.9)
+        resolve({ imageData: base64, mimeType: 'image/jpeg' })
+      }
+      
+      img.onerror = () => reject(new Error('Failed to load image'))
+      img.src = URL.createObjectURL(file)
+    })
+  }
+
+  const handlePaste = async (e: ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    const session = props.session()
+    if (!session?.session?.id) return
+
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (!file) continue
+
+        try {
+          const { imageData, mimeType } = await processImage(file)
+          const attachment: ContextAttachment = {
+            type: 'image',
+            name: file.name || `pasted-image-${Date.now()}.jpg`,
+            imageData,
+            mimeType,
+          }
+          setAttachedContext(prev => [...prev, attachment])
+        } catch (err) {
+          console.error('Failed to process pasted image:', err)
+        }
       }
     }
   }
@@ -190,6 +267,15 @@ export function ChatPanel(props: ChatPanelProps) {
         </div>
 
         <div class="flex items-center gap-0.5">
+          <Show when={agentWorking()}>
+            <div class="flex items-center gap-1.5 px-2 py-1 bg-accent-primary/10 text-accent-primary rounded text-xs mr-1">
+              <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <span class="font-medium">{agentWorkingText()}</span>
+            </div>
+          </Show>
           <Show when={sessionObj()?.sessionUrl}>
             <a
               href={sessionObj()?.sessionUrl}
@@ -396,14 +482,34 @@ export function ChatPanel(props: ChatPanelProps) {
         </div>
 
         <Show when={attachedContext().length > 0}>
-          <div class="mb-1.5 flex flex-wrap gap-1 px-2 pt-1.5">
+          <div class="mb-1.5 flex flex-wrap gap-2 px-2 pt-1.5">
             <For each={attachedContext()}>
-              {(ctx) => (
-                <div class="px-2 py-1 text-xs bg-accent-primary/10 text-accent-primary border border-accent-primary/20 rounded flex items-center gap-1">
-                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                  </svg>
-                  <span class="truncate max-w-[120px]">{ctx.name}</span>
+              {(ctx, index) => (
+                <div class="relative group">
+                  <Show when={ctx.type === 'image' && ctx.imageData} fallback={
+                    <div class="px-2 py-1 text-xs bg-accent-primary/10 text-accent-primary border border-accent-primary/20 rounded flex items-center gap-1">
+                      <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                      </svg>
+                      <span class="truncate max-w-[120px]">{ctx.name}</span>
+                    </div>
+                  }>
+                    <div class="relative">
+                      <img 
+                        src={ctx.imageData} 
+                        alt={ctx.name}
+                        class="h-16 w-auto rounded border border-accent-primary/30 object-cover"
+                      />
+                      <button
+                        class="absolute -top-1 -right-1 w-4 h-4 bg-accent-danger text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => setAttachedContext(prev => prev.filter((_, i) => i !== index()))}
+                      >
+                        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  </Show>
                 </div>
               )}
             </For>
@@ -413,10 +519,11 @@ export function ChatPanel(props: ChatPanelProps) {
         <div class="chat-input-box px-2 py-1">
           <textarea
             class="min-h-[96px] max-h-[250px] w-full bg-dark-surface border border-dark-border rounded-lg px-2 py-1.5 text-sm text-dark-text placeholder-dark-text-muted/50 focus:outline-none focus:border-accent-primary resize-none disabled:opacity-50 disabled:cursor-not-allowed"
-            placeholder={isLoading() && !isReconnecting() ? "Waiting for session to start..." : "Type your message... (Shift+Enter to send)"}
+            placeholder={isLoading() && !isReconnecting() ? "Waiting for session to start..." : "Type your message... (Shift+Enter to send). Paste images with Ctrl+V."}
             value={messageInput()}
             onChange={(e) => setMessageInput(e.currentTarget.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             disabled={isLoading() || isReconnecting() || !sessionObj()?.id}
           />
         </div>

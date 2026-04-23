@@ -44,11 +44,13 @@ export interface SendMessageInput {
 }
 
 export interface ContextAttachment {
-  type: "file" | "screenshot" | "task"
+  type: "file" | "screenshot" | "task" | "image"
   name: string
   content?: string
   filePath?: string
   taskId?: string
+  imageData?: string // Base64 encoded image data
+  mimeType?: string
 }
 
 /**
@@ -116,9 +118,102 @@ export class PlanningSession {
     })
   }
 
+  private agentWorking = false
+  private currentToolName: string | null = null
+
   private installStreamingSubscription(process: PiRpcProcess): Effect.Effect<void, never, Scope.Scope> {
     return process.subscribeEvents((event) => {
       const eventType = event.type as string
+
+      // Handle agent lifecycle events for working indicator
+      if (eventType === "agent_start") {
+        this.agentWorking = true
+        this.currentToolName = null
+        const statusMessage = {
+          id: this.messageSeq++,
+          seq: this.messageSeq,
+          messageId: randomUUID(),
+          sessionId: this.session.id,
+          taskId: null,
+          taskRunId: null,
+          timestamp: nowUnix(),
+          role: "system" as const,
+          eventName: "agent_start",
+          messageType: "session_status" as const,
+          contentJson: {
+            agentWorking: true,
+            currentTool: null,
+          },
+        }
+        this.onMessage?.(statusMessage as unknown as SessionMessage)
+      }
+
+      if (eventType === "tool_execution_start") {
+        const toolName = (event as Record<string, unknown>).toolName as string || 
+                        (event as Record<string, unknown>).tool as string || 
+                        'tool'
+        this.currentToolName = toolName
+        const statusMessage = {
+          id: this.messageSeq++,
+          seq: this.messageSeq,
+          messageId: randomUUID(),
+          sessionId: this.session.id,
+          taskId: null,
+          taskRunId: null,
+          timestamp: nowUnix(),
+          role: "system" as const,
+          eventName: "tool_execution_start",
+          messageType: "session_status" as const,
+          contentJson: {
+            agentWorking: true,
+            currentTool: toolName,
+          },
+        }
+        this.onMessage?.(statusMessage as unknown as SessionMessage)
+      }
+
+      if (eventType === "tool_execution_end") {
+        this.currentToolName = null
+        const statusMessage = {
+          id: this.messageSeq++,
+          seq: this.messageSeq,
+          messageId: randomUUID(),
+          sessionId: this.session.id,
+          taskId: null,
+          taskRunId: null,
+          timestamp: nowUnix(),
+          role: "system" as const,
+          eventName: "tool_execution_end",
+          messageType: "session_status" as const,
+          contentJson: {
+            agentWorking: true,
+            currentTool: null,
+          },
+        }
+        this.onMessage?.(statusMessage as unknown as SessionMessage)
+      }
+
+      if (eventType === "agent_end") {
+        this.agentWorking = false
+        this.currentToolName = null
+        const statusMessage = {
+          id: this.messageSeq++,
+          seq: this.messageSeq,
+          messageId: randomUUID(),
+          sessionId: this.session.id,
+          taskId: null,
+          taskRunId: null,
+          timestamp: nowUnix(),
+          role: "system" as const,
+          eventName: "agent_end",
+          messageType: "session_status" as const,
+          contentJson: {
+            agentWorking: false,
+            currentTool: null,
+          },
+        }
+        this.onMessage?.(statusMessage as unknown as SessionMessage)
+      }
 
       if (eventType === "message_update") {
         const msgEvent = event.assistantMessageEvent as Record<string, unknown> | undefined
@@ -652,7 +747,9 @@ export class PlanningSession {
         fullContent += "\n\n---\n\n**Context Attachments:**\n"
         for (const attachment of input.contextAttachments) {
           fullContent += `\n[${attachment.type.toUpperCase()}: ${attachment.name}]\n`
-          if (attachment.content) {
+          if (attachment.imageData) {
+            fullContent += `[Image: ${attachment.name}]\n${attachment.imageData}\n`
+          } else if (attachment.content) {
             fullContent += "```\n" + attachment.content + "\n```\n"
           }
           if (attachment.filePath) {

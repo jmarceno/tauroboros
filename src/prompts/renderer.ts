@@ -245,11 +245,13 @@ export function buildBestOfNFinalApplierVariables(
   }
 }
 
-export function buildCommitVariables(baseRef: string, deleteWorktree = true): Record<string, unknown> {
+export function buildCommitVariables(baseRef: string, deleteWorktree = true, taskName?: string, taskId?: string): Record<string, unknown> {
   return {
     base_ref: baseRef,
     keep_worktree_note: deleteWorktree
       ? "The worktree will be automatically cleaned up by the system after this task completes."
       : "Important: do NOT delete the worktree at the end; keep it for manual follow-up.",
+    task_name: taskName,
+    task_id: taskId,
   }
 }

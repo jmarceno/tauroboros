@@ -82,6 +82,7 @@ export interface PiWorkflowSession {
   exitCode: number | null
   exitSignal: string | null
   errorMessage: string | null
+  name: string | null
 }
 
 export interface CreatePiWorkflowSessionInput {
@@ -103,6 +104,7 @@ export interface CreatePiWorkflowSessionInput {
   exitCode?: number | null
   exitSignal?: string | null
   errorMessage?: string | null
+  name?: string | null
 }
 
 export interface UpdatePiWorkflowSessionInput {
@@ -121,6 +123,7 @@ export interface UpdatePiWorkflowSessionInput {
   exitCode?: number | null
   exitSignal?: string | null
   errorMessage?: string | null
+  name?: string | null
 }
 
 export type PromptTemplateKey =

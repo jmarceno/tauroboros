@@ -6,6 +6,8 @@
 import { createMemo, Show, For, createSignal, createEffect, onCleanup } from 'solid-js'
 import type { SessionMessage } from '@/types'
 import { formatRelativeTime, formatLocalDate } from '@/utils/date'
+import { MermaidModal } from './MermaidModal'
+import { MermaidBlock } from './MermaidBlock'
 import 'highlight.js/styles/github-dark.css'
 
 interface RenderedBlock {
@@ -97,7 +99,18 @@ function renderMarkdown(text: string): string {
 export function ChatMessage(props: ChatMessageProps) {
   const [renderedBlocks, setRenderedBlocks] = createSignal<RenderedBlock[]>([])
   const [highlightedCode, setHighlightedCode] = createSignal<Map<string, string>>(new Map())
-  const mermaidContainerRefs: Record<string, HTMLDivElement | undefined> = {}
+  const [modalOpen, setModalOpen] = createSignal(false)
+  const [modalContent, setModalContent] = createSignal('')
+
+  const openMermaidModal = (content: string) => {
+    setModalContent(content)
+    setModalOpen(true)
+  }
+
+  const closeMermaidModal = () => {
+    setModalOpen(false)
+    setModalContent('')
+  }
 
   const isUser = createMemo(() => props.message.role === 'user')
   const isAssistant = createMemo(() => props.message.role === 'assistant')
@@ -184,36 +197,6 @@ export function ChatMessage(props: ChatMessageProps) {
     })()
   })
 
-  // Render mermaid diagrams
-  createEffect(() => {
-    const blocks = renderedBlocks()
-    blocks.forEach(async (block) => {
-      if (block.type === 'mermaid' && block.id && !block.content.startsWith('<svg')) {
-        const container = mermaidContainerRefs[block.id]
-        if (container) {
-          try {
-            const mermaid = (await import('mermaid')).default
-            mermaid.initialize({
-              startOnLoad: false,
-              theme: 'dark',
-              securityLevel: 'strict',
-            })
-            const { svg } = await mermaid.render(`${block.id}-svg`, block.content)
-            container.innerHTML = svg
-          } catch (error) {
-            container.innerHTML = `<div class="mermaid-error">Failed to render chart</div>`
-          }
-        }
-      }
-    })
-  })
-
-  const setMermaidRef = (id: string, el: HTMLDivElement | undefined) => {
-    if (el) {
-      mermaidContainerRefs[id] = el
-    }
-  }
-
   const formatTimestamp = (timestamp: number) => {
     return formatRelativeTime(timestamp)
   }
@@ -296,28 +279,13 @@ export function ChatMessage(props: ChatMessageProps) {
               )
             }
 
-            if (block.type === 'mermaid') {
+            if (block.type === 'mermaid' && block.id) {
               return (
-                <div class="my-1.5 bg-dark-bg rounded-lg overflow-hidden border border-dark-border">
-                  <div class="text-xs text-dark-text-muted/60 px-2 py-1 bg-dark-surface2 border-b border-dark-border flex items-center gap-2">
-                    <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                    </svg>
-                    Chart
-                  </div>
-                  <div class="p-2">
-                    {block.content.startsWith('<svg') ? (
-                      <div innerHTML={block.content} />
-                    ) : (
-                      <div
-                        ref={(el) => setMermaidRef(block.id!, el)}
-                        class="p-1"
-                      >
-                        <pre class="text-xs text-dark-text-muted/80">{block.content}</pre>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <MermaidBlock
+                  content={block.content}
+                  id={block.id}
+                  onMaximize={openMermaidModal}
+                />
               )
             }
 
@@ -362,6 +330,12 @@ export function ChatMessage(props: ChatMessageProps) {
           </div>
         </Show>
       </div>
+
+      <MermaidModal
+        isOpen={modalOpen()}
+        content={modalContent()}
+        onClose={closeMermaidModal}
+      />
     </div>
   )
 }

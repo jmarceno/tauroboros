@@ -442,7 +442,11 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
           errorMessage: body.errorMessage,
         })
 
-        const withUrl = { ...updated!, sessionUrl: sessionUrlFor(updated!.id) }
+        if (!updated) {
+          return yield* Effect.fail(internalRouteError("Failed to update session", ErrorCode.EXECUTION_OPERATION_FAILED))
+        }
+
+        const withUrl = { ...updated, sessionUrl: sessionUrlFor(updated.id) }
         broadcast({ type: "planning_session_updated", payload: withUrl })
         return json(withUrl)
       }),
@@ -464,6 +468,10 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
               status: "completed",
               finishedAt: Math.floor(Date.now() / 1000),
             })
+
+            if (!updated) {
+              return json(createApiError("Failed to update session status", ErrorCode.EXECUTION_OPERATION_FAILED), 500)
+            }
 
             broadcast({ type: "planning_session_closed", payload: { id: params.id } })
             return json(updated)
@@ -495,7 +503,7 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
     }),
   )
 
-  router.get("/api/planning/sessions/:id/timeline", ({ params, json, db }) =>
+    router.get("/api/planning/sessions/:id/timeline", ({ params, json, db }) =>
     Effect.gen(function* () {
       const session = db.getWorkflowSession(params.id)
       if (!session) {
@@ -506,6 +514,44 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       }
 
       return json(db.getSessionTimelineEntries(params.id))
+    }),
+  )
+
+  // Rename session endpoint
+  router.put("/api/planning/sessions/:id/name", ({ params, req, json, broadcast, sessionUrlFor, db }) =>
+    Effect.gen(function* () {
+      const session = db.getWorkflowSession(params.id)
+      if (!session) {
+        return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+      }
+      if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+        return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+      }
+
+      const body = (yield* Effect.tryPromise({
+        try: () => req.json() as Promise<{ name?: string }>,
+        catch: (cause) => badRequestError(
+          cause instanceof Error ? cause.message : "Invalid JSON body",
+          ErrorCode.INVALID_JSON_BODY,
+          { cause },
+        ),
+      })) as Record<string, unknown>
+
+      if (!body.name || typeof body.name !== "string" || body.name.trim() === "") {
+        return yield* Effect.fail(badRequestError("Name is required and must be a non-empty string", ErrorCode.INVALID_REQUEST_BODY))
+      }
+
+      const updated = db.updateWorkflowSession(params.id, {
+        name: body.name.trim(),
+      })
+
+      if (!updated) {
+        return yield* Effect.fail(internalRouteError("Failed to update session name", ErrorCode.EXECUTION_OPERATION_FAILED))
+      }
+
+      const withUrl = { ...updated, sessionUrl: sessionUrlFor(updated.id) }
+      broadcast({ type: "planning_session_updated", payload: withUrl })
+      return json(withUrl)
     }),
   )
 }

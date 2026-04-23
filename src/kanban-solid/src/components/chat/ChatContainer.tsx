@@ -125,7 +125,7 @@ export function ChatContainer(props: ChatContainerProps) {
     const sessionId = `chat-${Date.now()}`
     const newSession: ChatSession = {
       id: sessionId,
-      name: dbSession.id,
+      name: dbSession.name || dbSession.id,
       session: dbSession,
       messages: [],
       isMinimized: false,
@@ -386,7 +386,7 @@ export function ChatContainer(props: ChatContainerProps) {
                           </div>
                           <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2 mb-1">
-                              <span class="text-sm font-medium text-dark-text truncate">Session {session.id}</span>
+                              <span class="text-sm font-medium text-dark-text truncate">{session.name || `Session ${session.id}`}</span>
                               <Show when={session.status === 'active' || session.status === 'starting'}>
                                 <span class="px-1.5 py-0.5 text-xs bg-accent-success/20 text-accent-success rounded">
                                   Active

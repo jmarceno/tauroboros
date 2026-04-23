@@ -379,6 +379,16 @@ function App() {
 
   // Keyboard shortcuts
   createEffect(() => {
+    // Helper to check if user is currently typing in an input field
+    const isTypingInInput = () => {
+      const activeElement = document.activeElement
+      if (!activeElement) return false
+      const tagName = activeElement.tagName.toLowerCase()
+      const isInputElement = tagName === 'input' || tagName === 'textarea'
+      const isContentEditable = activeElement.getAttribute('contenteditable') === 'true'
+      return isInputElement || isContentEditable
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       // Escape to close modals
       if (e.key === 'Escape') {
@@ -403,6 +413,11 @@ function App() {
         const tabIndex = parseInt(e.key) - 1
         const tabs = ['kanban', 'options', 'containers', 'archived', 'stats'] as const
         tabStore.setActiveTab(tabs[tabIndex])
+        return
+      }
+
+      // Skip single-key shortcuts if user is typing in an input
+      if (isTypingInInput()) {
         return
       }
 

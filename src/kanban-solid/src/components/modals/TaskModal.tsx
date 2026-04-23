@@ -41,6 +41,8 @@ export function TaskModal(props: TaskModalProps) {
   // Form state
   const [name, setName] = createSignal('')
   const [prompt, setPrompt] = createSignal('')
+  let nameInputRef: HTMLInputElement | undefined
+  let editorContainerRef: HTMLDivElement | undefined
   const [branch, setBranch] = createSignal('')
   const [planModel, setPlanModel] = createSignal('')
   const [executionModel, setExecutionModel] = createSignal('')
@@ -373,10 +375,20 @@ export function TaskModal(props: TaskModalProps) {
               <HelpButton tooltip="Short task title shown on the card." />
             </div>
             <input
+              ref={nameInputRef}
               type="text"
               class="form-input"
               value={name()}
               onInput={(e) => setName(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Tab' && !e.shiftKey) {
+                  e.preventDefault()
+                  const editor = editorContainerRef
+                  if (editor && (editor as any).focus) {
+                    ;(editor as any).focus()
+                  }
+                }
+              }}
               placeholder="Task name"
               disabled={isViewOnly()}
               required
@@ -391,10 +403,17 @@ export function TaskModal(props: TaskModalProps) {
             </div>
             <Suspense fallback={<div class="form-input min-h-[80px] flex items-center text-dark-text-muted">Loading editor...</div>}>
               <MarkdownEditor
+                ref={(el) => { editorContainerRef = el }}
                 modelValue={prompt()}
                 onUpdate={setPrompt}
                 placeholder="What should this task do?"
                 disabled={isViewOnly()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Tab' && e.shiftKey) {
+                    e.preventDefault()
+                    nameInputRef?.focus()
+                  }
+                }}
               />
             </Suspense>
           </div>

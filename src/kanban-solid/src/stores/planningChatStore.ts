@@ -29,11 +29,13 @@ const queryKeys = {
 }
 
 export interface ContextAttachment {
-  type: 'file' | 'screenshot' | 'task'
+  type: 'file' | 'screenshot' | 'task' | 'image'
   name: string
   content?: string
   filePath?: string
   taskId?: string
+  imageData?: string // Base64 encoded image data
+  mimeType?: string
 }
 
 export interface ChatSession {
@@ -46,6 +48,8 @@ export interface ChatSession {
   isSending: boolean
   isReconnecting: boolean
   error: string | null
+  agentWorking?: boolean
+  currentTool?: string | null
 }
 
 export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, handler: (payload: unknown) => void) => () => void }) {
@@ -185,10 +189,32 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     })
   }
 
-  const renameSession = (sessionId: string, newName: string) => {
+  const renameSession = async (sessionId: string, newName: string) => {
+    const session = getSession(sessionId)
+    if (!session?.session?.id) {
+      return { ok: false, error: 'No active session' }
+    }
+
+    // Optimistically update local state
     setSessions(prev => prev.map(s =>
       s.id === sessionId ? { ...s, name: newName } : s
     ))
+
+    // Persist to backend
+    return runApiEffect(
+      Effect.mapError(
+        api.planningApi.renameSession(session.session.id, newName),
+        (error) => {
+          // Revert local state on error
+          setSessions(prev => prev.map(s =>
+            s.id === sessionId ? { ...s, name: session.name } : s
+          ))
+          return { ok: false, error: error instanceof Error ? error.message : 'Failed to rename session' }
+        }
+      ).pipe(
+        Effect.map(() => ({ ok: true } as const))
+      )
+    )
   }
 
   const addMessageToSession = (sessionId: string, message: SessionMessage) => {
@@ -290,6 +316,8 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
 
           if (reconnectingSet.has(sessionId)) {
             return Effect.sync(() => {
+              // Clear sending state since we're queueing for later
+              sendingSet.delete(sessionId)
               const pending = pendingMessagesMap.get(sessionId) || []
               pendingMessagesMap.set(sessionId, [...pending, {
                 id: `pending-${Date.now()}`,
@@ -298,6 +326,7 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
                 retryCount: 0,
                 maxRetries: 1,
               }])
+              updateSession(sessionId, (current) => ({ ...current, isSending: false }))
             })
           }
 
@@ -579,7 +608,12 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
   const handlePlanningSessionUpdated = (data: PlanningSession) => {
     setSessions(prev => prev.map(s =>
       s.session?.id === data.id
-        ? { ...s, session: s.session ? { ...s.session, ...data } : null }
+        ? { 
+            ...s, 
+            session: s.session ? { ...s.session, ...data } : null,
+            // Update name if provided in the update
+            ...(data.name ? { name: data.name } : {})
+          }
         : s
     ))
   }
@@ -594,9 +628,22 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
 
   const handlePlanningSessionMessage = (data: { sessionId: string; message: SessionMessage }) => {
     const session = sessions().find(s => s.session?.id === data.sessionId)
-    if (session) {
-      addMessageToSession(session.id, data.message)
+    if (!session) return
+
+    // Handle agent working status updates - don't add to message history
+    if (data.message.messageType === 'session_status') {
+      const content = data.message.contentJson || {}
+      if (typeof content.agentWorking === 'boolean') {
+        setSessions(prev => prev.map(s =>
+          s.session?.id === data.sessionId
+            ? { ...s, agentWorking: content.agentWorking, currentTool: content.currentTool || null }
+            : s
+        ))
+      }
+      return // Don't add session_status messages to chat
     }
+
+    addMessageToSession(session.id, data.message)
   }
 
   return {
