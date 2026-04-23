@@ -1923,6 +1923,77 @@ export class PiKanbanDB {
     return this.getWorkflowRun(id)
   }
 
+  /**
+   * Delete a workflow run by ID
+   */
+  deleteWorkflowRun(id: string): boolean {
+    const result = this.db.prepare("DELETE FROM workflow_runs WHERE id = ?").run(id)
+    return result.changes > 0
+  }
+
+  /**
+   * Delete all sessions and their messages associated with given task IDs
+   * Returns the number of sessions deleted
+   */
+  deleteSessionsForTasks(taskIds: string[]): number {
+    if (taskIds.length === 0) return 0
+    const placeholders = taskIds.map(() => "?").join(",")
+
+    // First delete session messages (foreign key constraint)
+    this.db.prepare(`
+      DELETE FROM session_messages
+      WHERE session_id IN (
+        SELECT id FROM workflow_sessions WHERE task_id IN (${placeholders})
+      )
+    `).run(...taskIds)
+
+    // Then delete sessions
+    const sessionsResult = this.db.prepare(`
+      DELETE FROM workflow_sessions WHERE task_id IN (${placeholders})
+    `).run(...taskIds)
+
+    return sessionsResult.changes
+  }
+
+  /**
+   * Delete all task_runs for given task IDs
+   * Returns the number of task runs deleted
+   */
+  deleteTaskRunsForTasks(taskIds: string[]): number {
+    if (taskIds.length === 0) return 0
+    const placeholders = taskIds.map(() => "?").join(",")
+    const result = this.db.prepare(`
+      DELETE FROM task_runs WHERE task_id IN (${placeholders})
+    `).run(...taskIds)
+    return result.changes
+  }
+
+  /**
+   * Delete all task_candidates for given task IDs
+   * Returns the number of task candidates deleted
+   */
+  deleteCandidatesForTasks(taskIds: string[]): number {
+    if (taskIds.length === 0) return 0
+    const placeholders = taskIds.map(() => "?").join(",")
+    const result = this.db.prepare(`
+      DELETE FROM task_candidates WHERE task_id IN (${placeholders})
+    `).run(...taskIds)
+    return result.changes
+  }
+
+  /**
+   * Delete all self_heal_reports for given task IDs
+   * Returns the number of self-heal reports deleted
+   */
+  deleteSelfHealReportsForTasks(taskIds: string[]): number {
+    if (taskIds.length === 0) return 0
+    const placeholders = taskIds.map(() => "?").join(",")
+    const result = this.db.prepare(`
+      DELETE FROM self_heal_reports WHERE task_id IN (${placeholders})
+    `).run(...taskIds)
+    return result.changes
+  }
+
   // ---- workflow sessions ----
 
   createWorkflowSession(input: CreatePiWorkflowSessionInput): PiWorkflowSession {

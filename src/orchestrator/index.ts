@@ -40,6 +40,14 @@ export {
   maybeSelfHealTask,
 } from "./self-healing.ts"
 
+// Export clean run
+export {
+  type CleanRunContext,
+  type CleanRunResult,
+  CleanRunError,
+  cleanWorkflowRun,
+} from "./clean-run.ts"
+
 // Export auto-deploy
 export {
   type AutoDeployContext,

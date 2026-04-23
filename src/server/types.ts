@@ -9,6 +9,7 @@ import type { PlanningSessionManager } from "../runtime/planning-session.ts"
 import type { PackageDefinition } from "../db/types.ts"
 import type { HttpRouteError } from "./route-interpreter.ts"
 import type { OrchestratorOperationError } from "../orchestrator.ts"
+import type { CleanRunResult } from "../orchestrator/clean-run.ts"
 
 export interface RouteParams {
   [key: string]: string
@@ -46,6 +47,7 @@ export type ManualSelfHealRecoverFn = (
   reportId: string,
   action: "restart_task" | "keep_failed",
 ) => OrchestratorRouteEffect<{ ok: boolean; message: string }>
+export type CleanRunFn = (runId: string) => OrchestratorRouteEffect<CleanRunResult>
 
 /**
  * Server-level dependency context passed to route registration functions.
@@ -64,6 +66,7 @@ export interface ServerRouteContext {
   onGetSlots: GetSlotsFn | null
   onGetRunQueueStatus: GetRunQueueStatusFn | null
   onManualSelfHealRecover: ManualSelfHealRecoverFn | null
+  onCleanRun: CleanRunFn | null
   imageManager?: ContainerImageManager
   containerManager?: PiContainerManager
   validateContainerImage: (tag: string) => Effect.Effect<boolean, unknown>

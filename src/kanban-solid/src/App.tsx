@@ -46,6 +46,7 @@ import {
   ApproveModal,
   BatchEditModal,
   BestOfNDetailModal,
+  CleanRunModal,
   ExecutionGraphModal,
   OptionsModal,
   PlanningPromptModal,
@@ -59,7 +60,8 @@ import {
 } from '@/components'
 import { containersApi, runApiEffect, sleepMs } from '@/api'
 
-import type { Task, TaskGroup, TaskStatus } from '@/types'
+import type { Task, TaskGroup, TaskStatus, WorkflowRun } from '@/types'
+import { runsApi } from '@/api/runs'
 import { validateTaskDrop, validateGroupDrop } from '@/utils/dropValidation'
 import type { DropAction } from '@/utils/dropValidation'
 
@@ -95,6 +97,9 @@ function App() {
   const [logPanelCollapsed, setLogPanelCollapsed] = createSignal(false)
   const [highlightedRunId, setHighlightedRunId] = createSignal<string | null>(null)
   const [containerStatus, setContainerStatus] = createSignal<{ enabled: boolean; available: boolean; hasRunningWorkflows: boolean; message: string } | null>(null)
+  const [cleanRunModalOpen, setCleanRunModalOpen] = createSignal(false)
+  const [cleanRunModalRun, setCleanRunModalRun] = createSignal<WorkflowRun | null>(null)
+  const [isCleaningRun, setIsCleaningRun] = createSignal(false)
 
   // Load container status
   const loadContainerStatus = async () => {
@@ -567,6 +572,36 @@ function App() {
     workflowControl.cancelStop()
   }
 
+  // Clean run handlers
+  const handleOpenCleanRunModal = (run: WorkflowRun) => {
+    setCleanRunModalRun(run)
+    setCleanRunModalOpen(true)
+  }
+
+  const handleCloseCleanRunModal = () => {
+    setCleanRunModalOpen(false)
+    setCleanRunModalRun(null)
+  }
+
+  const handleConfirmCleanRun = async () => {
+    const run = cleanRunModalRun()
+    if (!run) return
+
+    setIsCleaningRun(true)
+    try {
+      const result = await runsApi.clean(run.id)
+      uiStore.showToast(result.message, 'success')
+      // Reload runs and tasks to reflect the cleaned state
+      await runsStore.loadRuns()
+      await tasksStore.loadTasks()
+      handleCloseCleanRunModal()
+    } catch (e) {
+      uiStore.showToast('Failed to clean run: ' + (e instanceof Error ? e.message : String(e)), 'error')
+    } finally {
+      setIsCleaningRun(false)
+    }
+  }
+
   const handleCreateGroup = async (name: string) => {
     const { taskIds } = uiStore.groupCreateModalData()
     if (taskIds.length === 0) {
@@ -836,6 +871,7 @@ function App() {
           }}
           onHighlightRun={(runId) => setHighlightedRunId(runId)}
           onClearHighlight={() => setHighlightedRunId(null)}
+          onCleanRun={handleOpenCleanRunModal}
         />
       </main>
 
@@ -1038,6 +1074,15 @@ function App() {
           onClose={uiStore.closeModal}
         />
       </Show>
+
+      {/* Clean Run Modal */}
+      <CleanRunModal
+        run={cleanRunModalRun() || { id: '', displayName: '', status: 'completed', taskOrder: [], currentTaskIndex: 0, currentTaskId: null, pauseRequested: false, stopRequested: false, errorMessage: null, createdAt: 0, startedAt: 0, updatedAt: 0, finishedAt: null, isArchived: false, archivedAt: null, color: '#888888', kind: 'all_tasks', targetTaskId: null }}
+        isOpen={cleanRunModalOpen()}
+        isLoading={isCleaningRun()}
+        onConfirm={handleConfirmCleanRun}
+        onCancel={handleCloseCleanRunModal}
+      />
 
       {/* Chat Container */}
       <ChatContainer

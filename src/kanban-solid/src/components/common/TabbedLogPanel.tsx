@@ -25,6 +25,7 @@ interface TabbedLogPanelProps {
   onArchiveAllStaleRuns: () => void
   onHighlightRun: (runId: string) => void
   onClearHighlight: () => void
+  onCleanRun?: (run: WorkflowRun) => void
 }
 
 export function TabbedLogPanel(props: TabbedLogPanelProps) {
@@ -96,6 +97,14 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
 
   const canArchiveRun = (run: WorkflowRun) => {
     return run.status === 'completed' || run.status === 'failed'
+  }
+
+  const canCleanRun = (run: WorkflowRun) => {
+    return run.status === 'completed' || run.status === 'failed'
+  }
+
+  const isRunActive = (run: WorkflowRun) => {
+    return run.status === 'queued' || run.status === 'running' || run.status === 'stopping' || run.status === 'paused'
   }
 
   const getRunStatusClass = (status: string, isStale = false) => {
@@ -269,6 +278,21 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
                                       >
                                         {isRunStale(run) ? 'stale' : run.status}
                                       </span>
+                                      <Show when={canCleanRun(run) && props.onCleanRun}>
+                                        <button
+                                          class="w-5 h-5 flex items-center justify-center bg-transparent border-0 text-dark-text-secondary cursor-pointer rounded transition-colors hover:text-accent-secondary hover:bg-accent-secondary/10"
+                                          title={isRunActive(run) ? "Cannot clean active run" : "Clean this run (reset all tasks)"}
+                                          disabled={isRunActive(run)}
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            props.onCleanRun?.(run)
+                                          }}
+                                        >
+                                          <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                          </svg>
+                                        </button>
+                                      </Show>
                                       <Show when={canArchiveRun(run)}>
                                         <button
                                           class="w-5 h-5 flex items-center justify-center bg-transparent border-0 text-dark-text-secondary cursor-pointer rounded transition-colors hover:text-accent-danger hover:bg-accent-danger/10"

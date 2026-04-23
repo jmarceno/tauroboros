@@ -74,6 +74,8 @@ import {
   getContainerImageOperations as getContainerImageOps,
   manualSelfHealRecover,
   maybeSelfHealTask,
+  cleanWorkflowRun,
+  type CleanRunResult,
 } from "./orchestrator/index.ts"
 
 export { OrchestratorOperationError }
@@ -2813,6 +2815,27 @@ export class PiOrchestrator {
       (runId) => this.refreshRunProgressEffect(runId),
       () => this.triggerSchedulingEffect(),
     )
+  }
+
+  /**
+   * Clean/reset a workflow run and all its tasks
+   * Resets all tasks in the run to backlog status and deletes all associated data
+   */
+  cleanRun(runId: string): Effect.Effect<CleanRunResult, OrchestratorOperationError> {
+    return this.wrapOperation("cleanRun", Effect.gen(this, function* () {
+      const result = yield* cleanWorkflowRun(runId, {
+        db: this.db,
+        broadcast: this.broadcast,
+      }).pipe(
+        Effect.mapError((error) => new OrchestratorOperationError({
+          operation: "cleanRun",
+          message: error.message,
+          code: error.code,
+          cause: error,
+        }))
+      )
+      return result
+    }))
   }
 
   private broadcastTask(taskId: string): void {

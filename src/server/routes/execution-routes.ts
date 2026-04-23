@@ -385,6 +385,29 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
     }),
   )
 
+  router.post("/api/runs/:id/clean", ({ params, json, broadcast, db }) =>
+    Effect.gen(function* () {
+      const run = db.getWorkflowRun(params.id)
+      if (!run) {
+        return yield* new HttpRouteError({
+          message: "Run not found",
+          code: ErrorCode.RUN_NOT_FOUND,
+          status: 404,
+        })
+      }
+
+      if (!ctx.onCleanRun) {
+        return json(createApiError("Clean run not available", ErrorCode.SERVICE_UNAVAILABLE), 503)
+      }
+
+      const result = yield* ctx.onCleanRun(params.id).pipe(
+        catchExecutionFailure(`Failed to clean run ${params.id}`),
+      )
+
+      return json(result)
+    }),
+  )
+
   router.get("/api/archived/tasks", ({ json, sessionUrlFor, db }) =>
     Effect.sync(() => {
       const grouped = db.getArchivedTasksGroupedByRun()

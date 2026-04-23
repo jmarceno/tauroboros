@@ -14,7 +14,7 @@ import { SmartRepairService } from "../runtime/smart-repair.ts"
 import { PlanningSessionManager } from "../runtime/planning-session.ts"
 import { sendTelegramNotificationEffect, sendTelegramWorkflowSummaryEffect, shouldSendNotification, type NotificationContext } from "../telegram.ts"
 import { Router } from "./router.ts"
-import type { RequestContext, ServerRouteContext } from "./types.ts"
+import type { RequestContext, ServerRouteContext, CleanRunFn } from "./types.ts"
 import { WebSocketHub } from "./websocket.ts"
 import { readEmbeddedFileEffect, embeddedFileExistsEffect, getContentType, getIndexHtmlEffect } from "./embedded-files.ts"
 import { VERSION, COMMIT_HASH, DISPLAY_VERSION, IS_COMPILED } from "./version.ts"
@@ -91,6 +91,7 @@ export class PiKanbanServer {
   private readonly onGetSlots: GetSlotsFn | null
   private readonly onGetRunQueueStatus: GetRunQueueStatusFn | null
   private readonly onManualSelfHealRecover: ManualSelfHealRecoverFn | null
+  private readonly onCleanRun: CleanRunFn | null
   private readonly defaultPort: number
   private readonly smartRepair: SmartRepairService
   private readonly imageManager?: ContainerImageManager
@@ -157,6 +158,7 @@ export class PiKanbanServer {
       onGetSlots?: GetSlotsFn
       onGetRunQueueStatus?: GetRunQueueStatusFn
       onManualSelfHealRecover?: ManualSelfHealRecoverFn
+      onCleanRun?: CleanRunFn
       settings?: InfrastructureSettings
       projectRoot?: string
       smartRepair?: SmartRepairService
@@ -192,6 +194,7 @@ export class PiKanbanServer {
     this.onGetSlots = opts.onGetSlots ?? null
     this.onGetRunQueueStatus = opts.onGetRunQueueStatus ?? null
     this.onManualSelfHealRecover = opts.onManualSelfHealRecover ?? null
+    this.onCleanRun = opts.onCleanRun ?? null
     this.imageManager = opts.imageManager
     this.containerManager = opts.containerManager
     this.planningSessionManager = opts.planningSessionManager
@@ -530,6 +533,7 @@ export class PiKanbanServer {
       onGetSlots: this.onGetSlots,
       onGetRunQueueStatus: this.onGetRunQueueStatus,
       onManualSelfHealRecover: this.onManualSelfHealRecover,
+      onCleanRun: this.onCleanRun,
       imageManager: this.imageManager,
       containerManager: this.containerManager,
       validateContainerImage: (tag) => this.validateContainerImage(tag),

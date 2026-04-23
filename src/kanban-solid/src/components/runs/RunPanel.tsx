@@ -9,9 +9,11 @@ import type { WorkflowRun } from '@/types'
 interface RunPanelProps {
   run: WorkflowRun
   isStale: boolean
+  isActive?: boolean
   onArchive: () => void
   onHighlight: () => void
   onClearHighlight: () => void
+  onClean?: () => void
 }
 
 export function RunPanel(props: RunPanelProps) {
@@ -46,7 +48,7 @@ export function RunPanel(props: RunPanelProps) {
         <div class="run-progress-fill" style={{ width: `${progress()}%` }} />
       </div>
 
-      <div class="flex gap-2 mt-2">
+      <div class="flex gap-2 mt-2 flex-wrap">
         <button
           class="text-[10px] px-2 py-1 bg-dark-bg border border-dark-border rounded hover:border-accent-primary"
           onClick={props.onHighlight}
@@ -59,6 +61,16 @@ export function RunPanel(props: RunPanelProps) {
         >
           Clear
         </button>
+        <Show when={props.onClean}>
+          <button
+            class="text-[10px] px-2 py-1 bg-dark-bg border border-dark-border rounded hover:border-accent-secondary text-accent-secondary disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-dark-border"
+            onClick={props.onClean}
+            disabled={props.isActive}
+            title={props.isActive ? "Cannot clean an active run" : "Reset all tasks to start fresh"}
+          >
+            Clean
+          </button>
+        </Show>
         <button
           class="text-[10px] px-2 py-1 bg-dark-bg border border-dark-border rounded hover:border-accent-danger text-accent-danger"
           onClick={props.onArchive}

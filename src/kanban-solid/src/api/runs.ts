@@ -5,6 +5,17 @@
 import { apiClient } from './client.ts'
 import type { WorkflowRun } from '@/types'
 
+export interface CleanRunResult {
+  success: boolean
+  tasksReset: number
+  sessionsDeleted: number
+  taskRunsDeleted: number
+  candidatesDeleted: number
+  reportsDeleted: number
+  runsDeleted: number
+  message: string
+}
+
 export const runsApi = {
   // Queries
   getAll: () => apiClient.get<WorkflowRun[]>('/api/runs'),
@@ -31,4 +42,5 @@ export const runsApi = {
     apiClient.post<{ success: boolean; run: WorkflowRun; killed?: number; cleaned?: number }>(`/api/runs/${id}/stop`, options),
   forceStop: (id: string) => apiClient.post<{ success: boolean; killed: number; cleaned: number; run: WorkflowRun }>(`/api/runs/${id}/force-stop`),
   archive: (id: string) => apiClient.delete(`/api/runs/${id}`),
+  clean: (id: string) => apiClient.post<CleanRunResult>(`/api/runs/${id}/clean`),
 }
