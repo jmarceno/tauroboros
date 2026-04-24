@@ -23,34 +23,34 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
 
       const nameValidation = validateTaskGroupName(body?.name)
       if (!nameValidation.valid) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           nameValidation.error ?? "name is invalid",
           ErrorCode.INVALID_REQUEST_BODY,
-        ))
+        )
       }
 
       if (body?.color !== undefined && !isValidHexColor(body.color)) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "color must be a valid hex color (e.g., #888888)",
           ErrorCode.INVALID_COLOR,
-        ))
+        )
       }
 
       if (body?.status !== undefined && !isTaskGroupStatus(body.status)) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "status must be active, completed, or archived",
           ErrorCode.INVALID_TASK_GROUP_STATUS,
-        ))
+        )
       }
 
       let memberTaskIds: string[] = []
       if (body?.taskIds !== undefined) {
         const taskValidation = validateTaskIds(body.taskIds, db)
         if (!taskValidation.valid) {
-          return yield* Effect.fail(badRequestError(
+          return yield* badRequestError(
             taskValidation.error ?? "taskIds are invalid",
             ErrorCode.INVALID_REQUEST_BODY,
-          ))
+          )
         }
         memberTaskIds = body.taskIds as string[]
       }
@@ -70,10 +70,10 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
     Effect.gen(function* () {
       const group = db.getTaskGroup(params.id)
       if (!group) {
-        return yield* Effect.fail(notFoundError(
+        return yield* notFoundError(
           "Task group not found",
           ErrorCode.TASK_GROUP_NOT_FOUND,
-        ))
+        )
       }
 
       const tasks = group.taskIds
@@ -91,10 +91,10 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
     Effect.gen(function* () {
       const existing = db.getTaskGroup(params.id)
       if (!existing) {
-        return yield* Effect.fail(notFoundError(
+        return yield* notFoundError(
           "Task group not found",
           ErrorCode.TASK_GROUP_NOT_FOUND,
-        ))
+        )
       }
 
       const body = (yield* Effect.tryPromise({
@@ -109,25 +109,25 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
       if (body?.name !== undefined) {
         const nameValidation = validateTaskGroupName(body.name)
         if (!nameValidation.valid) {
-          return yield* Effect.fail(badRequestError(
+          return yield* badRequestError(
             nameValidation.error ?? "name is invalid",
             ErrorCode.INVALID_REQUEST_BODY,
-          ))
+          )
         }
       }
 
       if (body?.color !== undefined && !isValidHexColor(body.color)) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "color must be a valid hex color (e.g., #888888)",
           ErrorCode.INVALID_COLOR,
-        ))
+        )
       }
 
       if (body?.status !== undefined && !isTaskGroupStatus(body.status)) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "status must be active, completed, or archived",
           ErrorCode.INVALID_TASK_GROUP_STATUS,
-        ))
+        )
       }
 
       const updated = db.updateTaskGroup(params.id, {
@@ -137,10 +137,10 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
         completedAt: body?.status === "completed" ? Math.floor(Date.now() / 1000) : undefined,
       })
       if (!updated) {
-        return yield* Effect.fail(internalRouteError(
+        return yield* internalRouteError(
           "Failed to update task group",
           ErrorCode.CONTAINER_OPERATION_FAILED,
-        ))
+        )
       }
       broadcast({ type: "task_group_updated", payload: updated })
       return json(updated)
@@ -151,18 +151,18 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
     Effect.gen(function* () {
       const group = db.getTaskGroup(params.id)
       if (!group) {
-        return yield* Effect.fail(notFoundError(
+        return yield* notFoundError(
           "Task group not found",
           ErrorCode.TASK_GROUP_NOT_FOUND,
-        ))
+        )
       }
 
       const success = db.deleteTaskGroup(params.id)
       if (!success) {
-        return yield* Effect.fail(internalRouteError(
+        return yield* internalRouteError(
           "Failed to delete task group",
           ErrorCode.CONTAINER_OPERATION_FAILED,
-        ))
+        )
       }
 
       broadcast({ type: "task_group_deleted", payload: { id: params.id } })
@@ -174,10 +174,10 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
     Effect.gen(function* () {
       const group = db.getTaskGroup(params.id)
       if (!group) {
-        return yield* Effect.fail(notFoundError(
+        return yield* notFoundError(
           "Task group not found",
           ErrorCode.TASK_GROUP_NOT_FOUND,
-        ))
+        )
       }
 
       const body = (yield* Effect.tryPromise({
@@ -190,27 +190,28 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
       })) as Record<string, unknown>
 
       if (!body?.taskIds || !Array.isArray(body.taskIds)) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "taskIds array is required",
           ErrorCode.INVALID_REQUEST_BODY,
-        ))
+        )
       }
 
-      const taskValidation = validateTaskIds(body.taskIds, db)
+      const taskIds = body.taskIds as string[]
+      const taskValidation = validateTaskIds(taskIds, db)
       if (!taskValidation.valid) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           taskValidation.error ?? "taskIds are invalid",
           ErrorCode.INVALID_REQUEST_BODY,
-        ))
+        )
       }
 
       const result = yield* Effect.try({
         try: () => {
-          const addedCount = db.addTasksToGroup(params.id, body.taskIds)
+          const addedCount = db.addTasksToGroup(params.id, taskIds)
           const updated = db.getTaskGroup(params.id)
           broadcast({
             type: "task_group_members_added",
-            payload: { groupId: params.id, taskIds: body.taskIds, addedCount },
+            payload: { groupId: params.id, taskIds, addedCount },
           })
           return updated
         },
@@ -242,7 +243,8 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
       })
 
       if (result instanceof HttpRouteError) {
-        return yield* Effect.fail(result)
+        const error: HttpRouteError = result
+        return yield* error
       }
 
       return json(result)
@@ -253,10 +255,10 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
     Effect.gen(function* () {
       const group = db.getTaskGroup(params.id)
       if (!group) {
-        return yield* Effect.fail(notFoundError(
+        return yield* notFoundError(
           "Task group not found",
           ErrorCode.TASK_GROUP_NOT_FOUND,
-        ))
+        )
       }
 
       const body = (yield* Effect.tryPromise({
@@ -269,10 +271,10 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
       })) as Record<string, unknown>
 
       if (!body?.taskIds || !Array.isArray(body.taskIds)) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "taskIds array is required",
           ErrorCode.INVALID_REQUEST_BODY,
-        ))
+        )
       }
 
       const removedCount = db.removeTasksFromGroup(params.id, body.taskIds)
@@ -289,41 +291,53 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
     Effect.gen(function* () {
       const group = db.getTaskGroup(params.id)
       if (!group) {
-        return yield* Effect.fail(notFoundError(
+        return yield* notFoundError(
           "Task group not found",
           ErrorCode.TASK_GROUP_NOT_FOUND,
-        ))
+        )
       }
 
       if (group.taskIds.length === 0) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "Cannot start group with no tasks",
           ErrorCode.INVALID_REQUEST_BODY,
-        ))
+        )
       }
 
       if (db.hasRunningWorkflows()) {
-        return yield* Effect.fail(conflictError(
+        return yield* conflictError(
           "A workflow is already running. Stop it first.",
           ErrorCode.EXECUTION_OPERATION_FAILED,
-        ))
+        )
       }
 
-      const tasks = group.taskIds.map((id) => db.getTask(id)).filter(Boolean)
-      const nonBacklogTasks = tasks.filter((t) => t!.status !== "backlog" && t!.status !== "template")
-      if (nonBacklogTasks.length > 0) {
-        return yield* Effect.fail(conflictError(
-          "Some tasks are not in backlog status",
-          ErrorCode.EXECUTION_OPERATION_FAILED,
-          { tasks: nonBacklogTasks.map((t) => ({ id: t!.id, name: t!.name, status: t!.status })) },
-        ))
-      }
+      // Filter to only runnable tasks (backlog/template); skip completed/failed tasks
+       const runnableTaskIds = group.taskIds.filter((id) => {
+         const task = db.getTask(id)
+         if (!task) return false
+         // Only include tasks that are in backlog or template status
+         // Tasks that are 'done', 'failed', 'review', etc. will be skipped
+         return task.status === "backlog" || task.status === "template"
+       })
+
+       if (runnableTaskIds.length === 0) {
+         return yield* conflictError(
+           "No runnable tasks in group (all tasks are already completed or in a non-runnable state)",
+           ErrorCode.EXECUTION_OPERATION_FAILED,
+         )
+       }
+
+       // Log skipped tasks for visibility
+       const skippedCount = group.taskIds.length - runnableTaskIds.length
+       if (skippedCount > 0) {
+         yield* Effect.logInfo(`[task-groups] Skipping ${skippedCount} non-runnable tasks in group "${group.name}"`)
+       }
 
       if (!ctx.onStartGroup) {
-        return yield* Effect.fail(internalRouteError(
+        return yield* internalRouteError(
           "Group execution handler not available",
           ErrorCode.SERVICE_UNAVAILABLE,
-        ))
+        )
       }
 
       return yield* ctx.onStartGroup(params.id).pipe(
@@ -359,11 +373,8 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
           if (message.includes("not found")) {
             return Effect.fail(badRequestError(message, ErrorCode.TASK_GROUP_NOT_FOUND))
           }
-          const operation = "operation" in (err as object) && typeof (err as { operation?: unknown }).operation === "string"
-            ? (err as { operation: string }).operation
-            : null
-          if (operation) {
-            return Effect.fail(internalRouteError(`Group execution unavailable: ${operation}`, ErrorCode.SERVICE_UNAVAILABLE, err))
+          if (err instanceof HttpRouteError) {
+            return Effect.fail(internalRouteError(`Group execution unavailable: ${err.message}`, ErrorCode.SERVICE_UNAVAILABLE, err))
           }
           return Effect.fail(internalRouteError(message, ErrorCode.EXECUTION_OPERATION_FAILED, err))
         }),
@@ -371,7 +382,7 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
           broadcast({ type: "run_created", payload: run })
           broadcast({
             type: "group_execution_started",
-            payload: { groupId: params.id, taskIds: group.taskIds, startedAt: Date.now() },
+            payload: { groupId: params.id, taskIds: runnableTaskIds, startedAt: Date.now() },
           })
           broadcast({ type: "execution_started", payload: {} })
           return json(run)
@@ -383,10 +394,10 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
   router.get("/api/tasks/:id/group", ({ params, json, db }) =>
     Effect.gen(function* () {
       if (!db.getTask(params.id)) {
-        return yield* Effect.fail(notFoundError(
+        return yield* notFoundError(
           "Task not found",
           ErrorCode.TASK_NOT_FOUND,
-        ))
+        )
       }
 
       const membership = db.getTaskGroupMembership(params.id)

@@ -16,15 +16,13 @@ TaurOboros is an agent orchestration system, that uses a Kanban style board to v
 - **Task Dependencies** – Define requirements between tasks to ensure proper execution order
 
 ### AI Execution Modes
+- **Plannin Chat** – Discuss with to AI create an implementation plan that you can them ask the AI to transform in boards tasks for execution.
 - **Standard Execution** – Direct AI agent execution with full access to tools and file system
-- **Plan Mode** – Discuss with to AI create an implementation plan that you can them ask the AI to transform in boards tasks for execution.
-- **Review Loops** – Automatic code review with iterative fixes until quality criteria are met
 - **Best-of-N Strategy** – Run multiple AI workers in parallel, have reviewers evaluate results, and automatically select or synthesize the best implementation
 
 ### Quality Assurance
 - **Automated Reviews** – AI-powered code review that checks for bugs, security issues, and completeness
 - **Code Style Review** – Describe the code style you want to enforced in the code, an agent validades and apply those rules after Review phase is done.
-- **Configurable Review Cycles** – Set how many review iterations each task should undergo
 - **Smart Repair** – Automatic detection and recovery from failed or stuck task states
 - **Self Healing** – When in Dev mode, Tauroboros use an AI agent to diagnostics task failures, analyzes root causes, and proposes permanent source-code fixes
 
@@ -34,8 +32,8 @@ TaurOboros is an agent orchestration system, that uses a Kanban style board to v
 - **Automatic Cleanup** – Worktrees and resources are cleaned up after successful task completion
 
 ### Monitoring & Observability
-- **Session Logging** – Full capture of all AI interactions with token usage and cost tracking
 - **Execution Graph Visualization** – See task dependencies and parallelization opportunities
+- **Session Logging** – Full capture of all AI interactions with token usage and cost tracking
 - **Telegram Notifications** – Get notified when tasks complete or fail
 
 ## Quick Start
@@ -47,6 +45,7 @@ TaurOboros is an agent orchestration system, that uses a Kanban style board to v
 
 ### Installation
 
+#### Option 1 - Download Binary from release
 Download the Bun compiled binary from the releases page and run it from inside your project directory. (It must be a inited Git repo for workflows to be able to start)
 
 ```bash
@@ -54,6 +53,27 @@ Download the Bun compiled binary from the releases page and run it from inside y
 ./path/to/exec/tauroroboros
 
 ```
+
+#### Option 2 - Clone, Compile, Install (scripts/install.sh)
+
+```bash
+# Clone the repo
+git clone https://github.com/jmarceno/tauroboros.git
+
+# One command to compile and install
+./scripts/install.sh
+# With options
+./scripts/install.sh --global        # System-wide install
+./scripts/install.sh --skip-compile  # Skip compilation
+./scripts/install.sh --remove        # Uninstall
+```
+## Running
+
+### Running the Binary
+
+With the TaurOboros on your path, just `cd` into your project directory and run it `./tauroboros`, it will print the port you need to access.
+
+If you prefer just copy the binary to the project directory and execute directly from there.
 
 ### Running the Dev server from project repo
 
@@ -86,13 +106,6 @@ SERVER_PORT=3790 ./tauroboros
 # Validate the compiled binary works correctly
 bun run compile:test
 ```
-
-**Binary Features:**
-- Single file executable (~66 MB) with all frontend assets embedded
-- No dependencies required at runtime (just the binary)
-- Supports all the same features as the Bun runtime version
-- Runtime data (database, settings) stored in `./.pi/` directory
-- Environment variable support: `SERVER_PORT` to customize port
 
 ### Basic Usage
 

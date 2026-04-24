@@ -158,25 +158,30 @@ describe("PiKanbanDB", () => {
       taskId: task.id,
       taskStatus: "failed",
       errorMessage: "Boom",
-      diagnosticsSummary: "Likely bad dependency check",
-      rootCauses: ["Dependency state race"],
+      diagnosticsSummary: "Investigated Tauroboros codebase for bugs",
+      isTauroborosBug: true,
+      rootCause: {
+        description: "Race condition in dependency state check",
+        affectedFiles: ["src/scheduler.ts", "src/orchestrator.ts"],
+        codeSnippet: "if (task.status === 'executing') { /* bug here */ }",
+      },
       proposedSolution: "Guard scheduler transition with explicit check",
       implementationPlan: ["Add guard", "Add regression test"],
-      recoverable: true,
-      recommendedAction: "restart_task",
-      actionRationale: "Task can resume without discarding completed work",
+      confidence: "high",
+      externalFactors: [],
       sourceMode: "local",
       sourcePath: "/tmp/source",
       githubUrl: "https://github.com/jmarceno/tauroboros",
       tauroborosVersion: "0.1.0",
       dbPath: db.getDatabasePath(),
       dbSchemaJson: db.getSchemaSnapshot(),
-      rawResponse: "{\"ok\":true}",
+      rawResponse: "{\"isTauroborosBug\":true,\"confidence\":\"high\"}",
     })
 
     expect(report.runId).toBe(run.id)
     expect(report.taskId).toBe(task.id)
-    expect(report.recoverable).toBe(true)
+    expect(report.isTauroborosBug).toBe(true)
+    expect(report.confidence).toBe("high")
 
     const reports = db.getSelfHealReportsForRun(run.id)
     expect(reports.length).toBe(1)

@@ -120,11 +120,7 @@ function runPiModelCommandEffect(
     const timeoutFiber = yield* Effect.fork(
       Effect.gen(function* () {
         yield* Effect.sleep(timeoutMs)
-        try {
-          command.kill()
-        } catch {
-          // no-op
-        }
+        command.kill()
       })
     )
 

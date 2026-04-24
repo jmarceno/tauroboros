@@ -128,6 +128,33 @@ bun run scripts/test-binary.ts
 SERVER_PORT=3790 ./tauroboros
 ```
 
+### Install Script
+
+One-command compile and install:
+
+```bash
+# Compile and install to ~/.local/bin (user-local, default)
+./scripts/install.sh
+
+# Compile and install to /usr/local/bin (system-wide, requires sudo)
+./scripts/install.sh --global
+
+# Skip compilation (install existing binary)
+./scripts/install.sh --skip-compile
+
+# Remove installed binary
+./scripts/install.sh --remove
+
+# Remove from global location
+./scripts/install.sh --global --remove
+```
+
+The install script will:
+1. Build the kanban-solid frontend (refreshing all assets)
+2. Generate embedded assets
+3. Compile the Bun binary
+4. Install to the target directory
+
 <!-- effect-solutions:start -->
 ## Effect Best Practices
 
@@ -179,3 +206,6 @@ bun run scripts/verify-migration.ts
 
 ## Pre-existing errors
   You must always fix errors you find, it does not matter if were introduced by your changes or not. We are a team and we work on all the issues together.
+
+## Effect
+Always follow effect best practices

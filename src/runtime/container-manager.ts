@@ -235,16 +235,25 @@ export class PiContainerManager {
       const piDir = path.join(tauroborosDir, 'agent')
       const modelsJsonPath = path.join(piDir, 'models.json')
 
-      yield* Effect.try({
-        try: () => {
-          fs.mkdirSync(piDir, { recursive: true })
-          fs.writeFileSync(modelsJsonPath, JSON.stringify(modelsJson, null, 2))
-        },
-        catch: (cause) => new ContainerManagerError({
-          operation: "generateModelsJson",
-          message: cause instanceof Error ? cause.message : String(cause),
-          cause,
-        }),
+      yield* Effect.gen(function* () {
+        const jsonContent = yield* Schema.encodeUnknown(Schema.parseJson(Schema.Object))(modelsJson).pipe(
+          Effect.mapError((cause) => new ContainerManagerError({
+            operation: "generateModelsJson",
+            message: `Failed to encode models.json: ${cause instanceof Error ? cause.message : String(cause)}`,
+            cause,
+          })),
+        )
+        yield* Effect.try({
+          try: () => {
+            fs.mkdirSync(piDir, { recursive: true })
+            fs.writeFileSync(modelsJsonPath, jsonContent)
+          },
+          catch: (cause) => new ContainerManagerError({
+            operation: "generateModelsJson",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+        })
       })
 
       yield* logInfo(`[container-manager] Generated models.json at ${modelsJsonPath}`)
@@ -994,23 +1003,33 @@ export class PiContainerManager {
   /**
    * Force kill a container (SIGKILL).
    * Used for emergency stop and destructive operations.
+   * Never fails - if container doesn't exist, it's considered already stopped.
    */
-  forceKillContainer(sessionId: string): Effect.Effect<boolean, ContainerManagerError> {
+  forceKillContainer(sessionId: string): Effect.Effect<boolean, never> {
     return this.forceKillContainerInternal(sessionId)
   }
 
-  private forceKillContainerInternal(sessionId: string): Effect.Effect<boolean, ContainerManagerError> {
+  private forceKillContainerInternal(sessionId: string): Effect.Effect<boolean, never> {
     return Effect.gen(this, function* () {
       const containerName = `tauroboros-${sessionId}`
-      try {
-        // Send SIGKILL instead of graceful stop
-        yield* this.execPodman(["kill", "-s", "SIGKILL", containerName])
+      // Use Effect.match to handle failures gracefully - container not found is ok
+      const result = yield* this.execPodman(["kill", "-s", "SIGKILL", containerName]).pipe(
+        Effect.match({
+          onSuccess: () => true,
+          onFailure: (err) => err,
+        })
+      )
+
+      if (result === true) {
         this.containers.delete(sessionId)
         return true
-      } catch (err) {
-        yield* logDebug(`[container-manager] Failed to force kill container ${sessionId}: ${err instanceof Error ? err.message : String(err)}`)
-        return false
       }
+
+      // Log but don't fail - container not existing is acceptable during stop
+      const errorMessage = result instanceof Error ? result.message : String(result)
+      yield* logDebug(`[container-manager] Container ${sessionId} kill result: ${errorMessage}`)
+      this.containers.delete(sessionId)
+      return false
     })
   }
 

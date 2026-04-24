@@ -124,11 +124,12 @@ export function runShellCommandEffect(
       ])
       return { stdout, stderr, exitCode }
     },
-    catch: (cause) => {
+    catch: (cause): OrchestratorOperationError => {
       const { OrchestratorOperationError } = require("./errors.ts")
       return new OrchestratorOperationError({
         operation: "runShellCommand",
         message: cause instanceof Error ? cause.message : String(cause),
+        cause,
       })
     },
   })

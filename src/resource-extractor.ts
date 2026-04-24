@@ -6,16 +6,16 @@
  */
 
 import * as generatedAssetsModule from "./server/generated-assets.ts"
-import type { GeneratedAssetsModule } from "./server/generated-assets.ts"
 import { existsSync, mkdirSync, writeFileSync, readdirSync, statSync, rmSync, readFileSync } from "fs"
 import { join, dirname } from "path"
 
 // Static import ensures Bun compile captures generated assets at compile time.
-const generatedAssets: GeneratedAssetsModule | null =
+// The module exports are checked at runtime to ensure compatibility.
+const generatedAssets =
   typeof generatedAssetsModule.getAllSkillAssets === "function" &&
   typeof generatedAssetsModule.getAllConfigAssets === "function" &&
   typeof generatedAssetsModule.getAllDockerAssets === "function"
-    ? (generatedAssetsModule as unknown as GeneratedAssetsModule)
+    ? generatedAssetsModule
     : null
 
 /**

@@ -1,15 +1,14 @@
 import { existsSync, mkdirSync } from "fs"
 import { dirname, join, resolve } from "path"
-import { Effect, Schema } from "effect"
+import { Effect, Schema, Either } from "effect"
 import { inspect } from "node:util"
 import type { InfrastructureSettings } from "../config/settings.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { Task, WorkflowRun } from "../types.ts"
 import { resolveContainerImage } from "../types.ts"
 import { VERSION, IS_COMPILED } from "../server/version.ts"
-import { PiSessionManager, SessionManagerExecuteError } from "./session-manager.ts"
+import { PiSessionManager } from "./session-manager.ts"
 import { parseStrictJsonObject } from "./strict-json.ts"
-import { PiProcessError } from "./pi-process.ts"
 import type { PiContainerManager } from "./container-manager.ts"
 import { getSystemPrompt, renderPromptTemplate } from "../prompts/catalog.ts"
 
@@ -19,12 +18,20 @@ export class SelfHealingError extends Schema.TaggedError<SelfHealingError>()("Se
   cause: Schema.optional(Schema.Unknown),
 }) {}
 
+class GitCloneError extends Schema.TaggedError<GitCloneError>()("GitCloneError", {
+  message: Schema.String,
+  stdout: Schema.String,
+  stderr: Schema.String,
+}) {}
+
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
 }
 
+type SourceMode = "local" | "github_clone" | "github_metadata_only"
+
 interface SourceContext {
-  sourceMode: "local" | "github_clone" | "github_metadata_only"
+  sourceMode: SourceMode
   sourcePath: string | null
   githubUrl: string
   notes: string
@@ -39,11 +46,37 @@ interface InvestigateFailureInput {
 
 export interface SelfHealingInvestigationResult {
   reportId: string
-  recoverable: boolean
-  recommendedAction: "restart_task" | "keep_failed"
+  isTauroborosBug: boolean
+  confidence: "high" | "medium" | "low"
   diagnosticsSummary: string
-  actionRationale: string
+  rootCause: {
+    description: string
+    affectedFiles: readonly string[]
+    codeSnippet: string
+  }
+  proposedSolution: string
+  implementationPlan: readonly string[]
+  externalFactors: readonly string[]
 }
+
+const ConfidenceSchema = Schema.Literal("high", "medium", "low")
+const SourceModeSchema = Schema.Literal("local", "github_clone", "github_metadata_only")
+
+const RootCauseSchema = Schema.Struct({
+  description: Schema.String,
+  affectedFiles: Schema.Array(Schema.String),
+  codeSnippet: Schema.String,
+})
+
+const SelfHealResponseSchema = Schema.Struct({
+  diagnosticsSummary: Schema.String,
+  isTauroborosBug: Schema.Boolean,
+  rootCause: RootCauseSchema,
+  proposedSolution: Schema.String,
+  implementationPlan: Schema.Array(Schema.String),
+  confidence: ConfidenceSchema,
+  externalFactors: Schema.Array(Schema.String),
+})
 
 export class SelfHealingService {
   private readonly sessions: PiSessionManager
@@ -100,14 +133,14 @@ export class SelfHealingService {
       }).pipe(
         Effect.mapError((cause) =>
           new SelfHealingError({
-            operation: cause instanceof SessionManagerExecuteError ? cause.operation : cause instanceof PiProcessError ? cause.operation : "investigateFailure",
+            operation: "investigateFailure",
             message: cause instanceof Error ? cause.message : String(cause),
             cause,
           }),
         ),
       )
 
-      const parsed = yield* Effect.try({
+      const rawParsed = yield* Effect.try({
         try: () => parseStrictJsonObject(session.responseText, "Self-heal diagnostics response"),
         catch: (cause) => new SelfHealingError({
           operation: "parseDiagnosticsResponse",
@@ -116,36 +149,15 @@ export class SelfHealingService {
         }),
       })
 
-      const diagnosticsSummary =
-        typeof parsed.diagnosticsSummary === "string" && parsed.diagnosticsSummary.trim().length > 0
-          ? parsed.diagnosticsSummary.trim()
-          : "Self-heal diagnostics returned no summary"
-
-      const rootCausesRaw = Array.isArray(parsed.rootCauses) ? parsed.rootCauses : []
-      const rootCauses = rootCausesRaw
-        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-        .map((item) => item.trim())
-
-      const proposedSolution =
-        typeof parsed.proposedSolution === "string" && parsed.proposedSolution.trim().length > 0
-          ? parsed.proposedSolution.trim()
-          : "No permanent solution provided"
-
-      const implementationPlanRaw = Array.isArray(parsed.implementationPlan) ? parsed.implementationPlan : []
-      const implementationPlan = implementationPlanRaw
-        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-        .map((item) => item.trim())
-
-      const recoverabilityRaw = parsed.recoverability && typeof parsed.recoverability === "object"
-        ? parsed.recoverability as Record<string, unknown>
-        : {}
-
-      const recoverable = recoverabilityRaw.recoverable === true
-      const recommendedAction: SelfHealingInvestigationResult["recommendedAction"] = recoverabilityRaw.recommendedAction === "restart_task" ? "restart_task" : "keep_failed"
-      const actionRationale =
-        typeof recoverabilityRaw.rationale === "string" && recoverabilityRaw.rationale.trim().length > 0
-          ? recoverabilityRaw.rationale.trim()
-          : "No recoverability rationale provided"
+      const validationResult = Schema.decodeUnknownEither(SelfHealResponseSchema)(rawParsed)
+      const validated = yield* Either.match(validationResult, {
+        onLeft: (decodeError) => new SelfHealingError({
+          operation: "validateDiagnosticsResponse",
+          message: `Invalid self-heal response structure: ${JSON.stringify(decodeError)}`,
+          cause: decodeError,
+        }),
+        onRight: (value) => Effect.succeed(value),
+      })
 
       const report = self.db.createSelfHealReport({
         id: `${input.run.id}-${input.task.id}-${nowUnix()}`,
@@ -153,13 +165,13 @@ export class SelfHealingService {
         taskId: input.task.id,
         taskStatus: input.task.status,
         errorMessage: input.errorMessage,
-        diagnosticsSummary,
-        rootCauses,
-        proposedSolution,
-        implementationPlan,
-        recoverable,
-        recommendedAction,
-        actionRationale,
+        diagnosticsSummary: validated.diagnosticsSummary,
+        isTauroborosBug: validated.isTauroborosBug,
+        rootCause: validated.rootCause,
+        proposedSolution: validated.proposedSolution,
+        implementationPlan: validated.implementationPlan,
+        confidence: validated.confidence,
+        externalFactors: validated.externalFactors,
         sourceMode: source.sourceMode,
         sourcePath: source.sourcePath,
         githubUrl: source.githubUrl,
@@ -171,10 +183,13 @@ export class SelfHealingService {
 
       return {
         reportId: report.id,
-        recoverable,
-        recommendedAction,
-        diagnosticsSummary,
-        actionRationale,
+        isTauroborosBug: validated.isTauroborosBug,
+        confidence: validated.confidence,
+        diagnosticsSummary: validated.diagnosticsSummary,
+        rootCause: validated.rootCause,
+        proposedSolution: validated.proposedSolution,
+        implementationPlan: validated.implementationPlan,
+        externalFactors: validated.externalFactors,
       }
     })
   }
@@ -182,15 +197,16 @@ export class SelfHealingService {
   private resolveSourceContextEffect(runId: string): Effect.Effect<SourceContext, SelfHealingError> {
     const self = this
     return Effect.gen(function* () {
-      const localLooksLikeSource = existsSync(join(self.projectRoot, ".git")) && existsSync(join(self.projectRoot, "src", "orchestrator.ts"))
+      const hasGitDir = existsSync(join(self.projectRoot, ".git"))
+      const hasSourceFiles = existsSync(join(self.projectRoot, "src", "orchestrator.ts"))
 
-      if (localLooksLikeSource) {
+      if (hasGitDir && hasSourceFiles) {
         return {
-          sourceMode: "local" as const,
+          sourceMode: "local" satisfies SourceMode,
           sourcePath: self.projectRoot,
           githubUrl: self.githubUrl,
           notes: "Running in development/source mode, local repository used.",
-        }
+        } satisfies SourceContext
       }
 
       const cloneDir = resolve(self.projectRoot, ".tauroboros", "self-heal-source", `${VERSION}-${runId}`)
@@ -199,28 +215,36 @@ export class SelfHealingService {
       if (!existsSync(cloneDir)) {
         const cloneResult = yield* runCommandEffect(["git", "clone", "--depth", "1", self.githubUrl, cloneDir], self.projectRoot)
         if (cloneResult.exitCode !== 0) {
-          return yield* new SelfHealingError({
-            operation: "resolveSourceContext",
-            message: `git clone failed: ${cloneResult.stderr || cloneResult.stdout || "unknown error"}`,
-          })
+          return yield* new GitCloneError({
+            message: "git clone failed",
+            stdout: cloneResult.stdout,
+            stderr: cloneResult.stderr,
+          }).pipe(
+            Effect.mapError((err) => new SelfHealingError({
+              operation: "resolveSourceContext",
+              message: err.message,
+              cause: err,
+            })),
+          )
         }
       }
 
       return {
-        sourceMode: "github_clone" as const,
+        sourceMode: "github_clone" satisfies SourceMode,
         sourcePath: cloneDir,
         githubUrl: self.githubUrl,
         notes: `Cloned source for diagnostics at ${cloneDir}`,
-      }
+      } satisfies SourceContext
     }).pipe(
-      Effect.catchAll((error) =>
-        Effect.succeed({
-          sourceMode: "github_metadata_only" as const,
+      Effect.catchAll((error) => {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        return Effect.succeed<SourceContext>({
+          sourceMode: "github_metadata_only",
           sourcePath: null,
           githubUrl: self.githubUrl,
-          notes: `Unable to clone source locally: ${error instanceof Error ? error.message : String(error)}`,
+          notes: `Unable to clone source locally: ${errorMessage}. Self-healing will proceed with metadata-only analysis.`,
         })
-      ),
+      }),
     )
   }
 }

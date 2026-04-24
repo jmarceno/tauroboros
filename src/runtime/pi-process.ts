@@ -593,7 +593,7 @@ export class PiRpcProcess {
   private handleStdoutLineEffect(line: string): Effect.Effect<void, never> {
     return Effect.gen(this, function* () {
     const parsed = (yield* Effect.orElse(
-      Effect.try(() => JSON.parse(line) as Record<string, unknown>),
+      Schema.decodeUnknown(Schema.parseJson(Schema.Record({ key: Schema.String, value: Schema.Unknown })))(line),
       () => Effect.succeed({ type: "text", text: line }),
     )) as Record<string, unknown>
 

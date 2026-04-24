@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs"
 import { basename, join, resolve } from "path"
 import { execFileSync } from "child_process"
 import { Effect, Schema } from "effect"
@@ -416,44 +416,88 @@ export function listWorktrees(baseDirectory?: string): Effect.Effect<WorktreeInf
  */
 export function createWorktree(options: CreateWorktreeOptions): Effect.Effect<WorktreeInfo, WorktreeError> {
   return Effect.gen(function* () {
-    const prepared = yield* tryWorktree("CREATE_WORKTREE_PREPARE_FAILED", () => {
-      const baseDirectory = options.baseDirectory ? resolve(options.baseDirectory) : process.cwd()
-      const repoRoot = getRepoRoot(baseDirectory)
+    // Prepare all paths and validate inputs
+    const baseDirectory = options.baseDirectory ? resolve(options.baseDirectory) : process.cwd()
+    const repoRoot = getRepoRoot(baseDirectory)
 
-      const name = options.name?.trim()
-      if (!name) {
-        throw new WorktreeError({ message: "Worktree name cannot be empty", code: "INVALID_WORKTREE_NAME" })
-      }
+    const name = options.name?.trim()
+    if (!name) {
+      return yield* new WorktreeError({ message: "Worktree name cannot be empty", code: "INVALID_WORKTREE_NAME" })
+    }
 
-      const branch = normalizeBranchName(options.branch) ?? name
-      const baseRef = normalizeBranchName(options.baseRef)
-      if (!baseRef) {
-        throw new WorktreeError({
-          message: "No base branch specified for worktree creation. Please configure a branch in task options or global settings.",
-          code: "BASE_REF_NOT_SPECIFIED",
+    const branch = normalizeBranchName(options.branch) ?? name
+    const baseRef = normalizeBranchName(options.baseRef)
+    if (!baseRef) {
+      return yield* new WorktreeError({
+        message: "No base branch specified for worktree creation. Please configure a branch in task options or global settings.",
+        code: "BASE_REF_NOT_SPECIFIED",
+      })
+    }
+
+    // Create worktree directly at final location (NOT using temp dir to avoid breaking git tracking)
+    const worktreeBaseDir = options.worktreeBaseDir ? resolve(options.worktreeBaseDir) : join(repoRoot, ".worktrees")
+    const finalDirectory = join(worktreeBaseDir, name)
+
+    // Check if final location already exists
+    if (existsSync(finalDirectory)) {
+      return yield* new WorktreeError({ message: `Worktree directory already exists: ${finalDirectory}`, code: "WORKTREE_ALREADY_EXISTS" })
+    }
+
+    // Ensure base directory exists
+    mkdirSync(worktreeBaseDir, { recursive: true })
+
+    const createArgs = branchExists(branch, repoRoot)
+      ? ["worktree", "add", finalDirectory, branch]
+      : ["worktree", "add", "-b", branch, finalDirectory, baseRef]
+
+    // Execute git worktree creation with proper error handling and cleanup
+    yield* Effect.try({
+      try: () => runGit(createArgs, repoRoot),
+      catch: (cause) => new WorktreeError({
+        message: `Failed to create worktree '${name}': ${cause instanceof Error ? cause.message : String(cause)}`,
+        code: "CREATE_WORKTREE_FAILED",
+        gitOutput: cause instanceof WorktreeError ? cause.gitOutput : undefined
+      })
+    }).pipe(
+      Effect.tapError(() =>
+        // Clean up directory on failure
+        Effect.sync(() => {
+          if (existsSync(finalDirectory)) {
+            try {
+              rmSync(finalDirectory, { recursive: true, force: true })
+            } catch {
+              // Best effort cleanup
+            }
+          }
         })
-      }
+      )
+    )
 
-      const directory = buildWorktreePath(repoRoot, name, options.worktreeBaseDir)
-      if (existsSync(directory)) {
-        throw new WorktreeError({ message: `Worktree directory already exists: ${directory}`, code: "WORKTREE_ALREADY_EXISTS" })
-      }
+    // Validate that git commands work in the worktree BEFORE returning
+    // This ensures we catch any git issues immediately, before starting the agent
+    yield* Effect.try({
+      try: () => runGit(["status"], finalDirectory),
+      catch: (cause) => new WorktreeError({ 
+        message: `Worktree created but git validation failed: ${cause instanceof Error ? cause.message : String(cause)}`, 
+        code: "WORKTREE_GIT_VALIDATION_FAILED",
+        gitOutput: cause instanceof WorktreeError ? cause.gitOutput : undefined
+      })
+    }).pipe(
+      Effect.tapError(() =>
+        // Clean up final directory on validation failure
+        Effect.sync(() => {
+          if (existsSync(finalDirectory)) {
+            try {
+              rmSync(finalDirectory, { recursive: true, force: true })
+            } catch {
+              // Best effort cleanup
+            }
+          }
+        })
+      )
+    )
 
-      const createArgs = branchExists(branch, repoRoot)
-        ? ["worktree", "add", directory, branch]
-        : ["worktree", "add", "-b", branch, directory, baseRef]
-
-      try {
-        runGit(createArgs, repoRoot)
-      } catch (error) {
-        if (error instanceof WorktreeError) {
-          throw new WorktreeError({ message: `Failed to create worktree '${name}': ${error.message}`, code: "CREATE_WORKTREE_FAILED", gitOutput: error.gitOutput })
-        }
-        throw error
-      }
-
-      return { repoRoot, directory, branch, baseRef }
-    })
+    const prepared = { repoRoot, directory: finalDirectory, branch, baseRef }
 
     const listed = yield* listWorktrees(prepared.repoRoot)
     const normalizedDir = normalizeDirectory(prepared.directory)
@@ -635,13 +679,15 @@ export class WorktreeLifecycle {
     this.keepWorktrees = options.keepWorktrees === true
   }
 
-  /** Creates task worktree with `<sanitized-taskName>-<taskId>` naming. */
+  /** Creates task worktree with `<sanitized-taskName>-<taskId>-<random>` naming. */
   createForTask(taskId: string, taskName?: string, branch?: string, baseRef?: string): Effect.Effect<WorktreeInfo, WorktreeError> {
     const normalizedTaskId = taskId.trim()
     if (!normalizedTaskId) return Effect.fail(new WorktreeError({ message: "taskId cannot be empty", code: "INVALID_TASK_ID" }))
     if (taskName) {
       const sanitizedTaskName = sanitizeForGit(taskName)
-      const name = `${sanitizedTaskName}-${normalizedTaskId}`
+      // Add random suffix to ensure unique worktree names for task reruns
+      const randomSuffix = Math.random().toString(36).substring(2, 8)
+      const name = `${sanitizedTaskName}-${normalizedTaskId}-${randomSuffix}`
       return createWorktree({
         name,
         branch,
@@ -729,12 +775,14 @@ export class WorktreeLifecycle {
 
   /**
    * Extracts task ID from a worktree directory name.
-   * Names follow pattern: `task-<taskId>-<random>`
+   * Names follow pattern: `<sanitizedTaskName>-<taskId>-<random>`
    * Returns null if not a task worktree.
    */
   static parseTaskId(worktreeName: string): string | null {
-    const match = worktreeName.match(/^task-(.+)-[a-z0-9]+$/)
-    return match?.[1] ?? null
+    // Match pattern: anything-taskId-random (e.g., "fix-something-abc123def-7fd7efb2-a3f9k2")
+    // Extracts the taskId part (second to last segment before the random suffix)
+    const match = worktreeName.match(/^(.+)-([a-f0-9]{8})-[a-z0-9]{6}$/)
+    return match?.[2] ?? null
   }
 }
 

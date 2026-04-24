@@ -237,7 +237,7 @@ export function ChatMessage(props: ChatMessageProps) {
         <span class="chat-message-time">{formatTimestamp(props.message.timestamp)}</span>
       </div>
 
-      <div class={`chat-message-content ${isThinking() ? 'text-dark-text-muted/60' : ''}`}>
+      <div class={`chat-message-content ${isThinking() ? 'thinking-content' : ''}`}>
         <Show when={!isUser()}>
           <div
             class={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs ${
@@ -269,39 +269,47 @@ export function ChatMessage(props: ChatMessageProps) {
 
         <For each={renderedBlocks()}>
           {(block, index) => {
-            if (block.type === 'text' && block.content.startsWith('<')) {
-              return <div innerHTML={block.content} />
-            }
+            const blockContent = () => {
+              if (block.type === 'text' && block.content.startsWith('<')) {
+                return <div innerHTML={block.content} />
+              }
 
-            if (block.type === 'text') {
-              return (
-                <div class="message-text" innerHTML={renderMarkdown(block.content)} />
-              )
-            }
+              if (block.type === 'text') {
+                return (
+                  <div class="message-text" innerHTML={renderMarkdown(block.content)} />
+                )
+              }
 
-            if (block.type === 'mermaid' && block.id) {
-              return (
-                <MermaidBlock
-                  content={block.content}
-                  id={block.id}
-                  onMaximize={openMermaidModal}
-                />
-              )
-            }
+              if (block.type === 'mermaid' && block.id) {
+                return (
+                  <MermaidBlock
+                    content={block.content}
+                    id={block.id}
+                    onMaximize={openMermaidModal}
+                  />
+                )
+              }
 
-            if (block.type === 'code') {
-              const highlighted = highlightedCode().get(block.content) || block.content
-              return (
-                <div class="my-1 rounded-lg overflow-hidden bg-dark-bg border border-dark-border">
-                  <div class="text-xs text-dark-text-muted/60 px-2 py-1 bg-dark-surface2 border-b border-dark-border flex items-center justify-between">
-                    <span class="font-mono">{block.language}</span>
+              if (block.type === 'code') {
+                const highlighted = highlightedCode().get(block.content) || block.content
+                return (
+                  <div class="my-1 rounded-lg overflow-hidden bg-dark-bg border border-dark-border">
+                    <div class="text-xs text-dark-text-muted/60 px-2 py-1 bg-dark-surface2 border-b border-dark-border flex items-center justify-between">
+                      <span class="font-mono">{block.language}</span>
+                    </div>
+                    <pre class="p-2 overflow-x-auto"><code class={`hljs language-${block.language}`} innerHTML={highlighted} /></pre>
                   </div>
-                  <pre class="p-2 overflow-x-auto"><code class={`hljs language-${block.language}`} innerHTML={highlighted} /></pre>
-                </div>
-              )
+                )
+              }
+
+              return null
             }
 
-            return null
+            return (
+              <div class={isThinking() ? 'thinking-block' : ''}>
+                {blockContent()}
+              </div>
+            )
           }}
         </For>
 
@@ -325,7 +333,7 @@ export function ChatMessage(props: ChatMessageProps) {
         </Show>
 
         <Show when={isThinking()}>
-          <div class="text-xs text-dark-text-muted/40 mt-1 font-medium select-none">
+          <div class="thinking-indicator">
             thinking...
           </div>
         </Show>

@@ -2,144 +2,33 @@ import { Effect } from "effect"
 import type { Task, WorkflowRun, WSMessage } from "../types.ts"
 import type { PiKanbanDB } from "../db.ts"
 import type { SelfHealingService } from "../runtime/self-healing.ts"
-import type { OrchestratorOperationError } from "./errors.ts"
-import { OrchestratorOperationError as OrchestratorOperationErrorClass } from "./errors.ts"
+import { OrchestratorOperationError } from "./errors.ts"
 
-/**
- * Context for self-healing operations.
- */
 export interface SelfHealingContext {
   db: PiKanbanDB
   selfHealingService: SelfHealingService
   broadcast: (message: WSMessage) => void
 }
 
-/**
- * Interface for scheduler operations needed for self-healing.
- */
 export interface SelfHealingScheduler {
-  requeueExecutingTask(taskId: string): Effect.Effect<boolean, unknown>
-  enqueueTask(runId: string, taskId: string): Effect.Effect<void, unknown>
   getExecutingStates(runId: string): Effect.Effect<Array<{ taskId: string }>, unknown>
   getQueuedTasks(runId: string): Effect.Effect<string[], unknown>
 }
 
-/**
- * Result type for manual self-heal recovery.
- */
-export interface ManualSelfHealResult {
+export interface SelfHealInvestigationResult {
   ok: boolean
+  isBug: boolean
   message: string
+  reportId: string
 }
 
-/**
- * Apply a manual self-heal recovery action from the UI.
- * This is called when the user explicitly selects a recovery action from a self-heal report.
- */
-export function manualSelfHealRecover(
-  taskId: string,
-  reportId: string,
-  action: "restart_task" | "keep_failed",
-  context: SelfHealingContext,
-  scheduler: SelfHealingScheduler,
-  runId: string,
-  broadcastTask: (taskId: string) => void,
-  refreshRunProgressEffect: (runId: string) => Effect.Effect<void, OrchestratorOperationError>,
-  triggerSchedulingEffect: () => Effect.Effect<void, OrchestratorOperationError>,
-): Effect.Effect<ManualSelfHealResult, OrchestratorOperationError> {
-  return Effect.gen(function* () {
-    const task = context.db.getTask(taskId)
-    if (!task) {
-      return yield* new OrchestratorOperationErrorClass({
-        operation: "manualSelfHealRecover",
-        message: `Task not found: ${taskId}`,
-      })
-    }
-
-    const report = context.db.getSelfHealReport(reportId)
-    if (!report) {
-      return yield* new OrchestratorOperationErrorClass({
-        operation: "manualSelfHealRecover",
-        message: `Self-heal report not found: ${reportId}`,
-      })
-    }
-    if (report.taskId !== taskId) {
-      return yield* new OrchestratorOperationErrorClass({
-        operation: "manualSelfHealRecover",
-        message: `Report ${reportId} does not belong to task ${taskId}`,
-      })
-    }
-
-    if (action === "restart_task") {
-      const requeued = yield* scheduler.requeueExecutingTask(taskId)
-      if (!requeued) {
-        yield* scheduler.enqueueTask(runId, taskId)
-      }
-
-      context.db.updateTask(taskId, {
-        status: "queued",
-        errorMessage: null,
-        selfHealStatus: "idle",
-        selfHealMessage: "Manually recovered: task requeued",
-        sessionId: null,
-        sessionUrl: null,
-      })
-      broadcastTask(taskId)
-      context.broadcast({
-        type: "self_heal_status",
-        payload: {
-          runId,
-          taskId,
-          status: "recovered",
-          message: "Task manually requeued from self-heal report",
-          reportId,
-        },
-      })
-      yield* refreshRunProgressEffect(runId)
-      yield* triggerSchedulingEffect()
-      return { ok: true, message: "Task requeued successfully" } as ManualSelfHealResult
-    }
-
-    context.db.updateTask(taskId, {
-      selfHealStatus: "idle",
-      selfHealMessage: null,
-    })
-    broadcastTask(taskId)
-    context.broadcast({
-      type: "self_heal_status",
-      payload: {
-        runId,
-        taskId,
-        status: "manual_required",
-        message: "Manual recovery dismissed — task remains failed",
-        reportId,
-      },
-    })
-    return { ok: true, message: "Task kept as failed" } as ManualSelfHealResult
-  }).pipe(
-    Effect.catchAll((error: unknown) => {
-      if (error instanceof OrchestratorOperationErrorClass) {
-        return Effect.fail(error)
-      }
-      return Effect.fail(new OrchestratorOperationErrorClass({
-        operation: "manualSelfHealRecover",
-        message: error instanceof Error ? error.message : String(error),
-      }))
-    })
-  )
-}
-
-/**
- * Attempt to self-heal a failed task.
- * Investigates the failure and may requeue the task for retry.
- */
 export function maybeSelfHealTask(
   runId: string,
   task: Task,
   context: SelfHealingContext,
   scheduler: SelfHealingScheduler,
   broadcastTask: (taskId: string) => void,
-): Effect.Effect<boolean, OrchestratorOperationError> {
+): Effect.Effect<SelfHealInvestigationResult, OrchestratorOperationError> {
   return Effect.gen(function* () {
     const reportCount = context.db.countSelfHealReportsForTaskInRun(runId, task.id)
     if (reportCount >= 2) {
@@ -157,12 +46,12 @@ export function maybeSelfHealTask(
           message: "Self-healing retry limit reached",
         },
       })
-      return false
+      return { ok: false, isBug: false, message: "Retry limit reached", reportId: "" }
     }
 
     const run = context.db.getWorkflowRun(runId)
-    if (!run) {
-      return yield* new OrchestratorOperationErrorClass({
+    if (run === null) {
+      return yield* new OrchestratorOperationError({
         operation: "maybeSelfHealTask",
         message: `Run not found for self-heal flow: ${runId}`,
       })
@@ -176,7 +65,7 @@ export function maybeSelfHealTask(
 
     context.db.updateTask(task.id, {
       selfHealStatus: "investigating",
-      selfHealMessage: "Investigating failure and drafting permanent fix...",
+      selfHealMessage: "Investigating failure for Tauroboros bugs...",
     })
     broadcastTask(task.id)
     context.broadcast({
@@ -195,15 +84,19 @@ export function maybeSelfHealTask(
       errorMessage: task.errorMessage ?? "Task failed without explicit error message",
       hasOtherActiveTasks,
     }).pipe(
-      Effect.mapError((cause) => new OrchestratorOperationErrorClass({
+      Effect.mapError((cause) => new OrchestratorOperationError({
         operation: "maybeSelfHealTask",
         message: cause instanceof Error ? cause.message : String(cause),
       })),
     )
 
+    const statusMessage = result.isTauroborosBug
+      ? `Bug identified in Tauroboros (${result.confidence} confidence): ${result.rootCause.description.slice(0, 100)}...`
+      : `No Tauroboros bug found. External factors: ${result.externalFactors.join(", ") || "none identified"}`
+
     context.db.updateTask(task.id, {
-      selfHealStatus: "recovering",
-      selfHealMessage: result.diagnosticsSummary,
+      selfHealStatus: "idle",
+      selfHealMessage: statusMessage,
       selfHealReportId: result.reportId,
     })
     broadcastTask(task.id)
@@ -212,56 +105,20 @@ export function maybeSelfHealTask(
       payload: {
         runId,
         taskId: task.id,
-        status: "recovering",
-        message: "Self-healing generated diagnostics and recovery decision",
+        status: result.isTauroborosBug ? "bug_found" : "no_bug_found",
+        message: statusMessage,
         reportId: result.reportId,
+        isTauroborosBug: result.isTauroborosBug,
+        confidence: result.confidence,
       },
     })
 
-    if (result.recoverable && result.recommendedAction === "restart_task") {
-      const requeued = yield* scheduler.requeueExecutingTask(task.id)
-      if (!requeued) {
-        yield* scheduler.enqueueTask(runId, task.id)
-      }
-
-      context.db.updateTask(task.id, {
-        status: "queued",
-        errorMessage: null,
-        selfHealStatus: "idle",
-        selfHealMessage: "Auto-recovered: task requeued",
-        sessionId: null,
-        sessionUrl: null,
-      })
-      broadcastTask(task.id)
-      context.broadcast({
-        type: "self_heal_status",
-        payload: {
-          runId,
-          taskId: task.id,
-          status: "recovered",
-          message: "Task requeued after self-healing",
-          reportId: result.reportId,
-        },
-      })
-      return true
+    return {
+      ok: true,
+      isBug: result.isTauroborosBug,
+      message: statusMessage,
+      reportId: result.reportId,
     }
-
-    context.db.updateTask(task.id, {
-      selfHealStatus: "idle",
-      selfHealMessage: `Manual recovery required: ${result.actionRationale}`,
-    })
-    broadcastTask(task.id)
-    context.broadcast({
-      type: "self_heal_status",
-      payload: {
-        runId,
-        taskId: task.id,
-        status: "manual_required",
-        message: result.actionRationale,
-        reportId: result.reportId,
-      },
-    })
-    return false
   }).pipe(
     Effect.catchAll((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error)
@@ -279,7 +136,7 @@ export function maybeSelfHealTask(
           message,
         },
       })
-      return Effect.succeed(false)
+      return Effect.succeed({ ok: false, isBug: false, message, reportId: "" })
     }),
   )
 }

@@ -44,7 +44,7 @@ function parseOptionalStringField(
 ): Effect.Effect<string | undefined, HttpRouteError> {
   const value = body[key]
   if (value === undefined) {
-    return Effect.succeed(undefined)
+    return Effect.void as Effect.Effect<string | undefined, HttpRouteError>
   }
   if (typeof value === "string") {
     return Effect.succeed(value)
@@ -58,7 +58,7 @@ function parseOptionalBooleanField(
 ): Effect.Effect<boolean | undefined, HttpRouteError> {
   const value = body[key]
   if (value === undefined) {
-    return Effect.succeed(undefined)
+    return Effect.void as Effect.Effect<boolean | undefined, HttpRouteError>
   }
   if (typeof value === "boolean") {
     return Effect.succeed(value)
@@ -72,7 +72,7 @@ function parseOptionalStringArrayField(
 ): Effect.Effect<string[] | undefined, HttpRouteError> {
   const value = body[key]
   if (value === undefined) {
-    return Effect.succeed(undefined)
+    return Effect.void as Effect.Effect<string[] | undefined, HttpRouteError>
   }
   if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
     return Effect.succeed(value)
@@ -141,12 +141,12 @@ function parseTaskInputFields(
       autoCommit,
       deleteWorktree,
       requirements,
-      thinkingLevel: thinkingLevel as CreateTaskInput["thinkingLevel"],
-      planThinkingLevel: planThinkingLevel as CreateTaskInput["planThinkingLevel"],
-      executionThinkingLevel: executionThinkingLevel as CreateTaskInput["executionThinkingLevel"],
-      executionStrategy: executionStrategy as CreateTaskInput["executionStrategy"],
-      bestOfNConfig: bestOfNConfigValue as CreateTaskInput["bestOfNConfig"],
-      bestOfNSubstage: bestOfNSubstage as CreateTaskInput["bestOfNSubstage"],
+      thinkingLevel: thinkingLevel === "low" || thinkingLevel === "medium" || thinkingLevel === "high" || thinkingLevel === "default" ? thinkingLevel : undefined,
+      planThinkingLevel: planThinkingLevel === "low" || planThinkingLevel === "medium" || planThinkingLevel === "high" || planThinkingLevel === "default" ? planThinkingLevel : undefined,
+      executionThinkingLevel: executionThinkingLevel === "low" || executionThinkingLevel === "medium" || executionThinkingLevel === "high" || executionThinkingLevel === "default" ? executionThinkingLevel : undefined,
+      executionStrategy: executionStrategy === "best_of_n" || executionStrategy === "standard" ? executionStrategy : undefined,
+      bestOfNConfig: bestOfNConfigValue === null || bestOfNConfigValue === undefined ? undefined : bestOfNConfigValue as CreateTaskInput["bestOfNConfig"],
+      bestOfNSubstage: bestOfNSubstage === "idle" || bestOfNSubstage === "workers_running" || bestOfNSubstage === "reviewers_running" || bestOfNSubstage === "final_apply_running" || bestOfNSubstage === "blocked_for_manual_review" || bestOfNSubstage === "completed" ? bestOfNSubstage : undefined,
       skipPermissionAsking,
       containerImage,
     }
@@ -192,14 +192,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       Effect.mapError((error) => mapOrchestratorRouteError(taskId, "Failed to start task", error)),
     )
 
-  const manualSelfHealRecoverEffect = (
-    taskId: string,
-    reportId: string,
-    action: "restart_task" | "keep_failed",
-  ): Effect.Effect<{ ok: boolean; message: string }, HttpRouteError> =>
-    ctx.onManualSelfHealRecover!(taskId, reportId, action).pipe(
-      Effect.mapError((error) => mapOrchestratorRouteError(taskId, "Failed manual self-heal recovery for task", error)),
-    )
+
 
   const buildPlanRevisionResponse = (
     taskId: string,
@@ -328,14 +321,13 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     }
 
     if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
-      const imageExists = yield* Effect.tryPromise({
-        try: () => ctx.validateContainerImage(String(body.containerImage)),
-        catch: (error) => internalRouteError(
+      const imageExists = yield* ctx.validateContainerImage(String(body.containerImage)).pipe(
+        Effect.mapError((error) => internalRouteError(
           `Failed to validate container image '${String(body.containerImage)}'`,
           ErrorCode.CONTAINER_OPERATION_FAILED,
           error,
-        ),
-      })
+        )),
+      )
       if (!imageExists) {
         return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
       }
@@ -351,32 +343,33 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     })
     const removedDeps = rawRequirements.filter((reqId: string) => !allValidTaskIds.has(reqId))
 
-    const task = db.createTask({
+    const taskInput: CreateTaskInput = {
       id: randomUUID().slice(0, 8),
       name: String(body.name ?? "").trim(),
       prompt: String(body.prompt ?? ""),
-      status: body.status ?? "backlog",
-      branch: body.branch,
-      planModel: body.planModel,
-      executionModel: body.executionModel,
-      planmode: body.planmode,
-      autoApprovePlan: body.autoApprovePlan,
-      review: body.review,
-      codeStyleReview: body.codeStyleReview,
-      autoCommit: body.autoCommit,
-      autoDeploy: body.autoDeploy,
-      autoDeployCondition: body.autoDeployCondition,
-      deleteWorktree: body.deleteWorktree,
+      status: (body.status as import("../../db/types.ts").TaskStatus | undefined) ?? "backlog",
+      branch: body.branch as string | undefined,
+      planModel: body.planModel as string | undefined,
+      executionModel: body.executionModel as string | undefined,
+      planmode: body.planmode as boolean | undefined,
+      autoApprovePlan: body.autoApprovePlan as boolean | undefined,
+      review: body.review as boolean | undefined,
+      codeStyleReview: body.codeStyleReview as boolean | undefined,
+      autoCommit: body.autoCommit as boolean | undefined,
+      autoDeploy: body.autoDeploy as boolean | undefined,
+      autoDeployCondition: body.autoDeployCondition as import("../../db/types.ts").AutoDeployCondition | null | undefined,
+      deleteWorktree: body.deleteWorktree as boolean | undefined,
       requirements: validRequirements,
-      thinkingLevel: body.thinkingLevel,
-      planThinkingLevel: body.planThinkingLevel,
-      executionThinkingLevel: body.executionThinkingLevel,
-      executionStrategy: body.executionStrategy,
-      bestOfNConfig: body.bestOfNConfig,
-      bestOfNSubstage: body.bestOfNSubstage,
-      skipPermissionAsking: body.skipPermissionAsking,
-      containerImage: body.containerImage,
-    })
+      thinkingLevel: body.thinkingLevel as import("../../db/types.ts").ThinkingLevel | undefined,
+      planThinkingLevel: body.planThinkingLevel as import("../../db/types.ts").ThinkingLevel | undefined,
+      executionThinkingLevel: body.executionThinkingLevel as import("../../db/types.ts").ThinkingLevel | undefined,
+      executionStrategy: body.executionStrategy as import("../../db/types.ts").ExecutionStrategy | undefined,
+      bestOfNConfig: body.bestOfNConfig as import("../../db/types.ts").BestOfNConfig | null | undefined,
+      bestOfNSubstage: body.bestOfNSubstage as import("../../db/types.ts").BestOfNSubstage | undefined,
+      skipPermissionAsking: body.skipPermissionAsking as boolean | undefined,
+      containerImage: body.containerImage as string | undefined,
+    }
+    const task = db.createTask(taskInput)
 
     const normalized = normalizeTaskForClient(task, sessionUrlFor)
     broadcast({ type: "task_created", payload: normalized })
@@ -424,15 +417,14 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       const timeoutMs = Math.min(Math.max(Number(body.timeoutMs) || 1800000, 60000), 7200000)
       const pollIntervalMs = Math.min(Math.max(Number(body.pollIntervalMs) || 2000, 1000), 30000)
 
-      if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
-        const imageExists = yield* Effect.tryPromise({
-          try: () => ctx.validateContainerImage(String(body.containerImage)),
-          catch: (error) => internalRouteError(
-            `Failed to validate container image '${String(body.containerImage)}'`,
-            ErrorCode.CONTAINER_OPERATION_FAILED,
-            error,
-          ),
-        })
+    if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
+      const imageExists = yield* ctx.validateContainerImage(String(body.containerImage)).pipe(
+        Effect.mapError((error) => internalRouteError(
+          `Failed to validate container image '${String(body.containerImage)}'`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+          error,
+        )),
+      )
         if (!imageExists) {
           return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
         }
@@ -571,15 +563,24 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     const existing = db.getTask(params.id)
     if (!existing) return json({ error: "Task not found" }, 404)
 
+    const body = yield* parseJsonRecord(req)
+
+    // Check if this is a "mark done" operation (only status: 'done' and/or completedAt)
+    // This should be allowed even during execution as it's a manual completion action
+    const bodyKeys = Object.keys(body)
+    const isMarkDoneOperation =
+      bodyKeys.length <= 2 &&
+      bodyKeys.every(key => key === 'status' || key === 'completedAt') &&
+      (body.status === 'done' || body.status === undefined) &&
+      (body.completedAt !== undefined || body.status === 'done')
+
     const activeRun = db.getActiveWorkflowRunForTask(params.id)
-    if (activeRun) {
+    if (activeRun && !isMarkDoneOperation) {
       return json(
         { error: `Cannot modify task "${existing.name}" while it is executing in run ${activeRun.id}.` },
         409,
       )
     }
-
-    const body = yield* parseJsonRecord(req)
     const invalidBooleanField = getInvalidTaskBooleanField(body)
     if (invalidBooleanField) return json({ error: `Invalid ${invalidBooleanField}. Expected boolean.` }, 400)
     if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
@@ -644,14 +645,13 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     }
 
     if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
-      const imageExists = yield* Effect.tryPromise({
-        try: () => ctx.validateContainerImage(String(body.containerImage)),
-        catch: (error) => internalRouteError(
+      const imageExists = yield* ctx.validateContainerImage(String(body.containerImage)).pipe(
+        Effect.mapError((error) => internalRouteError(
           `Failed to validate container image '${String(body.containerImage)}'`,
           ErrorCode.CONTAINER_OPERATION_FAILED,
           error,
-        ),
-      })
+        )),
+      )
       if (!imageExists) {
         return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
       }
@@ -672,7 +672,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       body.groupId = null
     }
 
-    const task = db.updateTask(params.id, body)
+    const task = db.updateTask(params.id, body as import("../../db/types.ts").UpdateTaskInput)
     if (!task) return json({ error: "Task not found" }, 404)
 
     if (removedFromGroupId) {
@@ -1081,38 +1081,5 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     }),
   )
 
-  router.post("/api/tasks/:id/self-heal-recover", ({ params, req, json, db }) =>
-    Effect.gen(function* () {
-      if (!ctx.onManualSelfHealRecover) {
-        return yield* serviceUnavailableError("Manual self-heal recovery not available", ErrorCode.SERVICE_UNAVAILABLE)
-      }
-      yield* requireTask(db, params.id)
 
-      const body = yield* parseJsonRecord(req)
-      const reportId = typeof body.reportId === "string" ? body.reportId.trim() : ""
-      if (!reportId) {
-        return yield* badRequestError("reportId is required", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id })
-      }
-
-      const action = body.action
-      if (action !== "restart_task" && action !== "keep_failed") {
-        return yield* badRequestError(
-          "action must be 'restart_task' or 'keep_failed'",
-          ErrorCode.INVALID_REQUEST_BODY,
-          { taskId: params.id },
-        )
-      }
-
-      const report = db.getSelfHealReport(reportId)
-      if (!report) {
-        return yield* notFoundError("Self-heal report not found", ErrorCode.TASK_NOT_FOUND, { taskId: params.id, reportId })
-      }
-      if (report.taskId !== params.id) {
-        return yield* badRequestError("Report does not belong to this task", ErrorCode.INVALID_REQUEST_BODY, { taskId: params.id, reportId })
-      }
-
-      const result = yield* manualSelfHealRecoverEffect(params.id, reportId, action)
-      return json(result)
-    }),
-  )
 }

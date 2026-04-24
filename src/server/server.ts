@@ -14,7 +14,7 @@ import { SmartRepairService } from "../runtime/smart-repair.ts"
 import { PlanningSessionManager } from "../runtime/planning-session.ts"
 import { sendTelegramNotificationEffect, sendTelegramWorkflowSummaryEffect, shouldSendNotification, type NotificationContext } from "../telegram.ts"
 import { Router } from "./router.ts"
-import type { RequestContext, ServerRouteContext } from "./types.ts"
+import type { RequestContext, ServerRouteContext, CleanRunFn } from "./types.ts"
 import { WebSocketHub } from "./websocket.ts"
 import { readEmbeddedFileEffect, embeddedFileExistsEffect, getContentType, getIndexHtmlEffect } from "./embedded-files.ts"
 import { VERSION, COMMIT_HASH, DISPLAY_VERSION, IS_COMPILED } from "./version.ts"
@@ -26,6 +26,8 @@ import { registerPlanningRoutes } from "./routes/planning-routes.ts"
 import { registerContainerRoutes } from "./routes/container-routes.ts"
 import { registerTaskGroupRoutes } from "./routes/task-group-routes.ts"
 import { registerStatsRoutes } from "./routes/stats-routes.ts"
+import { HttpRouteError } from "./route-interpreter.ts"
+import { ErrorCode } from "../shared/error-codes.ts"
 
 class ServerRuntimeError extends Schema.TaggedError<ServerRuntimeError>()("ServerRuntimeError", {
   operation: Schema.String,
@@ -91,6 +93,7 @@ export class PiKanbanServer {
   private readonly onGetSlots: GetSlotsFn | null
   private readonly onGetRunQueueStatus: GetRunQueueStatusFn | null
   private readonly onManualSelfHealRecover: ManualSelfHealRecoverFn | null
+  private readonly onCleanRun: CleanRunFn | null
   private readonly defaultPort: number
   private readonly smartRepair: SmartRepairService
   private readonly imageManager?: ContainerImageManager
@@ -157,6 +160,7 @@ export class PiKanbanServer {
       onGetSlots?: GetSlotsFn
       onGetRunQueueStatus?: GetRunQueueStatusFn
       onManualSelfHealRecover?: ManualSelfHealRecoverFn
+      onCleanRun?: CleanRunFn
       settings?: InfrastructureSettings
       projectRoot?: string
       smartRepair?: SmartRepairService
@@ -192,6 +196,7 @@ export class PiKanbanServer {
     this.onGetSlots = opts.onGetSlots ?? null
     this.onGetRunQueueStatus = opts.onGetRunQueueStatus ?? null
     this.onManualSelfHealRecover = opts.onManualSelfHealRecover ?? null
+    this.onCleanRun = opts.onCleanRun ?? null
     this.imageManager = opts.imageManager
     this.containerManager = opts.containerManager
     this.planningSessionManager = opts.planningSessionManager
@@ -342,15 +347,7 @@ export class PiKanbanServer {
       }
 
       if (this.settings?.workflow?.container?.enabled !== false && this.containerManager) {
-        const setupStatus = yield* this.containerManager.validateSetup().pipe(
-          Effect.mapError((cause) =>
-            new ServerRuntimeError({
-              operation: "start",
-              message: `Failed to validate container runtime: ${cause instanceof Error ? cause.message : String(cause)}`,
-              cause,
-            }),
-          ),
-        )
+        const setupStatus = yield* this.containerManager.validateSetup()
         if (!setupStatus.podman) {
           return yield* new ServerRuntimeError({
             operation: "start",
@@ -530,6 +527,7 @@ export class PiKanbanServer {
       onGetSlots: this.onGetSlots,
       onGetRunQueueStatus: this.onGetRunQueueStatus,
       onManualSelfHealRecover: this.onManualSelfHealRecover,
+      onCleanRun: this.onCleanRun,
       imageManager: this.imageManager,
       containerManager: this.containerManager,
       validateContainerImage: (tag) => this.validateContainerImage(tag),
@@ -626,9 +624,10 @@ export class PiKanbanServer {
         const body = (yield* Effect.tryPromise({
           try: () => req.json() as Promise<Record<string, unknown>>,
           catch: (cause) =>
-            new ServerRuntimeError({
-              operation: "registerRoutes.options",
-              message: cause instanceof Error ? cause.message : String(cause),
+            new HttpRouteError({
+              message: `Failed to parse options request: ${cause instanceof Error ? cause.message : String(cause)}`,
+              code: ErrorCode.INVALID_JSON_BODY,
+              status: 400,
               cause,
             }),
         })) as Record<string, unknown>
@@ -724,14 +723,18 @@ export class PiKanbanServer {
         }),
       })
 
-      const images = yield* Effect.try({
-        try: () => JSON.parse(stdout) as Array<{ Names?: string[]; CreatedAt?: string; Size?: string }>,
-        catch: (cause) => new ServerRuntimeError({
+      const PodmanImageSchema = Schema.Array(Schema.Struct({
+        Names: Schema.optional(Schema.Array(Schema.String)),
+        CreatedAt: Schema.optional(Schema.String),
+        Size: Schema.optional(Schema.String),
+      }))
+      const images = yield* Schema.decodeUnknown(Schema.parseJson(PodmanImageSchema))(stdout).pipe(
+        Effect.mapError((cause) => new ServerRuntimeError({
           operation: "getPodmanImages",
           message: cause instanceof Error ? cause.message : String(cause),
           cause,
-        }),
-      })
+        })),
+      )
 
       const result: Array<{ tag: string; createdAt: number; size: string }> = []
 

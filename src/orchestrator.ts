@@ -48,7 +48,6 @@ import {
   clearAllPausedSessionStates,
 } from "./runtime/session-pause-state.ts"
 
-// Import from new orchestrator modules
 import {
   OrchestratorOperationError,
   type ContainerImageOperations,
@@ -73,9 +72,12 @@ import {
   validateWorkflowImagesEffect,
   isCustomImage,
   getContainerImageOperations as getContainerImageOps,
-  manualSelfHealRecover,
   maybeSelfHealTask,
+  cleanWorkflowRun,
+  type CleanRunResult,
 } from "./orchestrator/index.ts"
+
+export { OrchestratorOperationError }
 
 export class PiOrchestrator {
   private running = false
@@ -543,33 +545,125 @@ export class PiOrchestrator {
       const run = this.db.getWorkflowRun(runId)
       if (!run) return
 
-      let changed = true
-      while (changed) {
-        changed = false
+      // Check if any task has a failed/stuck dependency
+      let hasFailedDependency = false
+      let failedDependencyName = ""
+      let failedTaskId = ""
 
-        for (const taskId of run.taskOrder) {
-          if (!(yield* this.scheduler.isTaskQueued(taskId))) continue
-          const task = this.db.getTask(taskId)
-          if (!task) continue
+      for (const taskId of run.taskOrder) {
+        if (!(yield* this.scheduler.isTaskQueued(taskId))) continue
+        const task = this.db.getTask(taskId)
+        if (!task) continue
 
-          const failedDependency = task.requirements
-            .map((depId) => this.db.getTask(depId))
-            .find((dep) => dep && (dep.status === "failed" || dep.status === "stuck"))
+        const failedDependency = task.requirements
+          .map((depId) => this.db.getTask(depId))
+          .find((dep) => dep && (dep.status === "failed" || dep.status === "stuck"))
 
-          if (!failedDependency) continue
-
-          yield* this.scheduler.removeQueuedTask(taskId)
-          this.db.updateTask(taskId, {
-            status: "failed",
-            errorMessage: `Dependency \"${failedDependency.name}\" did not complete successfully`,
-          })
-          this.broadcastTask(taskId)
-          changed = true
+        if (failedDependency) {
+          hasFailedDependency = true
+          failedDependencyName = failedDependency.name
+          failedTaskId = taskId
+          break // Stop at first failed dependency - we need to stop the run
         }
+      }
+
+      // If a failed dependency was found, stop the run immediately
+      // This keeps dependent tasks in backlog instead of marking them as failed
+      if (hasFailedDependency) {
+        yield* Effect.logWarning(
+          `[orchestrator] Run ${runId} stopped due to dependency failure: ${failedDependencyName} (blocking task ${failedTaskId})`,
+        )
+        yield* this.stopRunDueToFailure(runId, failedDependencyName)
       }
     }).pipe(
       Effect.mapError((cause) => this.toOperationError("failTasksBlockedByDependency", cause)),
     )
+  }
+
+  /**
+   * Stops a workflow run due to a task failure.
+   * Unlike stopRun(), this marks the run as failed and preserves dependent tasks in backlog.
+   * Dependent tasks remain in "backlog" status instead of being marked as "failed".
+   */
+  private stopRunDueToFailure(runId: string, failedDependencyName: string): Effect.Effect<void, OrchestratorOperationError> {
+    return this.wrapOperation("stopRunDueToFailure", Effect.gen(this, function* () {
+      const run = this.db.getWorkflowRun(runId)
+      if (!run) {
+        yield* Effect.logError(`[orchestrator] Cannot stop run due to failure: run ${runId} not found`)
+        return
+      }
+
+      // Only stop if the run is still active
+      if (run.status !== "queued" && run.status !== "running" && run.status !== "paused") {
+        yield* Effect.logInfo(`[orchestrator] Run ${runId} already terminal (status: ${run.status}), skipping failure stop`)
+        return
+      }
+
+      yield* Effect.logInfo(`[orchestrator] Stopping run ${runId} due to task failure`)
+      
+      const control = this.getRunControl(runId)
+      control.shouldStop = true
+      yield* this.interruptRunTaskFibers(runId)
+
+      // Kill active processes for this run
+      for (const [sessionId, activeProcess] of [...this.activeSessionProcesses]) {
+        const taskId = activeProcess.session.taskId
+        if (!taskId || !run.taskOrder.includes(taskId)) continue
+        if ("forceKill" in activeProcess.process) {
+          yield* activeProcess.process.forceKill("SIGKILL")
+        }
+        this.activeSessionProcesses.delete(sessionId)
+      }
+
+      // Move all non-terminal tasks to backlog (not failed!)
+      // This prevents cascade failures - dependent tasks stay in backlog for retry
+      for (const taskId of run.taskOrder ?? []) {
+        const task = this.db.getTask(taskId)
+        if (!task) continue
+
+        // Only process tasks that aren't already in a terminal state
+        const isTerminal = task.status === "done" || task.status === "failed" || task.status === "stuck"
+        if (isTerminal) continue
+
+        if (yield* this.scheduler.isTaskExecuting(taskId)) {
+          yield* this.scheduler.completeTask(taskId, "failed", task?.sessionId ?? null).pipe(Effect.orDie)
+        } else if (yield* this.scheduler.isTaskQueued(taskId)) {
+          yield* this.scheduler.removeQueuedTask(taskId)
+        }
+
+        // Move to backlog instead of failed - this is the key change for cascade prevention
+        if (task.status === "queued" || task.status === "executing" || task.status === "review") {
+          this.db.updateTask(taskId, {
+            status: "backlog",
+            errorMessage: `Workflow stopped: dependency "${failedDependencyName}" failed`,
+            sessionId: null,
+            sessionUrl: null,
+          })
+          this.broadcastTask(taskId)
+        }
+      }
+
+      // Mark run as failed (not completed like stopRun does)
+      const updated = this.db.updateWorkflowRun(runId, {
+        status: "failed",
+        currentTaskId: null,
+        currentTaskIndex: run.taskOrder.length,
+        finishedAt: nowUnix(),
+        errorMessage: `Task failed: ${failedDependencyName}`,
+      })
+
+      if (updated) {
+        const enriched = yield* this.enrichWorkflowRunEffect(updated)
+        if (enriched) {
+          this.broadcast({ type: "run_updated", payload: enriched })
+        }
+        this.broadcast({ type: "execution_failed", payload: { runId, reason: "task_failure" } })
+        yield* Effect.logInfo(`[orchestrator] Run ${runId} stopped due to failure, dependent tasks preserved in backlog`)
+      }
+
+      yield* this.scheduler.removeRun(runId).pipe(Effect.orDie)
+      this.unregisterRun(runId)
+    }))
   }
 
   private handleScheduledTaskLifecycleFailureEffect(
@@ -589,26 +683,21 @@ export class PiOrchestrator {
         return
       }
 
-      for (const runTaskId of run.taskOrder) {
-        const runTask = this.db.getTask(runTaskId)
-        if (yield* this.scheduler.isTaskExecuting(runTaskId)) {
-          yield* this.scheduler.completeTask(runTaskId, "failed", runTask?.sessionId ?? null).pipe(Effect.orDie)
-        } else if (yield* this.scheduler.isTaskQueued(runTaskId)) {
-          yield* this.scheduler.removeQueuedTask(runTaskId)
-        }
+      // Only fail the specific task that had the lifecycle failure
+      // Other tasks should remain queued/backlog for retry
+      const failedTask = this.db.getTask(taskId)
+      if (yield* this.scheduler.isTaskExecuting(taskId)) {
+        yield* this.scheduler.completeTask(taskId, "failed", failedTask?.sessionId ?? null).pipe(Effect.orDie)
+      } else if (yield* this.scheduler.isTaskQueued(taskId)) {
+        yield* this.scheduler.removeQueuedTask(taskId)
+      }
 
-        if (!runTask || this.isTaskRunTerminal(runTask)) {
-          continue
-        }
-
-        this.db.updateTask(runTaskId, {
+      if (failedTask && !this.isTaskRunTerminal(failedTask)) {
+        this.db.updateTask(taskId, {
           status: "failed",
-          errorMessage:
-            runTaskId === taskId
-              ? `Workflow orchestration failed: ${error.message}`
-              : `Workflow aborted because orchestration failed while processing task ${taskId}: ${error.message}`,
+          errorMessage: `Workflow orchestration failed: ${error.message}`,
         })
-        this.broadcastTask(runTaskId)
+        this.broadcastTask(taskId)
       }
 
       const completedCount = run.taskOrder.reduce((count, runTaskId) => {
@@ -655,9 +744,11 @@ export class PiOrchestrator {
       let latestTask: Task | null
       try {
         latestTask = this.db.getTask(taskId)
-      } catch {
-        // DB was closed (e.g. during test teardown) before the background task completed; abort gracefully.
-        return
+      } catch (error) {
+        return yield* new OrchestratorOperationError({
+          operation: "startScheduledTaskEffect",
+          message: `Failed to load task ${taskId} after execution: ${error instanceof Error ? error.message : String(error)}`,
+        })
       }
       if (!latestTask) {
         return yield* new OrchestratorOperationError({
@@ -672,17 +763,19 @@ export class PiOrchestrator {
         return
       }
 
-      if (latestTask.status === "failed" || latestTask.status === "stuck") {
-        const selfHealResult = yield* this.maybeSelfHealTask(runId, latestTask).pipe(Effect.either)
-        if (Either.isRight(selfHealResult) && selfHealResult.right) {
-          yield* this.refreshRunProgressEffect(runId)
-          yield* this.triggerSchedulingEffect()
-          return
-        }
-        if (Either.isLeft(selfHealResult)) {
-          yield* Effect.logError(`[orchestrator] Self-heal failed for task ${taskId}: ${selfHealResult.left.message}`)
-        }
-      }
+      // Self-healing temporarily disabled until architecture is fixed
+      // See: plans/fix-self-healing.md for the full refactoring plan
+      // if (latestTask.status === "failed" || latestTask.status === "stuck") {
+      //   const selfHealResult = yield* this.maybeSelfHealTask(runId, latestTask).pipe(Effect.either)
+      //   if (Either.isRight(selfHealResult) && selfHealResult.right) {
+      //     yield* this.refreshRunProgressEffect(runId)
+      //     yield* this.triggerSchedulingEffect()
+      //     return
+      //   }
+      //   if (Either.isLeft(selfHealResult)) {
+      //     yield* Effect.logError(`[orchestrator] Self-heal failed for task ${taskId}: ${selfHealResult.left.message}`)
+      //   }
+      // }
 
       const finalStatus = latestTask.status === "done"
         ? "done"
@@ -1065,11 +1158,31 @@ export class PiOrchestrator {
           })
         }
 
+        // Filter to only runnable tasks (backlog/template); skip completed/failed tasks
+        const runnableTaskIds = group.taskIds.filter((id) => {
+          const task = this.db.getTask(id)
+          if (!task) return false
+          return task.status === "backlog" || task.status === "template"
+        })
+
+        if (runnableTaskIds.length === 0) {
+          return yield* new OrchestratorOperationError({
+            operation: "startGroup",
+            message: `Cannot start group "${group.name}": no runnable tasks (all tasks are already completed or in a non-runnable state)`,
+            code: ErrorCode.EXECUTION_OPERATION_FAILED,
+          })
+        }
+
+        const skippedCount = group.taskIds.length - runnableTaskIds.length
+        if (skippedCount > 0) {
+          yield* Effect.logInfo(`[orchestrator] Skipping ${skippedCount} non-runnable tasks when starting group "${group.name}"`)
+        }
+
         return yield* this.startRunEffect({
           kind: "group_tasks",
           displayName: `Group: ${group.name}`,
           groupId: group.id,
-          taskOrder: group.taskIds,
+          taskOrder: runnableTaskIds,
         })
       }))
   }
@@ -1197,8 +1310,15 @@ export class PiOrchestrator {
     for (const taskId of run.taskOrder) {
       const task = this.db.getTask(taskId)
       if (task?.sessionId) {
-        yield* this.killSessionImmediately(task.sessionId)
-        result.killed++
+          // Use either to capture success/failure without failing the whole operation
+          const killResult = yield* this.killSessionImmediately(task.sessionId).pipe(
+            Effect.either
+          )
+          if (killResult._tag === "Left") {
+            const errorMessage = killResult.left instanceof Error ? killResult.left.message : String(killResult.left)
+            yield* Effect.logWarning(`[orchestrator] Failed to kill session ${task.sessionId}: ${errorMessage}`)
+          }
+          result.killed++
       }
     }
 
@@ -1207,39 +1327,34 @@ export class PiOrchestrator {
       for (const taskId of run.taskOrder) {
         const task = this.db.getTask(taskId)
         if (task?.sessionId) {
-          try {
-            yield* this.containerManager!.forceKillContainer(task.sessionId!).pipe(
-              Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)),
-            )
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error)
-            yield* Effect.logWarning(`[orchestrator] Failed to kill container for session ${task.sessionId}: ${msg}`)
-          }
+          // forceKillContainer never fails - it returns boolean
+          yield* this.containerManager!.forceKillContainer(task.sessionId!)
         }
       }
       // Run a final emergency sweep to terminate any container that may have escaped targeted kills.
-      result.killed += yield* this.containerManager!.emergencyStop().pipe(
-        Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)),
-      )
+      result.killed += yield* this.containerManager!.emergencyStop()
     }
 
     // 3. Delete all worktrees for this run's tasks
     for (const taskId of run.taskOrder) {
       const task = this.db.getTask(taskId)
       if (task?.worktreeDir && existsSync(task.worktreeDir)) {
-        try {
-          yield* Effect.logInfo(`[orchestrator] Removing worktree: ${task.worktreeDir}`)
-          yield* this.worktree.complete(task.worktreeDir!, {
-            branch: "",
-            targetBranch: "",
-            shouldMerge: false,
-            shouldRemove: true,
-          }).pipe(Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)))
+        yield* Effect.logInfo(`[orchestrator] Removing worktree: ${task.worktreeDir}`)
+        // Use either to capture success/failure without failing the whole operation
+        const worktreeResult = yield* this.worktree.complete(task.worktreeDir!, {
+          branch: "",
+          targetBranch: "",
+          shouldMerge: false,
+          shouldRemove: true,
+        }).pipe(
+          Effect.either
+        )
+        if (worktreeResult._tag === "Left") {
+          const errorMessage = worktreeResult.left instanceof Error ? worktreeResult.left.message : String(worktreeResult.left)
+          yield* Effect.logWarning(`[orchestrator] Failed to remove worktree ${task.worktreeDir}: ${errorMessage}`)
+        } else {
           this.db.updateTask(taskId, { worktreeDir: null })
           result.cleaned++
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error)
-          yield* Effect.logWarning(`[orchestrator] Failed to remove worktree ${task.worktreeDir}: ${msg}`)
         }
       }
     }
@@ -1254,16 +1369,17 @@ export class PiOrchestrator {
         if (task?.containerImage && task.containerImage !== defaultImage) {
           // Only delete custom-tagged images, never the default base image
           if (this.isCustomImage(task.containerImage)) {
-            try {
-              yield* Effect.logInfo(`[orchestrator] Deleting custom container image: ${task.containerImage}`)
-              const containerManager = yield* this.getContainerImageOperations("destructiveStop")
-              yield* containerManager.deleteImage(task.containerImage!).pipe(
-                Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)),
-              )
+            yield* Effect.logInfo(`[orchestrator] Deleting custom container image: ${task.containerImage}`)
+            const containerManager = yield* this.getContainerImageOperations("destructiveStop")
+            // Use either to capture success/failure without failing the whole operation
+            const imageResult = yield* containerManager.deleteImage(task.containerImage!).pipe(
+              Effect.either
+            )
+            if (imageResult._tag === "Left") {
+              const errorMessage = imageResult.left instanceof Error ? imageResult.left.message : String(imageResult.left)
+              yield* Effect.logWarning(`[orchestrator] Failed to delete custom image ${task.containerImage}: ${errorMessage}`)
+            } else {
               this.db.updateTask(taskId, { containerImage: undefined })
-            } catch (error) {
-              const msg = error instanceof Error ? error.message : String(error)
-              yield* Effect.logWarning(`[orchestrator] Failed to delete custom image ${task.containerImage}: ${msg}`)
             }
           }
         }
@@ -1754,6 +1870,25 @@ export class PiOrchestrator {
 
       // Track active task for pause/stop operations
       this.activeTask = task
+      
+      // CRITICAL: Verify task doesn't already have an error before starting
+      // This catches any errors that might have been set during worktree creation or setup
+      const taskPreCheck = this.db.getTask(task.id)
+      if (taskPreCheck?.errorMessage) {
+        yield* Effect.logError(
+          `[orchestrator] Task ${task.name}(${task.id}) has error_message before execution start - aborting: ${taskPreCheck.errorMessage}`,
+        )
+        yield* this.scheduler.completeTask(task.id, "failed", taskPreCheck.sessionId).pipe(Effect.orDie)
+        this.db.updateTask(task.id, {
+          status: "failed",
+          errorMessage: `Pre-execution error check failed: ${taskPreCheck.errorMessage}`,
+        })
+        this.broadcastTask(task.id)
+        return yield* new OrchestratorOperationError({
+          operation: "executeTask.preFlightErrorCheck",
+          message: `Task has error_message before execution: ${taskPreCheck.errorMessage}`,
+        })
+      }
 
       if (task.executionStrategy === "best_of_n") {
         return yield* this.runBestOfNExecution(task, options)
@@ -1815,6 +1950,26 @@ export class PiOrchestrator {
           )
           this.db.updateTask(task.id, { worktreeDir: worktreeInfo.directory })
         }
+        
+        // CRITICAL: After worktree creation/verification, check if error was set
+        // This catches any worktree creation issues that might have set error_message
+        const taskAfterWorktree = this.db.getTask(task.id)
+        if (taskAfterWorktree?.errorMessage) {
+          yield* Effect.logError(
+            `[orchestrator] Task ${task.name}(${task.id}) has error_message after worktree setup - aborting before starting agent: ${taskAfterWorktree.errorMessage}`,
+          )
+          yield* this.scheduler.completeTask(task.id, "failed", taskAfterWorktree.sessionId).pipe(Effect.orDie)
+          this.db.updateTask(task.id, {
+            status: "failed",
+            errorMessage: `Worktree setup failed: ${taskAfterWorktree.errorMessage}`,
+          })
+          this.broadcastTask(task.id)
+          return yield* new OrchestratorOperationError({
+            operation: "executeTask.worktreeErrorCheck",
+            message: `Task has error_message after worktree setup: ${taskAfterWorktree.errorMessage}`,
+          })
+        }
+        
         this.activeWorktreeInfo = worktreeInfo
         this.broadcastTask(task.id)
 
@@ -1905,7 +2060,7 @@ export class PiOrchestrator {
           }
 
           // Special handling for CollectEventsTimeoutError
-          if (error._tag === "CollectEventsTimeoutError") {
+          if (error instanceof CollectEventsTimeoutError) {
             const completionCheck = checkEssentialCompletion(error.collectedEvents)
             if (completionCheck.isEssentiallyComplete) {
               return Effect.gen(this, function* () {
@@ -2219,7 +2374,9 @@ export class PiOrchestrator {
         this.broadcastTask(taskId)
         try {
           unlinkSync(reviewFilePath)
-        } catch {}
+        } catch (error) {
+          yield* Effect.logWarning(`Failed to cleanup review file ${reviewFilePath}: ${error instanceof Error ? error.message : String(error)}`)
+        }
       }
     })
   }
@@ -2683,42 +2840,27 @@ export class PiOrchestrator {
     })
   }
 
+
+
   /**
-   * Apply a manual self-heal recovery action from the UI.
-   * This is called when the user explicitly selects a recovery action from a self-heal report.
+   * Clean/reset a workflow run and all its tasks
+   * Resets all tasks in the run to backlog status and deletes all associated data
    */
-  manualSelfHealRecover(
-    taskId: string,
-    reportId: string,
-    action: "restart_task" | "keep_failed",
-  ): Effect.Effect<{ ok: boolean; message: string }, OrchestratorOperationError> {
-    const report = this.db.getSelfHealReport(reportId)
-    if (!report) {
-      return Effect.fail(new OrchestratorOperationError({
-        operation: "manualSelfHealRecover",
-        message: `Self-heal report not found: ${reportId}`,
-      }))
-    }
-    
-    return manualSelfHealRecover(
-      taskId,
-      reportId,
-      action,
-      { db: this.db, selfHealingService: this.selfHealingService, broadcast: this.broadcast },
-      {
-        requeueExecutingTask: (taskId) => this.scheduler.requeueExecutingTask(taskId).pipe(
-          Effect.map(result => result !== null),
-          Effect.orDie
-        ),
-        enqueueTask: (runId, taskId) => this.scheduler.enqueueTask(runId, taskId).pipe(Effect.orDie),
-        getExecutingStates: (runId) => this.scheduler.getExecutingStates(runId).pipe(Effect.orDie),
-        getQueuedTasks: (runId) => this.scheduler.getQueuedTasks(runId),
-      },
-      report.runId,
-      (taskId) => this.broadcastTask(taskId),
-      (runId) => this.refreshRunProgressEffect(runId),
-      () => this.triggerSchedulingEffect(),
-    )
+  cleanRun(runId: string): Effect.Effect<CleanRunResult, OrchestratorOperationError> {
+    return this.wrapOperation("cleanRun", Effect.gen(this, function* () {
+      const result = yield* cleanWorkflowRun(runId, {
+        db: this.db,
+        broadcast: this.broadcast,
+      }).pipe(
+        Effect.mapError((error) => new OrchestratorOperationError({
+          operation: "cleanRun",
+          message: error.message,
+          code: error.code,
+          cause: error,
+        }))
+      )
+      return result
+    }))
   }
 
   private broadcastTask(taskId: string): void {
@@ -2727,17 +2869,12 @@ export class PiOrchestrator {
     this.broadcast({ type: "task_updated", payload: updated })
   }
 
-  private maybeSelfHealTask(runId: string, task: Task): Effect.Effect<boolean, OrchestratorOperationError> {
+  private maybeSelfHealTask(runId: string, task: Task): Effect.Effect<import("./orchestrator/self-healing.ts").SelfHealInvestigationResult, OrchestratorOperationError> {
     return maybeSelfHealTask(
       runId,
       task,
       { db: this.db, selfHealingService: this.selfHealingService, broadcast: this.broadcast },
       {
-        requeueExecutingTask: (taskId) => this.scheduler.requeueExecutingTask(taskId).pipe(
-          Effect.map(result => result !== null),
-          Effect.orDie
-        ),
-        enqueueTask: (runId, taskId) => this.scheduler.enqueueTask(runId, taskId).pipe(Effect.orDie),
         getExecutingStates: (runId) => this.scheduler.getExecutingStates(runId).pipe(Effect.orDie),
         getQueuedTasks: (runId) => this.scheduler.getQueuedTasks(runId),
       },

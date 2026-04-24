@@ -217,11 +217,6 @@ bun test tests/*.test.ts
 bun run test:effect-migration
 ```
 
-Current verification status:
-- 14 migration checks pass
-- 246 unit tests pass
-- 6 effect migration boundary tests pass
-
 ## Common Migration Patterns
 
 ### Converting a Promise-based method

@@ -101,10 +101,10 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
     Effect.gen(function* () {
       const prompt = db.getPlanningPrompt("default")
       if (!prompt) {
-        return yield* Effect.fail(notFoundError(
+        return yield* notFoundError(
           "Planning prompt not found",
           ErrorCode.PLANNING_PROMPT_NOT_CONFIGURED,
-        ))
+        )
       }
       return json(prompt)
     }),
@@ -125,17 +125,17 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
 
       const existing = db.getPlanningPrompt((body as Record<string, unknown>).key as string ?? "default")
       if (!existing) {
-        return yield* Effect.fail(notFoundError(
+        return yield* notFoundError(
           "Planning prompt not found",
           ErrorCode.PLANNING_PROMPT_NOT_CONFIGURED,
-        ))
+        )
       }
 
       const updated = db.updatePlanningPrompt(existing.id, {
-        name: (body as Record<string, unknown>).name,
-        description: (body as Record<string, unknown>).description,
-        promptText: (body as Record<string, unknown>).promptText,
-        isActive: (body as Record<string, unknown>).isActive,
+        name: (body as Record<string, unknown>).name as string | undefined,
+        description: (body as Record<string, unknown>).description as string | undefined,
+        promptText: (body as Record<string, unknown>).promptText as string | undefined,
+        isActive: (body as Record<string, unknown>).isActive as boolean | undefined,
       })
 
       broadcast({ type: "planning_prompt_updated", payload: updated })
@@ -173,11 +173,11 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       }
 
       return yield* ctx.planningSessionManager.createSession({
-        cwd: body.cwd ?? process.cwd(),
+        cwd: (body.cwd as string | undefined) ?? process.cwd(),
         systemPrompt: planningPrompt.promptText,
-        model: body.model ?? "default",
-        thinkingLevel: body.thinkingLevel ?? "default",
-        sessionKind,
+        model: (body.model as string | undefined) ?? "default",
+        thinkingLevel: (body.thinkingLevel as "default" | "low" | "medium" | "high" | undefined) ?? "default",
+        sessionKind: sessionKind as "planning" | "container_config",
         onMessage: (message: SessionMessage) => {
           broadcast({ type: "planning_session_message", payload: { sessionId: message.sessionId, message } })
         },
@@ -221,7 +221,7 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       }
 
       return yield* planningSession.sendMessage({
-        content: body.content,
+        content: body.content as string,
         contextAttachments: body.contextAttachments as ContextAttachment[] | undefined,
       }).pipe(
         Effect.as(json({ ok: true })),
@@ -261,8 +261,8 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
 
     return yield* ctx.planningSessionManager.reconnectSession(params.id, {
         systemPrompt: planningPrompt.promptText,
-        model: body.model ?? session.model ?? "default",
-        thinkingLevel: body.thinkingLevel ?? session.thinkingLevel ?? "default",
+        model: (body.model as string | undefined) ?? session.model ?? "default",
+        thinkingLevel: (body.thinkingLevel as "default" | "low" | "medium" | "high" | undefined) ?? session.thinkingLevel ?? "default",
         onMessage: (message: SessionMessage) => {
           broadcast({ type: "planning_session_message", payload: { sessionId: session.id, message } })
         },
@@ -313,20 +313,25 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       return json(createApiError("Planning session not active", ErrorCode.PLANNING_SESSION_NOT_ACTIVE), 400)
     }
 
+    const model = body.model as string | undefined
+    const thinkingLevel = body.thinkingLevel as "default" | "low" | "medium" | "high" | undefined
+    const setModelEffect = model
+      ? planningSession.setModel(model)
+      : Effect.void
     const setThinkingLevelEffect =
-      body.thinkingLevel && body.thinkingLevel !== "default"
-        ? planningSession.setThinkingLevel(body.thinkingLevel)
+      thinkingLevel && thinkingLevel !== "default"
+        ? planningSession.setThinkingLevel(thinkingLevel)
         : Effect.void
 
     return yield* Effect.gen(function* () {
-        yield* planningSession.setModel(body.model)
+        yield* setModelEffect
         yield* setThinkingLevelEffect
         const updated = db.getWorkflowSession(params.id)
         const withUrl = updated ? { ...updated, sessionUrl: sessionUrlFor(updated.id) } : null
         if (withUrl) {
           broadcast({ type: "planning_session_updated", payload: withUrl })
         }
-        return json({ ok: true, model: body.model, thinkingLevel: body.thinkingLevel })
+        return json({ ok: true, model, thinkingLevel })
       }).pipe(
         Effect.catchTag("PlanningSessionError", (error) =>
           Effect.fail(new HttpRouteError({
@@ -409,10 +414,10 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       Effect.gen(function* () {
         const session = db.getWorkflowSession(params.id)
         if (!session) {
-          return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+          return yield* notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND)
         }
         if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
-          return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+          return yield* badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION)
         }
         return json({ ...session, sessionUrl: sessionUrlFor(session.id) })
       }),
@@ -422,10 +427,10 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       Effect.gen(function* () {
         const session = db.getWorkflowSession(params.id)
         if (!session) {
-          return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+          return yield* notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND)
         }
         if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
-          return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+          return yield* badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION)
         }
 
         const body = (yield* Effect.tryPromise({
@@ -438,12 +443,12 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
         })) as Record<string, unknown>
 
         const updated = db.updateWorkflowSession(params.id, {
-          status: body.status,
-          errorMessage: body.errorMessage,
+          status: body.status as import("../../db/types.ts").PiSessionStatus | undefined,
+          errorMessage: body.errorMessage as string | null | undefined,
         })
 
         if (!updated) {
-          return yield* Effect.fail(internalRouteError("Failed to update session", ErrorCode.EXECUTION_OPERATION_FAILED))
+          return yield* internalRouteError("Failed to update session", ErrorCode.EXECUTION_OPERATION_FAILED)
         }
 
         const withUrl = { ...updated, sessionUrl: sessionUrlFor(updated.id) }
@@ -456,10 +461,10 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       Effect.gen(function* () {
         const session = db.getWorkflowSession(params.id)
         if (!session) {
-          return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+          return yield* notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND)
         }
         if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
-          return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+          return yield* badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION)
         }
 
         return yield* ctx.planningSessionManager.closeSession(params.id).pipe(
@@ -491,10 +496,10 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
     Effect.gen(function* () {
       const session = db.getWorkflowSession(params.id)
       if (!session) {
-        return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+        return yield* notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND)
       }
       if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
-        return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+        return yield* badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION)
       }
 
       const limit = Number(url.searchParams.get("limit") ?? 500)
@@ -507,10 +512,10 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
     Effect.gen(function* () {
       const session = db.getWorkflowSession(params.id)
       if (!session) {
-        return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+        return yield* notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND)
       }
       if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
-        return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+        return yield* badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION)
       }
 
       return json(db.getSessionTimelineEntries(params.id))
@@ -522,10 +527,10 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
     Effect.gen(function* () {
       const session = db.getWorkflowSession(params.id)
       if (!session) {
-        return yield* Effect.fail(notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND))
+        return yield* notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND)
       }
       if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
-        return yield* Effect.fail(badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION))
+        return yield* badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION)
       }
 
       const body = (yield* Effect.tryPromise({
@@ -538,7 +543,7 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       })) as Record<string, unknown>
 
       if (!body.name || typeof body.name !== "string" || body.name.trim() === "") {
-        return yield* Effect.fail(badRequestError("Name is required and must be a non-empty string", ErrorCode.INVALID_REQUEST_BODY))
+        return yield* badRequestError("Name is required and must be a non-empty string", ErrorCode.INVALID_REQUEST_BODY)
       }
 
       const updated = db.updateWorkflowSession(params.id, {
@@ -546,7 +551,7 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       })
 
       if (!updated) {
-        return yield* Effect.fail(internalRouteError("Failed to update session name", ErrorCode.EXECUTION_OPERATION_FAILED))
+        return yield* internalRouteError("Failed to update session name", ErrorCode.EXECUTION_OPERATION_FAILED)
       }
 
       const withUrl = { ...updated, sessionUrl: sessionUrlFor(updated.id) }

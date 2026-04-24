@@ -11,6 +11,8 @@ import type { ExecutionGraph } from '@/types'
 
 interface ExecutionGraphModalProps {
   onClose: () => void
+  pendingGroupId?: string | null
+  onConfirm?: () => Promise<void>
 }
 
 export function ExecutionGraphModal(props: ExecutionGraphModalProps) {
@@ -39,6 +41,12 @@ export function ExecutionGraphModal(props: ExecutionGraphModalProps) {
       return
     }
     try {
+      // If onConfirm is provided, use that (handles both group and regular execution)
+      if (props.onConfirm) {
+        await props.onConfirm()
+        return
+      }
+      // Default: start regular execution
       await runApiEffect(optionsApi.startExecution())
       props.onClose()
       uiStore.showToast('Workflow run started', 'success')

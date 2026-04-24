@@ -258,81 +258,66 @@ export class ContainerImageManager {
   }
 
   private doPrepare(): Effect.Effect<void, ContainerImageManagerError> {
-    return Effect.gen(this, function* () {
+    const self = this
+    return Effect.gen(function* () {
       // First check if image already exists
-      const exists = yield* this.checkImageExists()
+      const exists = yield* self.checkImageExists()
       if (exists) {
-        this.isPrepared = true
-        this.updateStatus("ready", "Container image is ready")
+        self.isPrepared = true
+        self.updateStatus("ready", "Container image is ready")
         return
       }
 
       // Need to build or pull
-      this.updateStatus("preparing", "Preparing container image...")
-
+      self.updateStatus("preparing", "Preparing container image...")
       const startTime = Date.now()
 
-      try {
-        if (this.options.imageSource === "dockerfile") {
-          yield* Effect.tryPromise({
-            try: () => this.buildFromDockerfile(),
-            catch: (cause) =>
-              new ContainerImageManagerError({
-                operation: "buildFromDockerfile",
-                message: cause instanceof Error ? cause.message : String(cause),
-                cause,
-              }),
-          })
-        } else if (this.options.imageSource === "registry") {
-          yield* Effect.tryPromise({
-            try: () => this.pullFromRegistry(),
-            catch: (cause) =>
-              new ContainerImageManagerError({
-                operation: "pullFromRegistry",
-                message: cause instanceof Error ? cause.message : String(cause),
-                cause,
-              }),
-          })
-        }
+      // Build or pull the image
+      if (self.options.imageSource === "dockerfile") {
+        yield* self.buildFromDockerfileEffect()
+      } else if (self.options.imageSource === "registry") {
+        yield* self.pullFromRegistry()
+      }
 
-        const buildTime = Date.now() - startTime
-        this.isPrepared = true
-        this.saveCache({
-          imageName: this.options.imageName,
-          status: "ready",
-          lastUpdated: new Date().toISOString(),
-          source: this.options.imageSource,
-          buildTimeMs: buildTime,
-        })
-
-        this.updateStatus("ready", `Container image ready (took ${Math.round(buildTime / 1000)}s)`)
-      } catch (error) {
+      // Success path
+      const buildTime = Date.now() - startTime
+      self.isPrepared = true
+      self.saveCache({
+        imageName: self.options.imageName,
+        status: "ready",
+        lastUpdated: new Date().toISOString(),
+        source: self.options.imageSource,
+        buildTimeMs: buildTime,
+      })
+      self.updateStatus("ready", `Container image ready (took ${Math.round(buildTime / 1000)}s)`)
+    }).pipe(
+      Effect.catchAll((error) => {
         const errorMessage = error instanceof Error ? error.message : String(error)
-        this.isPrepared = false
-        this.saveCache({
-          imageName: this.options.imageName,
+        self.isPrepared = false
+        self.saveCache({
+          imageName: self.options.imageName,
           status: "error",
           lastUpdated: new Date().toISOString(),
-          source: this.options.imageSource,
+          source: self.options.imageSource,
           errorMessage,
         })
-        this.updateStatus("error", "Failed to prepare container image", undefined, errorMessage)
+        self.updateStatus("error", "Failed to prepare container image", undefined, errorMessage)
         if (error instanceof ContainerImageManagerError) {
-          return yield* error
+          return Effect.fail(error)
         }
-        return yield* new ContainerImageManagerError({
+        return Effect.fail(new ContainerImageManagerError({
           operation: "doPrepare",
           message: errorMessage,
           cause: error,
-        })
-      }
-    })
+        }))
+      }),
+    )
   }
 
   /**
-   * Build the image from Dockerfile with progress reporting.
+   * Build the image from Dockerfile with progress reporting (Effect version).
    */
-  private async buildFromDockerfile(): Promise<void> {
+  private buildFromDockerfileEffect(): Effect.Effect<void, ContainerImageManagerError> {
     const projectRoot = this.options.projectRoot || process.cwd()
     const dockerfileRelativePath = this.options.dockerfilePath || "docker/pi-agent/Dockerfile"
 
@@ -362,7 +347,7 @@ export class ContainerImageManager {
     writeInfo(`🔄 Building container image from ${dockerfilePathForBuild}...`)
     writeInfo("   This may take a minute on first run...")
 
-    return new Promise((resolve, reject) => {
+    return Effect.async<void, ContainerImageManagerError>((resume) => {
       const proc = spawn(
         "podman",
         ["build", "-t", this.options.imageName, "-f", dockerfilePathForBuild, "."],
@@ -410,14 +395,21 @@ export class ContainerImageManager {
       proc.on("close", (code) => {
         if (code === 0) {
           writeInfo(`✅ Container image built successfully: ${this.options.imageName}`)
-          resolve()
+          resume(Effect.void)
         } else {
-          reject(new Error(`Failed to build image: ${stderr || stdout || `exit code ${code}`}`))
+          resume(Effect.fail(new ContainerImageManagerError({
+            operation: "buildFromDockerfile",
+            message: `Failed to build image: ${stderr || stdout || `exit code ${code}`}`,
+          })))
         }
       })
 
       proc.on("error", (err) => {
-        reject(new Error(`Failed to spawn podman build: ${err.message}`))
+        resume(Effect.fail(new ContainerImageManagerError({
+          operation: "buildFromDockerfile",
+          message: `Failed to spawn podman build: ${err.message}`,
+          cause: err,
+        })))
       })
     })
   }
@@ -463,16 +455,14 @@ export class ContainerImageManager {
         if (code === 0) {
           // Tag the pulled image with our local name if different
           if (registryUrl !== this.options.imageName) {
-            // Chain the tag operation as an Effect
+            // Chain the tag operation as an Effect - run it and resume with result
             const tagEffect = this.execPodman(["tag", registryUrl, this.options.imageName])
-            tagEffect.pipe(
-              Effect.matchEffect({
-                onSuccess: () => resume(Effect.succeed(undefined)),
-                onFailure: (error) => resume(Effect.fail(error)),
-              })
+            Effect.runPromise(tagEffect).then(
+              () => resume(Effect.void),
+              (error) => resume(Effect.fail(error)),
             )
           } else {
-            resume(Effect.succeed(undefined))
+            resume(Effect.void)
           }
         } else {
           resume(Effect.fail(new ContainerImageManagerError({

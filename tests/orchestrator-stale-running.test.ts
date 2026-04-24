@@ -22,6 +22,13 @@ function createSettings(): InfrastructureSettings {
 }
 
 function cleanupWorktrees(): void {
+  // CRITICAL: Skip cleanup when running inside Tauroboros task container
+  // This prevents the AI from deleting worktree metadata during task execution
+  if (process.env.TAUROBOROS_TASK_ID || process.env.PI_CODING_AGENT) {
+    console.log("[orchestrator-stale-running.test] Skipping worktree cleanup inside Tauroboros container")
+    return
+  }
+  
   try {
     // List all worktrees and remove non-main ones
     const output = execFileSync("git", ["worktree", "list", "--porcelain"], {

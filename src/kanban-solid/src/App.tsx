@@ -46,6 +46,7 @@ import {
   ApproveModal,
   BatchEditModal,
   BestOfNDetailModal,
+  CleanRunModal,
   ExecutionGraphModal,
   OptionsModal,
   PlanningPromptModal,
@@ -59,7 +60,8 @@ import {
 } from '@/components'
 import { containersApi, runApiEffect, sleepMs } from '@/api'
 
-import type { Task, TaskGroup, TaskStatus } from '@/types'
+import type { Task, TaskGroup, TaskStatus, WorkflowRun } from '@/types'
+import { runsApi } from '@/api/runs'
 import { validateTaskDrop, validateGroupDrop } from '@/utils/dropValidation'
 import type { DropAction } from '@/utils/dropValidation'
 
@@ -95,6 +97,10 @@ function App() {
   const [logPanelCollapsed, setLogPanelCollapsed] = createSignal(false)
   const [highlightedRunId, setHighlightedRunId] = createSignal<string | null>(null)
   const [containerStatus, setContainerStatus] = createSignal<{ enabled: boolean; available: boolean; hasRunningWorkflows: boolean; message: string } | null>(null)
+  const [cleanRunModalOpen, setCleanRunModalOpen] = createSignal(false)
+  const [cleanRunModalRun, setCleanRunModalRun] = createSignal<WorkflowRun | null>(null)
+  const [isCleaningRun, setIsCleaningRun] = createSignal(false)
+  const [pendingGroupStart, setPendingGroupStart] = createSignal<string | null>(null)
 
   // Load container status
   const loadContainerStatus = async () => {
@@ -535,6 +541,28 @@ function App() {
     }
   }
 
+  const onStartGroup = async (groupId: string) => {
+    if (optionsStore.options()?.showExecutionGraph) {
+      setPendingGroupStart(groupId)
+      uiStore.openModal('executionGraph')
+    } else {
+      await executeGroupStart(groupId)
+    }
+  }
+
+  const executeGroupStart = async (groupId: string) => {
+    try {
+      await taskGroupsStore.startGroup(groupId)
+      uiStore.showToast('Group workflow started', 'success')
+      await runsStore.loadRuns()
+      await tasksStore.loadTasks()
+    } catch (e) {
+      uiStore.showToast('Failed to start group: ' + (e instanceof Error ? e.message : String(e)), 'error')
+    } finally {
+      setPendingGroupStart(null)
+    }
+  }
+
   const onPauseExecution = async (runId: string) => {
     uiStore.showToast('Pausing workflow...', 'info')
     const success = await workflowControl.pause(runId)
@@ -565,6 +593,36 @@ function App() {
   const closeStopConfirmModal = () => {
     uiStore.setShowStopConfirmModal(false)
     workflowControl.cancelStop()
+  }
+
+  // Clean run handlers
+  const handleOpenCleanRunModal = (run: WorkflowRun) => {
+    setCleanRunModalRun(run)
+    setCleanRunModalOpen(true)
+  }
+
+  const handleCloseCleanRunModal = () => {
+    setCleanRunModalOpen(false)
+    setCleanRunModalRun(null)
+  }
+
+  const handleConfirmCleanRun = async () => {
+    const run = cleanRunModalRun()
+    if (!run) return
+
+    setIsCleaningRun(true)
+    try {
+      const result = await runsApi.clean(run.id)
+      uiStore.showToast(result.message, 'success')
+      // Reload runs and tasks to reflect the cleaned state
+      await runsStore.loadRuns()
+      await tasksStore.loadTasks()
+      handleCloseCleanRunModal()
+    } catch (e) {
+      uiStore.showToast('Failed to clean run: ' + (e instanceof Error ? e.message : String(e)), 'error')
+    } finally {
+      setIsCleaningRun(false)
+    }
   }
 
   const handleCreateGroup = async (name: string) => {
@@ -775,7 +833,7 @@ function App() {
             }}
             onVirtualCardClick={(groupId) => taskGroupsStore.openGroup(groupId)}
             onDeleteGroup={(groupId) => taskGroupsStore.deleteGroup(groupId)}
-            onStartGroup={(groupId) => taskGroupsStore.startGroup(groupId)}
+            onStartGroup={onStartGroup}
             onCloseGroupPanel={() => taskGroupsStore.openGroup(null)}
             onRemoveTaskFromGroup={(taskId) => {
               const groupId = taskGroupsStore.activeGroupId()
@@ -836,6 +894,7 @@ function App() {
           }}
           onHighlightRun={(runId) => setHighlightedRunId(runId)}
           onClearHighlight={() => setHighlightedRunId(null)}
+          onCleanRun={handleOpenCleanRunModal}
         />
       </main>
 
@@ -934,7 +993,27 @@ function App() {
 
       <Show when={uiStore.activeModal() === 'executionGraph'}>
         <ExecutionGraphModal
-          onClose={uiStore.closeModal}
+          pendingGroupId={pendingGroupStart()}
+          onConfirm={async () => {
+            const groupId = pendingGroupStart()
+            if (groupId) {
+              await executeGroupStart(groupId)
+            } else {
+              try {
+                await optionsStore.startExecution()
+                await runsStore.loadRuns()
+                await tasksStore.loadTasks()
+                uiStore.showToast('Workflow run started', 'success')
+              } catch (e) {
+                uiStore.showToast('Execution control failed: ' + (e instanceof Error ? e.message : String(e)), 'error')
+              }
+            }
+            uiStore.closeModal()
+          }}
+          onClose={() => {
+            setPendingGroupStart(null)
+            uiStore.closeModal()
+          }}
         />
       </Show>
 
@@ -1038,6 +1117,15 @@ function App() {
           onClose={uiStore.closeModal}
         />
       </Show>
+
+      {/* Clean Run Modal */}
+      <CleanRunModal
+        run={cleanRunModalRun() || { id: '', displayName: '', status: 'completed', taskOrder: [], currentTaskIndex: 0, currentTaskId: null, pauseRequested: false, stopRequested: false, errorMessage: null, createdAt: 0, startedAt: 0, updatedAt: 0, finishedAt: null, isArchived: false, archivedAt: null, color: '#888888', kind: 'all_tasks', targetTaskId: null }}
+        isOpen={cleanRunModalOpen()}
+        isLoading={isCleaningRun()}
+        onConfirm={handleConfirmCleanRun}
+        onCancel={handleCloseCleanRunModal}
+      />
 
       {/* Chat Container */}
       <ChatContainer

@@ -35,10 +35,17 @@ export {
 export {
   type SelfHealingContext,
   type SelfHealingScheduler,
-  type ManualSelfHealResult,
-  manualSelfHealRecover,
+  type SelfHealInvestigationResult,
   maybeSelfHealTask,
 } from "./self-healing.ts"
+
+// Export clean run
+export {
+  type CleanRunContext,
+  type CleanRunResult,
+  CleanRunError,
+  cleanWorkflowRun,
+} from "./clean-run.ts"
 
 // Export auto-deploy
 export {

@@ -97,7 +97,7 @@ export function MermaidModal(props: MermaidModalProps) {
   return (
     <Portal>
       <Show when={props.isOpen}>
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
           {/* Modal Container */}
           <div class="w-[95vw] h-[95vh] bg-dark-surface rounded-lg border border-dark-border flex flex-col shadow-2xl">
             {/* Header */}

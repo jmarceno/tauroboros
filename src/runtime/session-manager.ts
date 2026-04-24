@@ -9,7 +9,7 @@ import type { PiContainerManager } from "./container-manager.ts"
 import { ContainerPiProcess } from "./container-pi-process.ts"
 import { createPiProcessEffect, type PiRuntimeMode } from "./pi-process-factory.ts"
 import { parseModelSelection } from "./model-utils.ts"
-import { loadPausedRunState } from "./session-pause-state.ts"
+import { loadPausedRunState, listPausedRunStates } from "./session-pause-state.ts"
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -133,6 +133,16 @@ export class PiSessionManager {
   ): Effect.Effect<ExecuteSessionPromptResult, SessionManagerExecuteError | PiProcessError> {
     const self = this
     return Effect.gen(function* () {
+      // CRITICAL: Check if task already has an error_message before starting
+      // If so, abort immediately without starting agent or container
+      const task = self.db.getTask(input.taskId)
+      if (task?.errorMessage) {
+        return yield* new SessionManagerExecuteError({
+          operation: "preFlightCheck",
+          message: `Task has error_message set - aborting before starting session: ${task.errorMessage}`,
+        })
+      }
+      
       const sessionId = input.resumedSessionId ?? randomUUID().slice(0, 8)
       const existingContainerId = yield* self.resolveExistingContainerIdEffect(input)
 
@@ -292,6 +302,16 @@ export class PiSessionManager {
                 cause,
               })),
             )
+            
+            // CRITICAL: Check if task was marked with error during session execution
+            // If error_message was set, abort immediately and fail hard
+            const taskAfterExecution = self.db.getTask(input.taskId)
+            if (taskAfterExecution?.errorMessage) {
+              return yield* new SessionManagerExecuteError({
+                operation: "postExecutionCheck",
+                message: `Task error_message was set during session execution - hard abort: ${taskAfterExecution.errorMessage}`,
+              })
+            }
 
             let responseText = ""
             for (let i = events.length - 1; i >= 0; i--) {

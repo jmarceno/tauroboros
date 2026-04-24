@@ -184,12 +184,16 @@ export interface SelfHealReport {
   taskStatus: TaskStatus
   errorMessage: string | null
   diagnosticsSummary: string
-  rootCauses: string[]
+  isTauroborosBug: boolean
+  rootCause: {
+    description: string
+    affectedFiles: readonly string[]
+    codeSnippet: string
+  }
   proposedSolution: string
-  implementationPlan: string[]
-  recoverable: boolean
-  recommendedAction: "restart_task" | "keep_failed"
-  actionRationale: string
+  implementationPlan: readonly string[]
+  confidence: "high" | "medium" | "low"
+  externalFactors: readonly string[]
   sourceMode: "local" | "github_clone" | "github_metadata_only"
   sourcePath: string | null
   githubUrl: string
@@ -345,12 +349,14 @@ export type WSMessageType =
   | "execution_complete"
   | "execution_paused"
   | "execution_resumed"
+  | "execution_failed"
   | "run_created"
   | "run_archived"
   | "run_updated"
   | "run_paused"           // NEW: Run was paused
   | "run_resumed"          // NEW: Run was resumed
   | "run_stopped"          // NEW: Run was stopped (with destructive flag)
+  | "run_cleaned"          // NEW: Run was cleaned/reset
   | "error"
   | "task_run_created"
   | "task_run_updated"

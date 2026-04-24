@@ -1,6 +1,8 @@
 import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
+import type { MessageRole, MessageType } from "../../types.ts"
+import type { PiSessionStatus } from "../../db/types.ts"
 import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
 import { HttpRouteError, badRequestError, internalRouteError } from "../route-interpreter.ts"
 
@@ -91,21 +93,21 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
       }
 
       if (eventType === "message") {
-        const eventMessage = body?.message ?? {}
-        const usage = eventMessage.usage ?? body?.usage ?? {}
-        const cost = usage.cost ?? {}
+        const eventMessage = (body?.message ?? {}) as Record<string, unknown>
+        const usage = (eventMessage.usage ?? body?.usage ?? {}) as Record<string, unknown>
+        const cost = (usage.cost ?? {}) as Record<string, unknown>
 
         const message = db.createSessionMessage({
           sessionId: session.id,
           taskId: session.taskId,
           taskRunId: session.taskRunId,
-          role: body?.role ?? eventMessage.role ?? "assistant",
-          eventName: body?.eventName ?? body?.type ?? null,
-          messageType: body?.messageType ?? "text",
-          contentJson: body?.contentJson ?? { text: String(body?.text ?? "") },
-          modelProvider: body?.modelProvider ?? eventMessage.provider ?? null,
-          modelId: body?.modelId ?? eventMessage.model ?? null,
-          agentName: body?.agentName ?? null,
+          role: (body?.role ?? eventMessage.role ?? "assistant") as MessageRole,
+          eventName: (body?.eventName ?? body?.type ?? null) as string | null,
+          messageType: (body?.messageType ?? "text") as MessageType,
+          contentJson: (body?.contentJson ?? { text: String(body?.text ?? "") }) as Record<string, unknown>,
+          modelProvider: (body?.modelProvider ?? eventMessage.provider ?? null) as string | null,
+          modelId: (body?.modelId ?? eventMessage.model ?? null) as string | null,
+          agentName: (body?.agentName ?? null) as string | null,
           promptTokens: typeof usage.input === "number" ? usage.input : null,
           completionTokens: typeof usage.output === "number" ? usage.output : null,
           cacheReadTokens: typeof usage.cacheRead === "number" ? usage.cacheRead : null,
@@ -121,8 +123,8 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
 
       if (eventType === "status") {
         const updated = db.updateWorkflowSession(session.id, {
-          status: body?.status ?? session.status,
-          errorMessage: body?.errorMessage ?? session.errorMessage,
+          status: (body?.status as PiSessionStatus | undefined) ?? session.status,
+          errorMessage: (body?.errorMessage as string | undefined) ?? session.errorMessage,
         })
         broadcast({ type: "session_status_changed", payload: updated ?? session })
         return json({ ok: true })
@@ -130,22 +132,22 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
 
       if (eventType === "complete") {
         const updated = db.updateWorkflowSession(session.id, {
-          status: body?.status ?? "completed",
+          status: (body?.status as PiSessionStatus | undefined) ?? "completed",
           finishedAt: Math.floor(Date.now() / 1000),
-          exitCode: body?.exitCode ?? null,
-          exitSignal: body?.exitSignal ?? null,
-          errorMessage: body?.errorMessage ?? null,
+          exitCode: (body?.exitCode as number | null | undefined) ?? null,
+          exitSignal: (body?.exitSignal as string | null | undefined) ?? null,
+          errorMessage: (body?.errorMessage as string | null | undefined) ?? null,
         })
         broadcast({ type: "session_completed", payload: updated ?? session })
         return json({ ok: true })
       }
 
       // Unsupported event type - use shared route interpreter
-      return yield* Effect.fail(badRequestError(
+      return yield* badRequestError(
         `Unsupported event type: ${eventType}`,
         ErrorCode.UNSUPPORTED_EVENT_TYPE,
         { eventType },
-      ))
+      )
     }),
   )
 }

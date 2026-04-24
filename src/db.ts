@@ -100,7 +100,6 @@ export class DatabaseError extends Schema.TaggedError<DatabaseError>()("Database
 
 
 
-// Color palette for workflow runs - distinct colors that work well with dark theme
 const RUN_COLORS = [
   "#ff6b6b", // Red
   "#4ecdc4", // Teal
@@ -158,10 +157,6 @@ type PromptSeed = {
   variablesJson: string[]
 }
 
-/**
- * Get default prompt templates from the catalog.
- * Templates are loaded from prompt-catalog.json for centralized control.
- */
 function getDefaultPromptTemplates(): PromptSeed[] {
   const templates = getAllPromptTemplates()
   return templates.map((template) => ({
@@ -184,6 +179,18 @@ function parseJSON<T>(value: unknown): T | null {
   } catch {
     return null
   }
+}
+
+function parseStringArray(value: unknown): string[] | null {
+  const parsed = parseJSON(value)
+  if (!Array.isArray(parsed)) return null
+  return parsed.filter((item): item is string => typeof item === "string")
+}
+
+function parseRecord(value: unknown): Record<string, unknown> | null {
+  const parsed = parseJSON(value)
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  return parsed as Record<string, unknown>
 }
 
 function asThinkingLevel(value: unknown): ThinkingLevel {
@@ -455,11 +462,7 @@ function pickString(...values: unknown[]): string | null {
   return null
 }
 
-// ============================================================================
-// Effect-wrapped validation helpers
-// These wrap the synchronous validation functions in Effect for composability.
-// They preserve the same error semantics (DatabaseError tagged errors).
-// ============================================================================
+
 
 export const asThinkingLevelEffect = (value: unknown): Effect.Effect<ThinkingLevel, DatabaseError> =>
   Effect.try({
@@ -620,9 +623,21 @@ const SESSION_MESSAGE_SELECT = `
   LEFT JOIN workflow_sessions ws ON ws.id = sm.session_id
 `
 
-function rowToTask(row: Record<string, unknown>): Task {
-  const bestOfNConfigRaw = parseJSON<BestOfNConfig>(row.best_of_n_config)
+function parseThinkingLevel(value: unknown): ThinkingLevel {
+  const str = String(value)
+  if (str === "low" || str === "medium" || str === "high" || str === "default") {
+    return str
+  }
+  return "default"
+}
 
+function parseBestOfNConfig(value: unknown): BestOfNConfig | null {
+  const parsed = parseJSON(value)
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  return parsed as BestOfNConfig
+}
+
+function rowToTask(row: Record<string, unknown>): Task {
   return {
     id: String(row.id),
     name: String(row.name),
@@ -639,7 +654,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     autoDeployCondition: asAutoDeployConditionOrNull(row.auto_deploy_condition),
     deleteWorktree: Number(row.delete_worktree ?? 1) === 1,
     status: isTaskStatus(row.status) ? row.status : "template",
-    requirements: parseJSON<string[]>(row.requirements) ?? [],
+    requirements: parseStringArray(row.requirements) ?? [],
     agentOutput: String(row.agent_output ?? ""),
     reviewCount: Number(row.review_count ?? 0),
     jsonParseRetryCount: Number(row.json_parse_retry_count ?? 0),
@@ -650,14 +665,14 @@ function rowToTask(row: Record<string, unknown>): Task {
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at),
-    thinkingLevel: ["low", "medium", "high", "default"].includes(String(row.thinking_level)) ? String(row.thinking_level) as ThinkingLevel : "default",
-    planThinkingLevel: ["low", "medium", "high", "default"].includes(String(row.plan_thinking_level)) ? String(row.plan_thinking_level) as ThinkingLevel : "default",
-    executionThinkingLevel: ["low", "medium", "high", "default"].includes(String(row.execution_thinking_level)) ? String(row.execution_thinking_level) as ThinkingLevel : "default",
+    thinkingLevel: parseThinkingLevel(row.thinking_level),
+    planThinkingLevel: parseThinkingLevel(row.plan_thinking_level),
+    executionThinkingLevel: parseThinkingLevel(row.execution_thinking_level),
     executionPhase: isExecutionPhase(row.execution_phase) ? row.execution_phase : "not_started",
     awaitingPlanApproval: Number(row.awaiting_plan_approval ?? 0) === 1,
     planRevisionCount: Number(row.plan_revision_count ?? 0),
     executionStrategy: isExecutionStrategy(row.execution_strategy) ? row.execution_strategy : "standard",
-    bestOfNConfig: bestOfNConfigRaw ?? null,
+    bestOfNConfig: parseBestOfNConfig(row.best_of_n_config),
     bestOfNSubstage: isBestOfNSubstage(row.best_of_n_substage) ? row.best_of_n_substage : "idle",
     skipPermissionAsking: Number(row.skip_permission_asking ?? 1) === 1,
     maxReviewRunsOverride: row.max_review_runs_override === null || row.max_review_runs_override === undefined
@@ -681,6 +696,29 @@ function rowToTask(row: Record<string, unknown>): Task {
   }
 }
 
+function parseConfidence(value: unknown): SelfHealReport["confidence"] {
+  const str = String(value ?? "low")
+  if (str === "high" || str === "medium" || str === "low") return str
+  return "low"
+}
+
+function parseSourceMode(value: unknown): SelfHealReport["sourceMode"] {
+  if (value === "local") return "local"
+  if (value === "github_clone") return "github_clone"
+  return "github_metadata_only"
+}
+
+function parseRootCause(value: unknown): SelfHealReport["rootCause"] {
+  const parsed = parseRecord(value) ?? {}
+  const affectedFilesRaw = Array.isArray(parsed.affectedFiles) ? parsed.affectedFiles : []
+
+  return {
+    description: typeof parsed.description === "string" ? parsed.description : "",
+    affectedFiles: affectedFilesRaw.filter((f): f is string => typeof f === "string"),
+    codeSnippet: typeof parsed.codeSnippet === "string" ? parsed.codeSnippet : "",
+  }
+}
+
 function rowToSelfHealReport(row: Record<string, unknown>): SelfHealReport {
   return {
     id: String(row.id),
@@ -689,23 +727,18 @@ function rowToSelfHealReport(row: Record<string, unknown>): SelfHealReport {
     taskStatus: isTaskStatus(row.task_status) ? row.task_status : "failed",
     errorMessage: row.error_message ? String(row.error_message) : null,
     diagnosticsSummary: String(row.diagnostics_summary ?? ""),
-    rootCauses: parseJSON<string[]>(row.root_causes_json) ?? [],
+    isTauroborosBug: Number(row.is_tauroboros_bug ?? 0) === 1,
+    rootCause: parseRootCause(row.root_cause_json),
     proposedSolution: String(row.proposed_solution ?? ""),
-    implementationPlan: parseJSON<string[]>(row.implementation_plan_json) ?? [],
-    recoverable: Number(row.recoverable ?? 0) === 1,
-    recommendedAction: row.recommended_action === "restart_task" ? "restart_task" : "keep_failed",
-    actionRationale: String(row.action_rationale ?? ""),
-    sourceMode:
-      row.source_mode === "local"
-        ? "local"
-        : row.source_mode === "github_clone"
-          ? "github_clone"
-          : "github_metadata_only",
+    implementationPlan: parseStringArray(row.implementation_plan_json) ?? [],
+    confidence: parseConfidence(row.confidence),
+    externalFactors: parseStringArray(row.external_factors_json) ?? [],
+    sourceMode: parseSourceMode(row.source_mode),
     sourcePath: row.source_path ? String(row.source_path) : null,
     githubUrl: String(row.github_url ?? ""),
     tauroborosVersion: String(row.tauroboros_version ?? ""),
     dbPath: String(row.db_path ?? ""),
-    dbSchemaJson: parseJSON<Record<string, unknown>>(row.db_schema_json) ?? {},
+    dbSchemaJson: parseRecord(row.db_schema_json) ?? {},
     rawResponse: String(row.raw_response ?? ""),
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
@@ -739,7 +772,7 @@ function rowToTaskRun(row: Record<string, unknown>): TaskRun {
     summary: row.summary ? String(row.summary) : null,
     errorMessage: row.error_message ? String(row.error_message) : null,
     candidateId: row.candidate_id ? String(row.candidate_id) : null,
-    metadataJson: parseJSON<Record<string, unknown>>(row.metadata_json) ?? {},
+    metadataJson: parseRecord(row.metadata_json) ?? {},
     createdAt: Number(row.created_at ?? 0),
     updatedAt: Number(row.updated_at ?? 0),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at),
@@ -752,15 +785,25 @@ function isTaskCandidateStatus(value: unknown): value is TaskCandidate["status"]
   return typeof value === "string" && TASK_CANDIDATE_STATUSES.includes(value as TaskCandidate["status"])
 }
 
+function parseDiffStats(value: unknown): Record<string, number> | null {
+  const parsed = parseRecord(value)
+  if (parsed === null) return null
+  const result: Record<string, number> = {}
+  for (const [key, val] of Object.entries(parsed)) {
+    if (typeof val === "number") result[key] = val
+  }
+  return result
+}
+
 function rowToTaskCandidate(row: Record<string, unknown>): TaskCandidate {
   return {
     id: String(row.id),
     taskId: String(row.task_id),
     workerRunId: String(row.worker_run_id),
     status: isTaskCandidateStatus(row.status) ? row.status : "available",
-    changedFilesJson: parseJSON<string[]>(row.changed_files_json) ?? [],
-    diffStatsJson: parseJSON<Record<string, number>>(row.diff_stats_json) ?? {},
-    verificationJson: parseJSON<Record<string, unknown>>(row.verification_json) ?? {},
+    changedFilesJson: parseStringArray(row.changed_files_json) ?? [],
+    diffStatsJson: parseDiffStats(row.diff_stats_json) ?? {},
+    verificationJson: parseRecord(row.verification_json) ?? {},
     summary: row.summary ? String(row.summary) : null,
     errorMessage: row.error_message ? String(row.error_message) : null,
     createdAt: Number(row.created_at ?? 0),
@@ -775,7 +818,7 @@ function rowToWorkflowRun(row: Record<string, unknown>): WorkflowRun {
     status: asWorkflowRunStatus(row.status),
     displayName: String(row.display_name ?? ""),
     targetTaskId: row.target_task_id ? String(row.target_task_id) : null,
-    taskOrder: parseJSON<string[]>(row.task_order_json) ?? [],
+    taskOrder: parseStringArray(row.task_order_json) ?? [],
     currentTaskId: row.current_task_id ? String(row.current_task_id) : null,
     currentTaskIndex: Number(row.current_task_index ?? 0),
     pauseRequested: Number(row.pause_requested ?? 0) === 1,
@@ -870,7 +913,7 @@ function rowToSessionMessage(row: Record<string, unknown>): SessionMessage {
     role: asSessionMessageRole(row.role),
     eventName: row.event_name ? String(row.event_name) : null,
     messageType: asMessageType(row.message_type),
-    contentJson: parseJSON<Record<string, unknown>>(row.content_json) ?? {},
+    contentJson: parseRecord(row.content_json) ?? {},
     modelProvider: row.model_provider ? String(row.model_provider) : null,
     modelId: row.model_id ? String(row.model_id) : null,
     agentName: row.agent_name ? String(row.agent_name) : null,
@@ -879,11 +922,11 @@ function rowToSessionMessage(row: Record<string, unknown>): SessionMessage {
     cacheReadTokens: row.cache_read_tokens === null || row.cache_read_tokens === undefined ? null : Number(row.cache_read_tokens),
     cacheWriteTokens: row.cache_write_tokens === null || row.cache_write_tokens === undefined ? null : Number(row.cache_write_tokens),
     totalTokens: row.total_tokens === null || row.total_tokens === undefined ? null : Number(row.total_tokens),
-    costJson: parseJSON<Record<string, unknown>>(row.cost_json),
+    costJson: parseRecord(row.cost_json),
     costTotal: row.cost_total === null || row.cost_total === undefined ? null : Number(row.cost_total),
     toolCallId: row.tool_call_id ? String(row.tool_call_id) : null,
     toolName: row.tool_name ? String(row.tool_name) : null,
-    toolArgsJson: parseJSON<Record<string, unknown>>(row.tool_args_json),
+    toolArgsJson: parseRecord(row.tool_args_json),
     toolResultJson: parseJSON<Record<string, unknown>>(row.tool_result_json),
     toolStatus: row.tool_status ? String(row.tool_status) : null,
     editDiff: row.edit_diff ? String(row.edit_diff) : null,
@@ -1036,17 +1079,38 @@ export class PiKanbanDB {
     return snapshot
   }
 
-  // ---- tasks ----
+   // ---- tasks ----
 
-  getTasks(): Task[] {
-    const rows = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 0 ORDER BY idx ASC").all() as Record<string, unknown>[]
-    return rows.map(rowToTask)
-  }
+   /**
+    * Get active (non-archived) task IDs for validating requirements
+    */
+   getActiveTaskIds(): Set<string> {
+     const rows = this.db.prepare("SELECT id FROM tasks WHERE is_archived = 0").all() as Array<{ id: string }>
+     return new Set(rows.map(r => r.id))
+   }
 
-  getTask(id: string): Task | null {
-    const row = this.db.prepare("SELECT * FROM tasks WHERE id = ? AND is_archived = 0").get(id) as Record<string, unknown> | null
-    return row ? rowToTask(row) : null
-  }
+   getTasks(): Task[] {
+     const rows = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 0 ORDER BY idx ASC").all() as Record<string, unknown>[]
+     const tasks = rows.map(rowToTask)
+     // Filter out invalid requirements (pointing to non-existent tasks)
+     const validTaskIds = this.getActiveTaskIds()
+     return tasks.map(t => ({
+       ...t,
+       requirements: t.requirements.filter(reqId => validTaskIds.has(reqId))
+     }))
+   }
+
+   getTask(id: string): Task | null {
+     const row = this.db.prepare("SELECT * FROM tasks WHERE id = ? AND is_archived = 0").get(id) as Record<string, unknown> | null
+     if (!row) return null
+     const task = rowToTask(row)
+     // Filter out invalid requirements
+     const validTaskIds = this.getActiveTaskIds()
+     return {
+       ...task,
+       requirements: task.requirements.filter(reqId => validTaskIds.has(reqId))
+     }
+   }
 
   createTask(input: CreateTaskInput): Task {
     const now = nowUnix()
@@ -1337,15 +1401,33 @@ export class PiKanbanDB {
     return this.updateTask(taskId, { agentOutput: `${task.agentOutput}${chunk}` })
   }
 
-  deleteTask(id: string): boolean {
-    const result = this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id)
-    return result.changes > 0
-  }
+   deleteTask(id: string): boolean {
+     // Clean up requirements in other tasks that reference this task
+     const allTasks = this.getTasks()
+     for (const t of allTasks) {
+       if (t.requirements.includes(id)) {
+         this.db
+           .prepare("UPDATE tasks SET requirements = ?, updated_at = unixepoch() WHERE id = ?")
+           .run(JSON.stringify(t.requirements.filter((r) => r !== id)), t.id)
+       }
+     }
 
-  getTasksByStatus(status: TaskStatus): Task[] {
-    const rows = this.db.prepare("SELECT * FROM tasks WHERE status = ? AND is_archived = 0 ORDER BY idx ASC").all(status) as Record<string, unknown>[]
-    return rows.map(rowToTask)
-  }
+     // Clean up task group memberships
+     this.db.prepare("DELETE FROM task_group_members WHERE task_id = ?").run(id)
+
+     const result = this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id)
+     return result.changes > 0
+   }
+
+   getTasksByStatus(status: TaskStatus): Task[] {
+     const rows = this.db.prepare("SELECT * FROM tasks WHERE status = ? AND is_archived = 0 ORDER BY idx ASC").all(status) as Record<string, unknown>[]
+     const tasks = rows.map(rowToTask)
+     const validTaskIds = this.getActiveTaskIds()
+     return tasks.map(t => ({
+       ...t,
+       requirements: t.requirements.filter(reqId => validTaskIds.has(reqId))
+     }))
+   }
 
   reorderTask(id: string, newIdx: number): Task | null {
     const task = this.getTask(id)
@@ -1393,40 +1475,48 @@ export class PiKanbanDB {
     return false
   }
 
-  archiveTask(id: string): Task | null {
-    const task = this.getTask(id)
-    if (!task) return null
+   archiveTask(id: string): Task | null {
+     const task = this.getTask(id)
+     if (!task) return null
 
-    const now = nowUnix()
-    this.db.prepare("UPDATE tasks SET is_archived = 1, archived_at = ?, updated_at = unixepoch() WHERE id = ?").run(now, id)
+     const now = nowUnix()
+     this.db.prepare("UPDATE tasks SET is_archived = 1, archived_at = ?, updated_at = unixepoch() WHERE id = ?").run(now, id)
 
-    const allTasks = this.getTasks()
-    for (const t of allTasks) {
-      if (t.requirements.includes(id)) {
-        this.db
-          .prepare("UPDATE tasks SET requirements = ?, updated_at = unixepoch() WHERE id = ?")
-          .run(JSON.stringify(t.requirements.filter((r) => r !== id)), t.id)
-      }
-    }
+     // Clean up requirements in other tasks
+     const allTasks = this.getTasks()
+     for (const t of allTasks) {
+       if (t.requirements.includes(id)) {
+         this.db
+           .prepare("UPDATE tasks SET requirements = ?, updated_at = unixepoch() WHERE id = ?")
+           .run(JSON.stringify(t.requirements.filter((r) => r !== id)), t.id)
+       }
+     }
 
-    return { ...task, isArchived: true, archivedAt: now }
-  }
+     // Remove from task group memberships (archived tasks shouldn't be in groups)
+     this.db.prepare("DELETE FROM task_group_members WHERE task_id = ?").run(id)
 
-  hardDeleteTask(id: string): boolean {
-    if (this.hasTaskExecutionHistory(id)) return false
+     return { ...task, isArchived: true, archivedAt: now }
+   }
 
-    const allTasks = this.getTasks()
-    for (const t of allTasks) {
-      if (t.requirements.includes(id)) {
-        this.db
-          .prepare("UPDATE tasks SET requirements = ?, updated_at = unixepoch() WHERE id = ?")
-          .run(JSON.stringify(t.requirements.filter((r) => r !== id)), t.id)
-      }
-    }
+   hardDeleteTask(id: string): boolean {
+     if (this.hasTaskExecutionHistory(id)) return false
 
-    const result = this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id)
-    return result.changes > 0
-  }
+     // Clean up requirements in other tasks
+     const allTasks = this.getTasks()
+     for (const t of allTasks) {
+       if (t.requirements.includes(id)) {
+         this.db
+           .prepare("UPDATE tasks SET requirements = ?, updated_at = unixepoch() WHERE id = ?")
+           .run(JSON.stringify(t.requirements.filter((r) => r !== id)), t.id)
+       }
+     }
+
+     // Clean up task group memberships
+     this.db.prepare("DELETE FROM task_group_members WHERE task_id = ?").run(id)
+
+     const result = this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id)
+     return result.changes > 0
+   }
 
   getActiveWorkflowRunForTask(taskId: string): WorkflowRun | null {
     const runs = this.getWorkflowRuns()
@@ -1730,8 +1820,8 @@ export class PiKanbanDB {
       .prepare(`
         INSERT INTO self_heal_reports (
           id, run_id, task_id, task_status, error_message,
-          diagnostics_summary, root_causes_json, proposed_solution, implementation_plan_json,
-          recoverable, recommended_action, action_rationale,
+          diagnostics_summary, is_tauroboros_bug, root_cause_json, proposed_solution, implementation_plan_json,
+          confidence, external_factors_json,
           source_mode, source_path, github_url, tauroboros_version,
           db_path, db_schema_json, raw_response,
           created_at, updated_at
@@ -1744,12 +1834,12 @@ export class PiKanbanDB {
         input.taskStatus,
         input.errorMessage ?? null,
         input.diagnosticsSummary,
-        JSON.stringify(input.rootCauses),
+        input.isTauroborosBug ? 1 : 0,
+        JSON.stringify(input.rootCause),
         input.proposedSolution,
         JSON.stringify(input.implementationPlan),
-        input.recoverable ? 1 : 0,
-        input.recommendedAction,
-        input.actionRationale,
+        input.confidence,
+        JSON.stringify(input.externalFactors),
         input.sourceMode,
         input.sourcePath ?? null,
         input.githubUrl,
@@ -1785,17 +1875,30 @@ export class PiKanbanDB {
 
   // ---- Archived Tasks ----
 
-  getArchivedTasks(): Task[] {
-    const stmt = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 1 ORDER BY archived_at DESC")
-    const rows = stmt.all() as unknown[]
-    if (!Array.isArray(rows)) throw new DatabaseError({ operation: "getArchivedTasks", message: "getArchivedTasks: expected array result from database" })
-    return rows.map((r) => rowToTask(r as Record<string, unknown>))
-  }
+   getArchivedTasks(): Task[] {
+     const rows = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 1 ORDER BY archived_at DESC").all() as Record<string, unknown>[]
+     if (!Array.isArray(rows)) throw new DatabaseError({ operation: "getArchivedTasks", message: "getArchivedTasks: expected array result from database" })
+     const tasks = rows.map(rowToTask)
+     // Filter out invalid requirements (archived tasks may reference non-existent tasks)
+     const validTaskIds = this.getActiveTaskIds()
+     return tasks.map(t => ({
+       ...t,
+       requirements: t.requirements.filter(reqId => validTaskIds.has(reqId))
+     }))
+   }
 
-  getArchivedTask(id: string): Task | null {
-    const row = this.db.prepare("SELECT * FROM tasks WHERE id = ? AND is_archived = 1").get(id) as Record<string, unknown> | null
-    return row ? rowToTask(row) : null
-  }
+   getArchivedTask(id: string): Task | null {
+     const row = this.db.prepare("SELECT * FROM tasks WHERE id = ? AND is_archived = 1").get(id) as Record<string, unknown> | null
+     if (!row) return null
+     const task = rowToTask(row)
+     // Filter out invalid requirements
+     const validTaskIds = this.getActiveTaskIds()
+     return {
+       ...task,
+       requirements: task.requirements.filter(reqId => validTaskIds.has(reqId))
+     }
+   }
+
 
   getArchivedTasksByRun(runId: string): Task[] {
     const run = this.getWorkflowRun(runId)
@@ -1921,6 +2024,77 @@ export class PiKanbanDB {
 
     this.db.prepare(`UPDATE workflow_runs SET ${sets.join(", ")} WHERE id = ?`).run(...values)
     return this.getWorkflowRun(id)
+  }
+
+  /**
+   * Delete a workflow run by ID
+   */
+  deleteWorkflowRun(id: string): boolean {
+    const result = this.db.prepare("DELETE FROM workflow_runs WHERE id = ?").run(id)
+    return result.changes > 0
+  }
+
+  /**
+   * Delete all sessions and their messages associated with given task IDs
+   * Returns the number of sessions deleted
+   */
+  deleteSessionsForTasks(taskIds: string[]): number {
+    if (taskIds.length === 0) return 0
+    const placeholders = taskIds.map(() => "?").join(",")
+
+    // First delete session messages (foreign key constraint)
+    this.db.prepare(`
+      DELETE FROM session_messages
+      WHERE session_id IN (
+        SELECT id FROM workflow_sessions WHERE task_id IN (${placeholders})
+      )
+    `).run(...taskIds)
+
+    // Then delete sessions
+    const sessionsResult = this.db.prepare(`
+      DELETE FROM workflow_sessions WHERE task_id IN (${placeholders})
+    `).run(...taskIds)
+
+    return sessionsResult.changes
+  }
+
+  /**
+   * Delete all task_runs for given task IDs
+   * Returns the number of task runs deleted
+   */
+  deleteTaskRunsForTasks(taskIds: string[]): number {
+    if (taskIds.length === 0) return 0
+    const placeholders = taskIds.map(() => "?").join(",")
+    const result = this.db.prepare(`
+      DELETE FROM task_runs WHERE task_id IN (${placeholders})
+    `).run(...taskIds)
+    return result.changes
+  }
+
+  /**
+   * Delete all task_candidates for given task IDs
+   * Returns the number of task candidates deleted
+   */
+  deleteCandidatesForTasks(taskIds: string[]): number {
+    if (taskIds.length === 0) return 0
+    const placeholders = taskIds.map(() => "?").join(",")
+    const result = this.db.prepare(`
+      DELETE FROM task_candidates WHERE task_id IN (${placeholders})
+    `).run(...taskIds)
+    return result.changes
+  }
+
+  /**
+   * Delete all self_heal_reports for given task IDs
+   * Returns the number of self-heal reports deleted
+   */
+  deleteSelfHealReportsForTasks(taskIds: string[]): number {
+    if (taskIds.length === 0) return 0
+    const placeholders = taskIds.map(() => "?").join(",")
+    const result = this.db.prepare(`
+      DELETE FROM self_heal_reports WHERE task_id IN (${placeholders})
+    `).run(...taskIds)
+    return result.changes
   }
 
   // ---- workflow sessions ----
@@ -3847,13 +4021,20 @@ export class PiKanbanDB {
    * Get just task IDs in order
    * Returns string[] of task IDs in index order
    */
-  getTaskGroupMemberIds(groupId: string): string[] {
-    const rows = this.db
-      .prepare("SELECT task_id FROM task_group_members WHERE group_id = ? ORDER BY idx ASC")
-      .all(groupId) as Record<string, unknown>[]
+   getTaskGroupMemberIds(groupId: string): string[] {
+     // Only return task IDs that actually exist in the tasks table
+     const rows = this.db
+       .prepare(`
+         SELECT tgm.task_id 
+         FROM task_group_members tgm
+         INNER JOIN tasks t ON t.id = tgm.task_id
+         WHERE tgm.group_id = ? AND t.is_archived = 0
+         ORDER BY tgm.idx ASC
+       `)
+       .all(groupId) as Array<{ task_id: string }>
 
-    return rows.map(row => String(row.task_id))
-  }
+     return rows.map(row => row.task_id)
+   }
 
   /**
    * Get group a task belongs to
@@ -3974,7 +4155,7 @@ export const asTelegramNotificationLevelEffect = (value: unknown): Effect.Effect
       }
       throw new DatabaseError({
         operation: "validation",
-        message: `Invalid telegram notification level: ${JSON.stringify(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"`,
+        message: `Invalid telegram notification level: ${String(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"`,
       })
     },
     catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({
