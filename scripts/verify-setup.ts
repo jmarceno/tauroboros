@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readFileSync } from "fs"
 import { join, resolve } from "path"
 import {
   ensureInfrastructureSettings,
-  loadInfrastructureSettings,
   type InfrastructureSettings,
 } from "../src/config/settings.ts"
 import { discoverSkills, getProjectRoot } from "./sync-skills.ts"
@@ -17,17 +16,17 @@ interface PiSettings {
 
 function validateSkillFrontmatter(skillFilePath: string): void {
   const content = readFileSync(skillFilePath, "utf-8")
-  const trimmed = content.trimStart()
-  if (!trimmed.startsWith("---\n")) {
+  const normalized = content.trimStart().replace(/\r\n/g, "\n")
+  if (!normalized.startsWith("---\n")) {
     throw new Error(`Missing frontmatter start in ${skillFilePath}`)
   }
 
-  const endMarkerIndex = trimmed.indexOf("\n---\n", 4)
+  const endMarkerIndex = normalized.indexOf("\n---\n", 4)
   if (endMarkerIndex === -1) {
     throw new Error(`Missing frontmatter end in ${skillFilePath}`)
   }
 
-  const frontmatter = trimmed.slice(4, endMarkerIndex)
+  const frontmatter = normalized.slice(4, endMarkerIndex)
   if (!/\bname\s*:/m.test(frontmatter)) {
     throw new Error(`Frontmatter missing 'name' in ${skillFilePath}`)
   }
@@ -76,7 +75,11 @@ function validateSettings(settings: PiSettings): void {
 
 function validateInfrastructureSettings(settings: InfrastructureSettings): void {
   // Validate server settings
-  if (!settings.workflow?.server?.port || typeof settings.workflow.server.port !== "number") {
+  if (
+    typeof settings.workflow?.server?.port !== "number" ||
+    !Number.isInteger(settings.workflow.server.port) ||
+    settings.workflow.server.port < 0
+  ) {
     throw new Error("Infrastructure settings workflow.server.port must be a number")
   }
   if (!settings.workflow?.server?.dbPath || typeof settings.workflow.server.dbPath !== "string") {
@@ -121,11 +124,6 @@ export function verifySetup(projectRoot: string = getProjectRoot()): void {
   }
   console.log("✓ Skills have required frontmatter")
 
-  // Validate original Pi settings (skills configuration)
-  const settings = parseSettings(settingsPath)
-  validateSettings(settings)
-  console.log("✓ Pi settings.json skills configuration is valid")
-
   // Ensure infrastructure settings are initialized
   const infraResult = ensureInfrastructureSettings(projectRoot)
   validateInfrastructureSettings(infraResult.settings)
@@ -144,6 +142,11 @@ export function verifySetup(projectRoot: string = getProjectRoot()): void {
   }
 
   console.log("✓ Infrastructure settings are valid")
+
+  // Validate skills configuration from the initialized settings file
+  const settings = parseSettings(settingsPath)
+  validateSettings(settings)
+  console.log("✓ Pi settings.json skills configuration is valid")
 
   mkdirSync(piSkillsDir, { recursive: true })
   console.log("✓ .pi/skills directory is writable")

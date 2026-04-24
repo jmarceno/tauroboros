@@ -150,6 +150,14 @@ export async function main(): Promise<void> {
     settings = result.settings
 
     warnings = result.warnings
+    if (args.native && settings.workflow.container.enabled !== false) {
+      console.log("[tauroboros] Native mode requested - disabling container mode for this project...")
+
+      settings.workflow.container.enabled = false
+
+      saveInfrastructureSettings(projectRoot, settings)
+
+    }
     // CRITICAL: If container mode is enabled (default), verify podman is available
     if (settings.workflow.container.enabled !== false) {
       console.log("[tauroboros] Validating container runtime availability...")
