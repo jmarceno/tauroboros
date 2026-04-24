@@ -235,16 +235,25 @@ export class PiContainerManager {
       const piDir = path.join(tauroborosDir, 'agent')
       const modelsJsonPath = path.join(piDir, 'models.json')
 
-      yield* Effect.try({
-        try: () => {
-          fs.mkdirSync(piDir, { recursive: true })
-          fs.writeFileSync(modelsJsonPath, JSON.stringify(modelsJson, null, 2))
-        },
-        catch: (cause) => new ContainerManagerError({
-          operation: "generateModelsJson",
-          message: cause instanceof Error ? cause.message : String(cause),
-          cause,
-        }),
+      yield* Effect.gen(function* () {
+        const jsonContent = yield* Schema.encodeUnknown(Schema.parseJson(Schema.Object))(modelsJson).pipe(
+          Effect.mapError((cause) => new ContainerManagerError({
+            operation: "generateModelsJson",
+            message: `Failed to encode models.json: ${cause instanceof Error ? cause.message : String(cause)}`,
+            cause,
+          })),
+        )
+        yield* Effect.try({
+          try: () => {
+            fs.mkdirSync(piDir, { recursive: true })
+            fs.writeFileSync(modelsJsonPath, jsonContent)
+          },
+          catch: (cause) => new ContainerManagerError({
+            operation: "generateModelsJson",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+        })
       })
 
       yield* logInfo(`[container-manager] Generated models.json at ${modelsJsonPath}`)

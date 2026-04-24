@@ -26,6 +26,8 @@ import { registerPlanningRoutes } from "./routes/planning-routes.ts"
 import { registerContainerRoutes } from "./routes/container-routes.ts"
 import { registerTaskGroupRoutes } from "./routes/task-group-routes.ts"
 import { registerStatsRoutes } from "./routes/stats-routes.ts"
+import { HttpRouteError } from "./route-interpreter.ts"
+import { ErrorCode } from "../shared/error-codes.ts"
 
 class ServerRuntimeError extends Schema.TaggedError<ServerRuntimeError>()("ServerRuntimeError", {
   operation: Schema.String,
@@ -345,15 +347,7 @@ export class PiKanbanServer {
       }
 
       if (this.settings?.workflow?.container?.enabled !== false && this.containerManager) {
-        const setupStatus = yield* this.containerManager.validateSetup().pipe(
-          Effect.mapError((cause) =>
-            new ServerRuntimeError({
-              operation: "start",
-              message: `Failed to validate container runtime: ${cause instanceof Error ? cause.message : String(cause)}`,
-              cause,
-            }),
-          ),
-        )
+        const setupStatus = yield* this.containerManager.validateSetup()
         if (!setupStatus.podman) {
           return yield* new ServerRuntimeError({
             operation: "start",
@@ -630,9 +624,10 @@ export class PiKanbanServer {
         const body = (yield* Effect.tryPromise({
           try: () => req.json() as Promise<Record<string, unknown>>,
           catch: (cause) =>
-            new ServerRuntimeError({
-              operation: "registerRoutes.options",
-              message: cause instanceof Error ? cause.message : String(cause),
+            new HttpRouteError({
+              message: `Failed to parse options request: ${cause instanceof Error ? cause.message : String(cause)}`,
+              code: ErrorCode.INVALID_JSON_BODY,
+              status: 400,
               cause,
             }),
         })) as Record<string, unknown>
@@ -728,14 +723,18 @@ export class PiKanbanServer {
         }),
       })
 
-      const images = yield* Effect.try({
-        try: () => JSON.parse(stdout) as Array<{ Names?: string[]; CreatedAt?: string; Size?: string }>,
-        catch: (cause) => new ServerRuntimeError({
+      const PodmanImageSchema = Schema.Array(Schema.Struct({
+        Names: Schema.optional(Schema.Array(Schema.String)),
+        CreatedAt: Schema.optional(Schema.String),
+        Size: Schema.optional(Schema.String),
+      }))
+      const images = yield* Schema.decodeUnknown(Schema.parseJson(PodmanImageSchema))(stdout).pipe(
+        Effect.mapError((cause) => new ServerRuntimeError({
           operation: "getPodmanImages",
           message: cause instanceof Error ? cause.message : String(cause),
           cause,
-        }),
-      })
+        })),
+      )
 
       const result: Array<{ tag: string; createdAt: number; size: string }> = []
 

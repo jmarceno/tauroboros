@@ -51,12 +51,12 @@ export interface SelfHealingInvestigationResult {
   diagnosticsSummary: string
   rootCause: {
     description: string
-    affectedFiles: string[]
+    affectedFiles: readonly string[]
     codeSnippet: string
   }
   proposedSolution: string
-  implementationPlan: string[]
-  externalFactors: string[]
+  implementationPlan: readonly string[]
+  externalFactors: readonly string[]
 }
 
 const ConfidenceSchema = Schema.Literal("high", "medium", "low")
@@ -149,7 +149,7 @@ export class SelfHealingService {
         }),
       })
 
-      const validationResult = Schema.decodeEither(SelfHealResponseSchema)(rawParsed)
+      const validationResult = Schema.decodeUnknownEither(SelfHealResponseSchema)(rawParsed)
       const validated = yield* Either.match(validationResult, {
         onLeft: (decodeError) => new SelfHealingError({
           operation: "validateDiagnosticsResponse",
@@ -206,7 +206,7 @@ export class SelfHealingService {
           sourcePath: self.projectRoot,
           githubUrl: self.githubUrl,
           notes: "Running in development/source mode, local repository used.",
-        }
+        } satisfies SourceContext
       }
 
       const cloneDir = resolve(self.projectRoot, ".tauroboros", "self-heal-source", `${VERSION}-${runId}`)
@@ -234,7 +234,7 @@ export class SelfHealingService {
         sourcePath: cloneDir,
         githubUrl: self.githubUrl,
         notes: `Cloned source for diagnostics at ${cloneDir}`,
-      }
+      } satisfies SourceContext
     }).pipe(
       Effect.catchAll((error) => {
         const errorMessage = error instanceof Error ? error.message : String(error)

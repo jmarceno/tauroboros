@@ -172,10 +172,10 @@ function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
 }
 
-function parseJSON(value: unknown): unknown | null {
+function parseJSON<T>(value: unknown): T | null {
   if (typeof value !== "string" || value.length === 0) return null
   try {
-    return JSON.parse(value)
+    return JSON.parse(value) as T
   } catch {
     return null
   }
@@ -4088,7 +4088,7 @@ export const asTelegramNotificationLevelEffect = (value: unknown): Effect.Effect
       }
       throw new DatabaseError({
         operation: "validation",
-        message: `Invalid telegram notification level: ${JSON.stringify(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"`,
+        message: `Invalid telegram notification level: ${String(value)}. Expected "all", "failures", "done_and_failures", or "workflow_done_and_failures"`,
       })
     },
     catch: (error) => error instanceof DatabaseError ? error : new DatabaseError({

@@ -1,4 +1,4 @@
-import { Effect, Fiber, Scope } from "effect"
+import { Effect, Fiber, Schema, Scope } from "effect"
 import { existsSync, readdirSync, statSync } from "fs"
 import { join } from "path"
 import type { InfrastructureSettings } from "../config/settings.ts"
@@ -717,8 +717,8 @@ export class ContainerPiProcess {
   private handleStdoutLineEffect(line: string): Effect.Effect<void, never> {
     return Effect.gen(this, function* () {
     const parsed = (yield* Effect.orElse(
-      Effect.try(() => JSON.parse(line) as Record<string, unknown>),
-      () => Effect.succeed({ type: "text", text: line }),
+      Schema.decodeUnknown(Schema.parseJson(Schema.Record({ key: Schema.String, value: Schema.Unknown })))(line),
+      () => Effect.succeed({ type: "text", text: line } as Record<string, unknown>),
     )) as Record<string, unknown>
 
     const id = typeof parsed.id === "string" ? parsed.id : null

@@ -166,14 +166,8 @@ export class BestOfNRunner {
     containerManager?: PiContainerManager
     settings?: InfrastructureSettings
     externalSessionManager?: PiSessionManager
-    /**
-     * Called when a session is created for pause/stop tracking.
-     * Used by orchestrator to track active sessions.
-     */
     onSessionCreated?: (process: import("./container-pi-process.ts").ContainerPiProcess | import("./pi-process.ts").PiRpcProcess, session: import("../db/types.ts").PiWorkflowSession) => void
   }) {
-    // Use external session manager if provided (for proper process tracking in orchestrator)
-    // Otherwise create our own (for backward compatibility)
     this.sessions = deps.externalSessionManager ?? new PiSessionManager(this.deps.db, this.deps.containerManager, this.deps.settings)
   }
 
@@ -329,148 +323,167 @@ export class BestOfNRunner {
     })
   }
 
-  private runWorker(taskId: string, workerRun: TaskRun, options: Options, targetBranch: string): Effect.Effect<void> {
+  private runWorker(taskId: string, workerRun: TaskRun, options: Options, targetBranch: string): Effect.Effect<void, BestOfNError> {
     const self = this
     return Effect.gen(function* () {
       const task = self.deps.db.getTask(taskId)
       if (!task || !task.bestOfNConfig) return
+      const bestOfNConfig = task.bestOfNConfig
 
       let worktreeDir: string | null = null
-      try {
-        self.deps.db.updateTaskRun(workerRun.id, { status: "running" })
-        self.broadcastRun(workerRun.id)
 
-        const worktreeInfo = yield* self.deps.worktree.createForRun(workerRun.id, "bon-worker", targetBranch).pipe(
-          Effect.mapError((cause) => new BestOfNError({
-            operation: "runWorker.createWorktree",
-            message: cause instanceof Error ? cause.message : String(cause),
-            taskId,
-            cause,
-          })),
-        )
-        worktreeDir = worktreeInfo.directory
-        self.deps.db.updateTaskRun(workerRun.id, { worktreeDir })
-        self.broadcastRun(workerRun.id)
+      self.deps.db.updateTaskRun(workerRun.id, { status: "running" })
+      self.broadcastRun(workerRun.id)
 
-        const prompt = self.deps.db.renderPrompt(
-          "best_of_n_worker",
-          buildBestOfNWorkerVariables(task, workerRun.slotIndex, workerRun.model, options.extraPrompt, workerRun.taskSuffix ?? undefined),
-        )
-        const outputChunks: string[] = []
-        const workerImageToUse = resolveContainerImage(task, self.deps.settings?.workflow?.container?.image)
-
-        const response = yield* self.sessions.executePrompt({
+      const worktreeInfo = yield* self.deps.worktree.createForRun(workerRun.id, "bon-worker", targetBranch).pipe(
+        Effect.mapError((cause) => new BestOfNError({
+          operation: "runWorker.createWorktree",
+          message: cause instanceof Error ? cause.message : String(cause),
           taskId,
-          taskRunId: workerRun.id,
-          sessionKind: "task_run_worker",
-          cwd: worktreeDir,
-          worktreeDir,
-          branch: worktreeInfo.branch,
-          model: workerRun.model,
-          thinkingLevel: task.executionThinkingLevel,
-          promptText: prompt.renderedText,
-          containerImage: workerImageToUse,
-        }, {
-          onOutput: (chunk) => {
-            if (!trimText(chunk)) return
-            outputChunks.push(chunk)
-            appendTaggedOutput(self.deps.db, taskId, `worker-${workerRun.slotIndex}`, chunk)
-          },
-          onSessionCreated: self.deps.onSessionCreated,
-        }).pipe(
-          Effect.mapError((cause) => new BestOfNError({
-            operation: "runWorker.executePrompt",
-            message: cause instanceof Error ? cause.message : String(cause),
-            taskId,
-            cause,
-          })),
-        )
+          cause,
+        })),
+      )
+      worktreeDir = worktreeInfo.directory
+      self.deps.db.updateTaskRun(workerRun.id, { worktreeDir })
+      self.broadcastRun(workerRun.id)
 
-        self.deps.db.updateTaskRun(workerRun.id, {
-          sessionId: response.session.id,
-          sessionUrl: self.deps.sessionUrlFor(response.session.id),
-        })
-        self.broadcastRun(workerRun.id)
+      const prompt = self.deps.db.renderPrompt(
+        "best_of_n_worker",
+        buildBestOfNWorkerVariables(task, workerRun.slotIndex, workerRun.model, options.extraPrompt, workerRun.taskSuffix ?? undefined),
+      )
+      const outputChunks: string[] = []
+      const workerImageToUse = resolveContainerImage(task, self.deps.settings?.workflow?.container?.image)
 
-        const verificationJson = yield* self.runVerificationCommand(
-          trimText(task.bestOfNConfig.verificationCommand),
-          worktreeDir,
-        )
-
-        const changedFiles = yield* getChangedFiles(worktreeDir).pipe(
-          Effect.mapError((cause) => new BestOfNError({
-            operation: "runWorker.getChangedFiles",
-            message: cause instanceof Error ? cause.message : String(cause),
-            taskId,
-            cause,
-          })),
-        )
-        const diff = yield* getDiffStats(worktreeDir).pipe(
-          Effect.mapError((cause) => new BestOfNError({
-            operation: "runWorker.getDiffStats",
-            message: cause instanceof Error ? cause.message : String(cause),
-            taskId,
-            cause,
-          })),
-        )
-        const diffStatsJson: Record<string, number> = {}
-        for (const [filePath, stat] of Object.entries(diff.fileStats)) {
-          diffStatsJson[filePath] = stat.insertions + stat.deletions
-        }
-
-        const summary = trimText(response.responseText) || summaryText(outputChunks.join("\n"), 1000)
-        const candidate = self.deps.db.createTaskCandidate({
+      const response = yield* self.sessions.executePrompt({
+        taskId,
+        taskRunId: workerRun.id,
+        sessionKind: "task_run_worker",
+        cwd: worktreeDir,
+        worktreeDir,
+        branch: worktreeInfo.branch,
+        model: workerRun.model,
+        thinkingLevel: task.executionThinkingLevel,
+        promptText: prompt.renderedText,
+        containerImage: workerImageToUse,
+      }, {
+        onOutput: (chunk: string) => {
+          if (!trimText(chunk)) return
+          outputChunks.push(chunk)
+          appendTaggedOutput(self.deps.db, taskId, `worker-${workerRun.slotIndex}`, chunk)
+        },
+        onSessionCreated: self.deps.onSessionCreated,
+      }).pipe(
+        Effect.mapError((cause) => new BestOfNError({
+          operation: "runWorker.executePrompt",
+          message: cause instanceof Error ? cause.message : String(cause),
           taskId,
-          workerRunId: workerRun.id,
-          status: "available",
-          changedFilesJson: changedFiles,
-          diffStatsJson,
+          cause,
+        })),
+      )
+
+      self.deps.db.updateTaskRun(workerRun.id, {
+        sessionId: response.session.id,
+        sessionUrl: self.deps.sessionUrlFor(response.session.id),
+      })
+      self.broadcastRun(workerRun.id)
+
+      const verificationJson = yield* self.runVerificationCommand(
+        trimText(bestOfNConfig.verificationCommand),
+        worktreeDir,
+      )
+
+      const changedFiles = yield* getChangedFiles(worktreeDir).pipe(
+        Effect.mapError((cause) => new BestOfNError({
+          operation: "runWorker.getChangedFiles",
+          message: cause instanceof Error ? cause.message : String(cause),
+          taskId,
+          cause,
+        })),
+      )
+
+      const diff = yield* getDiffStats(worktreeDir).pipe(
+        Effect.mapError((cause) => new BestOfNError({
+          operation: "runWorker.getDiffStats",
+          message: cause instanceof Error ? cause.message : String(cause),
+          taskId,
+          cause,
+        })),
+      )
+
+      const diffStatsJson: Record<string, number> = {}
+      for (const [filePath, stat] of Object.entries(diff.fileStats)) {
+        diffStatsJson[filePath] = stat.insertions + stat.deletions
+      }
+
+      const summary = trimText(response.responseText) || summaryText(outputChunks.join("\n"), 1000)
+      const candidate = self.deps.db.createTaskCandidate({
+        taskId,
+        workerRunId: workerRun.id,
+        status: "available",
+        changedFilesJson: changedFiles,
+        diffStatsJson,
+        verificationJson,
+        summary: summaryText(summary, 1000) || null,
+        errorMessage: null,
+      })
+      self.deps.broadcast({ type: "task_candidate_created", payload: candidate })
+
+      self.deps.db.updateTaskRun(workerRun.id, {
+        status: "done",
+        summary: summaryText(summary, 500) || null,
+        candidateId: candidate.id,
+        metadataJson: {
           verificationJson,
-          summary: summaryText(summary, 1000) || null,
-          errorMessage: null,
-        })
-        self.deps.broadcast({ type: "task_candidate_created", payload: candidate })
-
-        self.deps.db.updateTaskRun(workerRun.id, {
-          status: "done",
-          summary: summaryText(summary, 500) || null,
-          candidateId: candidate.id,
-          metadataJson: {
-            verificationJson,
-            changedFiles,
-            diff,
-          },
-          completedAt: nowUnix(),
-        })
-        self.broadcastRun(workerRun.id)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+          changedFiles,
+          diff,
+        },
+        completedAt: nowUnix(),
+      })
+      self.broadcastRun(workerRun.id)
+    }).pipe(
+      Effect.catchAll((error: unknown) => {
+        const message = error instanceof BestOfNError
+          ? error.message
+          : error instanceof Error ? error.message : String(error)
         self.deps.db.updateTaskRun(workerRun.id, {
           status: "failed",
           errorMessage: message,
           completedAt: nowUnix(),
         })
         self.broadcastRun(workerRun.id)
-      } finally {
-        if (worktreeDir && task.deleteWorktree !== false) {
-          yield* self.deps.worktree.complete(worktreeDir, {
-            branch: "",
-            targetBranch: "",
-            shouldMerge: false,
-            shouldRemove: true,
-          }).pipe(Effect.catchTag("WorktreeError", () => Effect.void))
-        }
-      }
-    })
+        return Effect.fail(error instanceof BestOfNError ? error : new BestOfNError({
+          operation: "runWorker",
+          message,
+          taskId,
+          cause: error,
+        }))
+      }),
+      Effect.ensuring(
+        Effect.gen(function* () {
+          const task = self.deps.db.getTask(taskId)
+          if (!task) return
+          const run = self.deps.db.getTaskRun(workerRun.id)
+          if (!run) return
+          if (run.worktreeDir && task.deleteWorktree !== false) {
+            yield* self.deps.worktree.complete(run.worktreeDir, {
+              branch: "",
+              targetBranch: "",
+              shouldMerge: false,
+              shouldRemove: true,
+            }).pipe(Effect.catchTag("WorktreeError", () => Effect.void))
+          }
+        }),
+      ),
+    )
   }
 
-  private runReviewer(taskId: string, reviewerRun: TaskRun, candidates: TaskCandidate[], options: Options): Effect.Effect<void> {
+  private runReviewer(taskId: string, reviewerRun: TaskRun, candidates: TaskCandidate[], options: Options): Effect.Effect<void, BestOfNError> {
     const self = this
     return Effect.gen(function* () {
       const task = self.deps.db.getTask(taskId)
       if (!task) return
 
-      try {
+      yield* Effect.gen(function* () {
         self.deps.db.updateTaskRun(reviewerRun.id, { status: "running" })
         self.broadcastRun(reviewerRun.id)
 
@@ -511,15 +524,25 @@ export class BestOfNRunner {
           completedAt: nowUnix(),
         })
         self.broadcastRun(reviewerRun.id)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        self.deps.db.updateTaskRun(reviewerRun.id, {
-          status: "failed",
-          errorMessage: message,
-          completedAt: nowUnix(),
-        })
-        self.broadcastRun(reviewerRun.id)
-      }
+      }).pipe(
+        Effect.catchAll((error: unknown) => {
+          const message = error instanceof BestOfNError
+            ? error.message
+            : error instanceof Error ? error.message : String(error)
+          self.deps.db.updateTaskRun(reviewerRun.id, {
+            status: "failed",
+            errorMessage: message,
+            completedAt: nowUnix(),
+          })
+          self.broadcastRun(reviewerRun.id)
+          return Effect.fail(error instanceof BestOfNError ? error : new BestOfNError({
+            operation: "runReviewer",
+            message,
+            taskId,
+            cause: error,
+          }))
+        }),
+      )
     })
   }
 
@@ -535,6 +558,7 @@ export class BestOfNRunner {
     return Effect.gen(function* () {
       const task = self.deps.db.getTask(taskId)
       if (!task || !task.bestOfNConfig) return
+      const bestOfNConfig = task.bestOfNConfig
 
       const finalRun = self.deps.db.getTaskRun(finalRunId)
       if (!finalRun) {
@@ -546,159 +570,183 @@ export class BestOfNRunner {
       }
 
       let worktreeDir: string | null = null
-      try {
-        self.deps.db.updateTaskRun(finalRun.id, { status: "running" })
-        self.broadcastRun(finalRun.id)
 
-        const worktreeInfo = yield* self.deps.worktree.createForRun(finalRun.id, "bon-final", targetBranch).pipe(
-          Effect.mapError((cause) => new BestOfNError({
-            operation: "runFinalApplier.createWorktree",
-            message: cause instanceof Error ? cause.message : String(cause),
-            taskId,
-            cause,
-          })),
-        )
-        worktreeDir = worktreeInfo.directory
-        self.deps.db.updateTaskRun(finalRun.id, { worktreeDir })
-        self.broadcastRun(finalRun.id)
+      self.deps.db.updateTaskRun(finalRun.id, { status: "running" })
+      self.broadcastRun(finalRun.id)
 
-        const selectionMode: SelectionMode = task.bestOfNConfig.selectionMode === "pick_or_synthesize"
-          ? (aggregatedReview.recommendedFinalStrategy || "pick_or_synthesize")
-          : task.bestOfNConfig.selectionMode
-
-        const prompt = self.deps.db.renderPrompt(
-          "best_of_n_final_applier",
-          buildBestOfNFinalApplierVariables(
-            task,
-            candidates,
-            aggregatedReview,
-            selectionMode,
-            options.extraPrompt,
-            finalRun.taskSuffix ?? undefined,
-          ),
-        )
-
-        const outputChunks: string[] = []
-        const finalImageToUse = resolveContainerImage(task, self.deps.settings?.workflow?.container?.image)
-
-        const response = yield* self.sessions.executePrompt({
+      const worktreeInfo = yield* self.deps.worktree.createForRun(finalRun.id, "bon-final", targetBranch).pipe(
+        Effect.mapError((cause) => new BestOfNError({
+          operation: "runFinalApplier.createWorktree",
+          message: cause instanceof Error ? cause.message : String(cause),
           taskId,
-          taskRunId: finalRun.id,
-          sessionKind: "task_run_final_applier",
-          cwd: worktreeDir,
-          worktreeDir,
-          branch: worktreeInfo.branch,
-          model: finalRun.model,
-          thinkingLevel: task.executionThinkingLevel,
-          promptText: prompt.renderedText,
-          containerImage: finalImageToUse,
-        }, {
-          onOutput: (chunk) => {
-            if (!trimText(chunk)) return
-            outputChunks.push(chunk)
-            appendTaggedOutput(self.deps.db, taskId, "final-applier", chunk)
-          },
-          onSessionCreated: self.deps.onSessionCreated,
-        }).pipe(
-          Effect.mapError((cause) => new BestOfNError({
-            operation: "runFinalApplier.executePrompt",
-            message: cause instanceof Error ? cause.message : String(cause),
-            taskId,
-            cause,
-          })),
-        )
+          cause,
+        })),
+      )
+      worktreeDir = worktreeInfo.directory
+      self.deps.db.updateTaskRun(finalRun.id, { worktreeDir })
+      self.broadcastRun(finalRun.id)
 
-        self.deps.db.updateTaskRun(finalRun.id, {
-          sessionId: response.session.id,
-          sessionUrl: self.deps.sessionUrlFor(response.session.id),
-        })
-        self.broadcastRun(finalRun.id)
+      const selectionMode: SelectionMode = bestOfNConfig.selectionMode === "pick_or_synthesize"
+        ? (aggregatedReview.recommendedFinalStrategy || "pick_or_synthesize")
+        : bestOfNConfig.selectionMode
 
-        const verificationJson = yield* self.runVerificationCommand(trimText(task.bestOfNConfig.verificationCommand), worktreeDir)
+      const prompt = self.deps.db.renderPrompt(
+        "best_of_n_final_applier",
+        buildBestOfNFinalApplierVariables(
+          task,
+          candidates,
+          aggregatedReview,
+          selectionMode,
+          options.extraPrompt,
+          finalRun.taskSuffix ?? undefined,
+        ),
+      )
 
-        if (Object.keys(aggregatedReview.candidateVoteCounts).length > 0) {
-          const votedCandidateId = Object.entries(aggregatedReview.candidateVoteCounts)
-            .sort(([, left], [, right]) => right - left)[0]?.[0]
-          const selectedCandidateId = candidates.some((candidate) => candidate.id === votedCandidateId)
-            ? votedCandidateId
-            : candidates[0]?.id
-          if (selectedCandidateId) {
-            for (const candidate of candidates) {
-              const nextStatus = candidate.id === selectedCandidateId ? "selected" : "rejected"
-              const updated = self.deps.db.updateTaskCandidate(candidate.id, { status: nextStatus })
-              if (updated) self.deps.broadcast({ type: "task_candidate_updated", payload: updated })
-            }
+      const outputChunks: string[] = []
+      const finalImageToUse = resolveContainerImage(task, self.deps.settings?.workflow?.container?.image)
+
+      const response = yield* self.sessions.executePrompt({
+        taskId,
+        taskRunId: finalRun.id,
+        sessionKind: "task_run_final_applier",
+        cwd: worktreeDir,
+        worktreeDir,
+        branch: worktreeInfo.branch,
+        model: finalRun.model,
+        thinkingLevel: task.executionThinkingLevel,
+        promptText: prompt.renderedText,
+        containerImage: finalImageToUse,
+      }, {
+        onOutput: (chunk: string) => {
+          if (!trimText(chunk)) return
+          outputChunks.push(chunk)
+          appendTaggedOutput(self.deps.db, taskId, "final-applier", chunk)
+        },
+        onSessionCreated: self.deps.onSessionCreated,
+      }).pipe(
+        Effect.mapError((cause) => new BestOfNError({
+          operation: "runFinalApplier.executePrompt",
+          message: cause instanceof Error ? cause.message : String(cause),
+          taskId,
+          cause,
+        })),
+      )
+
+      self.deps.db.updateTaskRun(finalRun.id, {
+        sessionId: response.session.id,
+        sessionUrl: self.deps.sessionUrlFor(response.session.id),
+      })
+      self.broadcastRun(finalRun.id)
+
+      const verificationJson = yield* self.runVerificationCommand(trimText(bestOfNConfig.verificationCommand), worktreeDir)
+
+      if (Object.keys(aggregatedReview.candidateVoteCounts).length > 0) {
+        const votedCandidateId = Object.entries(aggregatedReview.candidateVoteCounts)
+          .sort(([, left], [, right]) => right - left)[0]?.[0]
+        const selectedCandidateId = candidates.some((candidate) => candidate.id === votedCandidateId)
+          ? votedCandidateId
+          : candidates[0]?.id
+        if (selectedCandidateId) {
+          for (const candidate of candidates) {
+            const nextStatus = candidate.id === selectedCandidateId ? "selected" : "rejected"
+            const updated = self.deps.db.updateTaskCandidate(candidate.id, { status: nextStatus })
+            if (updated) self.deps.broadcast({ type: "task_candidate_updated", payload: updated })
           }
         }
+      }
 
-        yield* self.deps.worktree.complete(worktreeDir, {
-          branch: worktreeInfo.branch,
-          targetBranch,
-          shouldMerge: true,
-          shouldRemove: task.deleteWorktree !== false,
-        }).pipe(
-          Effect.mapError((cause) => new BestOfNError({
-            operation: "runFinalApplier.completeWorktree",
-            message: cause instanceof Error ? cause.message : String(cause),
-            taskId,
-            cause,
-          })),
-        )
+      yield* self.deps.worktree.complete(worktreeDir, {
+        branch: worktreeInfo.branch,
+        targetBranch,
+        shouldMerge: true,
+        shouldRemove: task.deleteWorktree !== false,
+      }).pipe(
+        Effect.mapError((cause) => new BestOfNError({
+          operation: "runFinalApplier.completeWorktree",
+          message: cause instanceof Error ? cause.message : String(cause),
+          taskId,
+          cause,
+        })),
+      )
 
-        const summary = trimText(response.responseText) || summaryText(outputChunks.join("\n"), 1000)
-        self.deps.db.updateTaskRun(finalRun.id, {
-          status: "done",
-          summary: summaryText(summary, 500),
-          metadataJson: { verificationJson },
-          completedAt: nowUnix(),
-        })
-        self.broadcastRun(finalRun.id)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        self.deps.db.updateTaskRun(finalRun.id, {
+      const summary = trimText(response.responseText) || summaryText(outputChunks.join("\n"), 1000)
+      self.deps.db.updateTaskRun(finalRun.id, {
+        status: "done",
+        summary: summaryText(summary, 500),
+        metadataJson: { verificationJson },
+        completedAt: nowUnix(),
+      })
+      self.broadcastRun(finalRun.id)
+    }).pipe(
+      Effect.catchAll((error: unknown) => {
+        const message = error instanceof BestOfNError
+          ? error.message
+          : error instanceof Error ? error.message : String(error)
+        self.deps.db.updateTaskRun(finalRunId, {
           status: "failed",
           errorMessage: message,
           completedAt: nowUnix(),
         })
-        self.broadcastRun(finalRun.id)
-        return yield* new BestOfNError({
+        self.broadcastRun(finalRunId)
+        return Effect.fail(error instanceof BestOfNError ? error : new BestOfNError({
           operation: "runFinalApplier",
           message: `Best-of-n final applier failed: ${message}`,
           taskId,
           cause: error,
-        })
-      }
-    })
+        }))
+      }),
+      Effect.ensuring(
+        Effect.gen(function* () {
+          const task = self.deps.db.getTask(taskId)
+          if (!task) return
+          const run = self.deps.db.getTaskRun(finalRunId)
+          if (!run) return
+          if (run.worktreeDir && task.deleteWorktree !== false) {
+            yield* self.deps.worktree.complete(run.worktreeDir, {
+              branch: "",
+              targetBranch: "",
+              shouldMerge: false,
+              shouldRemove: true,
+            }).pipe(Effect.catchTag("WorktreeError", () => Effect.void))
+          }
+        }),
+      ),
+    )
   }
 
-  private runVerificationCommand(command: string, cwd: string): Effect.Effect<Record<string, unknown>> {
+  private runVerificationCommand(command: string, cwd: string): Effect.Effect<
+    Record<string, unknown>,
+    BestOfNError
+  > {
     if (!command) return Effect.succeed({ status: "skipped", reason: "No verification command configured" })
 
-    return Effect.tryPromise({
-      try: async () => {
-        const proc = Bun.spawn(["sh", "-c", command], {
-          cwd,
-          stdout: "pipe",
-          stderr: "pipe",
-        })
-        const [stdout, stderr, exitCode] = await Promise.all([
+    return Effect.gen(function* () {
+      const proc = Bun.spawn(["sh", "-c", command], {
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const [stdout, stderr, exitCode] = yield* Effect.promise(() =>
+        Promise.all([
           new Response(proc.stdout).text(),
           new Response(proc.stderr).text(),
           proc.exited,
         ])
+      )
 
-        return {
-          status: exitCode === 0 ? "passed" : "failed",
-          exitCode,
-          stdout: summaryText(stdout, 8_000),
-          stderr: summaryText(stderr, 8_000),
-        }
-      },
-      catch: (error) => ({
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
-      }),
-    })
+      return {
+        status: exitCode === 0 ? "passed" : "failed",
+        exitCode,
+        stdout: summaryText(stdout, 8_000),
+        stderr: summaryText(stderr, 8_000),
+      } as Record<string, unknown>
+    }).pipe(
+      Effect.mapError((cause: unknown) => new BestOfNError({
+        operation: "runVerificationCommand",
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      })),
+    )
   }
 
   private broadcastTask(taskId: string): void {

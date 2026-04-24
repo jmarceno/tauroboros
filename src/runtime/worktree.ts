@@ -434,40 +434,37 @@ export function createWorktree(options: CreateWorktreeOptions): Effect.Effect<Wo
       })
     }
 
-    // Use atomic creation: build temp path first, only move to final location on success
+    // Create worktree directly at final location (NOT using temp dir to avoid breaking git tracking)
     const worktreeBaseDir = options.worktreeBaseDir ? resolve(options.worktreeBaseDir) : join(repoRoot, ".worktrees")
     const finalDirectory = join(worktreeBaseDir, name)
-    
+
     // Check if final location already exists
     if (existsSync(finalDirectory)) {
       return yield* new WorktreeError({ message: `Worktree directory already exists: ${finalDirectory}`, code: "WORKTREE_ALREADY_EXISTS" })
     }
 
-    // Create a unique temp directory for atomic creation
-    const tempDirectory = join(worktreeBaseDir, `.tmp-${name}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
-    
     // Ensure base directory exists
     mkdirSync(worktreeBaseDir, { recursive: true })
 
     const createArgs = branchExists(branch, repoRoot)
-      ? ["worktree", "add", tempDirectory, branch]
-      : ["worktree", "add", "-b", branch, tempDirectory, baseRef]
+      ? ["worktree", "add", finalDirectory, branch]
+      : ["worktree", "add", "-b", branch, finalDirectory, baseRef]
 
     // Execute git worktree creation with proper error handling and cleanup
     yield* Effect.try({
       try: () => runGit(createArgs, repoRoot),
-      catch: (cause) => new WorktreeError({ 
-        message: `Failed to create worktree '${name}': ${cause instanceof Error ? cause.message : String(cause)}`, 
+      catch: (cause) => new WorktreeError({
+        message: `Failed to create worktree '${name}': ${cause instanceof Error ? cause.message : String(cause)}`,
         code: "CREATE_WORKTREE_FAILED",
         gitOutput: cause instanceof WorktreeError ? cause.gitOutput : undefined
       })
     }).pipe(
-      Effect.tapError(() => 
-        // Clean up temp directory on failure
+      Effect.tapError(() =>
+        // Clean up directory on failure
         Effect.sync(() => {
-          if (existsSync(tempDirectory)) {
+          if (existsSync(finalDirectory)) {
             try {
-              rmSync(tempDirectory, { recursive: true, force: true })
+              rmSync(finalDirectory, { recursive: true, force: true })
             } catch {
               // Best effort cleanup
             }
@@ -475,36 +472,6 @@ export function createWorktree(options: CreateWorktreeOptions): Effect.Effect<Wo
         })
       )
     )
-
-    // Atomically move temp to final location
-    yield* Effect.try({
-      try: () => renameSync(tempDirectory, finalDirectory),
-      catch: (cause) => new WorktreeError({ 
-        message: `Failed to rename worktree directory: ${cause instanceof Error ? cause.message : String(cause)}`, 
-        code: "RENAME_WORKTREE_FAILED" 
-      })
-    })
-
-    // CRITICAL: Fix the .git file to point to the correct gitdir path
-    // The .git file created by git worktree add contains a hardcoded path
-    // to the temp directory's gitdir. After renaming, we must update it.
-    yield* Effect.try({
-      try: () => {
-        const gitFilePath = join(finalDirectory, ".git")
-        if (existsSync(gitFilePath)) {
-          const gitFileContent = readFileSync(gitFilePath, "utf-8")
-          // Replace temp directory path with final directory path in gitdir reference
-          const correctedContent = gitFileContent.replace(tempDirectory, finalDirectory)
-          if (gitFileContent !== correctedContent) {
-            writeFileSync(gitFilePath, correctedContent, "utf-8")
-          }
-        }
-      },
-      catch: (cause) => new WorktreeError({ 
-        message: `Failed to fix .git file path: ${cause instanceof Error ? cause.message : String(cause)}`, 
-        code: "FIX_GITFILE_FAILED" 
-      })
-    })
 
     // Validate that git commands work in the worktree BEFORE returning
     // This ensures we catch any git issues immediately, before starting the agent

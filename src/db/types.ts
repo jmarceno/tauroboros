@@ -320,13 +320,13 @@ export interface CreateSelfHealReportInput {
   isTauroborosBug: boolean
   rootCause: {
     description: string
-    affectedFiles: string[]
+    affectedFiles: readonly string[]
     codeSnippet: string
   }
   proposedSolution: string
-  implementationPlan: string[]
+  implementationPlan: readonly string[]
   confidence: "high" | "medium" | "low"
-  externalFactors: string[]
+  externalFactors: readonly string[]
   sourceMode: "local" | "github_clone" | "github_metadata_only"
   sourcePath?: string | null
   githubUrl: string

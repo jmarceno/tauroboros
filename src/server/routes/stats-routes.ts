@@ -11,10 +11,10 @@ export function registerStatsRoutes(router: Router, _ctx: ServerRouteContext): v
     Effect.gen(function* () {
       const rangeParam = url.searchParams.get("range") ?? "lifetime"
       if (!isStatsTimeRange(rangeParam)) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "Invalid range. Allowed values: 24h, 7d, 30d, lifetime",
           ErrorCode.INVALID_RANGE,
-        ))
+        )
       }
       return json(db.getUsageStats(rangeParam))
     }),

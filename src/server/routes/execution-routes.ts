@@ -196,8 +196,8 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
     }),
   )
 
-  router.get("/api/runs/paused-state", ({ json }) =>
-    listPausedRunStates(ctx.db).pipe(
+  router.get("/api/runs/paused-state", ({ json, db }) =>
+    listPausedRunStates(db).pipe(
       Effect.mapError((error) => mapOperationError(error, "Failed to load paused run state")),
       Effect.map((pausedRuns) => {
         const pausedState = pausedRuns[0] ?? null
@@ -213,7 +213,7 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
     Effect.gen(function* () {
       const run = db.getWorkflowRun(params.id)
       if (!run) {
-        return yield* Effect.fail(mapOperationError(new Error("Run not found"), `Failed to load paused state for run ${params.id}`))
+        return yield* mapOperationError(new Error("Run not found"), `Failed to load paused state for run ${params.id}`)
       }
 
       const pausedStates = yield* Effect.forEach(

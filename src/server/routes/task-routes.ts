@@ -44,7 +44,7 @@ function parseOptionalStringField(
 ): Effect.Effect<string | undefined, HttpRouteError> {
   const value = body[key]
   if (value === undefined) {
-    return Effect.succeed(undefined)
+    return Effect.void as Effect.Effect<string | undefined, HttpRouteError>
   }
   if (typeof value === "string") {
     return Effect.succeed(value)
@@ -58,7 +58,7 @@ function parseOptionalBooleanField(
 ): Effect.Effect<boolean | undefined, HttpRouteError> {
   const value = body[key]
   if (value === undefined) {
-    return Effect.succeed(undefined)
+    return Effect.void as Effect.Effect<boolean | undefined, HttpRouteError>
   }
   if (typeof value === "boolean") {
     return Effect.succeed(value)
@@ -72,7 +72,7 @@ function parseOptionalStringArrayField(
 ): Effect.Effect<string[] | undefined, HttpRouteError> {
   const value = body[key]
   if (value === undefined) {
-    return Effect.succeed(undefined)
+    return Effect.void as Effect.Effect<string[] | undefined, HttpRouteError>
   }
   if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
     return Effect.succeed(value)
@@ -321,14 +321,13 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     }
 
     if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
-      const imageExists = yield* Effect.tryPromise({
-        try: () => ctx.validateContainerImage(String(body.containerImage)),
-        catch: (error) => internalRouteError(
+      const imageExists = yield* ctx.validateContainerImage(String(body.containerImage)).pipe(
+        Effect.mapError((error) => internalRouteError(
           `Failed to validate container image '${String(body.containerImage)}'`,
           ErrorCode.CONTAINER_OPERATION_FAILED,
           error,
-        ),
-      })
+        )),
+      )
       if (!imageExists) {
         return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
       }
@@ -344,32 +343,33 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     })
     const removedDeps = rawRequirements.filter((reqId: string) => !allValidTaskIds.has(reqId))
 
-    const task = db.createTask({
+    const taskInput: CreateTaskInput = {
       id: randomUUID().slice(0, 8),
       name: String(body.name ?? "").trim(),
       prompt: String(body.prompt ?? ""),
-      status: body.status ?? "backlog",
-      branch: body.branch,
-      planModel: body.planModel,
-      executionModel: body.executionModel,
-      planmode: body.planmode,
-      autoApprovePlan: body.autoApprovePlan,
-      review: body.review,
-      codeStyleReview: body.codeStyleReview,
-      autoCommit: body.autoCommit,
-      autoDeploy: body.autoDeploy,
-      autoDeployCondition: body.autoDeployCondition,
-      deleteWorktree: body.deleteWorktree,
+      status: (body.status as import("../../db/types.ts").TaskStatus | undefined) ?? "backlog",
+      branch: body.branch as string | undefined,
+      planModel: body.planModel as string | undefined,
+      executionModel: body.executionModel as string | undefined,
+      planmode: body.planmode as boolean | undefined,
+      autoApprovePlan: body.autoApprovePlan as boolean | undefined,
+      review: body.review as boolean | undefined,
+      codeStyleReview: body.codeStyleReview as boolean | undefined,
+      autoCommit: body.autoCommit as boolean | undefined,
+      autoDeploy: body.autoDeploy as boolean | undefined,
+      autoDeployCondition: body.autoDeployCondition as import("../../db/types.ts").AutoDeployCondition | null | undefined,
+      deleteWorktree: body.deleteWorktree as boolean | undefined,
       requirements: validRequirements,
-      thinkingLevel: body.thinkingLevel,
-      planThinkingLevel: body.planThinkingLevel,
-      executionThinkingLevel: body.executionThinkingLevel,
-      executionStrategy: body.executionStrategy,
-      bestOfNConfig: body.bestOfNConfig,
-      bestOfNSubstage: body.bestOfNSubstage,
-      skipPermissionAsking: body.skipPermissionAsking,
-      containerImage: body.containerImage,
-    })
+      thinkingLevel: body.thinkingLevel as import("../../db/types.ts").ThinkingLevel | undefined,
+      planThinkingLevel: body.planThinkingLevel as import("../../db/types.ts").ThinkingLevel | undefined,
+      executionThinkingLevel: body.executionThinkingLevel as import("../../db/types.ts").ThinkingLevel | undefined,
+      executionStrategy: body.executionStrategy as import("../../db/types.ts").ExecutionStrategy | undefined,
+      bestOfNConfig: body.bestOfNConfig as import("../../db/types.ts").BestOfNConfig | null | undefined,
+      bestOfNSubstage: body.bestOfNSubstage as import("../../db/types.ts").BestOfNSubstage | undefined,
+      skipPermissionAsking: body.skipPermissionAsking as boolean | undefined,
+      containerImage: body.containerImage as string | undefined,
+    }
+    const task = db.createTask(taskInput)
 
     const normalized = normalizeTaskForClient(task, sessionUrlFor)
     broadcast({ type: "task_created", payload: normalized })
@@ -417,15 +417,14 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       const timeoutMs = Math.min(Math.max(Number(body.timeoutMs) || 1800000, 60000), 7200000)
       const pollIntervalMs = Math.min(Math.max(Number(body.pollIntervalMs) || 2000, 1000), 30000)
 
-      if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
-        const imageExists = yield* Effect.tryPromise({
-          try: () => ctx.validateContainerImage(String(body.containerImage)),
-          catch: (error) => internalRouteError(
-            `Failed to validate container image '${String(body.containerImage)}'`,
-            ErrorCode.CONTAINER_OPERATION_FAILED,
-            error,
-          ),
-        })
+    if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
+      const imageExists = yield* ctx.validateContainerImage(String(body.containerImage)).pipe(
+        Effect.mapError((error) => internalRouteError(
+          `Failed to validate container image '${String(body.containerImage)}'`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+          error,
+        )),
+      )
         if (!imageExists) {
           return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
         }
@@ -646,14 +645,13 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     }
 
     if (body?.containerImage !== undefined && body.containerImage !== null && body.containerImage !== "") {
-      const imageExists = yield* Effect.tryPromise({
-        try: () => ctx.validateContainerImage(String(body.containerImage)),
-        catch: (error) => internalRouteError(
+      const imageExists = yield* ctx.validateContainerImage(String(body.containerImage)).pipe(
+        Effect.mapError((error) => internalRouteError(
           `Failed to validate container image '${String(body.containerImage)}'`,
           ErrorCode.CONTAINER_OPERATION_FAILED,
           error,
-        ),
-      })
+        )),
+      )
       if (!imageExists) {
         return json({ error: `Container image '${body.containerImage}' not found. Build the image first.` }, 409)
       }
@@ -674,7 +672,7 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
       body.groupId = null
     }
 
-    const task = db.updateTask(params.id, body)
+    const task = db.updateTask(params.id, body as import("../../db/types.ts").UpdateTaskInput)
     if (!task) return json({ error: "Task not found" }, 404)
 
     if (removedFromGroupId) {

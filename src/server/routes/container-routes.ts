@@ -1,6 +1,6 @@
 import { existsSync } from "fs"
 import { readFileSync, writeFileSync } from "fs"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
 import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
@@ -12,6 +12,18 @@ import {
   notFoundError,
   serviceUnavailableError,
 } from "../route-interpreter.ts"
+
+const ContainerProfileSchema = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  description: Schema.String,
+  image: Schema.String,
+  dockerfileTemplate: Schema.String,
+})
+
+const ProfilesFileSchema = Schema.Struct({
+  profiles: Schema.mutable(Schema.Array(ContainerProfileSchema)),
+})
 
 interface ContainerProfile {
   id: string
@@ -29,10 +41,10 @@ function loadProfilesFileEffect(ctx: ServerRouteContext): Effect.Effect<Profiles
   return Effect.gen(function* () {
     const profilesPath = ctx.getContainerProfilesPath()
     if (!existsSync(profilesPath)) {
-      return yield* Effect.fail(notFoundError(
+      return yield* notFoundError(
         `Container profiles file not found at ${profilesPath}`,
         ErrorCode.PROFILE_NOT_FOUND,
-      ))
+      )
     }
 
     const raw = yield* Effect.try({
@@ -44,20 +56,19 @@ function loadProfilesFileEffect(ctx: ServerRouteContext): Effect.Effect<Profiles
       ),
     })
 
-    const data = yield* Effect.try({
-      try: () => JSON.parse(raw) as ProfilesFile,
-      catch: (cause) => badRequestError(
+    const data = yield* Schema.decodeUnknown(Schema.parseJson(ProfilesFileSchema))(raw).pipe(
+      Effect.mapError((cause) => badRequestError(
         `Invalid JSON in profiles file: ${cause instanceof Error ? cause.message : String(cause)}`,
         ErrorCode.INVALID_REQUEST_BODY,
         { cause },
-      ),
-    })
+      )),
+    )
 
     if (!Array.isArray(data.profiles)) {
-      return yield* Effect.fail(badRequestError(
+      return yield* badRequestError(
         `Invalid profiles file: 'profiles' must be an array, got ${typeof data.profiles}`,
         ErrorCode.INVALID_REQUEST_BODY,
-      ))
+      )
     }
 
     return data
@@ -92,49 +103,62 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
       }
 
       if (!profile.id || !profile.name || !profile.dockerfileTemplate) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "Profile id, name, and dockerfileTemplate are required",
           ErrorCode.INVALID_REQUEST_BODY,
-        ))
+        )
       }
 
       if (!/^[a-z0-9-]+$/.test(profile.id)) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "Profile ID must be lowercase alphanumeric with hyphens only",
           ErrorCode.INVALID_REQUEST_BODY,
-        ))
+        )
       }
 
       const profilesPath = ctx.getContainerProfilesPath()
 
       // Read existing profiles or create new file
-      const data = yield* Effect.try({
-        try: () => {
-          if (existsSync(profilesPath)) {
-            const raw = readFileSync(profilesPath, "utf-8")
-            return JSON.parse(raw) as ProfilesFile
-          }
-          return { profiles: [] }
-        },
-        catch: (cause) => internalRouteError(
-          `Failed to read profiles file: ${cause instanceof Error ? cause.message : String(cause)}`,
-          ErrorCode.CONTAINER_OPERATION_FAILED,
-          cause,
-        ),
+      const data = yield* Effect.gen(function* () {
+        if (existsSync(profilesPath)) {
+          const raw = yield* Effect.try({
+            try: () => readFileSync(profilesPath, "utf-8"),
+            catch: (cause) => internalRouteError(
+              `Failed to read profiles file: ${cause instanceof Error ? cause.message : String(cause)}`,
+              ErrorCode.CONTAINER_OPERATION_FAILED,
+              cause,
+            ),
+          })
+          return yield* Schema.decodeUnknown(Schema.parseJson(ProfilesFileSchema))(raw).pipe(
+            Effect.mapError((cause) => internalRouteError(
+              `Failed to parse profiles file: ${cause instanceof Error ? cause.message : String(cause)}`,
+              ErrorCode.CONTAINER_OPERATION_FAILED,
+              cause,
+            )),
+          )
+        }
+        return { profiles: [] }
       })
 
       const existingIndex = data.profiles.findIndex((p) => p.id === profile.id)
       if (existingIndex >= 0) {
-        return yield* Effect.fail(conflictError(
+        return yield* conflictError(
           `Profile '${profile.id}' already exists. Use a different ID.`,
           ErrorCode.CONTAINER_OPERATION_FAILED,
-        ))
+        )
       }
 
       data.profiles.push(profile)
 
+      const jsonContent = yield* Schema.encodeUnknown(Schema.parseJson(ProfilesFileSchema))(data).pipe(
+        Effect.mapError((cause) => internalRouteError(
+          `Failed to encode profiles data: ${cause instanceof Error ? cause.message : String(cause)}`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+          cause,
+        )),
+      )
       yield* Effect.try({
-        try: () => writeFileSync(profilesPath, `${JSON.stringify(data, null, 2)}\n`, "utf-8"),
+        try: () => writeFileSync(profilesPath, `${jsonContent}\n`, "utf-8"),
         catch: (cause) => internalRouteError(
           `Failed to save profile: ${cause instanceof Error ? cause.message : String(cause)}`,
           ErrorCode.CONTAINER_OPERATION_FAILED,
@@ -196,10 +220,10 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
       const profile = data.profiles.find((p) => p.id === params.profileId)
 
       if (!profile) {
-        return yield* Effect.fail(notFoundError(
+        return yield* notFoundError(
           `Profile '${params.profileId}' not found`,
           ErrorCode.PROFILE_NOT_FOUND,
-        ))
+        )
       }
 
       return json({
@@ -213,11 +237,11 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
   router.post("/api/container/build", ({ req, json, broadcast, db }) =>
     Effect.gen(function* () {
         if (!ctx.imageManager) {
-          return yield* Effect.fail(serviceUnavailableError("Container image manager not available", ErrorCode.SERVICE_UNAVAILABLE))
+          return yield* serviceUnavailableError("Container image manager not available", ErrorCode.SERVICE_UNAVAILABLE)
         }
 
         if (db.hasRunningWorkflows()) {
-          return yield* Effect.fail(conflictError("Cannot build image while workflow is running. Please stop all workflows first.", ErrorCode.CONTAINER_OPERATION_FAILED))
+          return yield* conflictError("Cannot build image while workflow is running. Please stop all workflows first.", ErrorCode.CONTAINER_OPERATION_FAILED)
         }
 
         const body = yield* Effect.tryPromise({
@@ -237,11 +261,17 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
           dockerfile = customDockerfile
         } else if (existsSync(profilesPath)) {
           const raw = readFileSync(profilesPath, "utf-8")
-          const data = JSON.parse(raw) as ProfilesFile
+          const data = yield* Schema.decodeUnknown(Schema.parseJson(ProfilesFileSchema))(raw).pipe(
+            Effect.mapError((cause) => internalRouteError(
+              `Failed to parse profiles file: ${cause instanceof Error ? cause.message : String(cause)}`,
+              ErrorCode.CONTAINER_OPERATION_FAILED,
+              cause,
+            )),
+          )
           const profile = data.profiles.find((p) => p.id === profileId)
 
           if (!profile) {
-            return yield* Effect.fail(notFoundError(`Profile '${profileId}' not found`, ErrorCode.PROFILE_NOT_FOUND))
+            return yield* notFoundError(`Profile '${profileId}' not found`, ErrorCode.PROFILE_NOT_FOUND)
           }
 
           dockerfile = profile.dockerfileTemplate
@@ -249,7 +279,7 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
             imageTag = `pi-agent:${profile.id}-${Date.now()}`
           }
         } else {
-          return yield* Effect.fail(badRequestError("No profiles found and no custom Dockerfile provided", ErrorCode.INVALID_REQUEST_BODY))
+          return yield* badRequestError("No profiles found and no custom Dockerfile provided", ErrorCode.INVALID_REQUEST_BODY)
         }
 
         const buildId = db.createContainerBuild({
@@ -353,16 +383,16 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
           ErrorCode.INVALID_JSON_BODY,
         ),
       })) as Record<string, unknown>
-      const buildId = body.buildId
+      const buildId = typeof body.buildId === "string" ? parseInt(body.buildId, 10) : Number(body.buildId)
 
       if (!buildId) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "buildId is required",
           ErrorCode.INVALID_REQUEST_BODY,
-        ))
+        )
       }
 
-      db.updateContainerBuild(String(buildId), {
+      db.updateContainerBuild(buildId, {
         status: "cancelled",
         completedAt: Math.floor(Date.now() / 1000),
       })
@@ -384,17 +414,17 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
       const buildImages: Array<{ tag: string; createdAt: number; source: "build" }> = []
       for (const b of builds.filter((b) => b.imageTag && b.status === "success")) {
         if (!b.completedAt && !b.startedAt) {
-          return yield* Effect.fail(internalRouteError(
+          return yield* internalRouteError(
             `Build ${b.id} has no completedAt or startedAt timestamp`,
             ErrorCode.CONTAINER_OPERATION_FAILED,
-          ))
+          )
         }
         const createdAt = b.completedAt ?? b.startedAt
         if (!createdAt) {
-          return yield* Effect.fail(internalRouteError(
+          return yield* internalRouteError(
             `Build ${b.id} has invalid timestamps: completedAt=${b.completedAt}, startedAt=${b.startedAt}`,
             ErrorCode.CONTAINER_OPERATION_FAILED,
-          ))
+          )
         }
         buildImages.push({
           tag: b.imageTag!,
@@ -457,10 +487,10 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
       const tag = String(body?.tag ?? "")
 
       if (!tag) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "tag is required",
           ErrorCode.INVALID_REQUEST_BODY,
-        ))
+        )
       }
 
       let availableInPodman = false
@@ -491,27 +521,27 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
       const tag = decodeURIComponent(params.tag)
 
       if (!tag) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "tag is required",
           ErrorCode.INVALID_REQUEST_BODY,
-        ))
+        )
       }
 
       const tasks = db.getTasks()
       const tasksUsing = tasks.filter((t) => t.containerImage === tag && t.status !== "done")
       if (tasksUsing.length > 0) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           `Cannot delete image: used by ${tasksUsing.length} non-done task(s)`,
           ErrorCode.CONTAINER_OPERATION_FAILED,
           { tasksUsing: tasksUsing.map((t) => ({ id: t.id, name: t.name })) },
-        ))
+        )
       }
 
       if (!ctx.containerManager) {
-        return yield* Effect.fail(serviceUnavailableError(
+        return yield* serviceUnavailableError(
           "Container manager not available",
           ErrorCode.SERVICE_UNAVAILABLE,
-        ))
+        )
       }
 
       const allImages = yield* ctx.getPodmanImages().pipe(
@@ -523,10 +553,10 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
       )
       const piAgentImages = allImages.filter((img) => img.tag.includes("pi-agent"))
       if (piAgentImages.length <= 1) {
-        return yield* Effect.fail(badRequestError(
+        return yield* badRequestError(
           "Cannot delete the last available pi-agent image",
           ErrorCode.CONTAINER_OPERATION_FAILED,
-        ))
+        )
       }
 
       const result = yield* ctx.containerManager.deleteImage(tag).pipe(
@@ -537,10 +567,10 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
         )),
       )
       if (!result.success) {
-        return yield* Effect.fail(internalRouteError(
+        return yield* internalRouteError(
           `Failed to delete image: ${result.error}`,
           ErrorCode.CONTAINER_OPERATION_FAILED,
-        ))
+        )
       }
 
       return json({ success: true, message: `Image ${tag} deleted successfully` })

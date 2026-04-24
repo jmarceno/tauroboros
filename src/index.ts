@@ -147,7 +147,7 @@ const loadSettings = Effect.fn("loadSettings")(function* (projectRoot: string, a
     }
 
     const containerRuntime = yield* validateContainerSetupEffect(new PiContainerManager(), settings).pipe(
-      Effect.mapError((cause) => new StartupError({ message: `Failed to validate container runtime: ${cause.message}` })),
+      Effect.mapError((cause: unknown) => new StartupError({ message: `Failed to validate container runtime: ${cause instanceof Error ? cause.message : String(cause)}` })),
     )
 
     if (!containerRuntime.available) {

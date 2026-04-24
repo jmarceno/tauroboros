@@ -43,6 +43,7 @@ export type StopRunFn = (
 export type GetSlotsFn = () => OrchestratorRouteEffect<SlotUtilization>
 export type GetRunQueueStatusFn = (runId: string) => OrchestratorRouteEffect<RunQueueStatus>
 export type CleanRunFn = (runId: string) => OrchestratorRouteEffect<CleanRunResult>
+export type ManualSelfHealRecoverFn = (runId: string) => OrchestratorRouteEffect<unknown>
 
 /**
  * Server-level dependency context passed to route registration functions.
@@ -61,6 +62,7 @@ export interface ServerRouteContext {
   onGetSlots: GetSlotsFn | null
   onGetRunQueueStatus: GetRunQueueStatusFn | null
   onCleanRun: CleanRunFn | null
+  onManualSelfHealRecover: ManualSelfHealRecoverFn | null
   imageManager?: ContainerImageManager
   containerManager?: PiContainerManager
   validateContainerImage: (tag: string) => Effect.Effect<boolean, unknown>
