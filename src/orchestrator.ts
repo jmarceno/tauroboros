@@ -1850,6 +1850,25 @@ export class PiOrchestrator {
 
       // Track active task for pause/stop operations
       this.activeTask = task
+      
+      // CRITICAL: Verify task doesn't already have an error before starting
+      // This catches any errors that might have been set during worktree creation or setup
+      const taskPreCheck = this.db.getTask(task.id)
+      if (taskPreCheck?.errorMessage) {
+        yield* Effect.logError(
+          `[orchestrator] Task ${task.name}(${task.id}) has error_message before execution start - aborting: ${taskPreCheck.errorMessage}`,
+        )
+        yield* this.scheduler.completeTask(task.id, "failed", taskPreCheck.sessionId).pipe(Effect.orDie)
+        this.db.updateTask(task.id, {
+          status: "failed",
+          errorMessage: `Pre-execution error check failed: ${taskPreCheck.errorMessage}`,
+        })
+        this.broadcastTask(task.id)
+        return yield* new OrchestratorOperationError({
+          operation: "executeTask.preFlightErrorCheck",
+          message: `Task has error_message before execution: ${taskPreCheck.errorMessage}`,
+        })
+      }
 
       if (task.executionStrategy === "best_of_n") {
         return yield* this.runBestOfNExecution(task, options)
@@ -1911,6 +1930,26 @@ export class PiOrchestrator {
           )
           this.db.updateTask(task.id, { worktreeDir: worktreeInfo.directory })
         }
+        
+        // CRITICAL: After worktree creation/verification, check if error was set
+        // This catches any worktree creation issues that might have set error_message
+        const taskAfterWorktree = this.db.getTask(task.id)
+        if (taskAfterWorktree?.errorMessage) {
+          yield* Effect.logError(
+            `[orchestrator] Task ${task.name}(${task.id}) has error_message after worktree setup - aborting before starting agent: ${taskAfterWorktree.errorMessage}`,
+          )
+          yield* this.scheduler.completeTask(task.id, "failed", taskAfterWorktree.sessionId).pipe(Effect.orDie)
+          this.db.updateTask(task.id, {
+            status: "failed",
+            errorMessage: `Worktree setup failed: ${taskAfterWorktree.errorMessage}`,
+          })
+          this.broadcastTask(task.id)
+          return yield* new OrchestratorOperationError({
+            operation: "executeTask.worktreeErrorCheck",
+            message: `Task has error_message after worktree setup: ${taskAfterWorktree.errorMessage}`,
+          })
+        }
+        
         this.activeWorktreeInfo = worktreeInfo
         this.broadcastTask(task.id)
 

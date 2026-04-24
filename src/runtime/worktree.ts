@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, renameSync, rmSync } from "fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs"
 import { basename, join, resolve } from "path"
 import { execFileSync } from "child_process"
 import { Effect, Schema } from "effect"
@@ -416,68 +416,121 @@ export function listWorktrees(baseDirectory?: string): Effect.Effect<WorktreeInf
  */
 export function createWorktree(options: CreateWorktreeOptions): Effect.Effect<WorktreeInfo, WorktreeError> {
   return Effect.gen(function* () {
-    const prepared = yield* tryWorktree("CREATE_WORKTREE_PREPARE_FAILED", () => {
-      const baseDirectory = options.baseDirectory ? resolve(options.baseDirectory) : process.cwd()
-      const repoRoot = getRepoRoot(baseDirectory)
+    // Prepare all paths and validate inputs
+    const baseDirectory = options.baseDirectory ? resolve(options.baseDirectory) : process.cwd()
+    const repoRoot = getRepoRoot(baseDirectory)
 
-      const name = options.name?.trim()
-      if (!name) {
-        throw new WorktreeError({ message: "Worktree name cannot be empty", code: "INVALID_WORKTREE_NAME" })
-      }
+    const name = options.name?.trim()
+    if (!name) {
+      return yield* new WorktreeError({ message: "Worktree name cannot be empty", code: "INVALID_WORKTREE_NAME" })
+    }
 
-      const branch = normalizeBranchName(options.branch) ?? name
-      const baseRef = normalizeBranchName(options.baseRef)
-      if (!baseRef) {
-        throw new WorktreeError({
-          message: "No base branch specified for worktree creation. Please configure a branch in task options or global settings.",
-          code: "BASE_REF_NOT_SPECIFIED",
+    const branch = normalizeBranchName(options.branch) ?? name
+    const baseRef = normalizeBranchName(options.baseRef)
+    if (!baseRef) {
+      return yield* new WorktreeError({
+        message: "No base branch specified for worktree creation. Please configure a branch in task options or global settings.",
+        code: "BASE_REF_NOT_SPECIFIED",
+      })
+    }
+
+    // Use atomic creation: build temp path first, only move to final location on success
+    const worktreeBaseDir = options.worktreeBaseDir ? resolve(options.worktreeBaseDir) : join(repoRoot, ".worktrees")
+    const finalDirectory = join(worktreeBaseDir, name)
+    
+    // Check if final location already exists
+    if (existsSync(finalDirectory)) {
+      return yield* new WorktreeError({ message: `Worktree directory already exists: ${finalDirectory}`, code: "WORKTREE_ALREADY_EXISTS" })
+    }
+
+    // Create a unique temp directory for atomic creation
+    const tempDirectory = join(worktreeBaseDir, `.tmp-${name}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    
+    // Ensure base directory exists
+    mkdirSync(worktreeBaseDir, { recursive: true })
+
+    const createArgs = branchExists(branch, repoRoot)
+      ? ["worktree", "add", tempDirectory, branch]
+      : ["worktree", "add", "-b", branch, tempDirectory, baseRef]
+
+    // Execute git worktree creation with proper error handling and cleanup
+    yield* Effect.try({
+      try: () => runGit(createArgs, repoRoot),
+      catch: (cause) => new WorktreeError({ 
+        message: `Failed to create worktree '${name}': ${cause instanceof Error ? cause.message : String(cause)}`, 
+        code: "CREATE_WORKTREE_FAILED",
+        gitOutput: cause instanceof WorktreeError ? cause.gitOutput : undefined
+      })
+    }).pipe(
+      Effect.tapError(() => 
+        // Clean up temp directory on failure
+        Effect.sync(() => {
+          if (existsSync(tempDirectory)) {
+            try {
+              rmSync(tempDirectory, { recursive: true, force: true })
+            } catch {
+              // Best effort cleanup
+            }
+          }
         })
-      }
+      )
+    )
 
-      // Use atomic creation: build temp path first, only move to final location on success
-      const worktreeBaseDir = options.worktreeBaseDir ? resolve(options.worktreeBaseDir) : join(repoRoot, ".worktrees")
-      const finalDirectory = join(worktreeBaseDir, name)
-      
-      // Check if final location already exists
-      if (existsSync(finalDirectory)) {
-        throw new WorktreeError({ message: `Worktree directory already exists: ${finalDirectory}`, code: "WORKTREE_ALREADY_EXISTS" })
-      }
+    // Atomically move temp to final location
+    yield* Effect.try({
+      try: () => renameSync(tempDirectory, finalDirectory),
+      catch: (cause) => new WorktreeError({ 
+        message: `Failed to rename worktree directory: ${cause instanceof Error ? cause.message : String(cause)}`, 
+        code: "RENAME_WORKTREE_FAILED" 
+      })
+    })
 
-      // Create a unique temp directory for atomic creation
-      const tempDirectory = join(worktreeBaseDir, `.tmp-${name}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
-      
-      // Ensure base directory exists
-      mkdirSync(worktreeBaseDir, { recursive: true })
-
-      const createArgs = branchExists(branch, repoRoot)
-        ? ["worktree", "add", tempDirectory, branch]
-        : ["worktree", "add", "-b", branch, tempDirectory, baseRef]
-
-      let gitSucceeded = false
-      try {
-        runGit(createArgs, repoRoot)
-        gitSucceeded = true
-        
-        // Atomically move temp to final location
-        renameSync(tempDirectory, finalDirectory)
-      } catch (error) {
-        // Clean up temp directory on any failure to prevent orphaned directories
-        if (existsSync(tempDirectory)) {
-          try {
-            rmSync(tempDirectory, { recursive: true, force: true })
-          } catch {
-            // Best effort cleanup - ignore errors
+    // CRITICAL: Fix the .git file to point to the correct gitdir path
+    // The .git file created by git worktree add contains a hardcoded path
+    // to the temp directory's gitdir. After renaming, we must update it.
+    yield* Effect.try({
+      try: () => {
+        const gitFilePath = join(finalDirectory, ".git")
+        if (existsSync(gitFilePath)) {
+          const gitFileContent = readFileSync(gitFilePath, "utf-8")
+          // Replace temp directory path with final directory path in gitdir reference
+          const correctedContent = gitFileContent.replace(tempDirectory, finalDirectory)
+          if (gitFileContent !== correctedContent) {
+            writeFileSync(gitFilePath, correctedContent, "utf-8")
           }
         }
-        
-        if (error instanceof WorktreeError) {
-          throw new WorktreeError({ message: `Failed to create worktree '${name}': ${error.message}`, code: "CREATE_WORKTREE_FAILED", gitOutput: error.gitOutput })
-        }
-        throw error
-      }
-
-      return { repoRoot, directory: finalDirectory, branch, baseRef }
+      },
+      catch: (cause) => new WorktreeError({ 
+        message: `Failed to fix .git file path: ${cause instanceof Error ? cause.message : String(cause)}`, 
+        code: "FIX_GITFILE_FAILED" 
+      })
     })
+
+    // Validate that git commands work in the worktree BEFORE returning
+    // This ensures we catch any git issues immediately, before starting the agent
+    yield* Effect.try({
+      try: () => runGit(["status"], finalDirectory),
+      catch: (cause) => new WorktreeError({ 
+        message: `Worktree created but git validation failed: ${cause instanceof Error ? cause.message : String(cause)}`, 
+        code: "WORKTREE_GIT_VALIDATION_FAILED",
+        gitOutput: cause instanceof WorktreeError ? cause.gitOutput : undefined
+      })
+    }).pipe(
+      Effect.tapError(() =>
+        // Clean up final directory on validation failure
+        Effect.sync(() => {
+          if (existsSync(finalDirectory)) {
+            try {
+              rmSync(finalDirectory, { recursive: true, force: true })
+            } catch {
+              // Best effort cleanup
+            }
+          }
+        })
+      )
+    )
+
+    const prepared = { repoRoot, directory: finalDirectory, branch, baseRef }
 
     const listed = yield* listWorktrees(prepared.repoRoot)
     const normalizedDir = normalizeDirectory(prepared.directory)
