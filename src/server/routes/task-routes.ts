@@ -564,15 +564,24 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     const existing = db.getTask(params.id)
     if (!existing) return json({ error: "Task not found" }, 404)
 
+    const body = yield* parseJsonRecord(req)
+
+    // Check if this is a "mark done" operation (only status: 'done' and/or completedAt)
+    // This should be allowed even during execution as it's a manual completion action
+    const bodyKeys = Object.keys(body)
+    const isMarkDoneOperation =
+      bodyKeys.length <= 2 &&
+      bodyKeys.every(key => key === 'status' || key === 'completedAt') &&
+      (body.status === 'done' || body.status === undefined) &&
+      (body.completedAt !== undefined || body.status === 'done')
+
     const activeRun = db.getActiveWorkflowRunForTask(params.id)
-    if (activeRun) {
+    if (activeRun && !isMarkDoneOperation) {
       return json(
         { error: `Cannot modify task "${existing.name}" while it is executing in run ${activeRun.id}.` },
         409,
       )
     }
-
-    const body = yield* parseJsonRecord(req)
     const invalidBooleanField = getInvalidTaskBooleanField(body)
     if (invalidBooleanField) return json({ error: `Invalid ${invalidBooleanField}. Expected boolean.` }, 400)
     if (body?.thinkingLevel !== undefined && !isThinkingLevel(body.thinkingLevel)) {
