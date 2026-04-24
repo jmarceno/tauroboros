@@ -1290,8 +1290,15 @@ export class PiOrchestrator {
     for (const taskId of run.taskOrder) {
       const task = this.db.getTask(taskId)
       if (task?.sessionId) {
-        yield* this.killSessionImmediately(task.sessionId)
-        result.killed++
+          // Use either to capture success/failure without failing the whole operation
+          const killResult = yield* this.killSessionImmediately(task.sessionId).pipe(
+            Effect.either
+          )
+          if (killResult._tag === "Left") {
+            const errorMessage = killResult.left instanceof Error ? killResult.left.message : String(killResult.left)
+            yield* Effect.logWarning(`[orchestrator] Failed to kill session ${task.sessionId}: ${errorMessage}`)
+          }
+          result.killed++
       }
     }
 
@@ -1300,39 +1307,34 @@ export class PiOrchestrator {
       for (const taskId of run.taskOrder) {
         const task = this.db.getTask(taskId)
         if (task?.sessionId) {
-          try {
-            yield* this.containerManager!.forceKillContainer(task.sessionId!).pipe(
-              Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)),
-            )
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error)
-            yield* Effect.logWarning(`[orchestrator] Failed to kill container for session ${task.sessionId}: ${msg}`)
-          }
+          // forceKillContainer never fails - it returns boolean
+          yield* this.containerManager!.forceKillContainer(task.sessionId!)
         }
       }
       // Run a final emergency sweep to terminate any container that may have escaped targeted kills.
-      result.killed += yield* this.containerManager!.emergencyStop().pipe(
-        Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)),
-      )
+      result.killed += yield* this.containerManager!.emergencyStop()
     }
 
     // 3. Delete all worktrees for this run's tasks
     for (const taskId of run.taskOrder) {
       const task = this.db.getTask(taskId)
       if (task?.worktreeDir && existsSync(task.worktreeDir)) {
-        try {
-          yield* Effect.logInfo(`[orchestrator] Removing worktree: ${task.worktreeDir}`)
-          yield* this.worktree.complete(task.worktreeDir!, {
-            branch: "",
-            targetBranch: "",
-            shouldMerge: false,
-            shouldRemove: true,
-          }).pipe(Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)))
+        yield* Effect.logInfo(`[orchestrator] Removing worktree: ${task.worktreeDir}`)
+        // Use either to capture success/failure without failing the whole operation
+        const worktreeResult = yield* this.worktree.complete(task.worktreeDir!, {
+          branch: "",
+          targetBranch: "",
+          shouldMerge: false,
+          shouldRemove: true,
+        }).pipe(
+          Effect.either
+        )
+        if (worktreeResult._tag === "Left") {
+          const errorMessage = worktreeResult.left instanceof Error ? worktreeResult.left.message : String(worktreeResult.left)
+          yield* Effect.logWarning(`[orchestrator] Failed to remove worktree ${task.worktreeDir}: ${errorMessage}`)
+        } else {
           this.db.updateTask(taskId, { worktreeDir: null })
           result.cleaned++
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error)
-          yield* Effect.logWarning(`[orchestrator] Failed to remove worktree ${task.worktreeDir}: ${msg}`)
         }
       }
     }
@@ -1347,16 +1349,17 @@ export class PiOrchestrator {
         if (task?.containerImage && task.containerImage !== defaultImage) {
           // Only delete custom-tagged images, never the default base image
           if (this.isCustomImage(task.containerImage)) {
-            try {
-              yield* Effect.logInfo(`[orchestrator] Deleting custom container image: ${task.containerImage}`)
-              const containerManager = yield* this.getContainerImageOperations("destructiveStop")
-              yield* containerManager.deleteImage(task.containerImage!).pipe(
-                Effect.mapError((cause) => this.toOperationError("destructiveStop", cause)),
-              )
+            yield* Effect.logInfo(`[orchestrator] Deleting custom container image: ${task.containerImage}`)
+            const containerManager = yield* this.getContainerImageOperations("destructiveStop")
+            // Use either to capture success/failure without failing the whole operation
+            const imageResult = yield* containerManager.deleteImage(task.containerImage!).pipe(
+              Effect.either
+            )
+            if (imageResult._tag === "Left") {
+              const errorMessage = imageResult.left instanceof Error ? imageResult.left.message : String(imageResult.left)
+              yield* Effect.logWarning(`[orchestrator] Failed to delete custom image ${task.containerImage}: ${errorMessage}`)
+            } else {
               this.db.updateTask(taskId, { containerImage: undefined })
-            } catch (error) {
-              const msg = error instanceof Error ? error.message : String(error)
-              yield* Effect.logWarning(`[orchestrator] Failed to delete custom image ${task.containerImage}: ${msg}`)
             }
           }
         }
