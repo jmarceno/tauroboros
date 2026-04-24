@@ -13,22 +13,46 @@ interface MermaidBlockProps {
 
 export function MermaidBlock(props: MermaidBlockProps) {
   const [svg, setSvg] = createSignal<string | null>(null)
-  const [error, setError] = createSignal(false)
+  const [error, setError] = createSignal<string | null>(null)
   const [loading, setLoading] = createSignal(true)
 
   onMount(async () => {
     try {
+      // Pre-validation: Check content validity
+      if (!props.content?.trim()) {
+        throw new Error('Empty diagram content')
+      }
+      
+      if (props.content.length > 5000) {
+        throw new Error('Diagram too large (max 5000 chars)')
+      }
+
       const mermaid = (await import('mermaid')).default
+      
+      // Try to parse first - catches syntax errors early (non-blocking)
+      try {
+        await mermaid.parse(props.content)
+      } catch (parseErr) {
+        console.warn('Mermaid parse warning:', parseErr)
+      }
+
       mermaid.initialize({
         startOnLoad: false,
         theme: 'dark',
         securityLevel: 'strict',
       })
-      const { svg: renderedSvg } = await mermaid.render(`${props.id}-svg`, props.content)
+
+      const { svg: renderedSvg } = await mermaid.render(
+        `${props.id}-svg`, 
+        props.content
+      )
+      
       setSvg(renderedSvg)
-      setLoading(false)
-    } catch {
-      setError(true)
+      setError(null)
+    } catch (err) {
+      console.error('Mermaid render failed:', err)
+      setError(err instanceof Error ? err.message : 'Failed to render diagram')
+    } finally {
       setLoading(false)
     }
   })
@@ -70,7 +94,17 @@ export function MermaidBlock(props: MermaidBlockProps) {
               <pre class="text-xs text-dark-text-muted/80">{props.content}</pre>
             </div>
           }>
-            <div class="mermaid-error p-2 text-sm text-accent-danger">Failed to render chart</div>
+            <div class="mermaid-error p-2 text-sm text-accent-danger border border-accent-danger/30 rounded bg-accent-danger/10">
+              <div class="flex items-start gap-2">
+                <svg class="w-4 h-4 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <p class="font-medium">Failed to render chart</p>
+                  <p class="text-xs mt-1 opacity-80">{error()}</p>
+                </div>
+              </div>
+            </div>
           </Show>
         }>
           <div innerHTML={svg()!} />

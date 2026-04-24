@@ -100,6 +100,7 @@ function App() {
   const [cleanRunModalOpen, setCleanRunModalOpen] = createSignal(false)
   const [cleanRunModalRun, setCleanRunModalRun] = createSignal<WorkflowRun | null>(null)
   const [isCleaningRun, setIsCleaningRun] = createSignal(false)
+  const [pendingGroupStart, setPendingGroupStart] = createSignal<string | null>(null)
 
   // Load container status
   const loadContainerStatus = async () => {
@@ -540,6 +541,28 @@ function App() {
     }
   }
 
+  const onStartGroup = async (groupId: string) => {
+    if (optionsStore.options()?.showExecutionGraph) {
+      setPendingGroupStart(groupId)
+      uiStore.openModal('executionGraph')
+    } else {
+      await executeGroupStart(groupId)
+    }
+  }
+
+  const executeGroupStart = async (groupId: string) => {
+    try {
+      await taskGroupsStore.startGroup(groupId)
+      uiStore.showToast('Group workflow started', 'success')
+      await runsStore.loadRuns()
+      await tasksStore.loadTasks()
+    } catch (e) {
+      uiStore.showToast('Failed to start group: ' + (e instanceof Error ? e.message : String(e)), 'error')
+    } finally {
+      setPendingGroupStart(null)
+    }
+  }
+
   const onPauseExecution = async (runId: string) => {
     uiStore.showToast('Pausing workflow...', 'info')
     const success = await workflowControl.pause(runId)
@@ -810,7 +833,7 @@ function App() {
             }}
             onVirtualCardClick={(groupId) => taskGroupsStore.openGroup(groupId)}
             onDeleteGroup={(groupId) => taskGroupsStore.deleteGroup(groupId)}
-            onStartGroup={(groupId) => taskGroupsStore.startGroup(groupId)}
+            onStartGroup={onStartGroup}
             onCloseGroupPanel={() => taskGroupsStore.openGroup(null)}
             onRemoveTaskFromGroup={(taskId) => {
               const groupId = taskGroupsStore.activeGroupId()
@@ -970,7 +993,27 @@ function App() {
 
       <Show when={uiStore.activeModal() === 'executionGraph'}>
         <ExecutionGraphModal
-          onClose={uiStore.closeModal}
+          pendingGroupId={pendingGroupStart()}
+          onConfirm={async () => {
+            const groupId = pendingGroupStart()
+            if (groupId) {
+              await executeGroupStart(groupId)
+            } else {
+              try {
+                await optionsStore.startExecution()
+                await runsStore.loadRuns()
+                await tasksStore.loadTasks()
+                uiStore.showToast('Workflow run started', 'success')
+              } catch (e) {
+                uiStore.showToast('Execution control failed: ' + (e instanceof Error ? e.message : String(e)), 'error')
+              }
+            }
+            uiStore.closeModal()
+          }}
+          onClose={() => {
+            setPendingGroupStart(null)
+            uiStore.closeModal()
+          }}
         />
       </Show>
 

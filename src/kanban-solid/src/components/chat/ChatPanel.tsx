@@ -30,6 +30,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const [isChangingModel, setIsChangingModel] = createSignal(false)
   let messagesContainerRef: HTMLDivElement | undefined
   let nameInputRef: HTMLInputElement | undefined
+let textareaRef: HTMLTextAreaElement | undefined
 
   // Update local state when session changes
   createEffect(() => {
@@ -111,10 +112,19 @@ export function ChatPanel(props: ChatPanelProps) {
   })
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    // Only handle Shift+Enter for sending, allow regular Enter for newlines
     if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault()
       const session = props.session()
-      if (messageInput().trim() && !isSending() && session?.session?.id && session?.session?.status === 'active') {
+      
+      // Check if we can send: not loading/reconnecting, has session, not sending
+      const canSend = textareaRef?.value.trim() && 
+                       !isSending() && 
+                       session?.session?.id &&
+                       !isLoading() && 
+                       !isReconnecting()
+      
+      if (canSend) {
         handleSend()
       }
     }
@@ -190,13 +200,16 @@ export function ChatPanel(props: ChatPanelProps) {
 
   const handleSend = async () => {
     const session = props.session()
-    if (!messageInput().trim() || isSending()) return
-    if (!session?.session?.id) return
+    if (!textareaRef || isSending() || !session?.session?.id) return
+  
+    const content = textareaRef.value.trim()
+    if (!content) return
 
-    const content = messageInput().trim()
     const attachments = [...attachedContext()]
 
+    // Clear both signal and DOM immediately after capture
     setMessageInput('')
+    textareaRef.value = ''
     setAttachedContext([])
 
     try {
@@ -205,7 +218,9 @@ export function ChatPanel(props: ChatPanelProps) {
         messagesContainerRef.scrollTop = messagesContainerRef.scrollHeight
       }
     } catch {
-      // Message send failed - error handled by store
+      // CRITICAL: Restore message on error so user doesn't lose work
+      setMessageInput(content)
+      if (textareaRef) textareaRef.value = content
     }
   }
 
@@ -518,6 +533,7 @@ export function ChatPanel(props: ChatPanelProps) {
 
         <div class="chat-input-box px-2 py-1">
           <textarea
+            ref={textareaRef}
             class="min-h-[96px] max-h-[250px] w-full bg-dark-surface border border-dark-border rounded-lg px-2 py-1.5 text-sm text-dark-text placeholder-dark-text-muted/50 focus:outline-none focus:border-accent-primary resize-none disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder={isLoading() && !isReconnecting() ? "Waiting for session to start..." : "Type your message... (Shift+Enter to send). Paste images with Ctrl+V."}
             value={messageInput()}

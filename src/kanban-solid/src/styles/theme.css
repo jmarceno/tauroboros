@@ -1286,11 +1286,41 @@
     filter: brightness(1.1);
   }
 
-  .chat-send-btn:disabled {
-    opacity: 0.5;
+  .chat-send-btn:disabled,
+  .chat-send-btn[disabled] {
+    opacity: 0.4 !important;
     cursor: not-allowed !important;
+    background-color: var(--color-dark-surface3) !important;
+    color: var(--color-dark-text-muted) !important;
+    pointer-events: none;
   }
 
+  /* Thinking content styling */
+  .thinking-content {
+    opacity: 0.6;
+  }
+
+  .thinking-block {
+    font-style: italic;
+    color: var(--color-dark-text-muted);
+  }
+
+  /* Dim nested elements within thinking blocks */
+  .thinking-block pre,
+  .thinking-block .mermaid-wrap,
+  .thinking-block code {
+    opacity: 0.8;
+    filter: grayscale(0.3);
+  }
+
+  /* Thinking indicator */
+  .thinking-indicator {
+    font-size: 0.75rem;
+    color: var(--color-dark-text-muted);
+    font-style: italic;
+    margin-top: 0.5rem;
+  }
+  
   .minimized-dock {
     position: fixed;
     bottom: 1.25rem;
