@@ -1079,17 +1079,38 @@ export class PiKanbanDB {
     return snapshot
   }
 
-  // ---- tasks ----
+   // ---- tasks ----
 
-  getTasks(): Task[] {
-    const rows = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 0 ORDER BY idx ASC").all() as Record<string, unknown>[]
-    return rows.map(rowToTask)
-  }
+   /**
+    * Get active (non-archived) task IDs for validating requirements
+    */
+   getActiveTaskIds(): Set<string> {
+     const rows = this.db.prepare("SELECT id FROM tasks WHERE is_archived = 0").all() as Array<{ id: string }>
+     return new Set(rows.map(r => r.id))
+   }
 
-  getTask(id: string): Task | null {
-    const row = this.db.prepare("SELECT * FROM tasks WHERE id = ? AND is_archived = 0").get(id) as Record<string, unknown> | null
-    return row ? rowToTask(row) : null
-  }
+   getTasks(): Task[] {
+     const rows = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 0 ORDER BY idx ASC").all() as Record<string, unknown>[]
+     const tasks = rows.map(rowToTask)
+     // Filter out invalid requirements (pointing to non-existent tasks)
+     const validTaskIds = this.getActiveTaskIds()
+     return tasks.map(t => ({
+       ...t,
+       requirements: t.requirements.filter(reqId => validTaskIds.has(reqId))
+     }))
+   }
+
+   getTask(id: string): Task | null {
+     const row = this.db.prepare("SELECT * FROM tasks WHERE id = ? AND is_archived = 0").get(id) as Record<string, unknown> | null
+     if (!row) return null
+     const task = rowToTask(row)
+     // Filter out invalid requirements
+     const validTaskIds = this.getActiveTaskIds()
+     return {
+       ...task,
+       requirements: task.requirements.filter(reqId => validTaskIds.has(reqId))
+     }
+   }
 
   createTask(input: CreateTaskInput): Task {
     const now = nowUnix()
@@ -1380,15 +1401,33 @@ export class PiKanbanDB {
     return this.updateTask(taskId, { agentOutput: `${task.agentOutput}${chunk}` })
   }
 
-  deleteTask(id: string): boolean {
-    const result = this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id)
-    return result.changes > 0
-  }
+   deleteTask(id: string): boolean {
+     // Clean up requirements in other tasks that reference this task
+     const allTasks = this.getTasks()
+     for (const t of allTasks) {
+       if (t.requirements.includes(id)) {
+         this.db
+           .prepare("UPDATE tasks SET requirements = ?, updated_at = unixepoch() WHERE id = ?")
+           .run(JSON.stringify(t.requirements.filter((r) => r !== id)), t.id)
+       }
+     }
 
-  getTasksByStatus(status: TaskStatus): Task[] {
-    const rows = this.db.prepare("SELECT * FROM tasks WHERE status = ? AND is_archived = 0 ORDER BY idx ASC").all(status) as Record<string, unknown>[]
-    return rows.map(rowToTask)
-  }
+     // Clean up task group memberships
+     this.db.prepare("DELETE FROM task_group_members WHERE task_id = ?").run(id)
+
+     const result = this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id)
+     return result.changes > 0
+   }
+
+   getTasksByStatus(status: TaskStatus): Task[] {
+     const rows = this.db.prepare("SELECT * FROM tasks WHERE status = ? AND is_archived = 0 ORDER BY idx ASC").all(status) as Record<string, unknown>[]
+     const tasks = rows.map(rowToTask)
+     const validTaskIds = this.getActiveTaskIds()
+     return tasks.map(t => ({
+       ...t,
+       requirements: t.requirements.filter(reqId => validTaskIds.has(reqId))
+     }))
+   }
 
   reorderTask(id: string, newIdx: number): Task | null {
     const task = this.getTask(id)
@@ -1436,40 +1475,48 @@ export class PiKanbanDB {
     return false
   }
 
-  archiveTask(id: string): Task | null {
-    const task = this.getTask(id)
-    if (!task) return null
+   archiveTask(id: string): Task | null {
+     const task = this.getTask(id)
+     if (!task) return null
 
-    const now = nowUnix()
-    this.db.prepare("UPDATE tasks SET is_archived = 1, archived_at = ?, updated_at = unixepoch() WHERE id = ?").run(now, id)
+     const now = nowUnix()
+     this.db.prepare("UPDATE tasks SET is_archived = 1, archived_at = ?, updated_at = unixepoch() WHERE id = ?").run(now, id)
 
-    const allTasks = this.getTasks()
-    for (const t of allTasks) {
-      if (t.requirements.includes(id)) {
-        this.db
-          .prepare("UPDATE tasks SET requirements = ?, updated_at = unixepoch() WHERE id = ?")
-          .run(JSON.stringify(t.requirements.filter((r) => r !== id)), t.id)
-      }
-    }
+     // Clean up requirements in other tasks
+     const allTasks = this.getTasks()
+     for (const t of allTasks) {
+       if (t.requirements.includes(id)) {
+         this.db
+           .prepare("UPDATE tasks SET requirements = ?, updated_at = unixepoch() WHERE id = ?")
+           .run(JSON.stringify(t.requirements.filter((r) => r !== id)), t.id)
+       }
+     }
 
-    return { ...task, isArchived: true, archivedAt: now }
-  }
+     // Remove from task group memberships (archived tasks shouldn't be in groups)
+     this.db.prepare("DELETE FROM task_group_members WHERE task_id = ?").run(id)
 
-  hardDeleteTask(id: string): boolean {
-    if (this.hasTaskExecutionHistory(id)) return false
+     return { ...task, isArchived: true, archivedAt: now }
+   }
 
-    const allTasks = this.getTasks()
-    for (const t of allTasks) {
-      if (t.requirements.includes(id)) {
-        this.db
-          .prepare("UPDATE tasks SET requirements = ?, updated_at = unixepoch() WHERE id = ?")
-          .run(JSON.stringify(t.requirements.filter((r) => r !== id)), t.id)
-      }
-    }
+   hardDeleteTask(id: string): boolean {
+     if (this.hasTaskExecutionHistory(id)) return false
 
-    const result = this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id)
-    return result.changes > 0
-  }
+     // Clean up requirements in other tasks
+     const allTasks = this.getTasks()
+     for (const t of allTasks) {
+       if (t.requirements.includes(id)) {
+         this.db
+           .prepare("UPDATE tasks SET requirements = ?, updated_at = unixepoch() WHERE id = ?")
+           .run(JSON.stringify(t.requirements.filter((r) => r !== id)), t.id)
+       }
+     }
+
+     // Clean up task group memberships
+     this.db.prepare("DELETE FROM task_group_members WHERE task_id = ?").run(id)
+
+     const result = this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id)
+     return result.changes > 0
+   }
 
   getActiveWorkflowRunForTask(taskId: string): WorkflowRun | null {
     const runs = this.getWorkflowRuns()
@@ -1828,17 +1875,30 @@ export class PiKanbanDB {
 
   // ---- Archived Tasks ----
 
-  getArchivedTasks(): Task[] {
-    const stmt = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 1 ORDER BY archived_at DESC")
-    const rows = stmt.all() as unknown[]
-    if (!Array.isArray(rows)) throw new DatabaseError({ operation: "getArchivedTasks", message: "getArchivedTasks: expected array result from database" })
-    return rows.map((r) => rowToTask(r as Record<string, unknown>))
-  }
+   getArchivedTasks(): Task[] {
+     const rows = this.db.prepare("SELECT * FROM tasks WHERE is_archived = 1 ORDER BY archived_at DESC").all() as Record<string, unknown>[]
+     if (!Array.isArray(rows)) throw new DatabaseError({ operation: "getArchivedTasks", message: "getArchivedTasks: expected array result from database" })
+     const tasks = rows.map(rowToTask)
+     // Filter out invalid requirements (archived tasks may reference non-existent tasks)
+     const validTaskIds = this.getActiveTaskIds()
+     return tasks.map(t => ({
+       ...t,
+       requirements: t.requirements.filter(reqId => validTaskIds.has(reqId))
+     }))
+   }
 
-  getArchivedTask(id: string): Task | null {
-    const row = this.db.prepare("SELECT * FROM tasks WHERE id = ? AND is_archived = 1").get(id) as Record<string, unknown> | null
-    return row ? rowToTask(row) : null
-  }
+   getArchivedTask(id: string): Task | null {
+     const row = this.db.prepare("SELECT * FROM tasks WHERE id = ? AND is_archived = 1").get(id) as Record<string, unknown> | null
+     if (!row) return null
+     const task = rowToTask(row)
+     // Filter out invalid requirements
+     const validTaskIds = this.getActiveTaskIds()
+     return {
+       ...task,
+       requirements: task.requirements.filter(reqId => validTaskIds.has(reqId))
+     }
+   }
+
 
   getArchivedTasksByRun(runId: string): Task[] {
     const run = this.getWorkflowRun(runId)
@@ -3961,13 +4021,20 @@ export class PiKanbanDB {
    * Get just task IDs in order
    * Returns string[] of task IDs in index order
    */
-  getTaskGroupMemberIds(groupId: string): string[] {
-    const rows = this.db
-      .prepare("SELECT task_id FROM task_group_members WHERE group_id = ? ORDER BY idx ASC")
-      .all(groupId) as Record<string, unknown>[]
+   getTaskGroupMemberIds(groupId: string): string[] {
+     // Only return task IDs that actually exist in the tasks table
+     const rows = this.db
+       .prepare(`
+         SELECT tgm.task_id 
+         FROM task_group_members tgm
+         INNER JOIN tasks t ON t.id = tgm.task_id
+         WHERE tgm.group_id = ? AND t.is_archived = 0
+         ORDER BY tgm.idx ASC
+       `)
+       .all(groupId) as Array<{ task_id: string }>
 
-    return rows.map(row => String(row.task_id))
-  }
+     return rows.map(row => row.task_id)
+   }
 
   /**
    * Get group a task belongs to

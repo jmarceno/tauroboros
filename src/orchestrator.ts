@@ -1158,11 +1158,31 @@ export class PiOrchestrator {
           })
         }
 
+        // Filter to only runnable tasks (backlog/template); skip completed/failed tasks
+        const runnableTaskIds = group.taskIds.filter((id) => {
+          const task = this.db.getTask(id)
+          if (!task) return false
+          return task.status === "backlog" || task.status === "template"
+        })
+
+        if (runnableTaskIds.length === 0) {
+          return yield* new OrchestratorOperationError({
+            operation: "startGroup",
+            message: `Cannot start group "${group.name}": no runnable tasks (all tasks are already completed or in a non-runnable state)`,
+            code: ErrorCode.EXECUTION_OPERATION_FAILED,
+          })
+        }
+
+        const skippedCount = group.taskIds.length - runnableTaskIds.length
+        if (skippedCount > 0) {
+          yield* Effect.logInfo(`[orchestrator] Skipping ${skippedCount} non-runnable tasks when starting group "${group.name}"`)
+        }
+
         return yield* this.startRunEffect({
           kind: "group_tasks",
           displayName: `Group: ${group.name}`,
           groupId: group.id,
-          taskOrder: group.taskIds,
+          taskOrder: runnableTaskIds,
         })
       }))
   }

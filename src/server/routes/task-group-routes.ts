@@ -311,15 +311,27 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
         )
       }
 
-      const tasks = group.taskIds.map((id) => db.getTask(id)).filter(Boolean)
-      const nonBacklogTasks = tasks.filter((t) => t!.status !== "backlog" && t!.status !== "template")
-      if (nonBacklogTasks.length > 0) {
-        return yield* conflictError(
-          "Some tasks are not in backlog status",
-          ErrorCode.EXECUTION_OPERATION_FAILED,
-          { tasks: nonBacklogTasks.map((t) => ({ id: t!.id, name: t!.name, status: t!.status })) },
-        )
-      }
+      // Filter to only runnable tasks (backlog/template); skip completed/failed tasks
+       const runnableTaskIds = group.taskIds.filter((id) => {
+         const task = db.getTask(id)
+         if (!task) return false
+         // Only include tasks that are in backlog or template status
+         // Tasks that are 'done', 'failed', 'review', etc. will be skipped
+         return task.status === "backlog" || task.status === "template"
+       })
+
+       if (runnableTaskIds.length === 0) {
+         return yield* conflictError(
+           "No runnable tasks in group (all tasks are already completed or in a non-runnable state)",
+           ErrorCode.EXECUTION_OPERATION_FAILED,
+         )
+       }
+
+       // Log skipped tasks for visibility
+       const skippedCount = group.taskIds.length - runnableTaskIds.length
+       if (skippedCount > 0) {
+         yield* Effect.logInfo(`[task-groups] Skipping ${skippedCount} non-runnable tasks in group "${group.name}"`)
+       }
 
       if (!ctx.onStartGroup) {
         return yield* internalRouteError(
@@ -370,7 +382,7 @@ export function registerTaskGroupRoutes(router: Router, ctx: ServerRouteContext)
           broadcast({ type: "run_created", payload: run })
           broadcast({
             type: "group_execution_started",
-            payload: { groupId: params.id, taskIds: group.taskIds, startedAt: Date.now() },
+            payload: { groupId: params.id, taskIds: runnableTaskIds, startedAt: Date.now() },
           })
           broadcast({ type: "execution_started", payload: {} })
           return json(run)
