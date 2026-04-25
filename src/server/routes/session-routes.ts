@@ -101,6 +101,7 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
           sessionId: session.id,
           taskId: session.taskId,
           taskRunId: session.taskRunId,
+          messageId: (body?.messageId as string | null) ?? null,
           role: (body?.role ?? eventMessage.role ?? "assistant") as MessageRole,
           eventName: (body?.eventName ?? body?.type ?? null) as string | null,
           messageType: (body?.messageType ?? "text") as MessageType,

@@ -695,4 +695,14 @@ export const MIGRATIONS: Migration[] = [
        WHERE name IS NULL;`,
     ],
   },
+  {
+    version: 32,
+    description: "Add index on message_id for deduplication and add composite unique constraint",
+    statements: [
+      // Create index for fast deduplication lookups by message_id within session
+      `CREATE INDEX IF NOT EXISTS idx_session_messages_session_message_id ON session_messages(session_id, message_id);`,
+      // Note: Cannot add UNIQUE constraint to existing column with NULL values
+      // Deduplication is handled at application level in createSessionMessage
+    ],
+  },
 ]

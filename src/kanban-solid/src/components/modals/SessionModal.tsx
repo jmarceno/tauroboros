@@ -26,8 +26,19 @@ export function SessionModal(props: SessionModalProps) {
   const isLoading = () => messagesQuery.isLoading
   const error = () => messagesQuery.error?.message || null
 
+  const dedupedMessages = createMemo(() => {
+    // Deduplicate by messageId - keep first occurrence
+    const seen = new Set<string>()
+    return messages().filter((msg) => {
+      const key = msg.messageId || String(msg.id)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  })
+
   const sortedMessages = createMemo(() => {
-    return [...messages()].sort((a, b) => {
+    return [...dedupedMessages()].sort((a, b) => {
       const ta = Number(a.timestamp || 0)
       const tb = Number(b.timestamp || 0)
       if (ta !== tb) return ta - tb

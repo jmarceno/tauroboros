@@ -74,11 +74,19 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
 
       // Load messages
       runApiEffect(sessionsApi.getMessages(session.id, 1000)).then(messages => {
+        // Deduplicate by messageId - keep first occurrence
+        const seen = new Set<string>()
+        const dedupedMessages = messages.filter((msg: SessionMessage) => {
+          const key = msg.messageId || String(msg.id)
+          if (seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
         setSessions(prev => {
           const next = new Map(prev)
           const data = next.get(session.id)
           if (data) {
-            next.set(session.id, { ...data, messages, isLoading: false })
+            next.set(session.id, { ...data, messages: dedupedMessages, isLoading: false })
           }
           return next
         })

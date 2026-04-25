@@ -3028,6 +3028,7 @@ export class PiOrchestrator {
         this.db.createSessionMessage({
           sessionId,
           taskId,
+          messageId: randomUUID(),
           role: "system",
           messageType: "error",
           contentJson: {
