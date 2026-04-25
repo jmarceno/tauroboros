@@ -10,6 +10,7 @@ import type { PackageDefinition } from "../db/types.ts"
 import type { HttpRouteError } from "./route-interpreter.ts"
 import type { OrchestratorOperationError } from "../orchestrator.ts"
 import type { CleanRunResult } from "../orchestrator/clean-run.ts"
+import type { SseHub } from "./sse-hub.ts"
 
 export interface RouteParams {
   [key: string]: string
@@ -24,6 +25,7 @@ export interface RequestContext {
   text: (data: string, status?: number) => Response
   broadcast: (message: WSMessage) => void
   sessionUrlFor: (sessionId: string) => string
+  sseHub?: SseHub
 }
 
 export type RouteHandler = (ctx: RequestContext) => Effect.Effect<Response, HttpRouteError>

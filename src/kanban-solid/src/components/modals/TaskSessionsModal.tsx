@@ -3,11 +3,13 @@
  * Ported from React to SolidJS
  */
 
-import { createSignal, createEffect, Show, For, createMemo } from 'solid-js'
+import { createSignal, createEffect, Show, For, createMemo, onCleanup } from 'solid-js'
 import { createQuery } from '@tanstack/solid-query'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { tasksApi, sessionsApi, runApiEffect } from '@/api'
+import { Effect } from 'effect'
 import { formatLocalTime } from '@/utils/date'
+import { createSessionSseStore } from '@/stores/sessionSseStore'
 import type { Task, Session, TaskRun, SessionMessage } from '@shared-types'
 
 interface TaskSessionsModalProps {
@@ -28,6 +30,9 @@ interface SessionData {
 export function TaskSessionsModal(props: TaskSessionsModalProps) {
   const [sessions, setSessions] = createSignal<Map<string, SessionData>>(new Map())
   const [activeSessionId, setActiveSessionId] = createSignal<string | null>(null)
+
+  // SSE store for real-time message updates
+  const sseStore = createSessionSseStore()
 
   const taskId = () => props.taskId ?? props.task?.id
   const task = () => props.task ?? taskQuery.data
@@ -53,7 +58,7 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
     enabled: !!taskId(),
   }))
 
-  // Load session messages
+  // Load session messages and set up SSE for real-time updates
   createEffect(() => {
     const sessionsData = sessionsQuery.data
     const runsData = runsQuery.data
@@ -61,6 +66,7 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
 
     const sessionIds = sessionsData.map(s => s.id)
     const newSessions = new Map<string, SessionData>()
+    const unsubscribers: (() => void)[] = []
 
     for (const session of sessionsData) {
       newSessions.set(session.id, {
@@ -72,7 +78,7 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
         error: null,
       })
 
-      // Load messages
+      // Load initial messages
       runApiEffect(sessionsApi.getMessages(session.id, 1000)).then(messages => {
         // Deduplicate by messageId - keep first occurrence
         const seen = new Set<string>()
@@ -100,6 +106,49 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
           return next
         })
       })
+
+      // Set up SSE subscription for real-time updates
+      const unsubscribe = sseStore.on(session.id, (event) => {
+        if (event.type === 'session_message') {
+          const newMessage = event.payload as SessionMessage
+          setSessions(prev => {
+            const next = new Map(prev)
+            const data = next.get(session.id)
+            if (data) {
+              // Deduplicate: check if message already exists by messageId or id
+              const key = newMessage.messageId || String(newMessage.id)
+              const exists = data.messages.some(m =>
+                (m.messageId || String(m.id)) === key
+              )
+              if (!exists) {
+                next.set(session.id, {
+                  ...data,
+                  messages: [...data.messages, newMessage],
+                })
+              }
+            }
+            return next
+          })
+        } else if (event.type === 'session_status') {
+          const statusUpdate = event.payload as { status: string; finishedAt: number | null }
+          setSessions(prev => {
+            const next = new Map(prev)
+            const data = next.get(session.id)
+            if (data && data.session) {
+              next.set(session.id, {
+                ...data,
+                session: {
+                  ...data.session,
+                  status: statusUpdate.status as Session['status'],
+                  finishedAt: statusUpdate.finishedAt,
+                },
+              })
+            }
+            return next
+          })
+        }
+      })
+      unsubscribers.push(unsubscribe)
     }
 
     setSessions(newSessions)
@@ -108,6 +157,11 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
     if (sessionIds.length > 0 && !activeSessionId()) {
       setActiveSessionId(sessionIds[0])
     }
+
+    // Cleanup SSE subscriptions on effect cleanup
+    onCleanup(() => {
+      unsubscribers.forEach(unsub => unsub())
+    })
   })
 
   const sortedSessions = createMemo(() => {
@@ -217,8 +271,18 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
     return groups
   })
 
+     // Cleanup SSE on modal close
+  const handleClose = () => {
+    runApiEffect(sseStore.disconnectAll()).then(() => {
+      props.onClose()
+    }).catch(() => {
+      // Even if disconnect fails, still close the modal
+      props.onClose()
+    })
+  }
+
   return (
-    <ModalWrapper title={task() ? `${task()!.name} • Sessions` : 'Task Sessions'} onClose={props.onClose} size="xl">
+    <ModalWrapper title={task() ? `${task()!.name} • Sessions` : 'Task Sessions'} onClose={handleClose} size="xl">
       <div class="flex flex-col h-full min-h-[50vh]">
         <Show when={sortedSessions().length === 0}>
           <div class="text-dark-text-muted text-center py-8">

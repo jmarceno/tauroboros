@@ -7,6 +7,7 @@ import type { WSMessage } from "./types.ts"
 import { PiKanbanDB } from "./db.ts"
 import { PiKanbanServer } from "./server/server.ts"
 import { WebSocketHub } from "./server/websocket.ts"
+import { SseHub, makeSseHub } from "./server/sse-hub.ts"
 import { PiOrchestrator } from "./orchestrator.ts"
 import { OrchestratorOperationError } from "./orchestrator/index.ts"
 import { PiContainerManager } from "./runtime/container-manager.ts"
@@ -131,6 +132,7 @@ function buildPiServerRuntime(
   options: CreateServerOptions,
   db: PiKanbanDB,
   wsHub: WebSocketHub,
+  sseHub: SseHub,
   managers: RuntimeManagers,
 ): PiServerRuntime {
   const { smartRepair, planningSessionManager, imageManager, containerManager } = managers
@@ -159,6 +161,7 @@ function buildPiServerRuntime(
     imageManager,
     containerManager,
     wsHub,
+    sseHub,
     onStart: () => orchestrator.startAll(),
     onStartSingle: (taskId: string) => orchestrator.startSingle(taskId),
     onStartGroup: (groupId: string) => orchestrator.startGroup(groupId),
@@ -204,11 +207,12 @@ export const makePiServerRuntime = Effect.fn("makePiServerRuntime")(
 
     const db = new PiKanbanDB(dbPath)
     const wsHub = new WebSocketHub()
+    const sseHub = yield* makeSseHub()
     const { imageManager, containerManager } = resolveContainerSettings(projectRoot, options)
     const smartRepair = new SmartRepairService(db, options.settings, containerManager)
     const planningSessionManager = yield* PlanningSessionManager.make(db, containerManager, options.settings)
 
-    return buildPiServerRuntime(projectRoot, options, db, wsHub, {
+    return buildPiServerRuntime(projectRoot, options, db, wsHub, sseHub, {
       smartRepair,
       planningSessionManager,
       imageManager,
@@ -235,6 +239,13 @@ const makeScopedPiServerRuntime = Effect.fn("makeScopedPiServerRuntime")(
       (hub) => Effect.sync(() => hub.close()),
     )
 
+    const sseHub = yield* Effect.acquireRelease(
+      makeSseHub(),
+      (hub) => Effect.sync(() => {
+        // SSE hub cleanup is handled by connection cleanup
+      }),
+    )
+
     const { imageManager: resolvedImageManager, containerManager: resolvedContainerManager } = resolveContainerSettings(projectRoot, options)
 
     const imageManager = resolvedImageManager
@@ -255,7 +266,7 @@ const makeScopedPiServerRuntime = Effect.fn("makeScopedPiServerRuntime")(
     const planningSessionManager = yield* PlanningSessionManager.makeScoped(db, containerManager, options.settings)
 
     return yield* Effect.acquireRelease(
-      Effect.sync(() => buildPiServerRuntime(projectRoot, options, db, wsHub, {
+      Effect.sync(() => buildPiServerRuntime(projectRoot, options, db, wsHub, sseHub, {
         smartRepair,
         planningSessionManager,
         imageManager,

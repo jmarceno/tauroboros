@@ -16,6 +16,7 @@ import { sendTelegramNotificationEffect, sendTelegramWorkflowSummaryEffect, shou
 import { Router } from "./router.ts"
 import type { RequestContext, ServerRouteContext, CleanRunFn } from "./types.ts"
 import { WebSocketHub } from "./websocket.ts"
+import { SseHub } from "./sse-hub.ts"
 import { readEmbeddedFileEffect, embeddedFileExistsEffect, getContentType, getIndexHtmlEffect } from "./embedded-files.ts"
 import { VERSION, COMMIT_HASH, DISPLAY_VERSION, IS_COMPILED } from "./version.ts"
 import { isThinkingLevel } from "./validators.ts"
@@ -82,6 +83,7 @@ export class PiKanbanServer {
   private readonly db: PiKanbanDB
   private readonly router = new Router()
   private readonly wsHub: WebSocketHub
+  private readonly sseHub: SseHub
   private server: Bun.Server<unknown> | null = null
   private readonly onStart: StartFn
   private readonly onStartSingle: StartSingleFn
@@ -168,6 +170,7 @@ export class PiKanbanServer {
       imageManager?: ContainerImageManager
       containerManager?: PiContainerManager
       wsHub?: WebSocketHub
+      sseHub?: SseHub
     },
   ) {
     this.db = db
@@ -180,12 +183,16 @@ export class PiKanbanServer {
     if (!opts.planningSessionManager) {
       failServerRuntime("constructor", "planningSessionManager service is required")
     }
-    if (!opts.wsHub) {
+     if (!opts.wsHub) {
       failServerRuntime("constructor", "wsHub service is required")
+    }
+    if (!opts.sseHub) {
+      failServerRuntime("constructor", "sseHub service is required")
     }
 
     this.smartRepair = opts.smartRepair
     this.wsHub = opts.wsHub
+    this.sseHub = opts.sseHub
     this.onStart = opts.onStart ?? (() => Effect.succeed(null))
     this.onStartSingle = opts.onStartSingle ?? (() => Effect.succeed(null))
     this.onStartGroup = opts.onStartGroup ?? null
@@ -543,7 +550,7 @@ export class PiKanbanServer {
 
     registerTaskRoutes(this.router, ctx)
     registerExecutionRoutes(this.router, ctx)
-    registerSessionRoutes(this.router, ctx)
+    registerSessionRoutes(this.router, { ...ctx, sseHub: this.sseHub })
     registerPlanningRoutes(this.router, ctx)
     registerContainerRoutes(this.router, ctx)
     registerTaskGroupRoutes(this.router, ctx)

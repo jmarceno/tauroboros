@@ -1,12 +1,17 @@
-import { Effect } from "effect"
+import { Effect, Queue, Schema } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
 import type { MessageRole, MessageType } from "../../types.ts"
 import type { PiSessionStatus } from "../../db/types.ts"
 import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
 import { HttpRouteError, badRequestError, internalRouteError } from "../route-interpreter.ts"
+import type { SseHub } from "../sse-hub.ts"
 
-export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): void {
+export interface SessionRouteContext extends ServerRouteContext {
+  sseHub: SseHub
+}
+
+export function registerSessionRoutes(router: Router, ctx: SessionRouteContext): void {
   router.get("/api/sessions/:id", ({ params, json, db }) =>
     Effect.sync(() => {
       const session = db.getWorkflowSession(params.id)
@@ -58,7 +63,100 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
     }),
   )
 
-  router.post("/api/pi/sessions/:id/events", ({ params, req, json, broadcast, db, sessionUrlFor }) =>
+  // SSE endpoint for session message streaming
+  router.get("/api/sessions/:id/stream", ({ params, db, sseHub }) =>
+    Effect.sync(() => {
+      if (!sseHub) {
+        return new Response(JSON.stringify(createApiError("SSE hub not available", ErrorCode.SERVICE_UNAVAILABLE)), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+
+      const session = db.getWorkflowSession(params.id)
+      if (!session) {
+        return new Response(JSON.stringify(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND)), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        })
+      }
+
+      // Build SSE response headers
+      const headers = new Headers({
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Cache-Control",
+      })
+
+      // Create connection ID for this stream
+      const connectionId = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+
+      // Create a readable stream that reads from the queue
+      const readableStream = new ReadableStream({
+        start(controller) {
+          // Send initial connection open event
+          const openEvent = formatSseEvent("open", { sessionId: params.id, connected: true })
+          controller.enqueue(new TextEncoder().encode(openEvent))
+
+          // Create hub connection and start draining - runs outside Effect for simplicity
+          const runSetup = async () => {
+            const queueResult = await Effect.runPromise(sseHub.createConnection(params.id))
+
+            // Drain loop
+            const drain = async () => {
+              try {
+                while (true) {
+                  const event = await Effect.runPromise(Queue.take(queueResult))
+                  const data = formatSseEvent(event.type, event)
+                  controller.enqueue(new TextEncoder().encode(data))
+                }
+              } catch (err) {
+                // Queue closed or other error - close the stream
+                controller.close()
+              }
+            }
+
+            // Keep-alive ping
+            const keepAlive = async () => {
+              try {
+                while (true) {
+                  await new Promise(resolve => setTimeout(resolve, 30000))
+                  const pingEvent = formatSseEvent("ping", { time: Date.now() })
+                  controller.enqueue(new TextEncoder().encode(pingEvent))
+                }
+              } catch {
+                // Stop on error
+              }
+            }
+
+            // Run both concurrently
+            drain()
+            keepAlive()
+          }
+
+          runSetup().catch(() => {
+            controller.close()
+          })
+        },
+        cancel() {
+          // Connection closed by client - cleanup happens via Effect scope
+          sseHub.removeConnection(connectionId)
+        },
+      })
+
+      return new Response(readableStream, { headers })
+    }),
+  )
+
+  // Helper to format SSE event strings
+  function formatSseEvent(event: string, data: unknown): string {
+    const encodedData = JSON.stringify(data)
+    return `event: ${event}\ndata: ${encodedData}\n\n`
+  }
+
+  router.post("/api/pi/sessions/:id/events", ({ params, req, json, broadcast, db, sessionUrlFor, sseHub }) =>
     Effect.gen(function* () {
       const session = db.getWorkflowSession(params.id)
       if (!session) {
@@ -89,6 +187,9 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
           })
         }
         broadcast({ type: "session_started", payload: updated ?? session })
+        if (sseHub) {
+          sseHub.broadcastStatus(session.id, "active", null)
+        }
         return json({ ok: true })
       }
 
@@ -119,6 +220,9 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
           rawEventJson: body,
         })
         broadcast({ type: "session_message_created", payload: message })
+        if (sseHub) {
+          sseHub.broadcastMessage(message)
+        }
         return json({ ok: true, message })
       }
 
@@ -128,6 +232,9 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
           errorMessage: (body?.errorMessage as string | undefined) ?? session.errorMessage,
         })
         broadcast({ type: "session_status_changed", payload: updated ?? session })
+        if (sseHub) {
+          sseHub.broadcastStatus(session.id, String(updated?.status ?? session.status), null)
+        }
         return json({ ok: true })
       }
 
@@ -140,6 +247,10 @@ export function registerSessionRoutes(router: Router, ctx: ServerRouteContext): 
           errorMessage: (body?.errorMessage as string | null | undefined) ?? null,
         })
         broadcast({ type: "session_completed", payload: updated ?? session })
+        if (sseHub) {
+          const finishedAt = updated?.finishedAt ?? Math.floor(Date.now() / 1000)
+          sseHub.broadcastStatus(session.id, String(updated?.status ?? "completed"), finishedAt)
+        }
         return json({ ok: true })
       }
 
