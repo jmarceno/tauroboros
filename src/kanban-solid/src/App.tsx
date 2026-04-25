@@ -213,6 +213,14 @@ function App() {
           await tasksStore.updateTask(taskId, { status: 'review' })
           uiStore.showToast('Task moved to Review', 'success')
           break
+        case 'move-to-template':
+          // If task is in a group, remove it from the group first
+          if (task.groupId) {
+            await taskGroupsStore.removeTasksFromGroup(task.groupId, [taskId])
+          }
+          await tasksStore.updateTask(taskId, { status: 'template' })
+          uiStore.showToast('Task moved to Template', 'success')
+          break
       }
       await tasksStore.loadTasks()
     } catch (e) {

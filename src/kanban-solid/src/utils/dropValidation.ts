@@ -2,7 +2,7 @@ import type { Task, TaskStatus } from "@/types"
 
 export type DropTargetType = "column" | "group" | "invalid"
 
-export type DropAction = "move-to-done" | "reset-to-backlog" | "move-to-review" | "add-to-group" | "remove-from-group"
+export type DropAction = "move-to-done" | "reset-to-backlog" | "move-to-review" | "move-to-template" | "add-to-group" | "remove-from-group"
 
 export type DropValidationResult =
   | { allowed: true; action: DropAction }
@@ -46,6 +46,7 @@ export function validateTaskDrop(
   const canMoveToDone = ['stuck', 'review', 'code-style'].includes(task.status)
   const canMoveToBacklog = ['stuck', 'failed', 'done', 'review', 'code-style'].includes(task.status)
   const canMoveToReview = ['backlog', 'stuck', 'failed', 'code-style'].includes(task.status)
+  const canMoveToTemplate = ['backlog'].includes(task.status)
 
   if (targetStatus === 'done' && canMoveToDone) {
     return { allowed: true, action: 'move-to-done' }
@@ -57,6 +58,10 @@ export function validateTaskDrop(
 
   if (targetStatus === 'review' && canMoveToReview) {
     return { allowed: true, action: 'move-to-review' }
+  }
+
+  if (targetStatus === 'template' && canMoveToTemplate) {
+    return { allowed: true, action: 'move-to-template' }
   }
 
   return { allowed: false, reason: `Cannot move task from ${task.status} to ${targetStatus}` }
