@@ -69,6 +69,7 @@ export interface ServerRouteContext {
   getContainerProfilesPath: () => string
   getDockerfilePath: (subpath?: string) => string
   getPodmanImages: () => Effect.Effect<Array<{ tag: string; createdAt: number; size: string }>, unknown>
+  getDockerImages: () => Effect.Effect<Array<{ tag: string; createdAt: number; size: string }>, unknown>
   hashPackages: (packages: PackageDefinition[]) => string
   planningSessionManager: PlanningSessionManager
   smartRepair: SmartRepairService

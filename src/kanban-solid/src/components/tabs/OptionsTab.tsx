@@ -134,13 +134,11 @@ export function OptionsTab() {
 
   // Load initial data when queries complete
   createEffect(() => {
-    // Access the memoized values to track reactivity
     const loading = queryIsLoading()
     const error = queryError()
     const options = opts()
     const branches = branchData()
 
-    // Still loading - wait for next effect run
     if (loading) {
       return
     }
@@ -148,8 +146,6 @@ export function OptionsTab() {
     if (hasHydrated()) {
       return
     }
-
-    // Process the loaded data
     processLoadedData(options, branches, error)
   })
 

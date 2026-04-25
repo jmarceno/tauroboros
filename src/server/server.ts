@@ -534,6 +534,7 @@ export class PiKanbanServer {
       getContainerProfilesPath: () => this.getContainerProfilesPath(),
       getDockerfilePath: (subpath) => this.getDockerfilePath(subpath),
       getPodmanImages: () => this.getPodmanImages(),
+      getDockerImages: () => this.getDockerImages(),
       hashPackages: (packages) => this.hashPackages(packages),
       planningSessionManager: this.planningSessionManager,
       smartRepair: this.smartRepair,
@@ -661,6 +662,7 @@ export class PiKanbanServer {
 
     this.router.get("/api/branches", ({ json }) =>
       Effect.sync(() => {
+        console.log(`[API] /api/branches called, projectRoot: ${this.projectRoot}`)
         try {
           const branchOutput = Bun.spawnSync({
             cmd: ["git", "branch", "--format=%(refname:short)"],
@@ -675,6 +677,7 @@ export class PiKanbanServer {
             cwd: this.projectRoot,
           })
           if (branchOutput.exitCode !== 0 || currentOutput.exitCode !== 0) {
+            console.log(`[API] git command failed: exitCode ${branchOutput.exitCode}, ${currentOutput.exitCode}`)
             return json({ branches: [], current: null, error: "Failed to list git branches" })
           }
           const branches = new TextDecoder()
@@ -684,8 +687,10 @@ export class PiKanbanServer {
             .filter(Boolean)
           const current = new TextDecoder().decode(currentOutput.stdout).trim() || null
           if (current && !branches.includes(current)) branches.unshift(current)
+          console.log(`[API] returning branches: ${JSON.stringify({ branches, current })}`)
           return json({ branches, current })
         } catch (error) {
+          console.log(`[API] error: ${error}`)
           return json({ branches: [], current: null, error: error instanceof Error ? error.message : String(error) })
         }
       }),
@@ -726,7 +731,7 @@ export class PiKanbanServer {
       const PodmanImageSchema = Schema.Array(Schema.Struct({
         Names: Schema.optional(Schema.Array(Schema.String)),
         CreatedAt: Schema.optional(Schema.String),
-        Size: Schema.optional(Schema.String),
+        Size: Schema.optional(Schema.Union(Schema.String, Schema.Number)),
       }))
       const images = yield* Schema.decodeUnknown(Schema.parseJson(PodmanImageSchema))(stdout).pipe(
         Effect.mapError((cause) => new ServerRuntimeError({
@@ -761,9 +766,81 @@ export class PiKanbanServer {
           result.push({
             tag,
             createdAt: new Date(img.CreatedAt).getTime(),
-            size: img.Size,
+            size: String(img.Size),
           })
         }
+      }
+
+      return result
+    })
+  }
+
+  private getDockerImages(): Effect.Effect<Array<{ tag: string; createdAt: number; size: string }>, ServerRuntimeError> {
+    return Effect.gen(function* () {
+      const proc = Bun.spawn(["docker", "images", "--format", "json", "--filter", "reference=*pi-agent*"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+      const stdout = yield* Effect.tryPromise({
+        try: () => new Response(proc.stdout).text(),
+        catch: (cause) => new ServerRuntimeError({
+          operation: "getDockerImages",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
+      yield* Effect.tryPromise({
+        try: () => proc.exited,
+        catch: (cause) => new ServerRuntimeError({
+          operation: "getDockerImages",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
+      })
+
+      // Docker JSON output format is slightly different from Podman
+      const DockerImageSchema = Schema.Array(Schema.Struct({
+        Repository: Schema.optional(Schema.String),
+        Tag: Schema.optional(Schema.String),
+        CreatedAt: Schema.optional(Schema.String),
+        Size: Schema.optional(Schema.Union(Schema.String, Schema.Number)),
+      }))
+      const images = yield* Schema.decodeUnknown(Schema.parseJson(DockerImageSchema))(stdout).pipe(
+        Effect.mapError((cause) => new ServerRuntimeError({
+          operation: "getDockerImages",
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        })),
+      )
+
+      const result: Array<{ tag: string; createdAt: number; size: string }> = []
+
+      for (const img of images) {
+        const repository = img.Repository || ""
+        const tag = img.Tag || ""
+        const fullTag = repository && tag ? `${repository}:${tag}` : (repository || tag || "")
+        
+        if (!fullTag) {
+          continue
+        }
+        
+        if (!img.CreatedAt) {
+          return yield* new ServerRuntimeError({
+            operation: "getDockerImages",
+            message: `Invalid docker image data: 'CreatedAt' is required for image '${fullTag}'`,
+          })
+        }
+        if (!img.Size) {
+          return yield* new ServerRuntimeError({
+            operation: "getDockerImages",
+            message: `Invalid docker image data: 'Size' is required for image '${fullTag}'`,
+          })
+        }
+        result.push({
+          tag: fullTag,
+          createdAt: new Date(img.CreatedAt).getTime(),
+          size: String(img.Size),
+        })
       }
 
       return result
