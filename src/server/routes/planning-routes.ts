@@ -457,6 +457,32 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
       }),
     )
 
+    router.post("/api/planning/sessions/:id/stop", ({ params, json, broadcast, db }) =>
+      Effect.gen(function* () {
+        const session = db.getWorkflowSession(params.id)
+        if (!session) {
+          return yield* notFoundError("Session not found", ErrorCode.SESSION_NOT_FOUND)
+        }
+        if (session.sessionKind !== "planning" && session.sessionKind !== "container_config") {
+          return yield* badRequestError("Not a planning session", ErrorCode.NOT_A_PLANNING_SESSION)
+        }
+
+        return yield* ctx.planningSessionManager.stopSession(params.id).pipe(
+          Effect.map(() => {
+            broadcast({ type: "planning_session_stopped", payload: { id: params.id } })
+            return json({ ok: true })
+          }),
+          Effect.catchTag("PlanningSessionError", (error) =>
+            Effect.fail(new HttpRouteError({
+              message: `Failed to stop session: ${error.message}`,
+              code: ErrorCode.PLANNING_SESSION_STOP_FAILED,
+              status: 500,
+              cause: error,
+            }))),
+        )
+      }),
+    )
+
     router.post("/api/planning/sessions/:id/close", ({ params, json, broadcast, db }) =>
       Effect.gen(function* () {
         const session = db.getWorkflowSession(params.id)

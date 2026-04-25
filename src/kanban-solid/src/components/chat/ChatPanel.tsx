@@ -17,6 +17,7 @@ interface ChatPanelProps {
   onReconnect: () => Promise<void>
   onChangeModel: (model: string, thinkingLevel?: string) => Promise<void>
   onCreateTasks: () => Promise<void>
+  onStop: () => Promise<void>
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -544,9 +545,9 @@ let textareaRef: HTMLTextAreaElement | undefined
           />
         </div>
 
-        <div class="px-2 pb-1">
+        <div class="px-2 pb-1 flex items-center gap-1.5">
           <button
-            class="chat-send-btn w-full"
+            class="chat-send-btn flex-1"
             disabled={!messageInput().trim() || isSending() || !sessionObj()?.id || isLoading() || isReconnecting()}
             onClick={handleSend}
           >
@@ -563,6 +564,16 @@ let textareaRef: HTMLTextAreaElement | undefined
               </Show>
               {isLoading() && !isReconnecting() ? 'Starting session...' : 'Send'}
             </span>
+          </button>
+          <button
+            class="chat-stop-btn"
+            onClick={props.onStop}
+            disabled={!agentWorking()}
+            title={agentWorking() ? 'Stop agent' : 'Agent not running'}
+          >
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="1" />
+            </svg>
           </button>
         </div>
 

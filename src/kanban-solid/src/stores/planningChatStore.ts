@@ -508,6 +508,17 @@ export function createPlanningChatStore(sseStore: { on: (type: WSMessageType, ha
     )
   }
 
+  const stopAgent = (sessionId: string) => {
+    const session = getSession(sessionId)
+    if (!session?.session?.id) {
+      return Promise.resolve()
+    }
+
+    return runApiEffect(
+      api.planningApi.stopSession(session.session.id)
+    )
+  }
+
   const setSessionModelEffect = (sessionId: string, model: string, thinkingLevel?: string) => {
     const session = getSession(sessionId)
     if (!session?.session?.id) {
@@ -667,6 +678,7 @@ export function createPlanningChatStore(sseStore: { on: (type: WSMessageType, ha
     sendMessage,
     createTasksFromChat,
     reconnectSession,
+    stopAgent,
     setSessionModel,
     addExistingSession,
     setupSseHandlers,

@@ -523,6 +523,20 @@ export class PiRpcProcess {
   }
 
   /**
+   * Cancel the current response by sending an "abort" RPC command.
+   * Pi RPC mode does not handle SIGINT — the client must send
+   * { type: "abort" } via stdin. The process emits agent_end
+   * and returns to idle, ready for the next prompt.
+   */
+  cancel(): Effect.Effect<void, PiProcessError> {
+    return Effect.gen(this, function* () {
+      if (!this.proc) return yield* Effect.void
+
+      yield* this.send({ type: "abort" }, 30_000).pipe(Effect.asVoid)
+    })
+  }
+
+  /**
    * Get underlying process for direct manipulation.
    * Used for pause/stop operations.
    */

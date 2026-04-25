@@ -374,6 +374,7 @@ export type WSMessageType =
   | "planning_session_updated"
   | "planning_session_message"
   | "planning_session_closed"
+  | "planning_session_stopped"
   // Container events
   | "container_config_updated"
   | "container_package_added"
