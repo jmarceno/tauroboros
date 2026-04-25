@@ -586,7 +586,7 @@ describe("PiKanbanServer API", () => {
       expect(taskResponse.status).toBe(201)
 
       const event = await createTaskPromise
-      expect(event.name).toBe("SSE test task")
+      expect(event.payload.name).toBe("SSE test task")
     } finally {
       server.stop()
     }
@@ -627,8 +627,8 @@ describe("PiKanbanServer API", () => {
       expect(sessionEventResponse.status).toBe(200)
 
       const event = await sessionMessageEventPromise
-      expect(event.sessionId).toBe(session.id)
-      expect(event.messageType).toBe("thinking")
+      expect(event.payload.sessionId).toBe(session.id)
+      expect(event.payload.messageType).toBe("thinking")
     } finally {
       server.stop()
     }
@@ -662,8 +662,8 @@ describe("PiKanbanServer API", () => {
       expect(groupResponse.status).toBe(201)
 
       const event = await groupCreatedPromise
-      expect(event.name).toBe("Test Group")
-      expect(event.color).toBe("#888888")
+      expect(event.payload.name).toBe("Test Group")
+      expect(event.payload.color).toBe("#888888")
     } finally {
       server.stop()
     }
@@ -684,7 +684,7 @@ describe("PiKanbanServer API", () => {
       // Start collecting SSE events
       const eventsPromise = readSseEventsUntil(
         response,
-        (e) => e.type === "task_group_created" && e.data?.name === "No Duplicate Test",
+        (e) => e.type === "task_group_created" && e.data?.payload?.name === "No Duplicate Test",
         3000
       )
 
@@ -716,7 +716,7 @@ describe("PiKanbanServer API", () => {
       expect(groupCreatedEvents.length).toBe(0)
 
       // Verify the event has correct payload
-      expect(taskGroupCreatedEvents[0].data.name).toBe("No Duplicate Test")
+      expect(taskGroupCreatedEvents[0].data.payload.name).toBe("No Duplicate Test")
     } finally {
       server.stop()
     }
@@ -762,8 +762,8 @@ describe("PiKanbanServer API", () => {
       expect(updateResponse.status).toBe(200)
 
       const event = await groupUpdatedPromise
-      expect(event.name).toBe("Updated Name")
-      expect(event.color).toBe("#FF5733")
+      expect(event.payload.name).toBe("Updated Name")
+      expect(event.payload.color).toBe("#FF5733")
     } finally {
       server.stop()
     }
@@ -804,7 +804,7 @@ describe("PiKanbanServer API", () => {
       expect(deleteResponse.status).toBe(204)
 
       const event = await groupDeletedPromise
-      expect(event.id).toBe(groupId)
+      expect(event.payload.id).toBe(groupId)
     } finally {
       server.stop()
     }
@@ -862,9 +862,9 @@ describe("PiKanbanServer API", () => {
       expect(addResponse.status).toBe(200)
 
       const event = await membersAddedPromise
-      expect(event.groupId).toBe(groupId)
-      expect(event.taskIds).toContain(taskId)
-      expect(event.addedCount).toBe(1)
+      expect(event.payload.groupId).toBe(groupId)
+      expect(event.payload.taskIds).toContain(taskId)
+      expect(event.payload.addedCount).toBe(1)
     } finally {
       server.stop()
     }
@@ -923,9 +923,9 @@ describe("PiKanbanServer API", () => {
       expect(removeResponse.status).toBe(200)
 
       const event = await membersRemovedPromise
-      expect(event.groupId).toBe(groupId)
-      expect(event.taskIds).toContain(taskId)
-      expect(event.removedCount).toBe(1)
+      expect(event.payload.groupId).toBe(groupId)
+      expect(event.payload.taskIds).toContain(taskId)
+      expect(event.payload.removedCount).toBe(1)
     } finally {
       server.stop()
     }
@@ -1028,8 +1028,8 @@ describe("PiKanbanServer API", () => {
     await Promise.race([collectEvents, Bun.sleep(1000)])
 
     // Verify SSE events were broadcast
-    expect(events.some(e => e.type === "task_group_members_removed" && e.data?.groupId === groupId)).toBe(true)
-    expect(events.some(e => e.type === "group_task_removed" && e.data?.groupId === groupId && e.data?.taskId === taskId)).toBe(true)
+    expect(events.some(e => e.type === "task_group_members_removed" && e.data?.payload?.groupId === groupId)).toBe(true)
+    expect(events.some(e => e.type === "group_task_removed" && e.data?.payload?.groupId === groupId && e.data?.payload?.taskId === taskId)).toBe(true)
 
     reader.cancel()
     server.stop()
@@ -1086,8 +1086,8 @@ describe("PiKanbanServer API", () => {
       expect(startResponse.status).toBe(200)
 
       const event = await executionStartedPromise
-      expect(event.groupId).toBe(groupId)
-      expect(typeof event.runId).toBe("string")
+      expect(event.payload.groupId).toBe(groupId)
+      expect(typeof event.payload.runId).toBe("string")
     } finally {
       server.stop()
     }
@@ -1148,11 +1148,11 @@ describe("PiKanbanServer API", () => {
       })
 
       const event = await executionCompletePromise
-      expect(event.groupId).toBe(groupId)
-      expect(event.taskIds).toContain(taskId)
-      expect(event.status).toBe("success")
-      expect(typeof event.completedAt).toBe("number")
-      expect(Array.isArray(event.results)).toBe(true)
+      expect(event.payload.groupId).toBe(groupId)
+      expect(event.payload.taskIds).toContain(taskId)
+      expect(event.payload.status).toBe("success")
+      expect(typeof event.payload.completedAt).toBe("number")
+      expect(Array.isArray(event.payload.results)).toBe(true)
     } finally {
       server.stop()
     }

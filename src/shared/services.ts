@@ -14,7 +14,6 @@ import type { PiKanbanServer } from "../server/server.ts"
 import type { ContainerImageManager } from "../runtime/container-image-manager.ts"
 import type { PiContainerManager } from "../runtime/container-manager.ts"
 import type { PlanningSessionManager } from "../runtime/planning-session.ts"
-import type { WebSocketHub } from "../server/websocket.ts"
 import type { SmartRepairService } from "../runtime/smart-repair.ts"
 import type { LoggerService } from "./logger.ts"
 
@@ -57,11 +56,6 @@ export const ContainerManagerContext = Context.GenericTag<PiContainerManager>("C
  * Planning session manager service.
  */
 export const PlanningSessionManagerContext = Context.GenericTag<PlanningSessionManager>("PlanningSessionManagerContext")
-
-/**
- * WebSocket hub service.
- */
-export const WebSocketHubContext = Context.GenericTag<WebSocketHub>("WebSocketHubContext")
 
 /**
  * Smart repair service.

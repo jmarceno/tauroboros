@@ -1,4 +1,5 @@
 import { Effect, Queue, Schema } from "effect"
+import { pipe } from "effect/Function"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
 import type { MessageRole, MessageType } from "../../types.ts"
@@ -6,6 +7,12 @@ import type { PiSessionStatus } from "../../db/types.ts"
 import { ErrorCode, createApiError } from "../../shared/error-codes.ts"
 import { HttpRouteError, badRequestError, internalRouteError } from "../route-interpreter.ts"
 import type { SseHub } from "../sse-hub.ts"
+
+const JsonString = Schema.parseJson(Schema.Any)
+
+function jsonStringify(value: unknown): string {
+  return Schema.encodeSync(JsonString)(value)
+}
 
 export interface SessionRouteContext extends ServerRouteContext {
   sseHub: SseHub
@@ -67,7 +74,7 @@ export function registerSessionRoutes(router: Router, ctx: SessionRouteContext):
   router.get("/api/sessions/:id/stream", ({ params, db, sseHub }) =>
     Effect.sync(() => {
       if (!sseHub) {
-        return new Response(JSON.stringify(createApiError("SSE hub not available", ErrorCode.SERVICE_UNAVAILABLE)), {
+        return new Response(jsonStringify(createApiError("SSE hub not available", ErrorCode.SERVICE_UNAVAILABLE)), {
           status: 503,
           headers: { "Content-Type": "application/json" },
         })
@@ -75,7 +82,7 @@ export function registerSessionRoutes(router: Router, ctx: SessionRouteContext):
 
       const session = db.getWorkflowSession(params.id)
       if (!session) {
-        return new Response(JSON.stringify(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND)), {
+        return new Response(jsonStringify(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND)), {
           status: 404,
           headers: { "Content-Type": "application/json" },
         })
