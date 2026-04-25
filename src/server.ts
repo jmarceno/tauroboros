@@ -6,7 +6,7 @@ import type { InfrastructureSettings } from "./config/settings.ts"
 import type { WSMessage } from "./types.ts"
 import { PiKanbanDB } from "./db.ts"
 import { PiKanbanServer } from "./server/server.ts"
-import { WebSocketHub } from "./server/websocket.ts"
+import { GlobalSseHub, makeGlobalSseHub } from "./server/global-sse-hub.ts"
 import { SseHub, makeSseHub } from "./server/sse-hub.ts"
 import { PiOrchestrator } from "./orchestrator.ts"
 import { OrchestratorOperationError } from "./orchestrator/index.ts"
@@ -131,7 +131,7 @@ function buildPiServerRuntime(
   projectRoot: string,
   options: CreateServerOptions,
   db: PiKanbanDB,
-  wsHub: WebSocketHub,
+  globalSseHub: GlobalSseHub,
   sseHub: SseHub,
   managers: RuntimeManagers,
 ): PiServerRuntime {
@@ -160,7 +160,7 @@ function buildPiServerRuntime(
     planningSessionManager,
     imageManager,
     containerManager,
-    wsHub,
+    globalSseHub,
     sseHub,
     onStart: () => orchestrator.startAll(),
     onStartSingle: (taskId: string) => orchestrator.startSingle(taskId),
@@ -206,13 +206,13 @@ export const makePiServerRuntime = Effect.fn("makePiServerRuntime")(
     mkdirSync(dirname(dbPath), { recursive: true })
 
     const db = new PiKanbanDB(dbPath)
-    const wsHub = new WebSocketHub()
+    const globalSseHub = yield* makeGlobalSseHub()
     const sseHub = yield* makeSseHub()
     const { imageManager, containerManager } = resolveContainerSettings(projectRoot, options)
     const smartRepair = new SmartRepairService(db, options.settings, containerManager)
     const planningSessionManager = yield* PlanningSessionManager.make(db, containerManager, options.settings)
 
-    return buildPiServerRuntime(projectRoot, options, db, wsHub, sseHub, {
+    return buildPiServerRuntime(projectRoot, options, db, globalSseHub, sseHub, {
       smartRepair,
       planningSessionManager,
       imageManager,
@@ -234,8 +234,8 @@ const makeScopedPiServerRuntime = Effect.fn("makeScopedPiServerRuntime")(
       () => Effect.void,
     )
 
-    const wsHub = yield* Effect.acquireRelease(
-      Effect.sync(() => new WebSocketHub()),
+    const globalSseHub = yield* Effect.acquireRelease(
+      makeGlobalSseHub(),
       (hub) => Effect.sync(() => hub.close()),
     )
 
@@ -266,7 +266,7 @@ const makeScopedPiServerRuntime = Effect.fn("makeScopedPiServerRuntime")(
     const planningSessionManager = yield* PlanningSessionManager.makeScoped(db, containerManager, options.settings)
 
     return yield* Effect.acquireRelease(
-      Effect.sync(() => buildPiServerRuntime(projectRoot, options, db, wsHub, sseHub, {
+      Effect.sync(() => buildPiServerRuntime(projectRoot, options, db, globalSseHub, sseHub, {
         smartRepair,
         planningSessionManager,
         imageManager,

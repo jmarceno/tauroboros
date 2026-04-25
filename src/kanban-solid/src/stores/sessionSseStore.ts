@@ -3,18 +3,20 @@
  *
  * Manages SSE connections per session, receiving new messages as they arrive
  * from the backend Pi webhook. Uses EventSource for lightweight, one-way streaming.
+ *
+ * The server sends named events:
+ *   event: session_message
+ *   data: {"type":"session_message","sessionId":"...","payload":{...}}
+ *
+ *   event: session_status
+ *   data: {"type":"session_status","sessionId":"...","payload":{...}}
+ *
+ * We use addEventListener for these named events, NOT onmessage (which only
+ * fires for unnamed events).
  */
 
 import { createSignal, onCleanup } from 'solid-js'
-import { Effect, Schema } from 'effect'
-import { runApiEffect } from '@/api'
 import type { SessionMessage } from '@/types'
-
-export class SseClientError extends Schema.TaggedError<SseClientError>()('SseClientError', {
-  operation: Schema.String,
-  message: Schema.String,
-  cause: Schema.optional(Schema.Unknown),
-}) {}
 
 export interface SseEvent {
   type: 'session_message' | 'session_status'
@@ -36,109 +38,133 @@ export function createSessionSseStore() {
 
   /**
    * Connect to the SSE endpoint for a session.
-   * Returns an Effect that manages the lifecycle.
+   * Synchronously creates the EventSource and registers handlers.
    */
-  const connect = (sessionId: string): Effect.Effect<void, SseClientError> =>
-    Effect.gen(function* () {
-      // Skip if already connected
-      const existing = connections().get(sessionId)
-      if (existing && existing.eventSource.readyState === EventSource.OPEN) {
-        return
-      }
+  const connect = (sessionId: string): void => {
+    // Skip if already connected
+    const existing = connections().get(sessionId)
+    if (existing && existing.eventSource.readyState === EventSource.OPEN) {
+      return
+    }
 
-      // Skip if already connecting
-      if (isConnecting().has(sessionId)) {
-        return
-      }
+    // Skip if already connecting
+    if (isConnecting().has(sessionId)) {
+      return
+    }
 
-      setIsConnecting(prev => {
-        const next = new Set(prev)
-        next.add(sessionId)
-        return next
-      })
+    setIsConnecting(prev => {
+      const next = new Set(prev)
+      next.add(sessionId)
+      return next
+    })
 
-      const eventSource = new EventSource(`/api/sessions/${encodeURIComponent(sessionId)}/stream`)
-      const handlers = new Set<MessageHandler>()
+    const eventSource = new EventSource(`/api/sessions/${encodeURIComponent(sessionId)}/stream`)
+    const handlers = new Set<MessageHandler>()
 
-      const connection: Connection = {
-        eventSource,
-        handlers,
-        sessionId,
-      }
+    const connection: Connection = {
+      eventSource,
+      handlers,
+      sessionId,
+    }
 
-      setConnections(prev => {
-        const next = new Map(prev)
-        next.set(sessionId, connection)
-        return next
-      })
+    // Store connection BEFORE setting up event handlers so on() can find it
+    setConnections(prev => {
+      const next = new Map(prev)
+      next.set(sessionId, connection)
+      return next
+    })
 
-      // Set up event handlers
-      eventSource.onopen = () => {
-        setIsConnecting(prev => {
-          const next = new Set(prev)
-          next.delete(sessionId)
-          return next
-        })
-      }
+    // Register addEventListener for the named event types from the server.
+    // The server sends:
+    //   event: session_message\ndata: {"type":"session_message","sessionId":"...","payload":...}
+    //   event: session_status\ndata: {"type":"session_status","sessionId":"...","payload":...}
+    // onmessage does NOT fire for named events - only addEventListener does.
 
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data) as SseEvent
-          const conn = connections().get(sessionId)
-          if (conn) {
-            conn.handlers.forEach(handler => handler(data))
-          }
-        } catch {
-          // Ignore malformed messages
+    eventSource.addEventListener('session_message', (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data) as SseEvent
+        const conn = connections().get(sessionId)
+        if (conn) {
+          conn.handlers.forEach(handler => handler(data))
         }
-      }
-
-      eventSource.onerror = () => {
-        // Connection will auto-reconnect, but update state
-        setIsConnecting(prev => {
-          const next = new Set(prev)
-          next.delete(sessionId)
-          return next
-        })
+      } catch {
+        // Ignore malformed messages
       }
     })
 
-  /**
-   * Disconnect from a session's SSE endpoint.
-   */
-  const disconnect = (sessionId: string): Effect.Effect<void, never> =>
-    Effect.sync(() => {
-      const conn = connections().get(sessionId)
-      if (conn) {
-        conn.eventSource.close()
-        setConnections(prev => {
-          const next = new Map(prev)
-          next.delete(sessionId)
-          return next
-        })
+    eventSource.addEventListener('session_status', (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data) as SseEvent
+        const conn = connections().get(sessionId)
+        if (conn) {
+          conn.handlers.forEach(handler => handler(data))
+        }
+      } catch {
+        // Ignore malformed messages
       }
+    })
+
+    eventSource.onopen = () => {
       setIsConnecting(prev => {
         const next = new Set(prev)
         next.delete(sessionId)
         return next
       })
+    }
+
+    eventSource.onerror = (error) => {
+      // Suppress expected errors from client-initiated disconnects
+      const conn = connections().get(sessionId)
+      if (!conn) return // Already cleaned up, ignore
+      
+      // Only update state if this is a connection error, not a close
+      if (eventSource.readyState !== EventSource.CLOSED) {
+        setIsConnecting(prev => {
+          const next = new Set(prev)
+          next.delete(sessionId)
+          return next
+        })
+      }
+    }
+  }
+
+  /**
+   * Disconnect from a session's SSE endpoint.
+   */
+  const disconnect = (sessionId: string): void => {
+    const conn = connections().get(sessionId)
+    if (conn) {
+      conn.eventSource.close()
+      setConnections(prev => {
+        const next = new Map(prev)
+        next.delete(sessionId)
+        return next
+      })
+    }
+    setIsConnecting(prev => {
+      const next = new Set(prev)
+      next.delete(sessionId)
+      return next
     })
+  }
 
   /**
    * Subscribe to events for a session.
+   * Auto-connects if not already connected.
    * Returns an unsubscribe function.
    */
   const on = (sessionId: string, handler: MessageHandler): (() => void) => {
-    // Auto-connect if not already connected
+    // Check if we need to connect first
     const conn = connections().get(sessionId)
     if (!conn || conn.eventSource.readyState === EventSource.CLOSED) {
-      void runApiEffect(connect(sessionId).pipe(Effect.catchAll(() => Effect.void)))
+      connect(sessionId)
     }
 
-    // Add handler
-    const currentConn = connections().get(sessionId)
-    if (currentConn) {
-      currentConn.handlers.add(handler)
+    // After connect(), the connection is available synchronously since connect() is synchronous.
+    // Add the handler to the connection's handler set.
+    const updatedConn = connections().get(sessionId)
+    if (updatedConn) {
+      updatedConn.handlers.add(handler)
     }
 
     return () => {
@@ -147,7 +173,7 @@ export function createSessionSseStore() {
         c.handlers.delete(handler)
         // Disconnect if no more handlers
         if (c.handlers.size === 0) {
-          void runApiEffect(disconnect(sessionId))
+          disconnect(sessionId)
         }
       }
     }
@@ -156,21 +182,17 @@ export function createSessionSseStore() {
   /**
    * Disconnect all sessions.
    */
-  const disconnectAll = (): Effect.Effect<void, never> =>
-    Effect.sync(() => {
-      for (const [sessionId] of connections()) {
-        const conn = connections().get(sessionId)
-        if (conn) {
-          conn.eventSource.close()
-        }
-      }
-      setConnections(new Map())
-      setIsConnecting(new Set())
-    })
+  const disconnectAll = (): void => {
+    for (const [, conn] of connections()) {
+      conn.eventSource.close()
+    }
+    setConnections(new Map())
+    setIsConnecting(new Set())
+  }
 
   // Cleanup on component unmount
   onCleanup(() => {
-    void runApiEffect(disconnectAll())
+    disconnectAll()
   })
 
   return {

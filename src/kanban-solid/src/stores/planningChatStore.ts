@@ -52,7 +52,7 @@ export interface ChatSession {
   currentTool?: string | null
 }
 
-export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, handler: (payload: unknown) => void) => () => void }) {
+export function createPlanningChatStore(sseStore: { on: (type: WSMessageType, handler: (payload: unknown) => void) => () => void }) {
   const [isOpen, setIsOpen] = createSignal(false)
   const [width, setWidth] = createSignal(DEFAULT_WIDTH)
   const [isResizing, setIsResizing] = createSignal(false)
@@ -289,17 +289,6 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
         return yield* Effect.fail(new Error('No active session'))
       }
 
-      if (sendingSet.has(sessionId) && !isRetry) {
-        return yield* Effect.fail(new Error('Already sending a message'))
-      }
-
-      yield* Effect.sync(() => {
-        sendingSet.add(sessionId)
-        if (!isRetry) {
-          updateSession(sessionId, (current) => ({ ...current, isSending: true, error: null }))
-        }
-      })
-
       const backendSessionId = sessionData.id
 
       yield* api.planningApi.sendMessage(backendSessionId, content, attachments).pipe(
@@ -390,20 +379,23 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
       })
     })
 
-  const sendMessage = (sessionId: string, content: string, attachments?: ContextAttachment[]) => {
+  const sendMessage = (sessionId: string, content: string, attachments?: ContextAttachment[]): Promise<void> => {
     const session = getSession(sessionId)
 
     if (!session) {
-      return
+      return Promise.resolve()
     }
 
     if (!session.session?.id) {
-      return
+      return Promise.resolve()
     }
 
     if (sendingSet.has(sessionId)) {
-      return
+      return Promise.resolve()
     }
+
+    sendingSet.add(sessionId)
+    updateSession(sessionId, (current) => ({ ...current, isSending: true }))
 
     const isSessionNotActive = !session.session || session.error?.includes('not active')
 
@@ -417,13 +409,17 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
         maxRetries: 1,
       }])
 
+      // Clear sending state since we're queuing the message for later
+      sendingSet.delete(sessionId)
+      updateSession(sessionId, (current) => ({ ...current, isSending: false }))
+
       if (!session.isReconnecting && !reconnectingSet.has(sessionId)) {
-        runApiEffect(attemptSendMessageEffect(sessionId, content, attachments))
+        return runApiEffect(attemptSendMessageEffect(sessionId, content, attachments))
       }
-      return
+      return Promise.resolve()
     }
 
-    runApiEffect(attemptSendMessageEffect(sessionId, content, attachments))
+    return runApiEffect(attemptSendMessageEffect(sessionId, content, attachments))
   }
 
   const createTasksFromChat = (sessionId: string, tasks?: Array<{ name: string; prompt: string; status?: string; requirements?: string[] }>) => {
@@ -446,10 +442,6 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     const session = getSession(sessionId)
     if (!session?.session?.id) {
       return Effect.fail(new Error('No session to reconnect'))
-    }
-
-    if (reconnectingSet.has(sessionId)) {
-      return Effect.fail(new Error('Reconnect already in progress'))
     }
 
     const backendSessionId = session.session.id
@@ -497,20 +489,21 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     ))
 
     return runApiEffect(
-      Effect.mapError(
+      Effect.match(
         reconnectSessionEffect(sessionId, model, thinkingLevel),
-        (error) => {
-          reconnectingSet.delete(sessionId)
-          const errorMsg = error instanceof Error ? error.message : 'Failed to reconnect session'
-          setSessions(prev => prev.map(s =>
-            s.id === sessionId
-              ? { ...s, error: errorMsg, isLoading: false, isReconnecting: false }
-              : s
-          ))
-          return { ok: false, session: null, error: errorMsg }
+        {
+          onSuccess: (session) => ({ ok: true, session } as const),
+          onFailure: (error) => {
+            reconnectingSet.delete(sessionId)
+            const errorMsg = error instanceof Error ? error.message : 'Failed to reconnect session'
+            setSessions(prev => prev.map(s =>
+              s.id === sessionId
+                ? { ...s, error: errorMsg, isLoading: false, isReconnecting: false }
+                : s
+            ))
+            return { ok: false, session: null, error: errorMsg } as const
+          },
         }
-      ).pipe(
-        Effect.map((session) => ({ ok: true, session } as const))
       )
     )
   }
@@ -567,24 +560,24 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     setActiveSessionId(session.id)
   }
 
-  // WebSocket handlers
-  const setupWebSocketHandlers = () => {
-    const unsubCreated = wsStore.on('planning_session_created', (data) => {
+  // SSE handlers
+  const setupSseHandlers = () => {
+    const unsubCreated = sseStore.on('planning_session_created', (data) => {
       const session = data as PlanningSession
       handlePlanningSessionCreated(session)
     })
 
-    const unsubUpdated = wsStore.on('planning_session_updated', (data) => {
+    const unsubUpdated = sseStore.on('planning_session_updated', (data) => {
       const session = data as PlanningSession
       handlePlanningSessionUpdated(session)
     })
 
-    const unsubClosed = wsStore.on('planning_session_closed', (data) => {
+    const unsubClosed = sseStore.on('planning_session_closed', (data) => {
       const { id } = data as { id: string }
       handlePlanningSessionClosed({ id })
     })
 
-    const unsubMessage = wsStore.on('planning_session_message', (data) => {
+    const unsubMessage = sseStore.on('planning_session_message', (data) => {
       const { sessionId, message } = data as { sessionId: string; message: SessionMessage }
       handlePlanningSessionMessage({ sessionId, message })
     })
@@ -676,7 +669,7 @@ export function createPlanningChatStore(wsStore: { on: (type: WSMessageType, han
     reconnectSession,
     setSessionModel,
     addExistingSession,
-    setupWebSocketHandlers,
+    setupSseHandlers,
     handlePlanningSessionCreated,
     handlePlanningSessionUpdated,
     handlePlanningSessionClosed,

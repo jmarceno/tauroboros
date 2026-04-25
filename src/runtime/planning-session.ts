@@ -1050,6 +1050,7 @@ export class PlanningSessionManager {
       self.sessions.set(sessionId, planningSession)
 
       // Start the planning session
+      // Planning chat always runs in native mode
       yield* planningSession.start(input.systemPrompt, input.model, input.thinkingLevel, "native")
 
       const updatedSession = self.db.getWorkflowSession(sessionId) ?? session
@@ -1150,7 +1151,8 @@ export class PlanningSessionManager {
       // Store in active sessions (or replace old one)
       self.sessions.set(sessionId, planningSession)
 
-      // Reconnect to the Pi process (planning sessions always use native mode)
+      // Reconnect to the Pi process
+      // Planning chat always runs in native mode
       yield* planningSession.reconnect(input.systemPrompt, input.model, input.thinkingLevel, "native")
 
       const updatedSession = self.db.getWorkflowSession(sessionId) ?? dbSession

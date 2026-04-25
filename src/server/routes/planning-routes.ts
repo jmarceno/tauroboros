@@ -202,7 +202,7 @@ export function registerPlanningRoutes(router: Router, ctx: ServerRouteContext):
     }),
   )
 
-  router.post("/api/planning/sessions/:id/messages", ({ params, req, json, db }) =>
+  router.post("/api/planning/sessions/:id/messages", ({ params, req, json, broadcast, db }) =>
     Effect.gen(function* () {
       const session = db.getWorkflowSession(params.id)
       if (!session) return json(createApiError("Session not found", ErrorCode.SESSION_NOT_FOUND), 404)

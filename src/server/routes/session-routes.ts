@@ -90,59 +90,91 @@ export function registerSessionRoutes(router: Router, ctx: SessionRouteContext):
         "Access-Control-Allow-Headers": "Cache-Control",
       })
 
-      // Create connection ID for this stream
-      const connectionId = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+      // Connection ID from sseHub.createConnection - populated in start()
+      let connectionId: string | null = null
 
       // Create a readable stream that reads from the queue
       const readableStream = new ReadableStream({
         start(controller) {
-          // Send initial connection open event
+          // Send initial connection open event immediately
           const openEvent = formatSseEvent("open", { sessionId: params.id, connected: true })
           controller.enqueue(new TextEncoder().encode(openEvent))
 
-          // Create hub connection and start draining - runs outside Effect for simplicity
-          const runSetup = async () => {
-            const queueResult = await Effect.runPromise(sseHub.createConnection(params.id))
+          let closed = false
+          let keepAliveInterval: Timer | null = null
 
-            // Drain loop
-            const drain = async () => {
-              try {
-                while (true) {
-                  const event = await Effect.runPromise(Queue.take(queueResult))
-                  const data = formatSseEvent(event.type, event)
-                  controller.enqueue(new TextEncoder().encode(data))
-                }
-              } catch (err) {
-                // Queue closed or other error - close the stream
-                controller.close()
+          // Create hub connection and set up streaming
+          Effect.runPromise(sseHub.createConnection(params.id))
+            .then((result) => {
+              if (closed) {
+                // Already closed, clean up connection
+                sseHub.removeConnection(result.connectionId)
+                return
               }
-            }
 
-            // Keep-alive ping
-            const keepAlive = async () => {
-              try {
-                while (true) {
-                  await new Promise(resolve => setTimeout(resolve, 30000))
+              connectionId = result.connectionId
+              const queueResult = result.queue
+
+              // Keep-alive ping using setInterval (more Bun-friendly)
+              keepAliveInterval = setInterval(() => {
+                if (closed) return
+                try {
                   const pingEvent = formatSseEvent("ping", { time: Date.now() })
                   controller.enqueue(new TextEncoder().encode(pingEvent))
+                } catch {
+                  // Controller closed, clean up
+                  closed = true
+                  if (keepAliveInterval) {
+                    clearInterval(keepAliveInterval)
+                    keepAliveInterval = null
+                  }
                 }
-              } catch {
-                // Stop on error
+              }, 30000)
+
+              // Drain loop - use recursive pattern instead of async/await loop
+              const drain = () => {
+                if (closed) return
+
+                Effect.runPromise(Queue.take(queueResult))
+                  .then((event) => {
+                    if (closed) return
+                    const data = formatSseEvent(event.type, event)
+                    controller.enqueue(new TextEncoder().encode(data))
+                    // Schedule next iteration
+                    setImmediate(drain)
+                  })
+                  .catch(() => {
+                    // Queue closed or error - clean up
+                    closed = true
+                    if (keepAliveInterval) {
+                      clearInterval(keepAliveInterval)
+                      keepAliveInterval = null
+                    }
+                    try {
+                      controller.close()
+                    } catch {
+                      // Already closed
+                    }
+                  })
               }
-            }
 
-            // Run both concurrently
-            drain()
-            keepAlive()
-          }
-
-          runSetup().catch(() => {
-            controller.close()
-          })
+              // Start draining
+              drain()
+            })
+            .catch(() => {
+              // Failed to create connection
+              try {
+                controller.close()
+              } catch {
+                // Already closed
+              }
+            })
         },
         cancel() {
-          // Connection closed by client - cleanup happens via Effect scope
-          sseHub.removeConnection(connectionId)
+          // Connection closed by client - cleanup using the correct connection ID
+          if (connectionId) {
+            sseHub.removeConnection(connectionId)
+          }
         },
       })
 

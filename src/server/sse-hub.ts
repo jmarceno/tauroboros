@@ -34,10 +34,10 @@ export class SseHub {
 
   /**
    * Create a new SSE connection for a session.
-   * Returns a queue that the SSE endpoint will consume to stream events.
+   * Returns a queue and the connection ID that the SSE endpoint will use to stream events.
    * The queue is unbounded and will be cleaned up when the connection is removed.
    */
-  createConnection(sessionId: string): Effect.Effect<Queue.Queue<SseEvent>, SseHubError, never> {
+  createConnection(sessionId: string): Effect.Effect<{ queue: Queue.Queue<SseEvent>; connectionId: string }, SseHubError, never> {
     return Effect.gen(this, function* () {
       const connectionId = `conn_${++this.nextId}`
       const queue = yield* Queue.unbounded<SseEvent>()
@@ -50,7 +50,7 @@ export class SseHub {
       }
       this.connections.set(connectionId, connection)
 
-      return queue
+      return { queue, connectionId }
     })
   }
 

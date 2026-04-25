@@ -537,7 +537,7 @@ let textareaRef: HTMLTextAreaElement | undefined
             class="min-h-[96px] max-h-[250px] w-full bg-dark-surface border border-dark-border rounded-lg px-2 py-1.5 text-sm text-dark-text placeholder-dark-text-muted/50 focus:outline-none focus:border-accent-primary resize-none disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder={isLoading() && !isReconnecting() ? "Waiting for session to start..." : "Type your message... (Shift+Enter to send). Paste images with Ctrl+V."}
             value={messageInput()}
-            onChange={(e) => setMessageInput(e.currentTarget.value)}
+            onInput={(e) => setMessageInput(e.currentTarget.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             disabled={isLoading() || isReconnecting() || !sessionObj()?.id}
