@@ -139,6 +139,8 @@ export class PiKanbanServer {
   private notificationQueue: Queue.Queue<NotificationJob> | null = null;
   private pendingNotifications: NotificationJob[] = [];
   private _currentRunId: string | null = null;
+  private branchesCache: { branches: string[]; current: string | null } | null = null;
+  private branchesFetching = false;
 
   getImageManager(): ContainerImageManager | null {
     return this.imageManager ?? null;
@@ -189,6 +191,45 @@ export class PiKanbanServer {
 
     // Fallback to source location (development mode)
     return join(this.projectRoot, "docker", subpath);
+  }
+
+  private async refreshBranchesCache(): Promise<void> {
+    if (this.branchesFetching) return;
+    this.branchesFetching = true;
+    try {
+      const [branchProc, currentProc] = await Promise.all([
+        Bun.spawn(["git", "branch", "--format=%(refname:short)"], {
+          cwd: this.projectRoot,
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+        Bun.spawn(["git", "branch", "--show-current"], {
+          cwd: this.projectRoot,
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      ]);
+      const [branchExit, currentExit] = await Promise.all([
+        branchProc.exited,
+        currentProc.exited,
+      ]);
+      if (branchExit !== 0 || currentExit !== 0) {
+        return;
+      }
+      const branchText = await new Response(branchProc.stdout).text();
+      const currentText = await new Response(currentProc.stdout).text();
+      const branches = branchText
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const current = currentText.trim() || null;
+      if (current && !branches.includes(current)) branches.unshift(current);
+      this.branchesCache = { branches, current };
+    } catch {
+      // Git unavailable — keep stale cache
+    } finally {
+      this.branchesFetching = false;
+    }
   }
 
   constructor(
@@ -476,6 +517,7 @@ export class PiKanbanServer {
           Bun.serve({
             port,
             hostname: "0.0.0.0",
+            idleTimeout: 0,
             fetch: async (req, server) => {
               const url = new URL(req.url);
 
@@ -934,49 +976,10 @@ export class PiKanbanServer {
 
     this.router.get("/api/branches", ({ json }) =>
       Effect.sync(() => {
-        console.log(
-          `[API] /api/branches called, projectRoot: ${this.projectRoot}`,
+        this.refreshBranchesCache();
+        return json(
+          this.branchesCache ?? { branches: [], current: null },
         );
-        try {
-          const branchOutput = Bun.spawnSync({
-            cmd: ["git", "branch", "--format=%(refname:short)"],
-            stdout: "pipe",
-            stderr: "pipe",
-            cwd: this.projectRoot,
-          });
-          const currentOutput = Bun.spawnSync({
-            cmd: ["git", "branch", "--show-current"],
-            stdout: "pipe",
-            stderr: "pipe",
-            cwd: this.projectRoot,
-          });
-          if (branchOutput.exitCode !== 0 || currentOutput.exitCode !== 0) {
-            console.log(
-              `[API] git command failed: exitCode ${branchOutput.exitCode}, ${currentOutput.exitCode}`,
-            );
-            return json({
-              branches: [],
-              current: null,
-              error: "Failed to list git branches",
-            });
-          }
-          const branches = new TextDecoder()
-            .decode(branchOutput.stdout)
-            .split("\n")
-            .map((line) => line.trim())
-            .filter(Boolean);
-          const current =
-            new TextDecoder().decode(currentOutput.stdout).trim() || null;
-          if (current && !branches.includes(current)) branches.unshift(current);
-          return json({ branches, current });
-        } catch (error) {
-          console.log(`[API] error: ${error}`);
-          return json({
-            branches: [],
-            current: null,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
       }),
     );
 
