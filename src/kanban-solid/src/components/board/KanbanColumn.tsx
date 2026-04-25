@@ -128,7 +128,7 @@ export function KanbanColumn(props: KanbanColumnProps) {
                 task={task}
                 runColor={props.getTaskRunColor(task.id)}
                 isLocked={props.isTaskMutationLocked(task.id)}
-                canDrag={(props.status === 'backlog' || props.status === 'code-style') && !props.isTaskMutationLocked(task.id) && props.currentSort === 'manual'}
+                canDrag={(props.status === 'backlog' || props.status === 'code-style') && !props.isTaskMutationLocked(task.id)}
                 isSelected={props.getIsSelected?.(task.id)}
                 isMultiSelecting={props.isMultiSelecting}
                 bonSummary={props.bonSummaries[task.id]}
