@@ -130,6 +130,8 @@ export function KanbanBoard(props: KanbanBoardProps) {
         groups.review.push(task)
       } else if (task.status === 'code-style') {
         groups['code-style'].push(task)
+      } else if (task.status === 'queued') {
+        groups.backlog.push(task)
       } else if (task.status && task.status in groups) {
         groups[task.status as TaskStatus].push(task)
       }
