@@ -675,6 +675,25 @@ export function registerTaskRoutes(router: Router, ctx: ServerRouteContext): voi
     const task = db.updateTask(params.id, body as import("../../db/types.ts").UpdateTaskInput)
     if (!task) return json({ error: "Task not found" }, 404)
 
+    if (task.status === "done" && task.groupId) {
+      const groupInfo = db.getTaskGroup(task.groupId)
+      if (groupInfo && groupInfo.taskIds.length > 0) {
+        const allDone = groupInfo.taskIds.every((tid) => {
+          const t = db.getTask(tid)
+          return t?.status === "done"
+        })
+        if (allDone) {
+          const updatedGroup = db.updateTaskGroup(task.groupId, {
+            status: "completed",
+            completedAt: Math.floor(Date.now() / 1000),
+          })
+          if (updatedGroup) {
+            broadcast({ type: "task_group_updated", payload: updatedGroup })
+          }
+        }
+      }
+    }
+
     if (removedFromGroupId) {
       broadcast({ type: "task_group_members_removed", payload: { groupId: removedFromGroupId, taskIds: [task.id] } })
       broadcast({ type: "group_task_removed", payload: { groupId: removedFromGroupId, taskId: task.id } })

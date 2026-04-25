@@ -7,6 +7,7 @@ import type { Task, TaskStatus, BestOfNSummary, TaskGroup, ColumnSortPreferences
 import { KanbanColumn } from './KanbanColumn'
 import { VirtualCard } from './VirtualCard'
 import { GroupPanel } from './GroupPanel'
+import { DoneGroupCard } from './DoneGroupCard'
 import type { createDragDropStore } from '@/stores'
 import type { createSessionUsageStore } from '@/stores/sessionUsageStore'
 import type { createTaskLastUpdateStore } from '@/stores/taskLastUpdateStore'
@@ -121,6 +122,10 @@ export function KanbanBoard(props: KanbanBoardProps) {
         continue
       }
 
+      if (task.status === 'done' && task.groupId) {
+        continue
+      }
+
       if (task.status === 'failed' || task.status === 'stuck') {
         groups.review.push(task)
       } else if (task.status === 'code-style') {
@@ -150,7 +155,41 @@ export function KanbanBoard(props: KanbanBoardProps) {
 
   const activeGroups = createMemo(() => {
     const groups = props.groups || []
-    return groups.filter(g => g.status === 'active')
+    return groups.filter(g =>
+      g.status === 'active' && !fullyCompletedGroupIds().has(g.id)
+    )
+  })
+
+  const fullyCompletedGroupIds = createMemo(() => {
+    const allGroups = props.groups || []
+    return new Set(
+      allGroups
+        .filter(g => {
+          const memberIds = props.groupMembers?.[g.id] || []
+          return memberIds.length > 0 && memberIds.every(id => {
+            const task = props.tasks.find(t => t.id === id)
+            return task?.status === 'done'
+          })
+        })
+        .map(g => g.id)
+    )
+  })
+
+  const groupsWithDoneTasks = createMemo(() => {
+    const doneGroupIds = new Set(
+      props.tasks.filter(t => t.status === 'done' && t.groupId).map(t => t.groupId)
+    )
+    return (props.groups || []).filter(g => doneGroupIds.has(g.id))
+  })
+
+  const doneTasksByGroup = createMemo(() => {
+    const grouped: Record<string, Task[]> = {}
+    for (const task of props.tasks) {
+      if (task.status !== 'done' || !task.groupId) continue
+      if (!grouped[task.groupId]) grouped[task.groupId] = []
+      grouped[task.groupId].push(task)
+    }
+    return grouped
   })
 
   return (
@@ -230,6 +269,48 @@ export function KanbanBoard(props: KanbanBoardProps) {
                       ))}
                     </div>
                     <div class="virtual-cards-divider" />
+                  </div>
+                )}
+                {column.status === 'done' && groupsWithDoneTasks().length > 0 && (
+                  <div class="done-group-cards-section">
+                    <div class="done-group-cards-header">
+                      <span class="text-xs font-medium text-dark-text-muted uppercase tracking-wider">
+                        Completed Groups
+                      </span>
+                    </div>
+                    <div class="done-group-cards-list">
+                      {groupsWithDoneTasks().map(group => (
+                        <DoneGroupCard
+                          group={group}
+                          tasks={doneTasksByGroup()[group.id] || []}
+                          fullyCompleted={fullyCompletedGroupIds().has(group.id)}
+                          bonSummaries={props.bonSummaries}
+                          getTaskRunColor={props.getTaskRunColor}
+                          isTaskMutationLocked={props.isTaskMutationLocked}
+                          dragDrop={props.dragDrop}
+                          sessionUsage={props.sessionUsage}
+                          taskLastUpdate={props.taskLastUpdate}
+                          isMultiSelecting={props.isMultiSelecting}
+                          getIsSelected={props.getIsSelected}
+                          allTasks={props.tasks}
+                          options={props.options}
+                          onOpenTask={props.onOpenTask}
+                          onDeployTemplate={props.onDeployTemplate}
+                          onOpenTaskSessions={props.onOpenTaskSessions}
+                          onApprovePlan={props.onApprovePlan}
+                          onRequestRevision={props.onRequestRevision}
+                          onStartSingle={props.onStartSingle}
+                          onRepairTask={props.onRepairTask}
+                          onMarkDone={props.onMarkDone}
+                          onResetTask={props.onResetTask}
+                          onConvertToTemplate={props.onConvertToTemplate}
+                          onArchiveTask={props.onArchiveTask}
+                          onViewRuns={props.onViewRuns}
+                          onContinueReviews={props.onContinueReviews}
+                        />
+                      ))}
+                    </div>
+                    <div class="done-group-cards-divider" />
                   </div>
                 )}
               </KanbanColumn>

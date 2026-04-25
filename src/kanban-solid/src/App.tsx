@@ -763,7 +763,7 @@ function App() {
             columnSorts={optionsStore.options()?.columnSorts}
             highlightedRunId={highlightedRunId()}
             isTaskInRun={runsStore.isTaskInRun}
-            groups={taskGroupsStore.activeGroups()}
+            groups={taskGroupsStore.groups()}
             groupMembers={groupMembers()}
             activeGroupId={taskGroupsStore.activeGroupId()}
             options={optionsStore.options()}
