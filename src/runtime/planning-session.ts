@@ -789,6 +789,56 @@ export class PlanningSession {
   }
 
   /**
+   * Stop the current agent response without closing the session.
+   * The session remains connected and can accept new messages.
+   */
+  stop(): Effect.Effect<void, PlanningSessionError> {
+    const self = this
+    return Effect.gen(function* () {
+      if (!self.process) {
+        return yield* new PlanningSessionError({
+          operation: "stop",
+          message: "No active process to stop",
+        })
+      }
+
+      if (!self.agentWorking) {
+        return yield* Effect.void
+      }
+
+      yield* self.process.cancel().pipe(
+        Effect.mapError((cause) => new PlanningSessionError({
+          operation: "stop",
+          message: cause.message,
+          cause,
+        })),
+      )
+
+      self.agentWorking = false
+      self.currentToolName = null
+      self.streamingState = null
+
+      const stoppedMessage = {
+        id: self.messageSeq++,
+        seq: self.messageSeq,
+        messageId: randomUUID(),
+        sessionId: self.session.id,
+        taskId: null,
+        taskRunId: null,
+        timestamp: nowUnix(),
+        role: "system" as const,
+        eventName: "agent_stopped",
+        messageType: "session_status" as const,
+        contentJson: {
+          agentWorking: false,
+          currentTool: null,
+        },
+      }
+      self.onMessage?.(stoppedMessage as unknown as SessionMessage)
+    })
+  }
+
+  /**
    * Close the planning session.
    * Returns an Effect that must be run at the runtime boundary.
    */
@@ -1050,6 +1100,7 @@ export class PlanningSessionManager {
       self.sessions.set(sessionId, planningSession)
 
       // Start the planning session
+      // Planning chat always runs in native mode
       yield* planningSession.start(input.systemPrompt, input.model, input.thinkingLevel, "native")
 
       const updatedSession = self.db.getWorkflowSession(sessionId) ?? session
@@ -1064,6 +1115,24 @@ export class PlanningSessionManager {
 
   getAllActiveSessions(): PlanningSession[] {
     return Array.from(this.sessions.values()).filter((s) => s.isActive())
+  }
+
+  /**
+   * Stop the current agent response for a specific session without closing it.
+   * The session remains connected and can accept new messages.
+   */
+  stopSession(sessionId: string): Effect.Effect<void, PlanningSessionError> {
+    const self = this
+    return Effect.gen(function* () {
+      const session = self.sessions.get(sessionId)
+      if (!session) {
+        return yield* new PlanningSessionError({
+          operation: "stopSession",
+          message: "Session not active",
+        })
+      }
+      yield* session.stop()
+    })
   }
 
   /**
@@ -1150,7 +1219,8 @@ export class PlanningSessionManager {
       // Store in active sessions (or replace old one)
       self.sessions.set(sessionId, planningSession)
 
-      // Reconnect to the Pi process (planning sessions always use native mode)
+      // Reconnect to the Pi process
+      // Planning chat always runs in native mode
       yield* planningSession.reconnect(input.systemPrompt, input.model, input.thinkingLevel, "native")
 
       const updatedSession = self.db.getWorkflowSession(sessionId) ?? dbSession

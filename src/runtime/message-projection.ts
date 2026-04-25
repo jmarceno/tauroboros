@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto"
 import type { CreateSessionMessageInput, MessageRole, MessageType } from "../types.ts"
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -293,7 +294,7 @@ export function projectPiEventToSessionMessage(input: {
   const { editDiff, editFilePath } = extractEditMetadata(toolName, toolArgs)
 
   return {
-    messageId: pickString(event.messageId, assistantEvent.messageId, partial.responseId, message.responseId, message.id) ?? null,
+    messageId: pickString(event.messageId, assistantEvent.messageId, partial.responseId, message.responseId, message.id) ?? randomUUID(),
     sessionId: input.sessionId,
     taskId: input.taskId ?? null,
     taskRunId: input.taskRunId ?? null,

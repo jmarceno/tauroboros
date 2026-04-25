@@ -327,6 +327,7 @@ export function ChatContainer(props: ChatContainerProps) {
                       onReconnect={() => props.planningChat.reconnectSession(sessionId())}
                       onChangeModel={(model, thinkingLevel) => props.planningChat.setSessionModel(sessionId(), model, thinkingLevel)}
                       onCreateTasks={() => props.planningChat.createTasksFromChat(sessionId())}
+                      onStop={() => props.planningChat.stopAgent(sessionId())}
                     />
                   )
                 }}

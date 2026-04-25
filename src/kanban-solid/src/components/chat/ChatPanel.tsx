@@ -17,6 +17,7 @@ interface ChatPanelProps {
   onReconnect: () => Promise<void>
   onChangeModel: (model: string, thinkingLevel?: string) => Promise<void>
   onCreateTasks: () => Promise<void>
+  onStop: () => Promise<void>
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -537,16 +538,16 @@ let textareaRef: HTMLTextAreaElement | undefined
             class="min-h-[96px] max-h-[250px] w-full bg-dark-surface border border-dark-border rounded-lg px-2 py-1.5 text-sm text-dark-text placeholder-dark-text-muted/50 focus:outline-none focus:border-accent-primary resize-none disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder={isLoading() && !isReconnecting() ? "Waiting for session to start..." : "Type your message... (Shift+Enter to send). Paste images with Ctrl+V."}
             value={messageInput()}
-            onChange={(e) => setMessageInput(e.currentTarget.value)}
+            onInput={(e) => setMessageInput(e.currentTarget.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             disabled={isLoading() || isReconnecting() || !sessionObj()?.id}
           />
         </div>
 
-        <div class="px-2 pb-1">
+        <div class="px-2 pb-1 flex items-center gap-1.5">
           <button
-            class="chat-send-btn w-full"
+            class="chat-send-btn flex-1"
             disabled={!messageInput().trim() || isSending() || !sessionObj()?.id || isLoading() || isReconnecting()}
             onClick={handleSend}
           >
@@ -563,6 +564,16 @@ let textareaRef: HTMLTextAreaElement | undefined
               </Show>
               {isLoading() && !isReconnecting() ? 'Starting session...' : 'Send'}
             </span>
+          </button>
+          <button
+            class="chat-stop-btn"
+            onClick={props.onStop}
+            disabled={!agentWorking()}
+            title={agentWorking() ? 'Stop agent' : 'Agent not running'}
+          >
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="1" />
+            </svg>
           </button>
         </div>
 

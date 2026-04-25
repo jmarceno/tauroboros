@@ -15,12 +15,13 @@ import {
   createTaskGroupsStore,
   createWorkflowControlStore,
   createModelSearchStore,
-  createWebSocketStore,
+  createSseStore,
   createMultiSelectStore,
   createDragDropStore,
   createPlanningChatStore,
   createSessionUsageStore,
   createTaskLastUpdateStore,
+  createVersionStore,
   tabStore,
   uiStore,
 } from '@/stores'
@@ -81,10 +82,10 @@ function App() {
   const runsStore = createRunsStore()
   const optionsStore = createOptionsStore()
   const taskGroupsStore = createTaskGroupsStore()
-  const wsStore = createWebSocketStore()
+  const sseStore = createSseStore()
   const modelSearchStore = createModelSearchStore()
   const multiSelectStore = createMultiSelectStore()
-  const planningChatStore = createPlanningChatStore(wsStore)
+  const planningChatStore = createPlanningChatStore(sseStore)
   const sessionUsage = createSessionUsageStore()
   
   const workflowControl = createWorkflowControlStore(
@@ -259,22 +260,22 @@ function App() {
     uiStore.addLog('Kanban UI ready', 'info')
   })
 
-  // WebSocket handlers
+  // SSE handlers
   createEffect(() => {
     let sessionRefreshToken = 0
 
-    const unsubTaskCreated = wsStore.on('task_created', () => tasksStore.loadTasks())
-    const unsubTaskUpdated = wsStore.on('task_updated', () => tasksStore.loadTasks())
-    const unsubTaskDeleted = wsStore.on('task_deleted', () => tasksStore.loadTasks())
-    const unsubRunUpdated = wsStore.on('run_updated', (payload) => {
+    const unsubTaskCreated = sseStore.on('task_created', () => tasksStore.loadTasks())
+    const unsubTaskUpdated = sseStore.on('task_updated', () => tasksStore.loadTasks())
+    const unsubTaskDeleted = sseStore.on('task_deleted', () => tasksStore.loadTasks())
+    const unsubRunUpdated = sseStore.on('run_updated', (payload) => {
       const run = payload as import('@/types').WorkflowRun
       runsStore.updateRunFromWebSocket(run)
     })
-    const unsubGroupUpdated = wsStore.on('task_group_updated', (payload) => {
+    const unsubGroupUpdated = sseStore.on('task_group_updated', (payload) => {
       const group = payload as TaskGroup
       taskGroupsStore.updateGroupFromWebSocket(group)
     })
-    const unsubSessionMessage = wsStore.on('session_message_created', (payload) => {
+    const unsubSessionMessage = sseStore.on('session_message_created', (payload) => {
       const msg = payload as { sessionId?: string }
       if (msg.sessionId) {
         const token = ++sessionRefreshToken
@@ -287,7 +288,7 @@ function App() {
           .catch(() => undefined)
       }
     })
-    const unsubSelfHeal = wsStore.on('self_heal_status', (payload) => {
+    const unsubSelfHeal = sseStore.on('self_heal_status', (payload) => {
       const event = payload as {
         status?: string
         message?: string
@@ -314,8 +315,8 @@ function App() {
       }
     })
 
-    // Setup planning chat WebSocket handlers
-    const unsubPlanningHandlers = planningChatStore.setupWebSocketHandlers()
+    // Setup planning chat SSE handlers
+    const unsubPlanningHandlers = planningChatStore.setupSseHandlers()
 
     onCleanup(() => {
       sessionRefreshToken += 1
@@ -381,7 +382,7 @@ function App() {
       }
     }
 
-    if (wsStore.isConnected()) {
+    if (sseStore.isConnected()) {
       runAutoSync().catch((e) => {
         const errorMessage = e instanceof Error ? e.message : String(e)
         uiStore.addLog(`Auto-sync loop failed: ${errorMessage}`, 'error')
@@ -762,7 +763,7 @@ function App() {
             columnSorts={optionsStore.options()?.columnSorts}
             highlightedRunId={highlightedRunId()}
             isTaskInRun={runsStore.isTaskInRun}
-            groups={taskGroupsStore.activeGroups()}
+            groups={taskGroupsStore.groups()}
             groupMembers={groupMembers()}
             activeGroupId={taskGroupsStore.activeGroupId()}
             options={optionsStore.options()}

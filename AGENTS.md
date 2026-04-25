@@ -26,6 +26,21 @@ bun run start
 bun run dev
 ```
 
+### Generated Files (DO NOT COMMIT)
+
+Two files are auto-generated and in `.gitignore`:
+- `src/server/generated-assets.ts` — embeds kanban UI, skills, config, and docker files
+- `src/server/version.ts` — git commit hash and version info
+
+They are regenerated automatically via `predev`/`pretest` hooks:
+```bash
+bun run dev        # predev regenerates both
+bun test           # pretest regenerates both
+bun run compile    # compile regenerates both explicitly
+```
+
+Never commit these files — they are always generated before the commands that need them.
+
 Server auto-assigns an available port on first start. The assigned port is saved to `.tauroboros/settings.json` and reused for subsequent runs.
 
 ### Port Configuration

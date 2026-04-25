@@ -13,7 +13,7 @@ describe("frontend store migration boundaries", () => {
       "src/kanban-solid/src/stores/tasksStore.ts",
       "src/kanban-solid/src/stores/runsStore.ts",
       "src/kanban-solid/src/stores/optionsStore.ts",
-      "src/kanban-solid/src/stores/websocketStore.ts",
+      "src/kanban-solid/src/stores/sseStore.ts",
     ]
 
     for (const file of files) {
@@ -22,8 +22,8 @@ describe("frontend store migration boundaries", () => {
     }
   })
 
-  it("keeps websocket reconnection Effect-based (no sleepMs Promise loop)", () => {
-    const content = readStore("src/kanban-solid/src/stores/websocketStore.ts")
+  it("keeps SSE reconnection Effect-based (no sleepMs Promise loop)", () => {
+    const content = readStore("src/kanban-solid/src/stores/sseStore.ts")
 
     expect(content).not.toContain("sleepMs(")
     expect(content).toContain("Effect.sleep")

@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto"
 import { Effect } from "effect"
 import type { Router } from "../router.ts"
 import type { ServerRouteContext } from "../types.ts"
@@ -79,6 +80,7 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
             db.createSessionMessage({
               sessionId: task.sessionId,
               taskId: task.id,
+              messageId: randomUUID(),
               role: "system",
               messageType: "error",
               contentJson: {

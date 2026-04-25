@@ -2358,6 +2358,16 @@ export class PiKanbanDB {
   }
 
   createSessionMessage(input: CreateSessionMessageInput): SessionMessage {
+    // Deduplication: If messageId is provided and already exists in this session, return existing
+    if (input.messageId) {
+      const existingRow = this.db
+        .prepare(`${SESSION_MESSAGE_SELECT} WHERE sm.session_id = ? AND sm.message_id = ?`)
+        .get(input.sessionId, input.messageId) as Record<string, unknown> | null
+      if (existingRow) {
+        return rowToSessionMessage(existingRow)
+      }
+    }
+
     const seq = input.seq ?? this.getNextSessionMessageSeq(input.sessionId)
     const timestamp = input.timestamp ?? nowUnix()
     const result = this.db

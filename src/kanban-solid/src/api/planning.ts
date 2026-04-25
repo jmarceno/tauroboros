@@ -53,6 +53,8 @@ export const planningApi = {
     apiClient.post<{ ok: boolean; model: string; thinkingLevel?: string }>(`/api/planning/sessions/${id}/model`, { model, thinkingLevel }),
   
   closeSession: (id: string) => apiClient.post<PlanningSession>(`/api/planning/sessions/${id}/close`),
+
+  stopSession: (id: string) => apiClient.post<{ ok: boolean }>(`/api/planning/sessions/${id}/stop`),
   
   sendMessage: (id: string, content: string, contextAttachments?: ContextAttachment[]) =>
     apiClient.post<{ ok: boolean }>(`/api/planning/sessions/${id}/messages`, { content, contextAttachments }),

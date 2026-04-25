@@ -171,6 +171,105 @@ async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<vo
   throw new Error("Timed out waiting for condition")
 }
 
+/** Helper to read SSE events from a response */
+async function readSseEvents(response: Response, targetEventType: string, timeoutMs = 5000): Promise<any> {
+  const start = Date.now()
+  const reader = response.body?.getReader()
+  if (!reader) {
+    throw new Error("Response body is not readable")
+  }
+
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  while (Date.now() - start < timeoutMs) {
+    const { value, done } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+
+    // Parse SSE events
+    const events = buffer.split("\n\n")
+    buffer = events.pop() || ""
+
+    for (const event of events) {
+      const lines = event.split("\n")
+      let eventType = ""
+      let data = ""
+
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          eventType = line.slice(6).trim()
+        } else if (line.startsWith("data:")) {
+          data = line.slice(5).trim()
+        }
+      }
+
+      if (eventType === targetEventType && data) {
+        reader.cancel()
+        return JSON.parse(data)
+      }
+    }
+  }
+
+  reader.cancel()
+  throw new Error(`Timeout waiting for SSE event: ${targetEventType}`)
+}
+
+/** Helper to read all SSE events until a condition is met */
+async function readSseEventsUntil(
+  response: Response,
+  predicate: (event: any) => boolean,
+  timeoutMs = 5000
+): Promise<any[]> {
+  const start = Date.now()
+  const reader = response.body?.getReader()
+  if (!reader) {
+    throw new Error("Response body is not readable")
+  }
+
+  const decoder = new TextDecoder()
+  let buffer = ""
+  const events: any[] = []
+
+  while (Date.now() - start < timeoutMs) {
+    const { value, done } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+
+    // Parse SSE events
+    const eventBlocks = buffer.split("\n\n")
+    buffer = eventBlocks.pop() || ""
+
+    for (const block of eventBlocks) {
+      const lines = block.split("\n")
+      let eventType = ""
+      let data = ""
+
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          eventType = line.slice(6).trim()
+        } else if (line.startsWith("data:")) {
+          data = line.slice(5).trim()
+        }
+      }
+
+      if (data) {
+        const parsed = JSON.parse(data)
+        events.push({ type: eventType, data: parsed })
+        if (predicate({ type: eventType, data: parsed })) {
+          reader.cancel()
+          return events
+        }
+      }
+    }
+  }
+
+  reader.cancel()
+  return events
+}
+
 function createTestSettings(mockPiPath: string): InfrastructureSettings {
   return {
     skills: {
@@ -458,81 +557,63 @@ describe("PiKanbanServer API", () => {
     }
   })
 
-  it("broadcasts websocket task updates", async () => {
-    const root = createTempDir("tauroboros-ws-")
+  it("broadcasts SSE task updates", async () => {
+    const root = createTempDir("tauroboros-sse-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
     const port = await server.start(0)
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-
     try {
-      const firstMessagePromise = new Promise<any>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Timed out waiting for websocket message")), 5000)
+      // Connect to SSE endpoint
+      const response = await fetch(`http://127.0.0.1:${port}/sse`)
+      expect(response.status).toBe(200)
+      expect(response.headers.get("Content-Type")).toBe("text/event-stream")
 
-        ws.addEventListener("message", (event) => {
-          clearTimeout(timeout)
-          resolve(JSON.parse(String(event.data)))
-        }, { once: true })
-      })
+      // Create a task and listen for the event
+      const createTaskPromise = readSseEvents(response, "task_created", 5000)
 
-      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
-
-      const response = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
+      const taskResponse = await fetch(`http://127.0.0.1:${port}/api/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: "WS test task",
-          prompt: "Ensure websocket receives task_created",
+          name: "SSE test task",
+          prompt: "Ensure SSE receives task_created",
           status: "backlog",
         }),
       })
 
-      expect(response.status).toBe(201)
+      expect(taskResponse.status).toBe(201)
 
-      const event = await firstMessagePromise
-      expect(event.type).toBe("task_created")
-      expect(event.payload.name).toBe("WS test task")
+      const event = await createTaskPromise
+      expect(event.name).toBe("SSE test task")
     } finally {
-      ws.close()
-      
+      server.stop()
     }
   })
 
-  it("broadcasts websocket session message updates", async () => {
-    const root = createTempDir("tauroboros-session-ws-")
+  it("broadcasts SSE session message updates", async () => {
+    const root = createTempDir("tauroboros-session-sse-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
     const port = await server.start(0)
 
     const session = db.createWorkflowSession({
-      id: "session-ws-1",
+      id: "session-sse-1",
       sessionKind: "task",
       cwd: root,
     })
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-
     try {
-      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+      // Connect to SSE endpoint
+      const response = await fetch(`http://127.0.0.1:${port}/sse`)
+      expect(response.status).toBe(200)
 
-      const sessionMessageEventPromise = new Promise<any>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Timed out waiting for session websocket message")), 5000)
+      // Listen for session_message_created event
+      const sessionMessageEventPromise = readSseEvents(response, "session_message_created", 5000)
 
-        const handler = (event: any) => {
-          const parsed = JSON.parse(String(event.data))
-          if (parsed?.type !== "session_message_created") return
-          clearTimeout(timeout)
-          ws.removeEventListener("message", handler)
-          resolve(parsed)
-        }
-
-        ws.addEventListener("message", handler)
-      })
-
-      const response = await fetch(`http://127.0.0.1:${port}/api/pi/sessions/${session.id}/events`, {
+      const sessionEventResponse = await fetch(`http://127.0.0.1:${port}/api/pi/sessions/${session.id}/events`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -543,45 +624,32 @@ describe("PiKanbanServer API", () => {
         }),
       })
 
-      expect(response.status).toBe(200)
+      expect(sessionEventResponse.status).toBe(200)
 
       const event = await sessionMessageEventPromise
-      expect(event.type).toBe("session_message_created")
-      expect(event.payload.sessionId).toBe(session.id)
-      expect(event.payload.messageType).toBe("thinking")
+      expect(event.sessionId).toBe(session.id)
+      expect(event.messageType).toBe("thinking")
     } finally {
-      ws.close()
-      
+      server.stop()
     }
   })
 
-  it("broadcasts websocket task_group_created event", async () => {
-    const root = createTempDir("tauroboros-group-ws-")
+  it("broadcasts SSE task_group_created event", async () => {
+    const root = createTempDir("tauroboros-group-sse-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
     const port = await server.start(0)
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-
     try {
-      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+      // Connect to SSE endpoint
+      const response = await fetch(`http://127.0.0.1:${port}/sse`)
+      expect(response.status).toBe(200)
 
-      const groupCreatedPromise = new Promise<any>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Timed out waiting for task_group_created websocket message")), 5000)
+      // Listen for task_group_created event
+      const groupCreatedPromise = readSseEvents(response, "task_group_created", 5000)
 
-        const handler = (event: any) => {
-          const parsed = JSON.parse(String(event.data))
-          if (parsed?.type !== "task_group_created") return
-          clearTimeout(timeout)
-          ws.removeEventListener("message", handler)
-          resolve(parsed)
-        }
-
-        ws.addEventListener("message", handler)
-      })
-
-      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+      const groupResponse = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -591,15 +659,13 @@ describe("PiKanbanServer API", () => {
         }),
       })
 
-      expect(response.status).toBe(201)
+      expect(groupResponse.status).toBe(201)
 
       const event = await groupCreatedPromise
-      expect(event.type).toBe("task_group_created")
-      expect(event.payload.name).toBe("Test Group")
-      expect(event.payload.color).toBe("#888888")
+      expect(event.name).toBe("Test Group")
+      expect(event.color).toBe("#888888")
     } finally {
-      ws.close()
-      
+      server.stop()
     }
   })
 
@@ -610,19 +676,23 @@ describe("PiKanbanServer API", () => {
     db.updateOptions({ branch: "master" })
     const port = await server.start(0)
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-
     try {
-      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+      // Connect to SSE endpoint first
+      const response = await fetch(`http://127.0.0.1:${port}/sse`)
+      expect(response.status).toBe(200)
 
-      const messages: string[] = []
-      const handler = (event: any) => {
-        messages.push(event.data)
-      }
-      ws.addEventListener("message", handler)
+      // Start collecting SSE events
+      const eventsPromise = readSseEventsUntil(
+        response,
+        (e) => e.type === "task_group_created" && e.data?.name === "No Duplicate Test",
+        3000
+      )
 
-      // Create a group
-      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
+      // Wait for initial connection open event
+      await Bun.sleep(100)
+
+      // Create a group (this will trigger the events)
+      const groupResponse = await fetch(`http://127.0.0.1:${port}/api/task-groups`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -632,34 +702,28 @@ describe("PiKanbanServer API", () => {
         }),
       })
 
-      expect(response.status).toBe(201)
+      expect(groupResponse.status).toBe(201)
 
-      // Wait a bit for any potential duplicate messages
-      await Bun.sleep(200)
+      // Get the collected events
+      const events = await eventsPromise
 
-      // Parse all messages
-      const parsedMessages = messages.map(m => JSON.parse(m))
-      
-      // Should only have ONE task_group_created event
-      const taskGroupCreatedEvents = parsedMessages.filter(m => m.type === "task_group_created")
-      const groupCreatedEvents = parsedMessages.filter(m => m.type === "group_created")
-      
-      // Verify only one task_group_created
+      // Verify only one task_group_created event
+      const taskGroupCreatedEvents = events.filter(e => e.type === "task_group_created")
       expect(taskGroupCreatedEvents.length).toBe(1)
-      
+
       // Verify NO group_created event is broadcast (the duplicate)
+      const groupCreatedEvents = events.filter(e => e.type === "group_created")
       expect(groupCreatedEvents.length).toBe(0)
-      
+
       // Verify the event has correct payload
-      expect(taskGroupCreatedEvents[0].payload.name).toBe("No Duplicate Test")
+      expect(taskGroupCreatedEvents[0].data.name).toBe("No Duplicate Test")
     } finally {
-      ws.close()
-      
+      server.stop()
     }
   })
 
-  it("broadcasts websocket task_group_updated event", async () => {
-    const root = createTempDir("tauroboros-group-update-ws-")
+  it("broadcasts SSE task_group_updated event", async () => {
+    const root = createTempDir("tauroboros-group-update-sse-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
@@ -678,26 +742,15 @@ describe("PiKanbanServer API", () => {
     const group = await createRes.json()
     const groupId = group.id
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-
     try {
-      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+      // Connect to SSE endpoint
+      const response = await fetch(`http://127.0.0.1:${port}/sse`)
+      expect(response.status).toBe(200)
 
-      const groupUpdatedPromise = new Promise<any>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Timed out waiting for task_group_updated websocket message")), 5000)
+      // Listen for task_group_updated event
+      const groupUpdatedPromise = readSseEvents(response, "task_group_updated", 5000)
 
-        const handler = (event: any) => {
-          const parsed = JSON.parse(String(event.data))
-          if (parsed?.type !== "task_group_updated") return
-          clearTimeout(timeout)
-          ws.removeEventListener("message", handler)
-          resolve(parsed)
-        }
-
-        ws.addEventListener("message", handler)
-      })
-
-      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`, {
+      const updateResponse = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -706,20 +759,18 @@ describe("PiKanbanServer API", () => {
         }),
       })
 
-      expect(response.status).toBe(200)
+      expect(updateResponse.status).toBe(200)
 
       const event = await groupUpdatedPromise
-      expect(event.type).toBe("task_group_updated")
-      expect(event.payload.name).toBe("Updated Name")
-      expect(event.payload.color).toBe("#FF5733")
+      expect(event.name).toBe("Updated Name")
+      expect(event.color).toBe("#FF5733")
     } finally {
-      ws.close()
-      
+      server.stop()
     }
   })
 
-  it("broadcasts websocket task_group_deleted event", async () => {
-    const root = createTempDir("tauroboros-group-delete-ws-")
+  it("broadcasts SSE task_group_deleted event", async () => {
+    const root = createTempDir("tauroboros-group-delete-sse-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
@@ -738,42 +789,29 @@ describe("PiKanbanServer API", () => {
     const group = await createRes.json()
     const groupId = group.id
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-
     try {
-      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+      // Connect to SSE endpoint
+      const response = await fetch(`http://127.0.0.1:${port}/sse`)
+      expect(response.status).toBe(200)
 
-      const groupDeletedPromise = new Promise<any>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Timed out waiting for task_group_deleted websocket message")), 5000)
+      // Listen for task_group_deleted event
+      const groupDeletedPromise = readSseEvents(response, "task_group_deleted", 5000)
 
-        const handler = (event: any) => {
-          const parsed = JSON.parse(String(event.data))
-          if (parsed?.type !== "task_group_deleted") return
-          clearTimeout(timeout)
-          ws.removeEventListener("message", handler)
-          resolve(parsed)
-        }
-
-        ws.addEventListener("message", handler)
-      })
-
-      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`, {
+      const deleteResponse = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`, {
         method: "DELETE",
       })
 
-      expect(response.status).toBe(204)
+      expect(deleteResponse.status).toBe(204)
 
       const event = await groupDeletedPromise
-      expect(event.type).toBe("task_group_deleted")
-      expect(event.payload.id).toBe(groupId)
+      expect(event.id).toBe(groupId)
     } finally {
-      ws.close()
-      
+      server.stop()
     }
   })
 
-  it("broadcasts websocket task_group_members_added event", async () => {
-    const root = createTempDir("tauroboros-group-members-ws-")
+  it("broadcasts SSE task_group_members_added event", async () => {
+    const root = createTempDir("tauroboros-group-members-sse-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
@@ -805,26 +843,15 @@ describe("PiKanbanServer API", () => {
     const group = await groupRes.json()
     const groupId = group.id
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-
     try {
-      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+      // Connect to SSE endpoint
+      const response = await fetch(`http://127.0.0.1:${port}/sse`)
+      expect(response.status).toBe(200)
 
-      const membersAddedPromise = new Promise<any>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Timed out waiting for task_group_members_added websocket message")), 5000)
+      // Listen for task_group_members_added event
+      const membersAddedPromise = readSseEvents(response, "task_group_members_added", 5000)
 
-        const handler = (event: any) => {
-          const parsed = JSON.parse(String(event.data))
-          if (parsed?.type !== "task_group_members_added") return
-          clearTimeout(timeout)
-          ws.removeEventListener("message", handler)
-          resolve(parsed)
-        }
-
-        ws.addEventListener("message", handler)
-      })
-
-      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`, {
+      const addResponse = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -832,21 +859,19 @@ describe("PiKanbanServer API", () => {
         }),
       })
 
-      expect(response.status).toBe(200)
+      expect(addResponse.status).toBe(200)
 
       const event = await membersAddedPromise
-      expect(event.type).toBe("task_group_members_added")
-      expect(event.payload.groupId).toBe(groupId)
-      expect(event.payload.taskIds).toContain(taskId)
-      expect(event.payload.addedCount).toBe(1)
+      expect(event.groupId).toBe(groupId)
+      expect(event.taskIds).toContain(taskId)
+      expect(event.addedCount).toBe(1)
     } finally {
-      ws.close()
-      
+      server.stop()
     }
   })
 
-  it("broadcasts websocket task_group_members_removed event", async () => {
-    const root = createTempDir("tauroboros-group-remove-ws-")
+  it("broadcasts SSE task_group_members_removed event", async () => {
+    const root = createTempDir("tauroboros-group-remove-sse-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
@@ -879,26 +904,15 @@ describe("PiKanbanServer API", () => {
     const group = await groupRes.json()
     const groupId = group.id
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-
     try {
-      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+      // Connect to SSE endpoint
+      const response = await fetch(`http://127.0.0.1:${port}/sse`)
+      expect(response.status).toBe(200)
 
-      const membersRemovedPromise = new Promise<any>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Timed out waiting for task_group_members_removed websocket message")), 5000)
+      // Listen for task_group_members_removed event
+      const membersRemovedPromise = readSseEvents(response, "task_group_members_removed", 5000)
 
-        const handler = (event: any) => {
-          const parsed = JSON.parse(String(event.data))
-          if (parsed?.type !== "task_group_members_removed") return
-          clearTimeout(timeout)
-          ws.removeEventListener("message", handler)
-          resolve(parsed)
-        }
-
-        ws.addEventListener("message", handler)
-      })
-
-      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`, {
+      const removeResponse = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/tasks`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -906,16 +920,14 @@ describe("PiKanbanServer API", () => {
         }),
       })
 
-      expect(response.status).toBe(200)
+      expect(removeResponse.status).toBe(200)
 
       const event = await membersRemovedPromise
-      expect(event.type).toBe("task_group_members_removed")
-      expect(event.payload.groupId).toBe(groupId)
-      expect(event.payload.taskIds).toContain(taskId)
-      expect(event.payload.removedCount).toBe(1)
+      expect(event.groupId).toBe(groupId)
+      expect(event.taskIds).toContain(taskId)
+      expect(event.removedCount).toBe(1)
     } finally {
-      ws.close()
-      
+      server.stop()
     }
   })
 
@@ -948,17 +960,53 @@ describe("PiKanbanServer API", () => {
     const groupBefore = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`).then(r => r.json())
     expect(groupBefore.tasks).toContainEqual(expect.objectContaining({ id: taskId }))
 
-    // Set up websocket listener for group removal events
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-    const events: any[] = []
+    // Connect to SSE endpoint and collect events in background
+    const response = await fetch(`http://127.0.0.1:${port}/sse`)
+    expect(response.status).toBe(200)
 
-    await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
-    ws.addEventListener("message", (event: any) => {
-      const parsed = JSON.parse(String(event.data))
-      if (parsed?.type === "task_group_members_removed" || parsed?.type === "group_task_removed") {
-        events.push(parsed)
+    const events: any[] = []
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+
+    // Start collecting events in the background
+    const collectEvents = (async () => {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const eventBlocks = buffer.split("\n\n")
+        buffer = eventBlocks.pop() || ""
+
+        for (const block of eventBlocks) {
+          const lines = block.split("\n")
+          let eventType = ""
+          let data = ""
+
+          for (const line of lines) {
+            if (line.startsWith("event:")) {
+              eventType = line.slice(6).trim()
+            } else if (line.startsWith("data:")) {
+              data = line.slice(5).trim()
+            }
+          }
+
+          if (data) {
+            events.push({ type: eventType, data: JSON.parse(data) })
+          }
+        }
+
+        // Stop if we have the events we need
+        const foundEvents = events.filter(e =>
+          e.type === "task_group_members_removed" || e.type === "group_task_removed"
+        )
+        if (foundEvents.length >= 2) break
       }
-    })
+    })()
+
+    // Wait a moment for SSE connection to be ready
+    await Bun.sleep(100)
 
     // Convert task to template via PATCH
     const patchRes = await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}`, {
@@ -976,17 +1024,19 @@ describe("PiKanbanServer API", () => {
     const groupAfter = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}`).then(r => r.json())
     expect(groupAfter.tasks).not.toContainEqual(expect.objectContaining({ id: taskId }))
 
-    // Verify websocket events were broadcast
-    await new Promise<void>((resolve) => setTimeout(resolve, 100))
-    expect(events.some(e => e.type === "task_group_members_removed" && e.payload.groupId === groupId)).toBe(true)
-    expect(events.some(e => e.type === "group_task_removed" && e.payload.groupId === groupId && e.payload.taskId === taskId)).toBe(true)
+    // Wait for events to be collected
+    await Promise.race([collectEvents, Bun.sleep(1000)])
 
-ws.close()
-      server.stop()
+    // Verify SSE events were broadcast
+    expect(events.some(e => e.type === "task_group_members_removed" && e.data?.groupId === groupId)).toBe(true)
+    expect(events.some(e => e.type === "group_task_removed" && e.data?.groupId === groupId && e.data?.taskId === taskId)).toBe(true)
+
+    reader.cancel()
+    server.stop()
   })
 
-  it("broadcasts websocket group_execution_started event", async () => {
-    const root = createTempDir("tauroboros-group-exec-ws-")
+  it("broadcasts SSE group_execution_started event", async () => {
+    const root = createTempDir("tauroboros-group-exec-sse-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
@@ -1019,45 +1069,32 @@ ws.close()
     const group = await groupRes.json()
     const groupId = group.id
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-
     try {
-      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+      // Connect to SSE endpoint
+      const response = await fetch(`http://127.0.0.1:${port}/sse`)
+      expect(response.status).toBe(200)
 
-      const executionStartedPromise = new Promise<any>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Timed out waiting for group_execution_started websocket message")), 5000)
-
-        const handler = (event: any) => {
-          const parsed = JSON.parse(String(event.data))
-          if (parsed?.type !== "group_execution_started") return
-          clearTimeout(timeout)
-          ws.removeEventListener("message", handler)
-          resolve(parsed)
-        }
-
-        ws.addEventListener("message", handler)
-      })
+      // Listen for group_execution_started event
+      const executionStartedPromise = readSseEvents(response, "group_execution_started", 5000)
 
       // Group execution is now implemented and returns 200 on success
-      const response = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/start`, {
+      const startResponse = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/start`, {
         method: "POST",
       })
 
       // The endpoint returns 200 when group execution starts successfully
-      expect(response.status).toBe(200)
+      expect(startResponse.status).toBe(200)
 
       const event = await executionStartedPromise
-      expect(event.type).toBe("group_execution_started")
-      expect(event.payload.groupId).toBe(groupId)
-      expect(typeof event.payload.runId).toBe("string")
+      expect(event.groupId).toBe(groupId)
+      expect(typeof event.runId).toBe("string")
     } finally {
-      ws.close()
-      
+      server.stop()
     }
   })
 
-  it("broadcasts websocket group_execution_complete event", async () => {
-    const root = createTempDir("tauroboros-group-complete-ws-")
+  it("broadcasts SSE group_execution_complete event", async () => {
+    const root = createTempDir("tauroboros-group-complete-sse-")
     const dbPath = join(root, "tasks.db")
     const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
     db.updateOptions({ branch: "master" })
@@ -1090,44 +1127,15 @@ ws.close()
     const group = await groupRes.json()
     const groupId = group.id
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-
     try {
-      await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+      // Connect to SSE endpoint
+      const response = await fetch(`http://127.0.0.1:${port}/sse`)
+      expect(response.status).toBe(200)
 
-      const executionCompletePromise = new Promise<any>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error("Timed out waiting for group_execution_complete websocket message")), 5000)
+      // Listen for group_execution_complete event
+      const executionCompletePromise = readSseEvents(response, "group_execution_complete", 5000)
 
-        const handler = (event: any) => {
-          const parsed = JSON.parse(String(event.data))
-          if (parsed?.type !== "group_execution_complete") return
-          clearTimeout(timeout)
-          ws.removeEventListener("message", handler)
-          resolve(parsed)
-        }
-
-        ws.addEventListener("message", handler)
-      })
-
-      // Use the server's internal broadcast method via a test endpoint
-      // We use the health endpoint as a trigger and manually broadcast via the db's internal access
-      // Since the full group execution orchestrator isn't implemented yet,
-      // we manually broadcast to test that the message type works correctly
-      const broadcastRes = await fetch(`http://127.0.0.1:${port}/api/task-groups/${groupId}/execute-complete`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "success", results: [] }),
-      })
-
-      // Endpoint may return 404 if not implemented, but we test the WS type validity
-      // For now, verify the message type exists and can be broadcast via direct server access
-      // We'll use the internal broadcast through the server instance if available
-      // Actually, let's verify the type can be used by checking TypeScript compilation
-
-      // Since we can't easily broadcast without the orchestrator being fully implemented,
-      // we verify that the WebSocket message type is valid and the infrastructure exists
-      // by checking that a broadcast doesn't throw a type error
-
+      // Use the server's internal broadcast method to test the message type
       server.broadcast({
         type: "group_execution_complete",
         payload: {
@@ -1140,15 +1148,13 @@ ws.close()
       })
 
       const event = await executionCompletePromise
-      expect(event.type).toBe("group_execution_complete")
-      expect(event.payload.groupId).toBe(groupId)
-      expect(event.payload.taskIds).toContain(taskId)
-      expect(event.payload.status).toBe("success")
-      expect(typeof event.payload.completedAt).toBe("number")
-      expect(Array.isArray(event.payload.results)).toBe(true)
+      expect(event.groupId).toBe(groupId)
+      expect(event.taskIds).toContain(taskId)
+      expect(event.status).toBe("success")
+      expect(typeof event.completedAt).toBe("number")
+      expect(Array.isArray(event.results)).toBe(true)
     } finally {
-      ws.close()
-      
+      server.stop()
     }
   })
 
@@ -1465,8 +1471,8 @@ ws.close()
       }
     })
 
-    it("broadcasts websocket events during reset-to-group flow", async () => {
-      const root = createTempDir("tauroboros-reset-to-group-ws-")
+    it("broadcasts SSE events during reset-to-group flow", async () => {
+      const root = createTempDir("tauroboros-reset-to-group-sse-")
       const dbPath = join(root, "tasks.db")
       const { db, server } = createPiServer({ dbPath, port: 0, settings: createTestSettings() })
       db.updateOptions({ branch: "master" })
@@ -1477,7 +1483,7 @@ ws.close()
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: "Task for WS Test",
+          name: "Task for SSE Test",
           prompt: "Test task",
           status: "done",
           completedAt: Math.floor(Date.now() / 1000),
@@ -1491,7 +1497,7 @@ ws.close()
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: "WS Test Group",
+          name: "SSE Test Group",
           color: "#33A1FF",
           status: "active",
         }),
@@ -1506,42 +1512,67 @@ ws.close()
         body: JSON.stringify({ taskIds: [taskId] }),
       })
 
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
-
       try {
-        await new Promise<void>((resolve) => ws.addEventListener("open", () => resolve(), { once: true }))
+        // Connect to SSE endpoint
+        const response = await fetch(`http://127.0.0.1:${port}/sse`)
+        expect(response.status).toBe(200)
 
         const events: any[] = []
-        const eventPromise = new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error("Timed out waiting for websocket events")), 5000)
+        const reader = response.body!.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ""
 
-          const handler = (event: any) => {
-            const parsed = JSON.parse(String(event.data))
-            if (parsed?.type === "task_updated" || parsed?.type === "group_task_added" || parsed?.type === "task_group_members_added") {
-              events.push(parsed)
-              if (events.length >= 3) {
-                clearTimeout(timeout)
-                ws.removeEventListener("message", handler)
-                resolve()
+        // Start collecting events in the background
+        const collectEvents = (async () => {
+          while (true) {
+            const { value, done } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const eventBlocks = buffer.split("\n\n")
+            buffer = eventBlocks.pop() || ""
+
+            for (const block of eventBlocks) {
+              const lines = block.split("\n")
+              let eventType = ""
+              let data = ""
+
+              for (const line of lines) {
+                if (line.startsWith("event:")) {
+                  eventType = line.slice(6).trim()
+                } else if (line.startsWith("data:")) {
+                  data = line.slice(5).trim()
+                }
+              }
+
+              if (data) {
+                events.push({ type: eventType, data: JSON.parse(data) })
               }
             }
-          }
 
-          ws.addEventListener("message", handler)
-        })
+            // Stop if we have the events we need
+            const relevantEvents = events.filter(e =>
+              e.type === "task_updated" || e.type === "group_task_added" || e.type === "task_group_members_added"
+            )
+            if (relevantEvents.length >= 3) break
+          }
+        })()
+
+        // Wait a moment for SSE connection to be ready
+        await Bun.sleep(100)
 
         // Reset to group should trigger multiple events
         await fetch(`http://127.0.0.1:${port}/api/tasks/${taskId}/reset-to-group`, {
           method: "POST",
         })
 
-        await eventPromise
+        // Wait for events to be collected
+        await Promise.race([collectEvents, Bun.sleep(1000)])
 
         expect(events.some(e => e.type === "task_updated")).toBe(true)
         expect(events.some(e => e.type === "group_task_added")).toBe(true)
         expect(events.some(e => e.type === "task_group_members_added")).toBe(true)
       } finally {
-        ws.close()
         server.stop()
       }
     })

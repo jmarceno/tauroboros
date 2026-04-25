@@ -3,11 +3,12 @@
  * Ported from React to SolidJS
  */
 
-import { createSignal, createEffect, Show, For, createMemo } from 'solid-js'
+import { createSignal, createEffect, Show, For, createMemo, onCleanup, onMount } from 'solid-js'
 import { createQuery } from '@tanstack/solid-query'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { tasksApi, sessionsApi, runApiEffect } from '@/api'
 import { formatLocalTime } from '@/utils/date'
+import { createSessionSseStore } from '@/stores/sessionSseStore'
 import type { Task, Session, TaskRun, SessionMessage } from '@shared-types'
 
 interface TaskSessionsModalProps {
@@ -28,6 +29,12 @@ interface SessionData {
 export function TaskSessionsModal(props: TaskSessionsModalProps) {
   const [sessions, setSessions] = createSignal<Map<string, SessionData>>(new Map())
   const [activeSessionId, setActiveSessionId] = createSignal<string | null>(null)
+  
+  // Track which sessions have been initialized to prevent duplicate fetches
+  const [initializedSessions, setInitializedSessions] = createSignal<Set<string>>(new Set())
+
+  // SSE store for real-time message updates
+  const sseStore = createSessionSseStore()
 
   const taskId = () => props.taskId ?? props.task?.id
   const task = () => props.task ?? taskQuery.data
@@ -53,53 +60,139 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
     enabled: !!taskId(),
   }))
 
-  // Load session messages
+  // Track if component is mounted
+  let isMounted = true
+  const unsubscribers: (() => void)[] = []
+
+  // Initialize sessions when data is available
   createEffect(() => {
     const sessionsData = sessionsQuery.data
     const runsData = runsQuery.data
-    if (!sessionsData || !runsData) return
-
-    const sessionIds = sessionsData.map(s => s.id)
-    const newSessions = new Map<string, SessionData>()
-
-    for (const session of sessionsData) {
-      newSessions.set(session.id, {
-        id: session.id,
-        session: session,
-        messages: [],
-        taskRun: runsData.find(r => r.sessionId === session.id) || null,
-        isLoading: true,
-        error: null,
-      })
-
-      // Load messages
-      runApiEffect(sessionsApi.getMessages(session.id, 1000)).then(messages => {
-        setSessions(prev => {
-          const next = new Map(prev)
-          const data = next.get(session.id)
-          if (data) {
-            next.set(session.id, { ...data, messages, isLoading: false })
-          }
-          return next
+    
+    if (!sessionsData || !runsData || !isMounted) return
+    
+    const currentInitialized = initializedSessions()
+    
+    // Only process sessions that haven't been initialized yet
+    const sessionsToInitialize = sessionsData.filter(s => !currentInitialized.has(s.id))
+    
+    if (sessionsToInitialize.length === 0) return
+    
+    // Mark these sessions as initialized
+    setInitializedSessions(prev => {
+      const next = new Set(prev)
+      sessionsToInitialize.forEach(s => next.add(s.id))
+      return next
+    })
+    
+    // Initialize each new session
+    for (const session of sessionsToInitialize) {
+      // Add session to map
+      setSessions(prev => {
+        const next = new Map(prev)
+        next.set(session.id, {
+          id: session.id,
+          session: session,
+          messages: [],
+          taskRun: runsData.find(r => r.sessionId === session.id) || null,
+          isLoading: true,
+          error: null,
         })
-      }).catch(e => {
-        setSessions(prev => {
-          const next = new Map(prev)
-          const data = next.get(session.id)
-          if (data) {
-            next.set(session.id, { ...data, error: e.message, isLoading: false })
-          }
-          return next
-        })
+        return next
       })
+      
+      // Load initial messages
+      runApiEffect(sessionsApi.getMessages(session.id, 1000))
+        .then(messages => {
+          if (!isMounted) return
+          
+          // Deduplicate by messageId - keep first occurrence
+          const seen = new Set<string>()
+          const dedupedMessages = messages.filter((msg: SessionMessage) => {
+            const key = msg.messageId || String(msg.id)
+            if (seen.has(key)) return false
+            seen.add(key)
+            return true
+          })
+          
+          setSessions(prev => {
+            const next = new Map(prev)
+            const data = next.get(session.id)
+            if (data) {
+              next.set(session.id, { ...data, messages: dedupedMessages, isLoading: false })
+            }
+            return next
+          })
+        })
+        .catch(e => {
+          if (!isMounted) return
+          
+          setSessions(prev => {
+            const next = new Map(prev)
+            const data = next.get(session.id)
+            if (data) {
+              next.set(session.id, { ...data, error: e.message, isLoading: false })
+            }
+            return next
+          })
+        })
+
+      // Set up SSE subscription for real-time updates
+      const unsubscribe = sseStore.on(session.id, (event) => {
+        if (!isMounted) return
+        
+        if (event.type === 'session_message') {
+          const newMessage = event.payload as SessionMessage
+          setSessions(prev => {
+            const next = new Map(prev)
+            const data = next.get(session.id)
+            if (data) {
+              // Deduplicate: check if message already exists by messageId or id
+              const key = newMessage.messageId || String(newMessage.id)
+              const exists = data.messages.some(m =>
+                (m.messageId || String(m.id)) === key
+              )
+              if (!exists) {
+                next.set(session.id, {
+                  ...data,
+                  messages: [...data.messages, newMessage],
+                })
+              }
+            }
+            return next
+          })
+        } else if (event.type === 'session_status') {
+          const statusUpdate = event.payload as { status: string; finishedAt: number | null }
+          setSessions(prev => {
+            const next = new Map(prev)
+            const data = next.get(session.id)
+            if (data && data.session) {
+              next.set(session.id, {
+                ...data,
+                session: {
+                  ...data.session,
+                  status: statusUpdate.status as Session['status'],
+                  finishedAt: statusUpdate.finishedAt,
+                },
+              })
+            }
+            return next
+          })
+        }
+      })
+      unsubscribers.push(unsubscribe)
     }
 
-    setSessions(newSessions)
-
-    // Auto-select first session
-    if (sessionIds.length > 0 && !activeSessionId()) {
-      setActiveSessionId(sessionIds[0])
+    // Auto-select first session if none selected
+    if (!activeSessionId() && sessionsData.length > 0 && isMounted) {
+      setActiveSessionId(sessionsData[0].id)
     }
+  })
+
+  // Cleanup on unmount
+  onCleanup(() => {
+    isMounted = false
+    unsubscribers.forEach(unsub => unsub())
   })
 
   const sortedSessions = createMemo(() => {
@@ -209,8 +302,14 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
     return groups
   })
 
+  // Cleanup SSE on modal close
+  const handleClose = () => {
+    sseStore.disconnectAll()
+    props.onClose?.()
+  }
+
   return (
-    <ModalWrapper title={task() ? `${task()!.name} • Sessions` : 'Task Sessions'} onClose={props.onClose} size="xl">
+    <ModalWrapper title={task() ? `${task()!.name} • Sessions` : 'Task Sessions'} onClose={handleClose} size="xl">
       <div class="flex flex-col h-full min-h-[50vh]">
         <Show when={sortedSessions().length === 0}>
           <div class="text-dark-text-muted text-center py-8">

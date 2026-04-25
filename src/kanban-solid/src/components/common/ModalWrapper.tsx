@@ -18,10 +18,17 @@ export function ModalWrapper(props: ModalWrapperProps) {
     xl: 'max-w-6xl',
   }
 
+  const handleClose = (e: MouseEvent) => {
+    e.stopPropagation()
+    if (typeof props.onClose === 'function') {
+      props.onClose()
+    }
+  }
+
   return (
     <div 
       class="modal-overlay"
-      onClick={props.onClose}
+      onClick={handleClose}
     >
       <div
         class={`modal ${sizeClasses[props.size || 'md']}`}
@@ -29,7 +36,7 @@ export function ModalWrapper(props: ModalWrapperProps) {
       >
         <div class="modal-header">
           <h2>{props.title}</h2>
-          <button class="icon-btn" onClick={props.onClose}>×</button>
+          <button class="icon-btn" onClick={handleClose}>×</button>
         </div>
         <div class="modal-body">
           {props.children}
