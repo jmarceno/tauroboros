@@ -470,7 +470,7 @@ export function GroupPanel(props: GroupPanelProps) {
                   bonSummary={props.bonSummaries[task.id]}
                   runColor={props.getTaskRunColor(task.id)}
                   isLocked={props.isTaskMutationLocked(task.id)}
-                  canDrag={false}
+                  canDrag={!props.isTaskMutationLocked(task.id)}
                   dragDrop={props.dragDrop}
                   sessionUsage={props.sessionUsage}
                   taskLastUpdate={props.taskLastUpdate}

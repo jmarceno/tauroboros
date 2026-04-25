@@ -120,10 +120,12 @@ function App() {
     if (action === 'add-to-group') {
       // Validate that task can be added to group
       const sourceContext = dragDrop.dragSourceContext() === 'group' ? 'group' : 'column'
+      // Parse target: group:groupId or column status
+      const targetGroupId = target.startsWith('group:') ? target.slice(6) : target
       const validation = validateGroupDrop(
         task,
         sourceContext,
-        target,
+        targetGroupId,
         task.groupId ?? null
       )
 
@@ -135,7 +137,7 @@ function App() {
       }
 
       try {
-        await taskGroupsStore.addTasksToGroup(target, [taskId])
+        await taskGroupsStore.addTasksToGroup(targetGroupId, [taskId])
         await tasksStore.loadTasks()
         uiStore.showToast('Task added to group', 'success')
       } catch (e) {

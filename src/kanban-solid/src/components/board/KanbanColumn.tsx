@@ -68,7 +68,9 @@ export function KanbanColumn(props: KanbanColumnProps) {
 
   const handleDrop = (e: DragEvent) => {
     e.preventDefault()
-    props.dragDrop.handleDrop(props.status, 'move-to-status')
+    const sourceContext = props.dragDrop.dragSourceContext()
+    const action = sourceContext === 'group' ? 'remove-from-group' : 'move-to-status'
+    props.dragDrop.handleDrop(props.status, action)
   }
 
   const taskCount = createMemo(() => props.tasks.length)

@@ -172,7 +172,7 @@ export function TaskModal(props: TaskModalProps) {
     props.onClose()
   })
 
-  // Load data on mount
+  // Load data on mount - Convert this to Effect?
   onMount(async () => {
     setIsLoading(true)
     try {

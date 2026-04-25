@@ -433,27 +433,75 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
         })
       }
 
-      const podmanImages = yield* ctx.getPodmanImages().pipe(
-        Effect.mapError((error) => internalRouteError(
-          `Failed to get container images: ${error instanceof Error ? error.message : String(error)}`,
-          ErrorCode.CONTAINER_OPERATION_FAILED,
-          error,
-        )),
+      // Try to get images from both Podman and Docker, handle errors gracefully
+      const podmanImagesEffect = ctx.getPodmanImages().pipe(
+        Effect.mapError((error) => ({
+          type: 'podman' as const,
+          error: error instanceof Error ? error.message : String(error),
+        })),
+      )
+      
+      const dockerImagesEffect = ctx.getDockerImages().pipe(
+        Effect.mapError((error) => ({
+          type: 'docker' as const,
+          error: error instanceof Error ? error.message : String(error),
+        })),
       )
 
-      const podmanImagesMap = new Map<string, { tag: string; createdAt: number; size: string }>()
-      for (const img of podmanImages) {
-        podmanImagesMap.set(img.tag, img)
+      // Try both Podman and Docker, collect results from whichever succeeds
+      const [podmanResult, dockerResult] = yield* Effect.all(
+        [podmanImagesEffect, dockerImagesEffect],
+        { concurrency: 2, mode: 'either' }
+      )
+
+      const podmanImages: Array<{ tag: string; createdAt: number; size: string }> = []
+      const dockerImages: Array<{ tag: string; createdAt: number; size: string }> = []
+
+      if (podmanResult._tag === 'Right') {
+        podmanImages.push(...podmanResult.right)
+      }
+      if (dockerResult._tag === 'Right') {
+        dockerImages.push(...dockerResult.right)
       }
 
-      const allImages = new Map<string, { tag: string; createdAt: number; source: "build" | "podman"; size?: string }>()
-      for (const img of buildImages) {
-        const podmanImg = podmanImagesMap.get(img.tag)
-        allImages.set(img.tag, { ...img, size: podmanImg?.size })
+      // If both failed, return error
+      if (podmanResult._tag === 'Left' && dockerResult._tag === 'Left') {
+        return yield* internalRouteError(
+          `Failed to get container images from both Podman (${podmanResult.left.error}) and Docker (${dockerResult.left.error})`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+        )
       }
+
+      const allImagesMap = new Map<string, { tag: string; createdAt: number; source: "build" | "podman" | "docker"; size?: string }>()
+      
+      // Add build images first
+      for (const img of buildImages) {
+        allImagesMap.set(img.tag, { ...img, size: undefined })
+      }
+      
+      // Add Podman images
       for (const img of podmanImages) {
-        if (!allImages.has(img.tag)) {
-          allImages.set(img.tag, { ...img, source: "podman" })
+        const existing = allImagesMap.get(img.tag)
+        if (existing) {
+          // Update size if not set
+          if (!existing.size) {
+            existing.size = img.size
+          }
+        } else {
+          allImagesMap.set(img.tag, { ...img, source: "podman" })
+        }
+      }
+      
+      // Add Docker images
+      for (const img of dockerImages) {
+        const existing = allImagesMap.get(img.tag)
+        if (existing) {
+          // Update size if not set
+          if (!existing.size) {
+            existing.size = img.size
+          }
+        } else {
+          allImagesMap.set(img.tag, { ...img, source: "docker" })
         }
       }
 
@@ -466,7 +514,7 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
         }
       }
 
-      const result = Array.from(allImages.values()).map((img) => ({
+      const result = Array.from(allImagesMap.values()).map((img) => ({
         ...img,
         inUseByTasks: imageUsage[img.tag] ?? 0,
       }))
@@ -544,13 +592,43 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
         )
       }
 
-      const allImages = yield* ctx.getPodmanImages().pipe(
-        Effect.mapError((error) => internalRouteError(
-          `Failed to delete image: ${error instanceof Error ? error.message : String(error)}`,
-          ErrorCode.CONTAINER_OPERATION_FAILED,
-          error,
-        )),
+      // Try to get images from both Podman and Docker, handle errors gracefully
+      const podmanImagesEffect = ctx.getPodmanImages().pipe(
+        Effect.mapError((error) => ({
+          type: 'podman' as const,
+          error: error instanceof Error ? error.message : String(error),
+        })),
       )
+      
+      const dockerImagesEffect = ctx.getDockerImages().pipe(
+        Effect.mapError((error) => ({
+          type: 'docker' as const,
+          error: error instanceof Error ? error.message : String(error),
+        })),
+      )
+
+      // Try both Podman and Docker, collect results from whichever succeeds
+      const [podmanResult, dockerResult] = yield* Effect.all(
+        [podmanImagesEffect, dockerImagesEffect],
+        { concurrency: 2, mode: 'either' }
+      )
+
+      const allImages: Array<{ tag: string; createdAt: number; size: string }> = []
+      if (podmanResult._tag === 'Right') {
+        allImages.push(...podmanResult.right)
+      }
+      if (dockerResult._tag === 'Right') {
+        allImages.push(...dockerResult.right)
+      }
+
+      // If both failed, return error
+      if (podmanResult._tag === 'Left' && dockerResult._tag === 'Left') {
+        return yield* internalRouteError(
+          `Failed to get container images from both Podman (${podmanResult.left.error}) and Docker (${dockerResult.left.error})`,
+          ErrorCode.CONTAINER_OPERATION_FAILED,
+        )
+      }
+
       const piAgentImages = allImages.filter((img) => img.tag.includes("pi-agent"))
       if (piAgentImages.length <= 1) {
         return yield* badRequestError(
