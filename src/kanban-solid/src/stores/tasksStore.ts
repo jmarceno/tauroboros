@@ -96,7 +96,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
       if (task.status === 'failed' || task.status === 'stuck') {
         groups.review.push(task)
       } else if (task.status === 'queued') {
-        groups.executing.push(task)
+        groups.backlog.push(task)
       } else if (task.status && task.status in groups) {
         groups[task.status as TaskStatus].push(task)
       }

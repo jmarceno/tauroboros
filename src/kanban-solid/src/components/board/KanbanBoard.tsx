@@ -130,6 +130,8 @@ export function KanbanBoard(props: KanbanBoardProps) {
         groups.review.push(task)
       } else if (task.status === 'code-style') {
         groups['code-style'].push(task)
+      } else if (task.status === 'queued') {
+        groups.backlog.push(task)
       } else if (task.status && task.status in groups) {
         groups[task.status as TaskStatus].push(task)
       }
@@ -142,7 +144,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
     const groups = props.groups || []
     const id = props.activeGroupId
     if (!id) return null
-    return groups.find(g => g.id === id) || null
+    return groups.find(group => group.id === id) || null
   })
 
   const activeGroupTasks = createMemo(() => {
@@ -150,36 +152,36 @@ export function KanbanBoard(props: KanbanBoardProps) {
     const members = props.groupMembers || {}
     if (!id || !members[id]) return []
     const memberIds = new Set(members[id])
-    return props.tasks.filter(t => memberIds.has(t.id))
-  })
-
-  const activeGroups = createMemo(() => {
-    const groups = props.groups || []
-    return groups.filter(g =>
-      g.status === 'active' && !fullyCompletedGroupIds().has(g.id)
-    )
+    return props.tasks.filter(task => memberIds.has(task.id))
   })
 
   const fullyCompletedGroupIds = createMemo(() => {
     const allGroups = props.groups || []
     return new Set(
       allGroups
-        .filter(g => {
-          const memberIds = props.groupMembers?.[g.id] || []
+        .filter(group => {
+          const memberIds = props.groupMembers?.[group.id] || []
           return memberIds.length > 0 && memberIds.every(id => {
-            const task = props.tasks.find(t => t.id === id)
+            const task = props.tasks.find(task => task.id === id)
             return task?.status === 'done'
           })
         })
-        .map(g => g.id)
+        .map(group => group.id)
+    )
+  })
+
+  const activeGroups = createMemo(() => {
+    const groups = props.groups || []
+    return groups.filter(group =>
+      group.status === 'active' && !fullyCompletedGroupIds().has(group.id)
     )
   })
 
   const groupsWithDoneTasks = createMemo(() => {
     const doneGroupIds = new Set(
-      props.tasks.filter(t => t.status === 'done' && t.groupId).map(t => t.groupId)
+      props.tasks.filter(task => task.status === 'done' && task.groupId).map(task => task.groupId)
     )
-    return (props.groups || []).filter(g => doneGroupIds.has(g.id))
+    return (props.groups || []).filter(group => doneGroupIds.has(group.id))
   })
 
   const doneTasksByGroup = createMemo(() => {
