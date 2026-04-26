@@ -56,6 +56,7 @@ export interface ContainerConfig {
   imageName?: string
   useMockLLM?: boolean
   mountPodmanSocket?: boolean // Mount host's podman socket for container nesting
+  extensionPaths?: string[] // Paths to Pi extension files accessible inside the container
 }
 
 export interface ContainerProcess {
@@ -445,6 +446,13 @@ export class PiContainerManager {
         imageName,
       ]
 
+      // Append extension paths as additional args to the container's ENTRYPOINT
+      if (config.extensionPaths && config.extensionPaths.length > 0) {
+        for (const extPath of config.extensionPaths) {
+          podmanArgs.push("--extension", extPath)
+        }
+      }
+
       // Spawn podman run directly for proper stdin/stdout handling
       const proc = spawn("podman", podmanArgs, {
         stdio: ["pipe", "pipe", "pipe"],
@@ -813,11 +821,11 @@ export class PiContainerManager {
    * @param sessionId - The session ID for tracking this attachment
    * @returns ContainerProcess if successful, null if container not running or attach failed
    */
-  attachToContainer(containerId: string, sessionId: string): Effect.Effect<ContainerProcess | null, ContainerManagerError> {
-    return this.attachToContainerInternal(containerId, sessionId)
+  attachToContainer(containerId: string, sessionId: string, extensionPaths?: string[]): Effect.Effect<ContainerProcess | null, ContainerManagerError> {
+    return this.attachToContainerInternal(containerId, sessionId, extensionPaths)
   }
 
-  private attachToContainerInternal(containerId: string, sessionId: string): Effect.Effect<ContainerProcess | null, ContainerManagerError> {
+  private attachToContainerInternal(containerId: string, sessionId: string, extensionPaths?: string[]): Effect.Effect<ContainerProcess | null, ContainerManagerError> {
     return Effect.gen(this, function* () {
       // Verify container exists and is running
       const containerInfo = yield* this.checkContainerByIdInternal(containerId)
@@ -832,13 +840,22 @@ export class PiContainerManager {
         // Spawn podman exec to create a new pi rpc session in the existing container
         // The -i flag keeps stdin open, allowing us to send commands
         // The -e flag passes the PI_CODING_AGENT environment variable
-        const proc = spawn("podman", [
+        const execArgs = [
           "exec",
           "-i",  // Interactive mode - keep stdin open
           "-e", "PI_CODING_AGENT=true",  // Pass environment variable to container
           containerId,
           "pi", "rpc", "--session-id", sessionId,
-        ], {
+        ]
+
+        // Append extension paths for structured output
+        if (extensionPaths && extensionPaths.length > 0) {
+          for (const extPath of extensionPaths) {
+            execArgs.push("--extension", extPath)
+          }
+        }
+
+        const proc = spawn("podman", execArgs, {
           stdio: ["pipe", "pipe", "pipe"],
         })
 

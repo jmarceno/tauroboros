@@ -19,6 +19,7 @@ import {
 } from "../types.ts"
 import { parseStrictJsonObject } from "./strict-json.ts"
 import { PiSessionManager } from "./session-manager.ts"
+import { StructuredOutputExtractor } from "./structured-output-extractor.ts"
 import { getChangedFiles, getDiffStats, resolveTargetBranch, WorktreeLifecycle } from "./worktree.ts"
 import type { PiContainerManager } from "./container-manager.ts"
 
@@ -54,7 +55,62 @@ function summaryText(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`
 }
 
-function toReviewerOutput(text: string): ReviewerOutput {
+function toReviewerOutput(text: string, events?: Record<string, unknown>[]): ReviewerOutput {
+  // Phase A: Try structured output from tool events first
+  if (events && events.length > 0) {
+    const extractor = new StructuredOutputExtractor()
+    const toolResult = extractor.extractFromEvents<{
+      status: string
+      summary: string
+      bestCandidateIds: string[]
+      gaps: string[]
+      recommendedFinalStrategy: string
+      recommendedPrompt?: string
+    }>(events, "emit_best_of_n_vote")
+
+    if (toolResult) {
+      const status = toolResult.status
+      if (status !== "pass" && status !== "needs_manual_review") {
+        failBestOfN("toReviewerOutput", `Reviewer tool response must include status=pass|needs_manual_review, got: ${String(status)}`)
+      }
+
+      if (!Array.isArray(toolResult.bestCandidateIds)) {
+        failBestOfN("toReviewerOutput", "Reviewer tool response must include bestCandidateIds as an array")
+      }
+
+      if (!Array.isArray(toolResult.gaps)) {
+        failBestOfN("toReviewerOutput", "Reviewer tool response must include gaps as an array")
+      }
+
+      const recommendedFinalStrategy = toolResult.recommendedFinalStrategy
+      if (
+        recommendedFinalStrategy !== "pick_best"
+        && recommendedFinalStrategy !== "synthesize"
+        && recommendedFinalStrategy !== "pick_or_synthesize"
+      ) {
+        failBestOfN(
+          "toReviewerOutput",
+          `Reviewer tool response must include recommendedFinalStrategy=pick_best|synthesize|pick_or_synthesize, got: ${String(recommendedFinalStrategy)}`,
+        )
+      }
+
+      const summary = trimText(toolResult.summary)
+      if (!summary) {
+        failBestOfN("toReviewerOutput", "Reviewer tool response must include a non-empty summary")
+      }
+
+      return {
+        status,
+        summary,
+        bestCandidateIds: toolResult.bestCandidateIds.map((item) => String(item)).filter(Boolean),
+        gaps: toolResult.gaps.map((item) => String(item)).filter(Boolean),
+        recommendedFinalStrategy,
+        recommendedPrompt: trimText(toolResult.recommendedPrompt) || null,
+      }
+    }
+  }
+
+  // Fallback: Parse JSON from response text (backward compatibility)
   const parsed = parseStrictJsonObject(text, "Best-of-n reviewer response")
 
   const status = parsed.status
@@ -514,7 +570,7 @@ export class BestOfNRunner {
           })),
         )
 
-        const reviewerOutput = toReviewerOutput(response.responseText)
+        const reviewerOutput = toReviewerOutput(response.responseText, response.events)
         self.deps.db.updateTaskRun(reviewerRun.id, {
           status: "done",
           sessionId: response.session.id,

@@ -32,6 +32,10 @@ export interface UnifiedPiProcessOptions {
    * If not specified, uses the session's piSessionFile.
    */
   piSessionFile?: string
+  /**
+   * Paths to Pi extension files to load via --extension flag.
+   */
+  extensionPaths?: string[]
 }
 
 /**
@@ -89,6 +93,7 @@ export const createPiProcessEffect = Effect.fn("createPiProcessEffect")(
         disableAutoSessionMessages: options.disableAutoSessionMessages,
         existingContainerId: options.existingContainerId,
         containerImage: options.containerImage,
+        extensionPaths: options.extensionPaths,
       })
     }
 
@@ -101,6 +106,7 @@ export const createPiProcessEffect = Effect.fn("createPiProcessEffect")(
       systemPrompt: options.systemPrompt,
       disableAutoSessionMessages: options.disableAutoSessionMessages,
       piSessionFile: options.piSessionFile,
+      extensionPaths: options.extensionPaths,
     })
   },
 )

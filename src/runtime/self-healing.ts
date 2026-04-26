@@ -10,6 +10,7 @@ import { VERSION, IS_COMPILED } from "../server/version.ts"
 import { PiSessionManager } from "./session-manager.ts"
 import { parseStrictJsonObject } from "./strict-json.ts"
 import type { PiContainerManager } from "./container-manager.ts"
+import { StructuredOutputExtractor } from "./structured-output-extractor.ts"
 import { getSystemPrompt, renderPromptTemplate } from "../prompts/catalog.ts"
 
 export class SelfHealingError extends Schema.TaggedError<SelfHealingError>()("SelfHealingError", {
@@ -140,14 +141,24 @@ export class SelfHealingService {
         ),
       )
 
-      const rawParsed = yield* Effect.try({
-        try: () => parseStrictJsonObject(session.responseText, "Self-heal diagnostics response"),
-        catch: (cause) => new SelfHealingError({
-          operation: "parseDiagnosticsResponse",
-          message: cause instanceof Error ? cause.message : String(cause),
-          cause,
-        }),
-      })
+      // Phase A: Try structured output from tool events first
+      const extractor = new StructuredOutputExtractor()
+      const toolResult = extractor.extractFromEvents<Record<string, unknown>>(session.events, "emit_repair_decision")
+
+      let rawParsed: Record<string, unknown>
+      if (toolResult) {
+        rawParsed = toolResult
+      } else {
+        const parsed = yield* Effect.try({
+          try: () => parseStrictJsonObject(session.responseText, "Self-heal diagnostics response"),
+          catch: (cause) => new SelfHealingError({
+            operation: "parseDiagnosticsResponse",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+        })
+        rawParsed = parsed
+      }
 
       const validationResult = Schema.decodeUnknownEither(SelfHealResponseSchema)(rawParsed)
       const validated = yield* Either.match(validationResult, {

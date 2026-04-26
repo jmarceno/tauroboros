@@ -136,6 +136,7 @@ export class ContainerPiProcess {
   private readonly settings?: InfrastructureSettings
   private readonly disableAutoSessionMessages: boolean
   private readonly systemPrompt?: string
+  private readonly extensionPaths: string[]
 
   private containerProcess: ContainerProcess | null = null
   private requestId = 0
@@ -168,6 +169,7 @@ export class ContainerPiProcess {
     disableAutoSessionMessages?: boolean
     existingContainerId?: string | null
     containerImage?: string | null
+    extensionPaths?: string[]
   }) {
     this.db = args.db
     this.disableAutoSessionMessages = args.disableAutoSessionMessages ?? false
@@ -179,6 +181,7 @@ export class ContainerPiProcess {
     this.systemPrompt = args.systemPrompt
     this.existingContainerId = args.existingContainerId ?? null
     this.containerImage = args.containerImage ?? null
+    this.extensionPaths = args.extensionPaths ?? []
 
     if (!this.disableAutoSessionMessages) {
       this.messageStreamer = new MessageStreamer(
@@ -234,6 +237,7 @@ export class ContainerPiProcess {
           const attachedProcess = yield* this.containerManager.attachToContainer(
             this.existingContainerId!,
             this.session.id,
+            this.extensionPaths,
           ).pipe(
             Effect.mapError((cause) => new PiProcessError({
               operation: "start",
@@ -296,6 +300,7 @@ export class ContainerPiProcess {
         env: {},
         useMockLLM: process.env.USE_MOCK_LLM === 'true',
         mountPodmanSocket: containerSettings?.mountPodmanSocket ?? false,
+        extensionPaths: this.extensionPaths.length > 0 ? this.extensionPaths : undefined,
       }
 
       this.containerProcess = yield* this.containerManager.createContainer(containerConfig).pipe(
@@ -852,13 +857,14 @@ export class ContainerPiProcess {
   }
 
   private consumeStderrLinesEffect(): Effect.Effect<void, never> {
-    return Effect.sync(() => {
+    return Effect.gen(this, function* () {
       while (true) {
         const newlineIdx = this.stderrBuffer.indexOf("\n")
         if (newlineIdx < 0) break
         const line = this.stderrBuffer.slice(0, newlineIdx).trim()
         this.stderrBuffer = this.stderrBuffer.slice(newlineIdx + 1)
         if (!line) continue
+        yield* Effect.logInfo(`[container-stderr] ${line}`)
       }
     })
   }

@@ -12,6 +12,7 @@ import { parseStrictJsonObject } from "./strict-json.ts"
 import { formatLocalDateTime } from "../utils/date-format.ts"
 import { PiProcessError } from "./pi-process.ts"
 import type { PiContainerManager } from "./container-manager.ts"
+import { StructuredOutputExtractor } from "./structured-output-extractor.ts"
 
 export type SmartRepairAction = TaskRepairAction
 
@@ -186,6 +187,35 @@ export class SmartRepairService {
         ),
       )
 
+      // Phase A: Try structured output from tool events first
+      const extractor = new StructuredOutputExtractor()
+      const toolResult = extractor.extractFromEvents<{
+        action: string
+        reason: string
+        errorMessage?: string
+      }>(session.events, "emit_repair_decision")
+
+      if (toolResult) {
+        const action = toolResult.action
+        if (
+          action === "queue_implementation"
+          || action === "restore_plan_approval"
+          || action === "reset_backlog"
+          || action === "mark_done"
+          || action === "fail_task"
+          || action === "continue_with_more_reviews"
+          || action === "skip_code_style"
+          || action === "return_to_review"
+        ) {
+          return {
+            action,
+            reason: toolResult.reason || "No reason provided",
+            errorMessage: toolResult.errorMessage,
+          } as SmartRepairDecision
+        }
+      }
+
+      // Fallback: Parse JSON from response text (backward compatibility)
       return yield* parseRepairDecisionEffect(session.responseText)
     })
   }
