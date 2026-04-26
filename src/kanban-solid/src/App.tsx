@@ -49,8 +49,6 @@ import {
   BestOfNDetailModal,
   CleanRunModal,
   ExecutionGraphModal,
-  OptionsModal,
-  PlanningPromptModal,
   RestoreToGroupModal,
   RevisionModal,
   SessionModal,
@@ -1025,18 +1023,6 @@ function App() {
             setPendingGroupStart(null)
             uiStore.closeModal()
           }}
-        />
-      </Show>
-
-      <Show when={uiStore.activeModal() === 'options'}>
-        <OptionsModal
-          onClose={uiStore.closeModal}
-        />
-      </Show>
-
-      <Show when={uiStore.activeModal() === 'planningPrompt'}>
-        <PlanningPromptModal
-          onClose={uiStore.closeModal}
         />
       </Show>
 
