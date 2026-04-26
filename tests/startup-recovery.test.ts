@@ -85,11 +85,13 @@ describe("startup recovery", () => {
     }))
 
     const recoveredTask = db.getTask(staleTask.id)
-    expect(recoveredTask?.status).toBe("backlog")
+    expect(recoveredTask?.status).toBe("failed")
+    expect(recoveredTask?.errorMessage).toBe("Task was interrupted by server restart")
 
     const reviewRecoveredTask = db.getTask(interruptedReviewTask.id)
-    expect(reviewRecoveredTask?.status).not.toBe("review")
+    expect(reviewRecoveredTask?.status).toBe("failed")
     expect(reviewRecoveredTask?.reviewActivity).toBe("idle")
+    expect(reviewRecoveredTask?.errorMessage).toBe("Task was interrupted by server restart during review")
 
     const unchangedTask = db.getTask(untouchedReviewTask.id)
     expect(unchangedTask?.status).toBe("review")
@@ -123,8 +125,8 @@ describe("startup recovery", () => {
     await Effect.runPromise(runStartupRecoveryEffect({ db, broadcast: () => {} }))
     const second = db.getTask(task.id)
 
-    expect(first?.status).toBe("backlog")
-    expect(second?.status).toBe("backlog")
+    expect(first?.status).toBe("failed")
+    expect(second?.status).toBe("failed")
   })
 
   it("recovers stale workflow runs with no executing tasks", async () => {

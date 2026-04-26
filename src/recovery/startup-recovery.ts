@@ -52,12 +52,28 @@ export const runStartupRecoveryEffect = Effect.fn("runStartupRecoveryEffect")(
   yield* Effect.forEach(staleTasks, (task) =>
     Effect.gen(function* () {
       let decision: SmartRepairDecision
-      if (task.status === "executing" && (!task.worktreeDir || !existsSync(task.worktreeDir))) {
+      if (task.status === "executing") {
+        // On startup, any task marked as executing should be failed and sent to done
+        decision = {
+          action: "fail_task",
+          reason: "Startup recovery: task was executing when server restarted - marked as failed",
+          errorMessage: "Task was interrupted by server restart",
+        }
+      } else if (task.status === "queued") {
+        // Queued tasks should be reset to backlog to be re-queued
         decision = {
           action: "reset_backlog",
-          reason: "Startup recovery: task was executing without a valid worktree directory",
+          reason: "Startup recovery: task was queued when server restarted - reset to backlog",
+        }
+      } else if (task.status === "review" && task.reviewActivity === "running") {
+        // Tasks in review with running activity should be failed
+        decision = {
+          action: "fail_task",
+          reason: "Startup recovery: task was in review with running activity when server restarted - marked as failed",
+          errorMessage: "Task was interrupted by server restart during review",
         }
       } else {
+        // Fallback to deterministic repair for other cases
         const deterministic = chooseDeterministicRepairAction(task)
         decision = {
           action: deterministic.action,
@@ -67,7 +83,7 @@ export const runStartupRecoveryEffect = Effect.fn("runStartupRecoveryEffect")(
 
       const updated = yield* repair.applyAction(task.id, decision)
       broadcast({ type: "task_updated", payload: updated })
-      yield* Effect.logInfo(`[startup-recovery] Recovered task ${task.id}`)
+      yield* Effect.logInfo(`[startup-recovery] Recovered task ${task.id} with action: ${decision.action}`)
     }).pipe(
       Effect.catchAll((error) => Effect.logError(`[startup-recovery] Failed to recover task ${task.id}: ${error}`)),
     ),
@@ -99,6 +115,21 @@ export const runStartupRecoveryEffect = Effect.fn("runStartupRecoveryEffect")(
       const run = db.getWorkflowRun(pauseState.runId)
       if (run && run.status === "paused") {
         yield* Effect.logInfo(`[startup-recovery] Found paused run ${run.id} that can be resumed`)
+        // Ensure tasks in paused workflow are in appropriate states for restart
+        for (const taskId of run.taskOrder ?? []) {
+          const task = db.getTask(taskId)
+          if (task && (task.status === "executing" || task.status === "queued")) {
+            // Reset tasks that were executing or queued to backlog for clean restart
+            db.updateTask(taskId, {
+              status: "backlog",
+              errorMessage: null,
+              awaitingPlanApproval: false,
+              reviewActivity: "idle",
+            })
+            broadcast({ type: "task_updated", payload: db.getTask(taskId) })
+            yield* Effect.logInfo(`[startup-recovery] Reset task ${taskId} to backlog for paused workflow ${run.id}`)
+          }
+        }
         for (const session of pauseState.sessions) {
           if (session.containerId) {
             yield* Effect.logInfo(`[startup-recovery] Session ${session.sessionId} was using container ${session.containerId} (may need restart)`)
@@ -111,6 +142,21 @@ export const runStartupRecoveryEffect = Effect.fn("runStartupRecoveryEffect")(
           pauseRequested: true,
         })
         broadcast({ type: "run_paused", payload: { runId: run.id } })
+        
+        // Also reset tasks in this run to backlog for clean restart
+        for (const taskId of run.taskOrder ?? []) {
+          const task = db.getTask(taskId)
+          if (task && (task.status === "executing" || task.status === "queued")) {
+            db.updateTask(taskId, {
+              status: "backlog",
+              errorMessage: null,
+              awaitingPlanApproval: false,
+              reviewActivity: "idle",
+            })
+            broadcast({ type: "task_updated", payload: db.getTask(taskId) })
+            yield* Effect.logInfo(`[startup-recovery] Reset task ${taskId} to backlog for run ${run.id}`)
+          }
+        }
       }
     }
   }
