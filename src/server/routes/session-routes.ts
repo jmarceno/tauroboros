@@ -258,11 +258,17 @@ export function registerSessionRoutes(router: Router, ctx: SessionRouteContext):
           costTotal: typeof cost.total === "number" ? cost.total : null,
           rawEventJson: body,
         })
-        broadcast({ type: "session_message_created", payload: message })
-        if (sseHub) {
-          sseHub.broadcastMessage(message)
+
+        // Message may be null if deduplicated
+        if (message) {
+          broadcast({ type: "session_message_created", payload: message })
+          if (sseHub) {
+            sseHub.broadcastMessage(message)
+          }
+          return json({ ok: true, message })
         }
-        return json({ ok: true, message })
+
+        return json({ ok: true, deduplicated: true })
       }
 
       if (eventType === "status") {

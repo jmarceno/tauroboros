@@ -705,4 +705,15 @@ export const MIGRATIONS: Migration[] = [
       // Deduplication is handled at application level in createSessionMessage
     ],
   },
+  {
+    version: 33,
+    description: "Enhanced session message deduplication - content-based and empty marker filtering",
+    statements: [
+      // This migration documents the application-level deduplication enhancements:
+      // 1. MessageId-based dedup: Returns existing row if (session_id, message_id) already exists
+      // 2. Content-based dedup: Rejects duplicate events with same (session_id, role, message_type, content_json) within 60s window
+      // 3. Empty marker filtering: Skips storing empty message_start, turn_start, tool_execution_update events
+      // No schema changes required - all dedup logic is in createSessionMessage()
+    ],
+  },
 ]
