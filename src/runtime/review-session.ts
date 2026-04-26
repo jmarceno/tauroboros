@@ -18,10 +18,10 @@ function asReviewResultEffect(parsed: Record<string, unknown>): Effect.Effect<Re
   return Effect.try({
     try: () => {
       const status = parsed.status
-      if (status !== "pass" && status !== "gaps_found" && status !== "blocked" && status !== "json_parse_max_retries") {
+      if (status !== "pass" && status !== "gaps_found" && status !== "blocked") {
         throw new ReviewSessionError({
           operation: "asReviewResult",
-          message: `Review response JSON must include status: pass|gaps_found|blocked|json_parse_max_retries, got: ${String(status)}`,
+          message: `Review response JSON must include status: pass|gaps_found|blocked, got: ${String(status)}`,
         })
       }
 

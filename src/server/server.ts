@@ -413,7 +413,7 @@ export class PiKanbanServer {
           if (
             shouldSendNotification(
               notificationLevel,
-              "running",
+              "executing",
               "done",
               { isWorkflowDone: true },
             ) &&
