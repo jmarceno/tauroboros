@@ -408,9 +408,15 @@ export class PiKanbanServer {
           const options = this.db.getOptions();
           const notificationLevel = options.telegramNotificationLevel;
 
-          // Only send workflow summary for workflow_done_and_failures level
+          // Use shouldSendNotification to determine if workflow summary should be sent
+          // Check if workflow completion notification should be sent based on notification level
           if (
-            notificationLevel === "workflow_done_and_failures" &&
+            shouldSendNotification(
+              notificationLevel,
+              "running",
+              "done",
+              { isWorkflowDone: true },
+            ) &&
             options.telegramBotToken &&
             options.telegramChatId
           ) {
