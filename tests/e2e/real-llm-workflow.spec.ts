@@ -254,8 +254,3 @@ async function readTaskState(page: Page, taskName: string): Promise<WorkflowTask
 
   return { name: taskName, status: 'unknown' }
 }
-
-interface WorkflowTaskState {
-  name: string
-  status: string
-}

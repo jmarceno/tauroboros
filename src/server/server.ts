@@ -981,12 +981,11 @@ export class PiKanbanServer {
     );
 
     this.router.get("/api/branches", ({ json }) =>
-      Effect.sync(() => {
-        this.refreshBranchesCache();
-        return json(
-          this.branchesCache ?? { branches: [], current: null },
-        );
-      }),
+      Effect.promise(() => this.refreshBranchesCache()).pipe(
+        Effect.andThen(() =>
+          json(this.branchesCache ?? { branches: [], current: null })
+        ),
+      ),
     );
 
     this.router.get("/api/models", ({ json }) =>
@@ -1002,20 +1001,28 @@ export class PiKanbanServer {
     ServerRuntimeError
   > {
     return Effect.gen(function* () {
-      const proc = Bun.spawn(
-        [
-          "podman",
-          "images",
-          "--format",
-          "json",
-          "--filter",
-          "reference=*pi-agent*",
-        ],
-        {
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
+      const proc = yield* Effect.try({
+        try: () => Bun.spawn(
+          [
+            "podman",
+            "images",
+            "--format",
+            "json",
+            "--filter",
+            "reference=*pi-agent*",
+          ],
+          {
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        ),
+        catch: (cause) =>
+          new ServerRuntimeError({
+            operation: "getPodmanImages",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      });
       const stdout = yield* Effect.tryPromise({
         try: () => new Response(proc.stdout).text(),
         catch: (cause) =>
@@ -1095,20 +1102,28 @@ export class PiKanbanServer {
     ServerRuntimeError
   > {
     return Effect.gen(function* () {
-      const proc = Bun.spawn(
-        [
-          "docker",
-          "images",
-          "--format",
-          "json",
-          "--filter",
-          "reference=*pi-agent*",
-        ],
-        {
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
+      const proc = yield* Effect.try({
+        try: () => Bun.spawn(
+          [
+            "docker",
+            "images",
+            "--format",
+            "json",
+            "--filter",
+            "reference=*pi-agent*",
+          ],
+          {
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        ),
+        catch: (cause) =>
+          new ServerRuntimeError({
+            operation: "getDockerImages",
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      });
       const stdout = yield* Effect.tryPromise({
         try: () => new Response(proc.stdout).text(),
         catch: (cause) =>

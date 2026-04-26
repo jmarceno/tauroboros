@@ -464,16 +464,13 @@ export function registerContainerRoutes(router: Router, ctx: ServerRouteContext)
         dockerImages.push(...dockerResult.right)
       }
 
-      // If both failed, return error
+      // If both failed, return empty (no container runtime available)
       if (podmanResult._tag === 'Left' && dockerResult._tag === 'Left') {
-        return yield* internalRouteError(
-          `Failed to get container images from both Podman (${podmanResult.left.error}) and Docker (${dockerResult.left.error})`,
-          ErrorCode.CONTAINER_OPERATION_FAILED,
-        )
+        return json({ images: [] })
       }
 
       const allImagesMap = new Map<string, { tag: string; createdAt: number; source: "build" | "podman" | "docker"; size?: string }>()
-      
+
       // Add build images first
       for (const img of buildImages) {
         allImagesMap.set(img.tag, { ...img, size: undefined })

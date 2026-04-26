@@ -28,8 +28,8 @@ test.describe('Options Tab', () => {
     await saveOptionsButton(page).click()
     await expect(page.getByText('Options saved successfully')).toBeVisible({ timeout: 10000 })
 
-    await page.reload()
-    await page.waitForLoadState('networkidle')
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(1000)
     await page.getByRole('tab', { name: 'Options' }).click()
 
     const reloadedParallelTasksInput = page.locator('.form-group').filter({ hasText: 'Parallel Tasks' }).locator('input[type="number"]').first()
@@ -61,8 +61,8 @@ test.describe('Options Tab', () => {
     await saveOptionsButton(page).click()
     await expect(page.getByText('Options saved successfully')).toBeVisible({ timeout: 10000 })
 
-    await page.reload()
-    await page.waitForLoadState('networkidle')
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(1000)
     await page.getByRole('tab', { name: 'Kanban' }).click()
 
     const modal = await openTaskModal(page)
