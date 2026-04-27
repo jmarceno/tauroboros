@@ -67,6 +67,10 @@ const config: UserConfig = {
         target: `http://localhost:${SERVER_PORT}`,
         changeOrigin: true,
       },
+      "/sse": {
+        target: `http://localhost:${SERVER_PORT}`,
+        changeOrigin: true,
+      },
       "/ws": {
         target: `ws://localhost:${SERVER_PORT}`,
         ws: true,

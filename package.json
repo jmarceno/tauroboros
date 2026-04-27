@@ -10,6 +10,7 @@
     "dev": "bun run --watch src/index.ts",
     "build": "bun build --target=bun src/index.ts --outdir dist && bun run kanban:build",
     "compile": "bun run scripts/compile.ts",
+    "rust:bundle": "cd tauroboros-rust && cargo build --release --features embedded-frontend",
     "compile:test": "bun run scripts/test-binary.ts",
     "kanban:build": "cd src/kanban-solid && bun install --no-save && bun run build",
     "kanban:dev": "SERVER_PORT=3789 DEV_PORT=5174 bun run src/index.ts & sleep 3 && cd src/kanban-solid && bun install --no-save && SERVER_PORT=3789 DEV_PORT=5174 bun run dev",

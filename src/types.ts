@@ -638,14 +638,22 @@ export interface PlanningSession {
 
 export interface ModelEntry {
   id: string
+  label: string
+  value: string
+  providerId?: string
+  providerName?: string
+}
+
+export interface ModelProvider {
+  id: string
   name: string
-  provider: string
-  description?: string
+  models: ModelEntry[]
 }
 
 export interface ModelCatalog {
-  models: ModelEntry[]
-  lastUpdated: number
+  providers: ModelProvider[]
+  defaults: Record<string, string>
+  warning?: string
 }
 
 // Stats types

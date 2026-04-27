@@ -5,6 +5,21 @@
 
 import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from 'solid-js'
 import type { LogEntry, WorkflowRun } from '@/types'
+import { runApiEffect, runsApi } from '@/api'
+
+type RunQueueStatus = {
+  runId: string
+  status: WorkflowRun['status']
+  totalTasks: number
+  queuedTasks: number
+  executingTasks: number
+  completedTasks: number
+}
+
+type RunQueueState = {
+  status: RunQueueStatus | null
+  error: string | null
+}
 
 // Exported for testing
 export const MIN_PANEL_HEIGHT = 120
@@ -32,6 +47,7 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
   const [activeTab, setActiveTab] = createSignal<'runs' | 'logs'>('runs')
   const [panelHeight, setPanelHeight] = createSignal(DEFAULT_PANEL_HEIGHT)
   const [isResizing, setIsResizing] = createSignal(false)
+  const [queueStateByRunId, setQueueStateByRunId] = createSignal<Record<string, RunQueueState>>({})
 
   let resizeStartY = 0
   let resizeStartHeight = 0
@@ -90,6 +106,7 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
   const safeStaleRuns = createMemo(() => Array.isArray(props.staleRuns) ? props.staleRuns : [])
   const hasStaleRuns = createMemo(() => safeStaleRuns().length > 0)
   const hasAnyRuns = createMemo(() => props.runs.length > 0)
+  const activeRuns = createMemo(() => props.runs.filter(run => isRunActive(run)))
 
   const isRunStale = (run: WorkflowRun) => {
     return safeStaleRuns().some(sr => sr.id === run.id)
@@ -123,6 +140,46 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
     if (total === 0) return 0
     return (completed / total) * 100
   }
+
+  const getQueueState = (runId: string) => queueStateByRunId()[runId]
+
+  createEffect(() => {
+    if (activeTab() !== 'runs') return
+
+    const runsToTrack = activeRuns().map((run) => run.id)
+    if (runsToTrack.length === 0) {
+      setQueueStateByRunId({})
+      return
+    }
+
+    let disposed = false
+
+    const loadStatuses = async () => {
+      const nextEntries = await Promise.all(runsToTrack.map(async (runId) => {
+        try {
+          const status = await runApiEffect(runsApi.getQueueStatus(runId))
+          return [runId, { status, error: null } satisfies RunQueueState] as const
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          return [runId, { status: null, error: message } satisfies RunQueueState] as const
+        }
+      }))
+
+      if (disposed) return
+
+      setQueueStateByRunId(Object.fromEntries(nextEntries))
+    }
+
+    void loadStatuses()
+    const interval = window.setInterval(() => {
+      void loadStatuses()
+    }, 2000)
+
+    onCleanup(() => {
+      disposed = true
+      window.clearInterval(interval)
+    })
+  })
 
   // Distribute runs into columns for masonry layout (L→R, T→B)
   const getRunsForColumn = (columnIndex: number): WorkflowRun[] => {
@@ -255,6 +312,7 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
                               return (
                                 <div
                                   class="p-2.5 bg-dark-surface2 border border-dark-border rounded-md cursor-pointer transition-all"
+                                  data-run-id={run.id}
                                   classList={{
                                     'border-accent-success bg-accent-success/5': statusClass === 'active',
                                     'border-dark-border-hover opacity-80': statusClass === 'stale'
@@ -313,6 +371,20 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
                                     <span class="text-[10px] text-dark-text-secondary">
                                       {run.currentTaskIndex || 0}/{run.taskOrder?.length || 0} tasks
                                     </span>
+                                    <Show when={getQueueState(run.id)?.status}>
+                                      {(queueState) => (
+                                        <span class="text-[10px] text-dark-text-muted" data-run-queue-status={run.id}>
+                                          q {queueState().queuedTasks} · x {queueState().executingTasks} · d {queueState().completedTasks}
+                                        </span>
+                                      )}
+                                    </Show>
+                                    <Show when={getQueueState(run.id)?.error}>
+                                      {(queueError) => (
+                                        <span class="text-[10px] text-accent-danger" data-run-queue-error={run.id}>
+                                          queue error: {queueError()}
+                                        </span>
+                                      )}
+                                    </Show>
                                     <div class="h-0.5 bg-dark-border rounded-sm overflow-hidden">
                                       <div
                                         class="h-full rounded-sm transition-all"
