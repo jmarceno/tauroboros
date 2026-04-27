@@ -83,6 +83,7 @@ export class PiRpcProcess {
   private readonly systemPrompt?: string
   private readonly disableAutoSessionMessages: boolean
   private readonly piSessionFile?: string
+  private readonly extensionPaths: string[]
   private proc: Bun.Subprocess<"pipe", "pipe", "pipe"> | null = null
   private requestId = 0
   private readonly pending = new Map<string, Pending>()
@@ -104,6 +105,7 @@ export class PiRpcProcess {
     systemPrompt?: string
     disableAutoSessionMessages?: boolean
     piSessionFile?: string
+    extensionPaths?: string[]
   }) {
     this.db = args.db
     this.disableAutoSessionMessages = args.disableAutoSessionMessages ?? false
@@ -113,6 +115,7 @@ export class PiRpcProcess {
     this.settings = args.settings
     this.systemPrompt = args.systemPrompt
     this.piSessionFile = args.piSessionFile ?? args.session.piSessionFile ?? undefined
+    this.extensionPaths = args.extensionPaths ?? []
 
     if (!this.disableAutoSessionMessages) {
       this.messageStreamer = new MessageStreamer(
@@ -150,6 +153,10 @@ export class PiRpcProcess {
           }),
         })
         args.push("--session", sessionFile)
+      }
+
+      for (const extPath of this.extensionPaths) {
+        args.push("--extension", extPath)
       }
 
       this.proc = Bun.spawn({

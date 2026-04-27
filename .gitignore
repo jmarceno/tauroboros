@@ -54,3 +54,4 @@ dist-ssr
 *.sw?
 
 tsconfig.tsbuildinfo
+tsconfig-full.tsbuildinfo

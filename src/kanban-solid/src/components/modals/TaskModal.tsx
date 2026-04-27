@@ -172,36 +172,35 @@ export function TaskModal(props: TaskModalProps) {
     props.onClose()
   })
 
-  // Load data on mount - Convert this to Effect?
+  // Load data on mount - handle each API independently to avoid one failure blocking the form
   onMount(async () => {
     setIsLoading(true)
-    try {
-      const [branchData, imageData, latestOptions] = await Promise.all([
-        runApiEffect(referenceApi.getBranches()),
-        runApiEffect(containersApi.getImages()),
-        runApiEffect(optionsApi.get()),
-      ])
 
-      setAvailableBranches(branchData.branches || [])
-      setAvailableImages(imageData.images || [])
+    // Load branches (with fallback to empty)
+    const branchData = await runApiEffect(referenceApi.getBranches()).catch(() => ({ branches: [], current: null }))
+    setAvailableBranches(branchData.branches || [])
 
-      setBranch(currentBranch => {
-        if (currentBranch.trim()) return currentBranch
-        if (latestOptions.branch?.trim()) return latestOptions.branch.trim()
-        if (branchData.current) return branchData.current
-        if (branchData.branches?.[0]) return branchData.branches[0]
-        return currentBranch
-      })
+    // Load container images (with fallback to empty)
+    const imageData = await runApiEffect(containersApi.getImages()).catch(() => ({ images: [] }))
+    setAvailableImages(imageData.images || [])
 
-      setPlanModel(currentPlanModel => currentPlanModel || latestOptions.planModel || '')
-      setExecutionModel(currentExecutionModel => currentExecutionModel || latestOptions.executionModel || '')
-      setPlanThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions.planThinkingLevel || 'default' : currentLevel)
-      setExecutionThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions.executionThinkingLevel || 'default' : currentLevel)
-    } catch {
-      uiStore.showToast('Failed to load form data', 'error')
-    } finally {
-      setIsLoading(false)
-    }
+    // Load options (with fallback)
+    const latestOptions = await runApiEffect(optionsApi.get()).catch(() => ({} as Record<string, unknown>))
+
+    setBranch(currentBranch => {
+      if (currentBranch.trim()) return currentBranch
+      if (latestOptions.branch?.trim()) return latestOptions.branch.trim()
+      if (branchData.current) return branchData.current
+      if (branchData.branches?.[0]) return branchData.branches[0]
+      return currentBranch
+    })
+
+    setPlanModel(currentPlanModel => currentPlanModel || latestOptions.planModel || '')
+    setExecutionModel(currentExecutionModel => currentExecutionModel || latestOptions.executionModel || '')
+    setPlanThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions.planThinkingLevel || 'default' : currentLevel)
+    setExecutionThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions.executionThinkingLevel || 'default' : currentLevel)
+
+    setIsLoading(false)
   })
 
   const availableRequirements = createMemo(() => {

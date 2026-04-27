@@ -278,16 +278,6 @@ export function ChatContainer(props: ChatContainerProps) {
               <div class="flex items-center gap-1">
                 <button
                   class="chat-action-btn"
-                  title="Edit planning assistant prompt"
-                  onClick={() => uiStore.openModal('planningPrompt', {})}
-                >
-                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M12 1v6m0 6v6m4.22-10.22l4.24-4.24M6.34 17.66l-4.24 4.24M23 12h-6m-6 0H1m20.24 4.24l-4.24-4.24M6.34 6.34L2.1 2.1" />
-                  </svg>
-                </button>
-                <button
-                  class="chat-action-btn"
                   title="Close panel"
                   onClick={() => props.planningChat.closePanel()}
                 >

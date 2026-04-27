@@ -226,9 +226,9 @@
         "",
         "Strictness directive: default to finding gaps. Only return pass when all goals are complete and no unresolved defects remain.",
         "",
-        "IMPORTANT: Your ENTIRE response must be a single JSON object. Do NOT include any text before or after the JSON. Do NOT wrap it in markdown code blocks. Output ONLY the JSON object:",
+        "IMPORTANT: Your FINAL action MUST be to call the emit_review_result tool with the review findings. Do NOT output any text or JSON after calling the tool. The tool will submit your structured result automatically.",
         "",
-        "{\"status\": \"pass|gaps_found|blocked\", \"summary\": \"<brief summary of review findings>\", \"gaps\": [\"<first gap if any>\", \"<second gap if any>\"], \"recommendedPrompt\": \"<specific prompt to address gaps, or empty string if no gaps>\"}",
+        "Call emit_review_result with: status (\"pass\"|\"gaps_found\"|\"blocked\"), summary (brief findings), gaps (array of specific issues, empty if none), recommendedPrompt (instructions to fix gaps, or \"\" if none).",
         "",
         "Context:",
         "Task ID: {{task.id}}",
@@ -300,7 +300,7 @@
         "Context:",
         "{{repair_context}}",
         "",
-        "Return strict JSON: {\"action\":\"...\",\"reason\":\"...\",\"errorMessage\":\"optional\"}"
+        "Your FINAL action MUST be to call the emit_repair_decision tool with your decision. Do NOT output any text or JSON after calling the tool. Call emit_repair_decision with: action (one of the actions above), reason (why you chose this), errorMessage (only for fail_task)."
       ],
       "variables": [
         "task",
@@ -353,13 +353,9 @@
         "Candidates:",
         "{{candidate_summaries}}",
         "",
-        "Your response must be valid JSON with fields:",
-        "\"status\": \"pass|needs_manual_review\",",
-        "\"summary\": \"<short evaluation summary>\",",
-        "\"bestCandidateIds\": [\"<candidate-id-1>\", \"<candidate-id-2>\"],",
-        "\"gaps\": [\"<issue 1>\", \"<issue 2>\"],",
-        "\"recommendedFinalStrategy\": \"pick_best|synthesize|pick_or_synthesize\",",
-        "\"recommendedPrompt\": \"<optional instructions for the final applier, or null>\"",
+        "Your FINAL action MUST be to call the emit_best_of_n_vote tool with your evaluation. Do NOT output any text or JSON after calling the tool.",
+        "",
+        "Call emit_best_of_n_vote with: status (\"pass\"|\"needs_manual_review\"), summary (evaluation), bestCandidateIds (array of best candidate IDs), gaps (array of issues), recommendedFinalStrategy (\"pick_best\"|\"synthesize\"|\"pick_or_synthesize\"), recommendedPrompt (optional instructions for final applier).",
         "",
         "Additional reviewer instructions:",
         "{{task_suffix}}"

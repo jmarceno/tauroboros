@@ -9,6 +9,9 @@ export const referenceApi = {
   // Queries
   getBranches: () => apiClient.get<BranchList>('/api/branches'),
   getModels: () => apiClient.get<ModelCatalog>('/api/models'),
-  getExecutionGraph: () => apiClient.get<ExecutionGraph>('/api/execution-graph'),
+  getExecutionGraph: (groupId?: string) => {
+    const path = groupId ? `/api/execution-graph?groupId=${encodeURIComponent(groupId)}` : '/api/execution-graph'
+    return apiClient.get<ExecutionGraph>(path)
+  },
   getVersion: () => apiClient.get<{ version: string; commit: string; displayVersion: string; isCompiled: boolean }>('/api/version'),
 }

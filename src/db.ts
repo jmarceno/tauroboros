@@ -2357,8 +2357,90 @@ export class PiKanbanDB {
     tx(rows)
   }
 
-  createSessionMessage(input: CreateSessionMessageInput): SessionMessage {
-    // Deduplication: If messageId is provided and already exists in this session, return existing
+  // LRU cache for content-based deduplication: Map<sessionId, Set<contentFingerprint>>
+  private contentFingerprints: Map<string, Set<string>> = new Map()
+  private readonly CONTENT_FP_MAX_SIZE = 1000
+  private readonly CONTENT_FP_WINDOW_MS = 60000 // 60 second window
+  private contentFpLastCleaned = Date.now()
+
+  private getContentFingerprint(input: CreateSessionMessageInput): string {
+    // Create a stable fingerprint from content fields that define message identity
+    const content = input.contentJson
+    const text = typeof content?.text === "string" ? content.text : ""
+    const eventType = content?.eventType ?? ""
+    const eventName = content?.eventName ?? ""
+
+    return `${input.sessionId}:${input.role}:${input.messageType}:${eventType}:${eventName}:${text}`
+  }
+
+  private isRecentDuplicate(input: CreateSessionMessageInput): boolean {
+    // Check for content-based duplicates within the recent window
+    const sessionFp = this.contentFingerprints.get(input.sessionId)
+    if (!sessionFp) return false
+
+    const fingerprint = this.getContentFingerprint(input)
+    return sessionFp.has(fingerprint)
+  }
+
+  private addContentFingerprint(input: CreateSessionMessageInput): void {
+    // Cleanup old entries periodically
+    const now = Date.now()
+    if (now - this.contentFpLastCleaned > this.CONTENT_FP_WINDOW_MS) {
+      this.contentFingerprints.clear()
+      this.contentFpLastCleaned = now
+    }
+
+    // Add fingerprint for this session
+    let sessionFp = this.contentFingerprints.get(input.sessionId)
+    if (!sessionFp) {
+      sessionFp = new Set()
+      this.contentFingerprints.set(input.sessionId, sessionFp)
+    }
+
+    const fingerprint = this.getContentFingerprint(input)
+    sessionFp.add(fingerprint)
+
+    // Limit size per session to prevent unbounded growth
+    if (sessionFp.size > this.CONTENT_FP_MAX_SIZE) {
+      // Clear and start fresh if we hit the limit (rare, but prevents leaks)
+      sessionFp.clear()
+      sessionFp.add(fingerprint)
+    }
+  }
+
+  private isEmptyMarkerEvent(input: CreateSessionMessageInput): boolean {
+    // Skip events that are empty markers with no meaningful content
+    const content = input.contentJson
+    const text = typeof content?.text === "string" ? content.text : ""
+
+    // If there's actual text content, it's not an empty marker
+    if (text.trim().length > 0) return false
+
+    // Check for marker event types that shouldn't be stored when empty
+    const eventType = content?.eventType ?? ""
+    const eventName = content?.eventName ?? ""
+
+    // Empty message_start, turn_start, and tool_execution_update events are markers
+    const markerTypes = ["message_start", "turn_start", "tool_execution_update"]
+    if (markerTypes.includes(String(eventType)) || markerTypes.includes(String(eventName))) {
+      return true
+    }
+
+    // Also check message_type for markers
+    if (input.messageType === "step_start" && !text.trim()) {
+      return true
+    }
+
+    return false
+  }
+
+  createSessionMessage(input: CreateSessionMessageInput): SessionMessage | null {
+    // Skip empty marker events that provide no value
+    if (this.isEmptyMarkerEvent(input)) {
+      return null
+    }
+
+    // Deduplication Strategy 1: If messageId is provided and already exists in this session, return existing
     if (input.messageId) {
       const existingRow = this.db
         .prepare(`${SESSION_MESSAGE_SELECT} WHERE sm.session_id = ? AND sm.message_id = ?`)
@@ -2366,6 +2448,12 @@ export class PiKanbanDB {
       if (existingRow) {
         return rowToSessionMessage(existingRow)
       }
+    }
+
+    // Deduplication Strategy 2: Content-based dedup for events without stable messageId
+    // This catches randomUUID() events that are semantically identical
+    if (this.isRecentDuplicate(input)) {
+      return null
     }
 
     const seq = input.seq ?? this.getNextSessionMessageSeq(input.sessionId)
@@ -2412,6 +2500,10 @@ export class PiKanbanDB {
       )
 
     const row = this.getSessionMessageRow(Number(result.lastInsertRowid)) as Record<string, unknown>
+
+    // Track this message's content fingerprint for deduplication
+    this.addContentFingerprint(input)
+
     return rowToSessionMessage(row)
   }
 

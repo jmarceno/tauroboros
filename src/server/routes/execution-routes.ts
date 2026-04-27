@@ -243,9 +243,19 @@ export function registerExecutionRoutes(router: Router, ctx: ServerRouteContext)
     }),
   )
 
-  router.get("/api/execution-graph", ({ json, db }) =>
+  router.get("/api/execution-graph", ({ json, db, url }) =>
     Effect.sync(() => {
-      const allTasks = db.getTasks()
+      const groupId = url.searchParams.get("groupId")
+      let allTasks = db.getTasks()
+
+      if (groupId) {
+        const group = db.getTaskGroup(groupId)
+        if (!group) {
+          return json({ error: `Task group "${groupId}" not found` }, 404)
+        }
+        allTasks = allTasks.filter((task) => group.taskIds.includes(task.id))
+      }
+
     const validTaskIds = new Set(allTasks.map((t) => t.id))
 
     const dependencyWarnings: string[] = []

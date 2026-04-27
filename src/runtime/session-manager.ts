@@ -10,6 +10,28 @@ import { ContainerPiProcess } from "./container-pi-process.ts"
 import { createPiProcessEffect, type PiRuntimeMode } from "./pi-process-factory.ts"
 import { parseModelSelection } from "./model-utils.ts"
 import { loadPausedRunState, listPausedRunStates } from "./session-pause-state.ts"
+import { StructuredOutputExtractor, StructuredOutputNotFoundError } from "./structured-output-extractor.ts"
+import { getPiExtensionToolsPath } from "../resource-extractor.ts"
+
+/**
+ * Resolve the path to the Pi extension tools file.
+ * Uses the resource extractor which handles both binary and source modes.
+ * Fails critically if the extension path cannot be resolved.
+ */
+function resolveExtensionToolsPathEffect(worktreeDir?: string | null): Effect.Effect<string, SessionManagerExecuteError> {
+  const projectRoot = worktreeDir
+    ? worktreeDir.replace(/\/\.worktrees\/[^/]+$/, "")
+    : process.cwd()
+  const extracted = getPiExtensionToolsPath(projectRoot)
+  if (extracted) return Effect.succeed(extracted)
+
+  return Effect.fail(new SessionManagerExecuteError({
+    operation: "resolveExtensionToolsPath",
+    message:
+      `Failed to resolve pi extension tools path at ${projectRoot}/.pi/extensions/pi-tools/structured-output.ts. ` +
+      "The structured output extension is required. Ensure the extension file was properly extracted.",
+  }))
+}
 
 function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -188,6 +210,9 @@ export class PiSessionManager {
         })
       }
 
+      const extPath = yield* resolveExtensionToolsPathEffect(session.worktreeDir)
+      const extPaths = [extPath]
+
       const process = yield* createPiProcessEffect({
         db: self.db,
         session,
@@ -198,6 +223,7 @@ export class PiSessionManager {
         settings: self.settings,
         existingContainerId,
         containerImage: input.containerImage,
+        extensionPaths: extPaths,
       }).pipe(
         Effect.mapError((cause) => toSessionManagerError("createProcess", cause)),
       )
@@ -372,6 +398,42 @@ export class PiSessionManager {
       )
 
       return result
+    })
+  }
+
+  /**
+   * Execute a prompt and extract structured output from tool execution events.
+   *
+   * The prompt must instruct the agent to call a tool (registered via Pi extension)
+   * to emit structured output. The tool's result.details is extracted from the
+   * tool_execution_end RPC event and returned as structured output.
+   */
+  executePromptStructured<T>(
+    input: ExecuteSessionPromptInput & { toolName: string },
+    callbacks?: {
+      onOutput?: (chunk: string) => void
+      onSessionMessage?: (message: SessionMessage) => void
+      onSessionStart?: (session: PiWorkflowSession) => void
+      onSessionCreated?: (process: PiRpcProcess | ContainerPiProcess, session: PiWorkflowSession) => void
+    },
+  ): Effect.Effect<
+    ExecuteSessionPromptResult & { structuredOutput: T },
+    SessionManagerExecuteError | PiProcessError | StructuredOutputNotFoundError
+  > {
+    const self = this
+    return Effect.gen(function* () {
+      const result = yield* self.executePrompt(input, callbacks)
+
+      const extractor = new StructuredOutputExtractor()
+      const output = extractor.extractFromEvents<T>(result.events, input.toolName)
+      if (output === null) {
+        return yield* new StructuredOutputNotFoundError({
+          toolName: input.toolName,
+          message: `No tool_execution_end event found for tool "${input.toolName}" in ${result.events.length} events. The agent may not have called the tool.`,
+        })
+      }
+
+      return { ...result, structuredOutput: output }
     })
   }
 

@@ -109,11 +109,17 @@ function runPiModelCommandEffect(
   return Effect.gen(function* () {
     // Use shell to ensure proper PATH and environment
     // Note: pi --list-models outputs to stderr, not stdout!
-    const command = Bun.spawn({
-      cmd: ["bash", "-c", "PI_OFFLINE=1 pi --offline --list-models"],
-      stdout: "pipe",
-      stderr: "pipe",
-      env: process.env,
+    const command = yield* Effect.try({
+      try: () => Bun.spawn({
+        cmd: ["bash", "-c", "PI_OFFLINE=1 pi --offline --list-models"],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: process.env,
+      }),
+      catch: (error) => new ModelDiscoveryError({
+        operation: "runPiModelCommand",
+        message: error instanceof Error ? error.message : String(error),
+      }),
     })
 
     // Set up timeout

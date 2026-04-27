@@ -14,7 +14,8 @@ import { join, dirname } from "path"
 const generatedAssets =
   typeof generatedAssetsModule.getAllSkillAssets === "function" &&
   typeof generatedAssetsModule.getAllConfigAssets === "function" &&
-  typeof generatedAssetsModule.getAllDockerAssets === "function"
+  typeof generatedAssetsModule.getAllDockerAssets === "function" &&
+  typeof generatedAssetsModule.getAllPiExtensionAssets === "function"
     ? generatedAssetsModule
     : null
 
@@ -150,6 +151,63 @@ export function extractEmbeddedDocker(projectRoot: string): { count: number; pat
   }
 
   return { count: extractedPaths.length, paths: extractedPaths }
+}
+
+/**
+ * Extract all embedded pi-extension files to .pi/extensions/
+ * Always overwrites to ensure the latest extension code is used.
+ */
+export function extractEmbeddedPiExtensions(projectRoot: string): { count: number; paths: string[] } {
+  if (!generatedAssets) {
+    return { count: 0, paths: [] }
+  }
+
+  const extensionsDir = join(projectRoot, ".pi", "extensions", "pi-tools")
+  ensureDir(extensionsDir)
+
+  const extensionAssets = generatedAssets.getAllPiExtensionAssets()
+  const extractedPaths: string[] = []
+
+  for (const { path, asset } of extensionAssets) {
+    const targetPath = join(extensionsDir, path)
+    writeAssetToFile(targetPath, asset)
+    extractedPaths.push(targetPath)
+  }
+
+  return { count: extractedPaths.length, paths: extractedPaths }
+}
+
+/**
+ * Copy pi-extension files from source directory (development mode).
+ * Used when running from source code instead of compiled binary.
+ */
+export function copyPiExtensionsFromSource(projectRoot: string): { count: number; paths: string[] } {
+  const sourceExtensionsDir = join(projectRoot, "extensions", "pi-tools")
+  const targetExtensionsDir = join(projectRoot, ".pi", "extensions", "pi-tools")
+
+  if (!existsSync(sourceExtensionsDir)) {
+    return { count: 0, paths: [] }
+  }
+
+  ensureDir(targetExtensionsDir)
+  clearDirectory(targetExtensionsDir)
+
+  const entries = readdirSync(sourceExtensionsDir)
+  const copiedPaths: string[] = []
+
+  for (const entry of entries) {
+    const sourcePath = join(sourceExtensionsDir, entry)
+    const targetPath = join(targetExtensionsDir, entry)
+    const stat = statSync(sourcePath)
+
+    if (stat.isFile()) {
+      const content = readFileSync(sourcePath)
+      writeFileSync(targetPath, content)
+      copiedPaths.push(targetPath)
+    }
+  }
+
+  return { count: copiedPaths.length, paths: copiedPaths }
 }
 
 /**
@@ -326,6 +384,27 @@ export function copyDockerFromSource(projectRoot: string): { count: number } {
 }
 
 /**
+ * Get the path to the pi-extension tools file.
+ * Extracts extensions first if running from binary, then returns the path.
+ */
+export function getPiExtensionToolsPath(projectRoot: string): string | null {
+  const targetPath = join(projectRoot, ".pi", "extensions", "pi-tools", "structured-output.ts")
+
+  if (existsSync(targetPath)) {
+    return targetPath
+  }
+
+  // Try to extract/copy if not present
+  if (isRunningFromBinary()) {
+    const result = extractEmbeddedPiExtensions(projectRoot)
+    return result.count > 0 ? targetPath : null
+  }
+
+  const result = copyPiExtensionsFromSource(projectRoot)
+  return result.count > 0 ? targetPath : null
+}
+
+/**
  * Main extraction function - handles both binary and source modes
  * Call this at server startup
  */
@@ -334,32 +413,37 @@ export function extractEmbeddedResources(projectRoot: string): {
   skills: number
   config: number
   docker: number
+  piExtensions: number
 } {
   if (isRunningFromBinary()) {
     // Running from compiled binary - extract embedded resources
     const skillResult = extractEmbeddedSkills(projectRoot)
     const configResult = extractEmbeddedConfig(projectRoot)
     const dockerResult = extractEmbeddedDocker(projectRoot)
+    const piExtResult = extractEmbeddedPiExtensions(projectRoot)
 
     return {
       mode: "binary",
       skills: skillResult.count,
       config: configResult.count,
       docker: dockerResult.count,
+      piExtensions: piExtResult.count,
     }
   } else {
     // Running from source - copy from source directories
     const result = copyResourcesFromSource(projectRoot)
     const configResult = copyConfigFromSource(projectRoot)
     const dockerResult = copyDockerFromSource(projectRoot)
+    const piExtResult = copyPiExtensionsFromSource(projectRoot)
 
     // Only return "source" mode if we actually found and copied files
-    if (result.skills > 0 || configResult.count > 0 || dockerResult.count > 0) {
+    if (result.skills > 0 || configResult.count > 0 || dockerResult.count > 0 || piExtResult.count > 0) {
       return {
         mode: "source",
         skills: result.skills,
         config: configResult.count,
         docker: dockerResult.count,
+        piExtensions: piExtResult.count,
       }
     }
 
@@ -368,6 +452,7 @@ export function extractEmbeddedResources(projectRoot: string): {
       skills: 0,
       config: 0,
       docker: 0,
+      piExtensions: 0,
     }
   }
 }

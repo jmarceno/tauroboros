@@ -320,11 +320,13 @@ export class PlanningSession {
               },
             }
             const persistedThinking = this.db.createSessionMessage(thinkingMessageInput)
-            this.onMessage?.(persistedThinking)
+            if (persistedThinking) {
+              this.onMessage?.(persistedThinking)
+            }
           }
 
           const textMessageId = state.messageId + "-text"
-          if (this.checkAndAddRecentMessageId(textMessageId)) {
+          if (state.hasText && state.textBuffer && this.checkAndAddRecentMessageId(textMessageId)) {
             this.messageSeq++
             const textMessageInput: CreateSessionMessageInput = {
               sessionId: this.session.id,
@@ -343,7 +345,9 @@ export class PlanningSession {
               },
             }
             const persistedText = this.db.createSessionMessage(textMessageInput)
-            this.onMessage?.(persistedText)
+            if (persistedText) {
+              this.onMessage?.(persistedText)
+            }
           }
 
           this.streamingState = null
@@ -375,7 +379,9 @@ export class PlanningSession {
               },
             }
             const persistedThinking = this.db.createSessionMessage(thinkingMessageInput)
-            this.onMessage?.(persistedThinking)
+            if (persistedThinking) {
+              this.onMessage?.(persistedThinking)
+            }
           }
 
           const textMessageId = state.messageId + "-text"
@@ -398,7 +404,9 @@ export class PlanningSession {
               },
             }
             const persistedText = this.db.createSessionMessage(textMessageInput)
-            this.onMessage?.(persistedText)
+            if (persistedText) {
+              this.onMessage?.(persistedText)
+            }
           }
         }
 
@@ -776,7 +784,9 @@ export class PlanningSession {
       }
 
       const userMessage = self.db.createSessionMessage(userMessageInput)
-      self.onMessage?.(userMessage)
+      if (userMessage) {
+        self.onMessage?.(userMessage)
+      }
 
       yield* self.process.prompt(fullContent).pipe(
         Effect.mapError((cause) => new PlanningSessionError({

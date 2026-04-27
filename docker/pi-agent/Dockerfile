@@ -55,7 +55,7 @@ RUN curl -fsSL https://bun.sh/install | bash && \
     mv /root/.bun/bin/bun /usr/local/bin/bun && \
     ln -s /usr/local/bin/bun /usr/local/bin/bunx
 
-RUN npm install -g @mariozechner/pi-coding-agent
+RUN npm install -g @mariozechner/pi-coding-agent typebox
 
 RUN mkdir -p /root
 RUN mkdir -p /root/.pi

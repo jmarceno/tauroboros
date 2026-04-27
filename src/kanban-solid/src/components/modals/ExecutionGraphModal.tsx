@@ -24,7 +24,7 @@ export function ExecutionGraphModal(props: ExecutionGraphModalProps) {
   createEffect(() => {
     const loadGraph = async () => {
       try {
-        const data = await runApiEffect(referenceApi.getExecutionGraph())
+        const data = await runApiEffect(referenceApi.getExecutionGraph(props.pendingGroupId ?? undefined))
         setGraph(data)
       } catch (e) {
         uiStore.showToast('Failed to load execution graph: ' + (e instanceof Error ? e.message : String(e)), 'error')
@@ -72,7 +72,9 @@ export function ExecutionGraphModal(props: ExecutionGraphModalProps) {
           </div>
 
           <div class="text-sm text-dark-text-muted p-2.5 border border-dark-surface3 rounded-lg bg-dark-bg">
-            This preview reflects the current workflow dependency graph that will be used when execution starts.
+            {props.pendingGroupId
+              ? 'This preview reflects only the tasks in this group that will be executed.'
+              : 'This preview reflects the current workflow dependency graph that will be used when execution starts.'}
           </div>
 
           <Show when={nodeCount() === 0}>

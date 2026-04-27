@@ -3,14 +3,14 @@
  * Ported from React to SolidJS
  */
 
-import { createSignal, createEffect, createMemo, batch, Show, For } from 'solid-js'
+import { createSignal, createEffect, createMemo, batch, Show, For, onCleanup } from 'solid-js'
 import { createQuery, useQueryClient } from '@tanstack/solid-query'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { HelpButton } from '@/components/common/HelpButton'
 import { ModelPicker } from '@/components/common/ModelPicker'
 import { ThinkingLevelSelect } from '@/components/common/ThinkingLevelSelect'
 import { uiStore } from '@/stores'
-import { optionsApi, referenceApi, runApiEffect } from '@/api'
+import { optionsApi, referenceApi, planningApi, runApiEffect } from '@/api'
 import type { Options, ThinkingLevel, TelegramNotificationLevel } from '@/types'
 import { DEFAULT_CODE_STYLE_PROMPT } from '@/types'
 
@@ -58,6 +58,34 @@ export function OptionsTab() {
   const [isLoading, setIsLoading] = createSignal(true)
   const [isSaving, setIsSaving] = createSignal(false)
   const [hasHydrated, setHasHydrated] = createSignal(false)
+
+  // Planning prompt state
+  const [planningPromptData, setPlanningPromptData] = createSignal<{
+    id: number
+    key: string
+    name: string
+    description: string
+    promptText: string
+    isActive: boolean
+    createdAt: number
+    updatedAt: number
+  } | null>(null)
+
+  const [editedPlanningPrompt, setEditedPlanningPrompt] = createSignal({
+    name: '',
+    description: '',
+    promptText: '',
+  })
+
+  const [isPlanningPromptLoading, setIsPlanningPromptLoading] = createSignal(true)
+  const [isPlanningPromptSaving, setIsPlanningPromptSaving] = createSignal(false)
+  const [planningPromptError, setPlanningPromptError] = createSignal<string | null>(null)
+
+  const hasPlanningPromptChanges = () => planningPromptData()
+    ? editedPlanningPrompt().name !== planningPromptData()!.name ||
+      editedPlanningPrompt().description !== planningPromptData()!.description ||
+      editedPlanningPrompt().promptText !== planningPromptData()!.promptText
+    : false
 
   // Queries
   const optionsQuery = createQuery(() => ({
@@ -149,6 +177,38 @@ export function OptionsTab() {
     processLoadedData(options, branches, error)
   })
 
+  // Load planning prompt data
+  createEffect(() => {
+    let cancelled = false
+    
+    const loadPlanningPrompt = async () => {
+      setIsPlanningPromptLoading(true)
+      setPlanningPromptError(null)
+      try {
+        const prompt = await runApiEffect(planningApi.getPrompt())
+        if (cancelled) return
+        setPlanningPromptData(prompt)
+        setEditedPlanningPrompt({
+          name: prompt.name,
+          description: prompt.description,
+          promptText: prompt.promptText,
+        })
+      } catch (e) {
+        if (!cancelled) {
+          setPlanningPromptError(e instanceof Error ? e.message : 'Failed to load planning prompt')
+        }
+      } finally {
+        if (!cancelled) setIsPlanningPromptLoading(false)
+      }
+    }
+    
+    loadPlanningPrompt()
+    
+    onCleanup(() => {
+      cancelled = true
+    })
+  })
+
   const updateField = <K extends keyof Options>(key: K, value: Options[K]) => {
     setFormData(prev => ({ ...prev, [key]: value }))
   }
@@ -217,6 +277,119 @@ export function OptionsTab() {
       uiStore.showToast(errorMessage, 'error')
     }
   }
+
+  const savePlanningPrompt = async () => {
+    if (!hasPlanningPromptChanges() || !planningPromptData()) return
+
+    setIsPlanningPromptSaving(true)
+    setPlanningPromptError(null)
+    try {
+      const updated = await runApiEffect(planningApi.updatePrompt({
+        key: planningPromptData()!.key,
+        name: editedPlanningPrompt().name,
+        description: editedPlanningPrompt().description,
+        promptText: editedPlanningPrompt().promptText,
+      }))
+      setPlanningPromptData(updated)
+      uiStore.showToast('Planning prompt saved successfully', 'success')
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : 'Failed to save planning prompt'
+      setPlanningPromptError(errorMessage)
+      uiStore.showToast(errorMessage, 'error')
+    } finally {
+      setIsPlanningPromptSaving(false)
+    }
+  }
+
+  const resetPlanningPromptToDefault = () => {
+    if (!confirm('Reset to default planning prompt? This will overwrite your customizations.')) return
+
+    setEditedPlanningPrompt(prev => ({
+      ...prev,
+      name: 'Default Planning Prompt',
+      description: 'System prompt for the planning assistant agent',
+      promptText: DEFAULT_PLANNING_PROMPT,
+    }))
+  }
+
+  const DEFAULT_PLANNING_PROMPT = `You are a specialized Planning Assistant for software development task management.
+
+Your role is to help users create well-structured implementation plans before they become kanban tasks.
+
+## Core Capabilities
+
+1. **Task Planning**: Break down complex requirements into actionable, well-defined tasks
+2. **Architecture Design**: Suggest component structures, APIs, and data models
+3. **Dependency Analysis**: Identify task dependencies and execution order
+4. **Estimation Guidance**: Provide complexity assessments and implementation hints
+5. **Visual Explanation**: Use diagrams and visual aids to explain complex concepts
+
+## Interaction Guidelines
+
+- Ask clarifying questions when requirements are ambiguous
+- Suggest concrete next steps and validation approaches
+- Reference existing codebase patterns when relevant
+- Keep responses focused on planning and design
+- Do NOT write actual implementation code unless specifically requested for prototyping
+- **ALWAYS** try to visually explain things when possible using Mermaid charts
+- **NEVER** use ASCII charts or text-based diagrams - always use Mermaid syntax instead
+
+## Visual Explanations with Mermaid
+
+When explaining:
+- System architecture or component relationships
+- Data flow between components
+- Task dependencies and execution order
+- State machines or workflows
+- Class hierarchies or module structures
+- Sequence of operations
+
+Always use Mermaid chart syntax. Examples:
+
+**Flowchart:**
+\`\`\`mermaid
+flowchart TD
+    A[Start] --> B{Decision}
+    B -->|Yes| C[Action 1]
+    B -->|No| D[Action 2]
+    C --> E[End]
+    D --> E
+\`\`\`
+
+**Sequence Diagram:**
+\`\`\`mermaid
+sequenceDiagram
+    User->>+API: Request
+    API->>+Database: Query
+    Database-->>-API: Results
+    API-->>-User: Response
+\`\`\`
+
+**Class Diagram:**
+\`\`\`mermaid
+classDiagram
+    class User {
+        +String name
+        +login()
+    }
+    class Order {
+        +int id
+        +place()
+    }
+    User "1" --> "*" Order : has
+\`\`\`
+
+## Output Format for Task Creation
+
+When the user is ready to create tasks, help them structure:
+- Clear task names
+- Detailed prompts with context
+- Suggested task dependencies
+- Recommended execution order
+
+## Tool Access
+
+You have access to file exploration tools to understand the codebase structure when needed. Use them to provide context-aware planning suggestions.`
 
   return (
     <Show when={!queryIsLoading()} fallback={
@@ -545,6 +718,101 @@ export function OptionsTab() {
               />
             </div>
           </div>
+        </div>
+
+        {/* Planning Assistant Prompt */}
+        <div class="form-group border border-dark-surface3 rounded-lg p-4">
+          <div class="label-row">
+            <label>Planning Assistant Prompt</label>
+            <HelpButton tooltip="Customize the system prompt used by the planning chat agent. This defines how the planning assistant behaves and responds to requests." />
+          </div>
+          <Show when={isPlanningPromptLoading()}>
+            <div class="flex flex-col items-center justify-center py-8 space-y-3">
+              <svg class="w-6 h-6 animate-spin text-accent-primary" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <div class="text-center">
+                <p class="text-sm text-dark-text-muted">Loading planning prompt...</p>
+              </div>
+            </div>
+          </Show>
+
+          <Show when={planningPromptError()}>
+            <div class="p-4 rounded bg-red-500/10 border border-red-500/30 text-red-400 mb-4">
+              <div class="flex items-start gap-2">
+                <svg class="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{planningPromptError()}</span>
+              </div>
+            </div>
+          </Show>
+
+          <Show when={!isPlanningPromptLoading() && !planningPromptError()}>
+            <div class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-dark-text mb-1">Name</label>
+                <input
+                  type="text"
+                  class="form-input"
+                  value={editedPlanningPrompt().name}
+                  onChange={(e) => setEditedPlanningPrompt(prev => ({ ...prev, name: e.currentTarget.value }))}
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-dark-text mb-1">Description</label>
+                <input
+                  type="text"
+                  class="form-input"
+                  value={editedPlanningPrompt().description}
+                  onChange={(e) => setEditedPlanningPrompt(prev => ({ ...prev, description: e.currentTarget.value }))}
+                />
+              </div>
+
+              <div>
+                <label class="block text-sm font-medium text-dark-text mb-1">System Prompt</label>
+                <p class="text-xs text-dark-text-muted mb-2">
+                  This prompt defines how the planning assistant behaves. It uses Markdown formatting.
+                </p>
+                <textarea
+                  class="form-textarea font-mono text-sm min-h-[300px]"
+                  value={editedPlanningPrompt().promptText}
+                  placeholder="Enter the system prompt for the planning assistant..."
+                  onChange={(e) => setEditedPlanningPrompt(prev => ({ ...prev, promptText: e.currentTarget.value }))}
+                />
+              </div>
+
+              <div class="flex items-center justify-between">
+                <button
+                  class="btn btn-sm"
+                  disabled={isPlanningPromptLoading() || isPlanningPromptSaving()}
+                  onClick={resetPlanningPromptToDefault}
+                >
+                  Reset to Default
+                </button>
+
+                <button
+                  class="btn btn-primary btn-sm"
+                  disabled={!hasPlanningPromptChanges() || isPlanningPromptSaving()}
+                  onClick={savePlanningPrompt}
+                >
+                  {isPlanningPromptSaving() ? 'Saving...' : 'Save Prompt'}
+                </button>
+              </div>
+
+              <div class="bg-dark-surface rounded p-3 text-sm space-y-2">
+                <h4 class="font-medium text-dark-text">Prompt Tips</h4>
+                <ul class="text-dark-text-muted space-y-1 text-xs">
+                  <li>Be specific about the assistant's role and expertise</li>
+                  <li>Define clear interaction guidelines</li>
+                  <li>Specify output formats for better structured responses</li>
+                  <li>Mention available tools and when to use them</li>
+                </ul>
+              </div>
+            </div>
+          </Show>
         </div>
 
         {/* Footer Actions */}

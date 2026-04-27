@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "bun:test"
 import { Effect } from "effect"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"
+import { buildExecutionGraph } from "../src/execution-plan.ts"
 import type { WorkflowRun } from "../src/types.ts"
 
 const runEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect)
@@ -208,6 +209,128 @@ describe("Group Execution", () => {
           errorMessage.includes("No container image available")
         ).toBe(true)
       }
+    })
+  })
+
+  describe("execution graph group filtering", () => {
+    it("should only include tasks from the specified group in the execution graph", () => {
+      // Group A tasks
+      db.createTask({
+        id: "group-a-task-1",
+        name: "Group A Task 1",
+        prompt: "Group A task",
+        status: "backlog",
+        requirements: [],
+      })
+      db.createTask({
+        id: "group-a-task-2",
+        name: "Group A Task 2",
+        prompt: "Group A task",
+        status: "backlog",
+        requirements: [],
+      })
+
+      // Group B tasks
+      db.createTask({
+        id: "group-b-task-1",
+        name: "Group B Task 1",
+        prompt: "Group B task",
+        status: "backlog",
+        requirements: [],
+      })
+      db.createTask({
+        id: "group-b-task-2",
+        name: "Group B Task 2",
+        prompt: "Group B task",
+        status: "backlog",
+        requirements: [],
+      })
+
+      // Ungrouped task
+      db.createTask({
+        id: "ungrouped-task",
+        name: "Ungrouped Task",
+        prompt: "Ungrouped",
+        status: "backlog",
+        requirements: [],
+      })
+
+      const groupA = db.createTaskGroup({
+        name: "Group A",
+        memberTaskIds: ["group-a-task-1", "group-a-task-2"],
+      })
+
+      db.createTaskGroup({
+        name: "Group B",
+        memberTaskIds: ["group-b-task-1", "group-b-task-2"],
+      })
+
+      // Simulate what the server does: filter tasks to only those in the group
+      const allTasks = db.getTasks()
+      const group = db.getTaskGroup(groupA.id)
+      const groupTasks = allTasks.filter((task) => group!.taskIds.includes(task.id))
+
+      const options = db.getOptions()
+      const graph = buildExecutionGraph(groupTasks, options.parallelTasks)
+
+      // The graph should ONLY contain tasks from Group A
+      const graphTaskIds = graph.nodes.map((n) => n.id)
+      expect(graphTaskIds).toContain("group-a-task-1")
+      expect(graphTaskIds).toContain("group-a-task-2")
+      expect(graphTaskIds).not.toContain("group-b-task-1")
+      expect(graphTaskIds).not.toContain("group-b-task-2")
+      expect(graphTaskIds).not.toContain("ungrouped-task")
+      expect(graph.totalTasks).toBe(2)
+    })
+
+    it("should include group tasks with internal dependencies in the execution graph", () => {
+      // Tasks for a single group with internal dependencies
+      const task1 = db.createTask({
+        id: "dep-task-1",
+        name: "Base Task",
+        prompt: "Base",
+        status: "backlog",
+        requirements: [],
+      })
+
+      const task2 = db.createTask({
+        id: "dep-task-2",
+        name: "Dependent Task",
+        prompt: "Dependent",
+        status: "backlog",
+        requirements: ["dep-task-1"],
+      })
+
+      // External task that should NOT appear in the graph
+      db.createTask({
+        id: "external-task",
+        name: "External Task",
+        prompt: "External",
+        status: "backlog",
+        requirements: [],
+      })
+
+      const group = db.createTaskGroup({
+        name: "Dependency Group",
+        memberTaskIds: ["dep-task-1", "dep-task-2"],
+      })
+
+      const allTasks = db.getTasks()
+      const groupData = db.getTaskGroup(group.id)
+      const groupTasks = allTasks.filter((task) => groupData!.taskIds.includes(task.id))
+
+      const options = db.getOptions()
+      const graph = buildExecutionGraph(groupTasks, options.parallelTasks)
+
+      const graphTaskIds = graph.nodes.map((n) => n.id)
+      expect(graphTaskIds).toContain("dep-task-1")
+      expect(graphTaskIds).toContain("dep-task-2")
+      expect(graphTaskIds).not.toContain("external-task")
+      expect(graph.totalTasks).toBe(2)
+
+      // Verify edges exist for internal dependencies
+      const hasEdge = graph.edges.some((e) => e.from === "dep-task-1" && e.to === "dep-task-2")
+      expect(hasEdge).toBe(true)
     })
   })
 })

@@ -21,6 +21,7 @@ const OUTPUT_FILE = join(PROJECT_ROOT, "src", "server", "generated-assets.ts")
 const SKILLS_DIR = join(PROJECT_ROOT, "skills")
 const CONFIG_DIR = join(PROJECT_ROOT, "src", "config")
 const DOCKER_DIR = join(PROJECT_ROOT, "docker")
+const PI_EXTENSIONS_DIR = join(PROJECT_ROOT, "extensions", "pi-tools")
 
 interface AssetFile {
   path: string
@@ -29,7 +30,7 @@ interface AssetFile {
   isText: boolean
   data: string
   // Resource type for categorization
-  resourceType: "kanban" | "extension" | "skill" | "config" | "docker"
+  resourceType: "kanban" | "extension" | "skill" | "config" | "docker" | "pi-extension"
 }
 
 function getContentType(filename: string): string {
@@ -116,7 +117,7 @@ function generateAssetsModule(allFiles: AssetFile[]): string {
   lines.push("  contentType: string")
   lines.push("  isText: boolean")
   lines.push("  data: string")
-  lines.push("  resourceType: 'kanban' | 'extension' | 'skill' | 'config' | 'docker'")
+  lines.push("  resourceType: 'kanban' | 'extension' | 'skill' | 'config' | 'docker' | 'pi-extension'")
   lines.push("}")
   lines.push("")
   lines.push("export const embeddedAssets: Map<string, EmbeddedAsset> = new Map([")
@@ -138,6 +139,9 @@ function generateAssetsModule(allFiles: AssetFile[]): string {
     } else if (file.resourceType === "docker") {
       // Docker files go under /__embedded__/docker/
       key = `/__embedded__/docker/${file.relativePath}`
+    } else if (file.resourceType === "pi-extension") {
+      // Pi extension files go under /__embedded__/pi-extensions/
+      key = `/__embedded__/pi-extensions/${file.relativePath}`
     } else {
       key = `/${file.relativePath}`
     }
@@ -196,6 +200,19 @@ function generateAssetsModule(allFiles: AssetFile[]): string {
   lines.push('  const prefix = "/__embedded__/config/"')
   lines.push("  for (const [key, asset] of embeddedAssets.entries()) {")
   lines.push("    if (key.startsWith(prefix) && asset.resourceType === 'config') {")
+  lines.push("      const relativePath = key.slice(prefix.length)")
+  lines.push("      result.push({ path: relativePath, asset })")
+  lines.push("    }")
+  lines.push("  }")
+  lines.push("  return result")
+  lines.push("}")
+  lines.push("")
+  lines.push("// Pi-extension accessors for extraction")
+  lines.push("export function getAllPiExtensionAssets(): Array<{ path: string; asset: EmbeddedAsset }> {")
+  lines.push("  const result: Array<{ path: string; asset: EmbeddedAsset }> = []")
+  lines.push('  const prefix = "/__embedded__/pi-extensions/"')
+  lines.push("  for (const [key, asset] of embeddedAssets.entries()) {")
+  lines.push("    if (key.startsWith(prefix) && asset.resourceType === 'pi-extension') {")
   lines.push("      const relativePath = key.slice(prefix.length)")
   lines.push("      result.push({ path: relativePath, asset })")
   lines.push("    }")
@@ -268,6 +285,16 @@ async function main(): Promise<void> {
     console.log(`  → Found ${dockerFiles.length} docker files`)
   } else {
     console.log("  → No docker directory found, skipping...")
+  }
+
+  // Collect pi-extension files
+  if (existsSync(PI_EXTENSIONS_DIR)) {
+    console.log("  → Scanning pi-extensions directory...")
+    const piExtensionFiles = collectFiles(PI_EXTENSIONS_DIR, "", "pi-extension")
+    allFiles.push(...piExtensionFiles)
+    console.log(`  → Found ${piExtensionFiles.length} pi-extension files`)
+  } else {
+    console.log("  → No pi-extensions directory found, skipping...")
   }
 
   console.log(`  → Total: ${allFiles.length} files`)

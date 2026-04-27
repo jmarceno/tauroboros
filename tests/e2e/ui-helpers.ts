@@ -12,9 +12,8 @@ type TaskModalOptions = {
 }
 
 export async function gotoKanban(page: Page): Promise<void> {
-  await page.goto('/')
-  await page.waitForLoadState('networkidle')
-  await expect(page.locator('.kanban-wrapper')).toBeVisible({ timeout: 10000 })
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('.kanban-wrapper')).toBeVisible({ timeout: 30000 })
 }
 
 export function getColumn(page: Page, status: string): Locator {

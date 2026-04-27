@@ -8,9 +8,9 @@ import { sleepMs } from '@/api'
 import type { Toast, LogEntry, ToastVariant } from '@/types'
 
 // Modal Types
-export type ModalType = 'task' | 'options' | 'executionGraph' | 'approve' | 'revision' | 'startSingle' | 'session' | 'taskSessions' | 'bestOfNDetail' | 'batchEdit' | 'planningPrompt'
+export type ModalType = 'task' | 'executionGraph' | 'approve' | 'revision' | 'startSingle' | 'session' | 'taskSessions' | 'bestOfNDetail' | 'batchEdit'
 
-const VALID_MODALS = new Set<ModalType>(['task', 'options', 'executionGraph', 'approve', 'revision', 'startSingle', 'session', 'taskSessions', 'bestOfNDetail', 'batchEdit', 'planningPrompt'])
+const VALID_MODALS = new Set<ModalType>(['task', 'executionGraph', 'approve', 'revision', 'startSingle', 'session', 'taskSessions', 'bestOfNDetail', 'batchEdit'])
 
 // Toast store
 function createToastStore() {

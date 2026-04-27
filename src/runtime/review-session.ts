@@ -7,6 +7,7 @@ import { PiSessionManager, SessionManagerExecuteError } from "./session-manager.
 import { parseStrictJsonObject } from "./strict-json.ts"
 import type { PiContainerManager } from "./container-manager.ts"
 import { PiProcessError } from "./pi-process.ts"
+import { StructuredOutputExtractor, StructuredOutputNotFoundError } from "./structured-output-extractor.ts"
 
 export class ReviewSessionError extends Schema.TaggedError<ReviewSessionError>()("ReviewSessionError", {
   operation: Schema.String,
@@ -18,10 +19,10 @@ function asReviewResultEffect(parsed: Record<string, unknown>): Effect.Effect<Re
   return Effect.try({
     try: () => {
       const status = parsed.status
-      if (status !== "pass" && status !== "gaps_found" && status !== "blocked" && status !== "json_parse_max_retries") {
+      if (status !== "pass" && status !== "gaps_found" && status !== "blocked") {
         throw new ReviewSessionError({
           operation: "asReviewResult",
-          message: `Review response JSON must include status: pass|gaps_found|blocked|json_parse_max_retries, got: ${String(status)}`,
+          message: `Review response JSON must include status: pass|gaps_found|blocked, got: ${String(status)}`,
         })
       }
 
@@ -73,6 +74,34 @@ export interface RunReviewScratchResult {
   jsonParseRetryCount: number
 }
 
+/**
+ * Try to extract review result from tool_execution_end events.
+ * Returns null if no tool event is found (fall back to JSON parsing).
+ */
+function tryExtractReviewFromToolEvents(
+  events: Record<string, unknown>[],
+): ReviewResult | null {
+  const extractor = new StructuredOutputExtractor()
+  const details = extractor.extractFromEvents<{
+    status: string
+    summary: string
+    gaps: string[]
+    recommendedPrompt: string
+  }>(events, "emit_review_result")
+
+  if (!details) return null
+
+  const status = details.status
+  if (status !== "pass" && status !== "gaps_found" && status !== "blocked") return null
+
+  return {
+    status,
+    summary: details.summary || "No summary provided",
+    gaps: Array.isArray(details.gaps) ? details.gaps.map((g) => String(g).trim()).filter(Boolean) : [],
+    recommendedPrompt: typeof details.recommendedPrompt === "string" ? details.recommendedPrompt.trim() : "",
+  }
+}
+
 export class PiReviewSessionRunner {
   private readonly sessions: PiSessionManager
 
@@ -115,6 +144,18 @@ export class PiReviewSessionRunner {
         ),
       )
 
+      // Phase A: Try structured output from tool events first
+      const toolResult = tryExtractReviewFromToolEvents(response.events)
+      if (toolResult) {
+        return {
+          reviewResult: toolResult,
+          responseText: response.responseText,
+          sessionId: response.session.id,
+          jsonParseRetryCount: 0,
+        }
+      }
+
+      // Fallback: Parse JSON from response text (backward compatibility)
       const parsedResult = yield* Effect.either(
         Effect.try({
           try: () => parseStrictJsonObject(response.responseText, "Review response"),
