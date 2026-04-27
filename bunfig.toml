@@ -1,0 +1,6 @@
+[install]
+minimumReleaseAge = 604800 # seconds
+
+[test]
+# Exclude e2e tests from bun test (they use Playwright)
+exclude = ["tests/e2e/**/*"]

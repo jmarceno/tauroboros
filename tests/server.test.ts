@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "bun:test"
 import { execFileSync } from "child_process"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
@@ -270,7 +270,7 @@ async function readSseEventsUntil(
   return events
 }
 
-function createTestSettingsWithMock(mockPiPath: string): InfrastructureSettings {
+function createTestSettings(mockPiPath: string): InfrastructureSettings {
   return {
     skills: {
       localPath: "./skills",

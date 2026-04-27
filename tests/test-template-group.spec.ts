@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest"
+import { describe, it, expect, afterEach } from "bun:test"
 import { createPiServer, createTestSettings } from "./test-utils"
 import { join } from "path"
 import { mkdtempSync, rmSync } from "fs"

@@ -1,6 +1,5 @@
-// @ts-expect-error Bun-specific module - will be migrated in database layer migration
 import { Database } from "bun:sqlite"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "bun:test"
 import { mkdtempSync, rmSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"

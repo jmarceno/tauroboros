@@ -1,4 +1,4 @@
-import { beforeEach, afterEach, describe, expect, it } from "vitest"
+import { beforeEach, afterEach, describe, expect, it } from "bun:test"
 import { Effect } from "effect"
 import { PiKanbanDB } from "../src/db.ts"
 import { PiOrchestrator } from "../src/orchestrator.ts"

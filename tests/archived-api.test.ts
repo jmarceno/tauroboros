@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach } from "bun:test"
 import { Effect } from "effect"
 import { createPiServerScopedEffect, type PiKanbanServer } from "../src/server.ts"
 import { createTestSettings } from "./test-utils.ts"

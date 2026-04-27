@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, mock } from "bun:test"
 import { Effect } from "effect"
 import { mkdtempSync, rmSync } from "fs"
 import { tmpdir } from "os"
@@ -71,7 +71,7 @@ describe("CodeStyleSessionRunner", () => {
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
       // Create a mock session manager that returns successful response
-      const mockExecutePrompt = vi.fn((_input: unknown) => {
+      const mockExecutePrompt = mock((_input: unknown) => {
         const session = db.createWorkflowSession({
           id: "test-session-1",
           taskId: "task-1",
@@ -154,7 +154,7 @@ describe("CodeStyleSessionRunner", () => {
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
       let capturedPrompt: string | undefined
-      const mockExecutePrompt = vi.fn((input: unknown) => {
+      const mockExecutePrompt = mock((input: unknown) => {
         const execInput = input as { promptText: string }
         capturedPrompt = execInput.promptText
 
@@ -215,7 +215,7 @@ describe("CodeStyleSessionRunner", () => {
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
       let capturedPrompt: string | undefined
-      const mockExecutePrompt = vi.fn((input: unknown) => {
+      const mockExecutePrompt = mock((input: unknown) => {
         const execInput = input as { promptText: string }
         capturedPrompt = execInput.promptText
 
@@ -272,15 +272,15 @@ describe("CodeStyleSessionRunner", () => {
       const root = createTempDir("tauroboros-codestyle-callbacks-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
-      const onOutputMock = vi.fn((chunk: string) => {
+      const onOutputMock = mock((chunk: string) => {
         console.log(`Output: ${chunk}`)
       })
 
-      const onSessionCreatedMock = vi.fn((_process: unknown, _session: unknown) => {
+      const onSessionCreatedMock = mock((_process: unknown, _session: unknown) => {
         // session created callback
       })
 
-      const mockExecutePrompt = vi.fn((input: unknown, callbacks?: {
+      const mockExecutePrompt = mock((input: unknown, callbacks?: {
         onOutput?: (chunk: string) => void
         onSessionCreated?: (process: unknown, session: unknown) => void
       }) => {
@@ -356,7 +356,7 @@ describe("CodeStyleSessionRunner", () => {
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
       let capturedImage: string | null | undefined
-      const mockExecutePrompt = vi.fn((input: unknown) => {
+      const mockExecutePrompt = mock((input: unknown) => {
         const execInput = input as { containerImage?: string | null }
         capturedImage = execInput.containerImage
 
@@ -424,7 +424,7 @@ describe("CodeStyleSessionRunner", () => {
       const root = createTempDir("tauroboros-codestyle-failure-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
-      const mockExecutePrompt = vi.fn((_input: unknown) => {
+      const mockExecutePrompt = mock((_input: unknown) => {
         const session = db.createWorkflowSession({
           id: "test-session-fail",
           taskId: "task-fail",
@@ -485,7 +485,7 @@ describe("CodeStyleSessionRunner", () => {
       const root = createTempDir("tauroboros-codestyle-throw-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
-      const mockExecutePrompt = vi.fn((_input: unknown) =>
+      const mockExecutePrompt = mock((_input: unknown) =>
         Effect.fail(new SessionManagerExecuteError({
           operation: "executePrompt",
           message: "Session execution failed: connection timeout",
@@ -529,7 +529,7 @@ describe("CodeStyleSessionRunner", () => {
       const root = createTempDir("tauroboros-codestyle-unknown-status-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
-      const mockExecutePrompt = vi.fn((_input: unknown) => {
+      const mockExecutePrompt = mock((_input: unknown) => {
         const session = db.createWorkflowSession({
           id: "test-session-unknown",
           taskId: "task-unknown",
@@ -589,7 +589,7 @@ describe("CodeStyleSessionRunner", () => {
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
       const capturedParams: unknown[] = []
-      const mockExecutePrompt = vi.fn((input: unknown) => {
+      const mockExecutePrompt = mock((input: unknown) => {
         capturedParams.push(input)
 
         const session = db.createWorkflowSession({
@@ -666,7 +666,7 @@ describe("CodeStyleSessionRunner", () => {
       const root = createTempDir("tauroboros-codestyle-result-success-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
-      const mockExecutePrompt = vi.fn((_input: unknown) => {
+      const mockExecutePrompt = mock((_input: unknown) => {
         const session = db.createWorkflowSession({
           id: "session-success",
           taskId: "task-result",
@@ -733,7 +733,7 @@ describe("CodeStyleSessionRunner", () => {
       const root = createTempDir("tauroboros-codestyle-result-failure-")
       const db = new PiKanbanDB(join(root, "tasks.db"))
 
-      const mockExecutePrompt = vi.fn((_input: unknown) => {
+      const mockExecutePrompt = mock((_input: unknown) => {
         const session = db.createWorkflowSession({
           id: "session-failure",
           taskId: "task-fail-result",
