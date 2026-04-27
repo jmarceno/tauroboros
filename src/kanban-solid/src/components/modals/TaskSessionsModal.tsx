@@ -318,7 +318,7 @@ export function TaskSessionsModal(props: TaskSessionsModalProps) {
         </Show>
 
         <Show when={sortedSessions().length > 0}>
-          <div class="flex gap-1 border-b border-dark-surface3 mb-3 overflow-x-auto shrink-0 pb-1">
+          <div class="flex gap-1 border-b border-dark-surface3 mb-3 overflow-x-auto shrink-0 pb-1 sticky top-0 z-10 bg-dark-surface">
             <For each={sortedSessions()}>
               {(sessionData) => {
                 const status = getSessionStatus(sessionData)
