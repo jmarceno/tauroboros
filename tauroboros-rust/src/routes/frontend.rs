@@ -37,10 +37,7 @@ fn load_frontend_asset(path: &str) -> Option<(ContentType, Vec<u8>)> {
 }
 
 fn is_reserved_backend_path(path: &str) -> bool {
-    match path.split('/').next() {
-        Some("api") | Some("sse") | Some("ws") | Some("healthz") => true,
-        _ => false,
-    }
+    matches!(path.split('/').next(), Some("api") | Some("sse") | Some("ws") | Some("healthz"))
 }
 
 #[get("/")]

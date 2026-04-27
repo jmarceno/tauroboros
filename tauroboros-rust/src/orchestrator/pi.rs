@@ -24,12 +24,8 @@ use uuid::Uuid;
 
 const STRUCTURED_OUTPUT_EXTENSION_SOURCE: &str =
     include_str!("../../../extensions/pi-tools/structured-output.ts");
-const STRUCTURED_OUTPUT_EXTENSION_RELATIVE_PATH: [&str; 4] = [
-    ".pi",
-    "extensions",
-    "pi-tools",
-    "structured-output.ts",
-];
+const STRUCTURED_OUTPUT_EXTENSION_RELATIVE_PATH: [&str; 4] =
+    [".pi", "extensions", "pi-tools", "structured-output.ts"];
 const MODEL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
 const THINKING_RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
 const PROMPT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -134,7 +130,8 @@ impl PiSessionExecutor {
         )
         .await?;
 
-        let (mut child, mut stdin, mut rx) = match spawn_process(&session, &self.project_root).await {
+        let (mut child, mut stdin, mut rx) = match spawn_process(&session, &self.project_root).await
+        {
             Ok(process) => process,
             Err(error) => {
                 self.audit_error(
@@ -274,15 +271,11 @@ impl PiSessionExecutor {
         .ok_or_else(|| ApiError::internal("Failed to finalize session record"))?;
 
         let hub = self.sse_hub.read().await;
-        hub.broadcast_status(
-            &completed.id,
-            session_status_label,
-            completed.finished_at,
-        )
-        .await;
+        hub.broadcast_status(&completed.id, session_status_label, completed.finished_at)
+            .await;
 
         self.audit_event(
-            if matches!(result, Ok(_)) {
+            if result.is_ok() {
                 AuditLevel::Info
             } else {
                 AuditLevel::Error
@@ -447,7 +440,11 @@ impl PiSessionExecutor {
         }
     }
 
-    async fn persist_event_message(&self, session: &PiWorkflowSession, event: Value) -> Result<(), ApiError> {
+    async fn persist_event_message(
+        &self,
+        session: &PiWorkflowSession,
+        event: Value,
+    ) -> Result<(), ApiError> {
         let seq = get_next_session_message_seq(&self.db, &session.id).await?;
         let message = project_event_to_message(session, seq, event)?;
         let created = create_session_message(&self.db, &message).await?;
@@ -458,7 +455,11 @@ impl PiSessionExecutor {
         Ok(())
     }
 
-    async fn persist_stderr_message(&self, session: &PiWorkflowSession, content: &str) -> Result<(), ApiError> {
+    async fn persist_stderr_message(
+        &self,
+        session: &PiWorkflowSession,
+        content: &str,
+    ) -> Result<(), ApiError> {
         warn!(
             session_id = %session.id,
             task_id = ?session.task_id,
@@ -512,7 +513,14 @@ impl PiSessionExecutor {
 async fn spawn_process(
     session: &PiWorkflowSession,
     project_root: &str,
-) -> Result<(Child, tokio::process::ChildStdin, mpsc::UnboundedReceiver<ProcessLine>), ApiError> {
+) -> Result<
+    (
+        Child,
+        tokio::process::ChildStdin,
+        mpsc::UnboundedReceiver<ProcessLine>,
+    ),
+    ApiError,
+> {
     let session_file = session.pi_session_file.clone().ok_or_else(|| {
         ApiError::internal("Workflow session is missing piSessionFile")
             .with_code(ErrorCode::ExecutionOperationFailed)
@@ -636,7 +644,10 @@ where
     });
 }
 
-async fn send_request(stdin: &mut tokio::process::ChildStdin, payload: &Value) -> Result<(), ApiError> {
+async fn send_request(
+    stdin: &mut tokio::process::ChildStdin,
+    payload: &Value,
+) -> Result<(), ApiError> {
     let line = format!("{}\n", payload);
     stdin.write_all(line.as_bytes()).await.map_err(|error| {
         ApiError::internal(format!("Failed to write to pi stdin: {}", error))
@@ -706,7 +717,9 @@ async fn interrupt_session(
             status: Some(PiSessionStatus::Aborted),
             finished_at: Some(Some(chrono::Utc::now().timestamp())),
             exit_signal: Some(Some("SIGKILL".to_string())),
-            error_message: Some(Some("Task execution interrupted by stop request".to_string())),
+            error_message: Some(Some(
+                "Task execution interrupted by stop request".to_string(),
+            )),
             ..Default::default()
         },
     )
@@ -729,13 +742,11 @@ fn parse_model(model: &str) -> Result<(String, String), ApiError> {
     })?;
 
     if provider.trim().is_empty() || model_id.trim().is_empty() {
-        return Err(
-            ApiError::bad_request(format!(
-                "Invalid model format '{}'. Expected 'provider/modelId'.",
-                trimmed
-            ))
-            .with_code(ErrorCode::InvalidModel),
-        );
+        return Err(ApiError::bad_request(format!(
+            "Invalid model format '{}'. Expected 'provider/modelId'.",
+            trimmed
+        ))
+        .with_code(ErrorCode::InvalidModel));
     }
 
     Ok((provider.to_string(), model_id.to_string()))
@@ -769,7 +780,11 @@ fn extract_text_fragment(event: &Value) -> Option<String> {
     None
 }
 
-fn project_event_to_message(session: &PiWorkflowSession, seq: i32, event: Value) -> Result<SessionMessage, ApiError> {
+fn project_event_to_message(
+    session: &PiWorkflowSession,
+    seq: i32,
+    event: Value,
+) -> Result<SessionMessage, ApiError> {
     let event_object = event.as_object().cloned().unwrap_or_default();
     let assistant_event = event_object
         .get("assistantMessageEvent")
@@ -782,7 +797,10 @@ fn project_event_to_message(session: &PiWorkflowSession, seq: i32, event: Value)
         .cloned()
         .unwrap_or_default();
 
-    let event_type = event_object.get("type").and_then(Value::as_str).unwrap_or("session_status");
+    let event_type = event_object
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("session_status");
     let assistant_type = assistant_event.get("type").and_then(Value::as_str);
     let raw_role = message_object
         .get("role")
@@ -832,16 +850,21 @@ fn project_event_to_message(session: &PiWorkflowSession, seq: i32, event: Value)
         .map(str::to_string)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-    let text = extract_text_fragment(&event).or_else(|| {
-        event_object
-            .get("text")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    }).unwrap_or_default();
+    let text = extract_text_fragment(&event)
+        .or_else(|| {
+            event_object
+                .get("text")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
 
     let mut content = Map::new();
     content.insert("text".to_string(), Value::String(text));
-    content.insert("eventType".to_string(), Value::String(event_type.to_string()));
+    content.insert(
+        "eventType".to_string(),
+        Value::String(event_type.to_string()),
+    );
     content.insert(
         "assistantEventType".to_string(),
         assistant_type
@@ -895,8 +918,14 @@ fn project_event_to_message(session: &PiWorkflowSession, seq: i32, event: Value)
             .get("toolName")
             .and_then(Value::as_str)
             .map(str::to_string),
-        tool_args_json: event_object.get("args").cloned().map(|value| value.to_string()),
-        tool_result_json: event_object.get("result").cloned().map(|value| value.to_string()),
+        tool_args_json: event_object
+            .get("args")
+            .cloned()
+            .map(|value| value.to_string()),
+        tool_result_json: event_object
+            .get("result")
+            .cloned()
+            .map(|value| value.to_string()),
         tool_status: None,
         edit_diff: None,
         edit_file_path: None,
@@ -908,7 +937,9 @@ fn project_event_to_message(session: &PiWorkflowSession, seq: i32, event: Value)
 
 #[cfg(test)]
 mod tests {
-    use super::{build_pi_args, ensure_structured_output_extension, STRUCTURED_OUTPUT_EXTENSION_SOURCE};
+    use super::{
+        build_pi_args, ensure_structured_output_extension, STRUCTURED_OUTPUT_EXTENSION_SOURCE,
+    };
     use std::fs;
     use std::path::Path;
     use uuid::Uuid;
@@ -942,11 +973,10 @@ mod tests {
         let project_root = unique_temp_dir("pi-extension");
         fs::create_dir_all(&project_root).expect("create temp project root");
 
-        let extension_path = ensure_structured_output_extension(
-            project_root.to_str().expect("project root to str"),
-        )
-        .await
-        .expect("extract structured output extension");
+        let extension_path =
+            ensure_structured_output_extension(project_root.to_str().expect("project root to str"))
+                .await
+                .expect("extract structured output extension");
 
         assert!(Path::new(&extension_path).exists());
 

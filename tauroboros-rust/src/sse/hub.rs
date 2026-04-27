@@ -18,7 +18,7 @@ impl SseEvent {
             data: serde_json::to_value(data).unwrap_or_default(),
         }
     }
-    
+
     /// Format as SSE message
     pub fn format(&self) -> String {
         format!(
@@ -53,39 +53,42 @@ impl SseHub {
             global_listeners: Vec::new(),
         }
     }
-    
+
     /// Create a new SSE connection
-    pub async fn create_connection(&mut self, session_id: Option<String>) -> (String, mpsc::Receiver<SseEvent>) {
+    pub async fn create_connection(
+        &mut self,
+        session_id: Option<String>,
+    ) -> (String, mpsc::Receiver<SseEvent>) {
         let id = uuid::Uuid::new_v4().to_string();
         let (sender, receiver) = mpsc::channel(100);
-        
+
         let conn = SseConnection {
             id: id.clone(),
             session_id,
             sender,
         };
-        
+
         self.connections.insert(id.clone(), conn);
         (id, receiver)
     }
-    
+
     /// Remove an SSE connection
     pub fn remove_connection(&mut self, connection_id: &str) {
         self.connections.remove(connection_id);
     }
-    
+
     /// Broadcast a message to all connections
     pub async fn broadcast(&self, message: &WSMessage) {
         let event = SseEvent {
             event_type: message.r#type.clone(),
             data: serde_json::to_value(message).unwrap_or_default(),
         };
-        
+
         for conn in self.connections.values() {
             let _ = conn.sender.send(event.clone()).await;
         }
     }
-    
+
     /// Broadcast to session-specific listeners
     pub async fn broadcast_to_session(&self, session_id: &str, event: SseEvent) {
         for conn in self.connections.values() {
@@ -94,7 +97,7 @@ impl SseHub {
             }
         }
     }
-    
+
     /// Send status update for a session
     /// Frontend expects event name "session_status" with data format:
     /// {"type":"session_status","sessionId":"...","payload":{...}}
@@ -113,7 +116,7 @@ impl SseHub {
         };
         self.broadcast_to_session(session_id, event).await;
     }
-    
+
     /// Broadcast a session message
     /// Frontend expects event name "session_message" with data format:
     /// {"type":"session_message","sessionId":"...","payload":{...}}
@@ -126,7 +129,7 @@ impl SseHub {
                 "payload": message,
             }),
         };
-        
+
         self.broadcast_to_session(&message.session_id, event).await;
     }
 }
@@ -157,9 +160,12 @@ mod tests {
 
         let event = receiver.recv().await.expect("receive broadcast event");
         assert_eq!(event.event_type, "run_updated");
-        assert_eq!(event.data, json!({
-            "type": "run_updated",
-            "payload": { "id": "run-1", "status": "running" }
-        }));
+        assert_eq!(
+            event.data,
+            json!({
+                "type": "run_updated",
+                "payload": { "id": "run-1", "status": "running" }
+            })
+        );
     }
 }

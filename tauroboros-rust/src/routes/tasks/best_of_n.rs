@@ -1,8 +1,8 @@
 use crate::db::queries::*;
+use crate::db::UpdateTaskInput;
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
 use crate::state::AppStateType;
-use crate::db::UpdateTaskInput;
 use rocket::serde::json::{json, Json, Value};
 use rocket::{get, post, State};
 use serde::Deserialize;
@@ -19,7 +19,10 @@ pub(super) struct AbortBestOfNRequest {
 }
 
 #[get("/api/tasks/<id>/candidates")]
-pub(super) async fn get_task_candidates_route(state: &State<AppStateType>, id: String) -> ApiResult<Json<Vec<TaskCandidate>>> {
+pub(super) async fn get_task_candidates_route(
+    state: &State<AppStateType>,
+    id: String,
+) -> ApiResult<Json<Vec<TaskCandidate>>> {
     if get_task(&state.db, &id).await?.is_none() {
         return Err(ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound));
     }
@@ -29,8 +32,12 @@ pub(super) async fn get_task_candidates_route(state: &State<AppStateType>, id: S
 }
 
 #[get("/api/tasks/<id>/best-of-n-summary")]
-pub(super) async fn get_best_of_n_summary(state: &State<AppStateType>, id: String) -> ApiResult<Json<Value>> {
-    let task = get_task(&state.db, &id).await?
+pub(super) async fn get_best_of_n_summary(
+    state: &State<AppStateType>,
+    id: String,
+) -> ApiResult<Json<Value>> {
+    let task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     if task.execution_strategy != ExecutionStrategy::BestOfN {
@@ -41,13 +48,26 @@ pub(super) async fn get_best_of_n_summary(state: &State<AppStateType>, id: Strin
     let task_runs = get_task_runs(&state.db, &id).await?;
     let candidates = get_task_candidates(&state.db, &id).await?;
 
-    let worker_runs: Vec<&TaskRun> = task_runs.iter().filter(|r| matches!(r.phase, RunPhase::Worker)).collect();
-    let reviewer_runs: Vec<&TaskRun> = task_runs.iter().filter(|r| matches!(r.phase, RunPhase::Reviewer)).collect();
-    let applier_runs: Vec<&TaskRun> = task_runs.iter().filter(|r| matches!(r.phase, RunPhase::FinalApplier)).collect();
+    let worker_runs: Vec<&TaskRun> = task_runs
+        .iter()
+        .filter(|r| matches!(r.phase, RunPhase::Worker))
+        .collect();
+    let reviewer_runs: Vec<&TaskRun> = task_runs
+        .iter()
+        .filter(|r| matches!(r.phase, RunPhase::Reviewer))
+        .collect();
+    let applier_runs: Vec<&TaskRun> = task_runs
+        .iter()
+        .filter(|r| matches!(r.phase, RunPhase::FinalApplier))
+        .collect();
 
     let has_final_applier = !applier_runs.is_empty();
-    let final_applier_done = applier_runs.iter().any(|r| matches!(r.status, RunStatus::Done));
-    let final_applier_running = applier_runs.iter().any(|r| matches!(r.status, RunStatus::Running));
+    let final_applier_done = applier_runs
+        .iter()
+        .any(|r| matches!(r.status, RunStatus::Done));
+    let final_applier_running = applier_runs
+        .iter()
+        .any(|r| matches!(r.status, RunStatus::Running));
 
     let final_applier_status = if final_applier_done {
         "done"
@@ -89,7 +109,8 @@ pub(super) async fn select_candidate(
     id: String,
     req: Json<SelectCandidateRequest>,
 ) -> ApiResult<Json<Value>> {
-    let task = get_task(&state.db, &id).await?
+    let task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     if task.execution_strategy != ExecutionStrategy::BestOfN {
@@ -108,18 +129,24 @@ pub(super) async fn select_candidate(
         } else {
             "rejected"
         };
-        update_task_candidate(&state.db, &candidate.id, new_status).await.ok();
+        update_task_candidate(&state.db, &candidate.id, new_status)
+            .await
+            .ok();
     }
 
     let hub = state.sse_hub.read().await;
     for candidate in get_task_candidates(&state.db, &id).await? {
-        let _ = hub.broadcast(&WSMessage {
-            r#type: "task_candidate_updated".to_string(),
-            payload: serde_json::to_value(&candidate).unwrap_or_default(),
-        }).await;
+        let _ = hub
+            .broadcast(&WSMessage {
+                r#type: "task_candidate_updated".to_string(),
+                payload: serde_json::to_value(&candidate).unwrap_or_default(),
+            })
+            .await;
     }
 
-    Ok(Json(json!({ "ok": true, "selectedCandidate": req.candidate_id })))
+    Ok(Json(
+        json!({ "ok": true, "selectedCandidate": req.candidate_id }),
+    ))
 }
 
 #[post("/api/tasks/<id>/best-of-n/abort", data = "<req>")]
@@ -128,7 +155,8 @@ pub(super) async fn abort_best_of_n(
     id: String,
     req: Json<AbortBestOfNRequest>,
 ) -> ApiResult<Json<Value>> {
-    let task = get_task(&state.db, &id).await?
+    let task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     if task.execution_strategy != ExecutionStrategy::BestOfN {
@@ -136,7 +164,10 @@ pub(super) async fn abort_best_of_n(
             .with_code(ErrorCode::InvalidExecutionStrategy));
     }
 
-    let reason = req.reason.clone().unwrap_or_else(|| "Best-of-n execution aborted manually".to_string());
+    let reason = req
+        .reason
+        .clone()
+        .unwrap_or_else(|| "Best-of-n execution aborted manually".to_string());
 
     let update = UpdateTaskInput {
         status: Some(TaskStatus::Review),
@@ -145,11 +176,14 @@ pub(super) async fn abort_best_of_n(
         ..Default::default()
     };
 
-    let updated = update_task(&state.db, &id, update).await?
+    let updated = update_task(&state.db, &id, update)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found"))?;
 
     let base_url = format!("http://localhost:{}", state.port);
     super::broadcast_task_update(state, &updated, &base_url).await;
 
-    Ok(Json(json!({ "ok": true, "task": super::normalize_task_for_client(&updated, &base_url) })))
+    Ok(Json(
+        json!({ "ok": true, "task": super::normalize_task_for_client(&updated, &base_url) }),
+    ))
 }

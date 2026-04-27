@@ -2,8 +2,8 @@
 
 use crate::error::{ApiError, ErrorCode};
 use git2::{
-    build::CheckoutBuilder, BranchType, IndexAddOption, MergeAnalysis, Repository,
-    StatusOptions, WorktreeAddOptions, WorktreePruneOptions,
+    build::CheckoutBuilder, BranchType, IndexAddOption, MergeAnalysis, Repository, StatusOptions,
+    WorktreeAddOptions, WorktreePruneOptions,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -41,8 +41,12 @@ async fn run_git(cwd: PathBuf, args: Vec<String>) -> Result<String, ApiError> {
             .current_dir(&cwd)
             .output()
             .map_err(|error| {
-                ApiError::internal(format!("Failed to spawn git in {}: {}", cwd.display(), error))
-                    .with_code(ErrorCode::ExecutionOperationFailed)
+                ApiError::internal(format!(
+                    "Failed to spawn git in {}: {}",
+                    cwd.display(),
+                    error
+                ))
+                .with_code(ErrorCode::ExecutionOperationFailed)
             })?;
 
         if output.status.success() {
@@ -57,14 +61,16 @@ async fn run_git(cwd: PathBuf, args: Vec<String>) -> Result<String, ApiError> {
             .collect::<Vec<_>>()
             .join("\n");
 
-        Err(
-            ApiError::internal(format!(
-                "Git command failed in {}: {}",
-                cwd.display(),
-                if combined.is_empty() { "unknown git failure" } else { &combined }
-            ))
-            .with_code(ErrorCode::ExecutionOperationFailed),
-        )
+        Err(ApiError::internal(format!(
+            "Git command failed in {}: {}",
+            cwd.display(),
+            if combined.is_empty() {
+                "unknown git failure"
+            } else {
+                &combined
+            }
+        ))
+        .with_code(ErrorCode::ExecutionOperationFailed))
     })
     .await
     .map_err(|error| {
@@ -90,12 +96,21 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, ApiError> + Send + 'static,
 {
-    task::spawn_blocking(operation).await.map_err(join_failure)?
+    task::spawn_blocking(operation)
+        .await
+        .map_err(join_failure)?
 }
 
 fn discover_repository(base_directory: &Path) -> Result<Repository, ApiError> {
-    Repository::discover(base_directory)
-        .map_err(|error| git2_failure(&format!("Failed to discover repository from {}", base_directory.display()), error))
+    Repository::discover(base_directory).map_err(|error| {
+        git2_failure(
+            &format!(
+                "Failed to discover repository from {}",
+                base_directory.display()
+            ),
+            error,
+        )
+    })
 }
 
 fn repository_workdir(repository: &Repository) -> Result<PathBuf, ApiError> {
@@ -107,7 +122,9 @@ fn repository_workdir(repository: &Repository) -> Result<PathBuf, ApiError> {
 
 fn repo_root_sync(base_directory: &str) -> Result<String, ApiError> {
     let repository = discover_repository(Path::new(base_directory))?;
-    Ok(repository_workdir(&repository)?.to_string_lossy().to_string())
+    Ok(repository_workdir(&repository)?
+        .to_string_lossy()
+        .to_string())
 }
 
 fn branch_exists_sync(base_directory: &str, branch: &str) -> Result<bool, ApiError> {
@@ -125,8 +142,8 @@ fn list_branches_sync(base_directory: &str) -> Result<(String, Vec<String>), Api
         .map_err(|error| git2_failure("Failed to enumerate local branches", error))?;
 
     for branch_result in iterator {
-        let (branch, _) = branch_result
-            .map_err(|error| git2_failure("Failed to read branch entry", error))?;
+        let (branch, _) =
+            branch_result.map_err(|error| git2_failure("Failed to read branch entry", error))?;
         if let Some(name) = branch
             .name()
             .map_err(|error| git2_failure("Failed to read branch name", error))?
@@ -165,7 +182,10 @@ fn resolve_target_branch_sync(
         }
     }
 
-    if let Some(branch) = option_branch.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(branch) = option_branch
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         if branch_exists_sync(base_directory, branch)? {
             return Ok(branch.to_string());
         }
@@ -223,23 +243,28 @@ fn create_task_worktree_sync(
     let directory = worktree_base.join(&name);
 
     if directory.exists() {
-        return Err(
-            ApiError::conflict(format!("Worktree directory already exists: {}", directory.display()))
-                .with_code(ErrorCode::ExecutionOperationFailed),
-        );
+        return Err(ApiError::conflict(format!(
+            "Worktree directory already exists: {}",
+            directory.display()
+        ))
+        .with_code(ErrorCode::ExecutionOperationFailed));
     }
 
     let base_branch = repository
         .find_branch(base_ref, BranchType::Local)
         .map_err(|error| git2_failure(&format!("Failed to find base branch {base_ref}"), error))?;
-    let base_commit = base_branch
-        .get()
-        .peel_to_commit()
-        .map_err(|error| git2_failure(&format!("Failed to resolve commit for branch {base_ref}"), error))?;
+    let base_commit = base_branch.get().peel_to_commit().map_err(|error| {
+        git2_failure(
+            &format!("Failed to resolve commit for branch {base_ref}"),
+            error,
+        )
+    })?;
 
     let mut created_branch = repository
         .branch(&branch, &base_commit, false)
-        .map_err(|error| git2_failure(&format!("Failed to create worktree branch {branch}"), error))?;
+        .map_err(|error| {
+            git2_failure(&format!("Failed to create worktree branch {branch}"), error)
+        })?;
 
     let mut add_options = WorktreeAddOptions::new();
     add_options.reference(Some(created_branch.get()));
@@ -267,12 +292,22 @@ fn create_task_worktree_sync(
     })
 }
 
-fn auto_commit_worktree_sync(worktree_dir: &str, task_name: &str, task_id: &str) -> Result<bool, ApiError> {
-    let repository = Repository::open(worktree_dir)
-        .map_err(|error| git2_failure(&format!("Failed to open worktree repository {worktree_dir}"), error))?;
+fn auto_commit_worktree_sync(
+    worktree_dir: &str,
+    task_name: &str,
+    task_id: &str,
+) -> Result<bool, ApiError> {
+    let repository = Repository::open(worktree_dir).map_err(|error| {
+        git2_failure(
+            &format!("Failed to open worktree repository {worktree_dir}"),
+            error,
+        )
+    })?;
 
     let mut status_options = StatusOptions::new();
-    status_options.include_untracked(true).recurse_untracked_dirs(true);
+    status_options
+        .include_untracked(true)
+        .recurse_untracked_dirs(true);
     let statuses = repository
         .statuses(Some(&mut status_options))
         .map_err(|error| git2_failure("Failed to inspect worktree status", error))?;
@@ -320,7 +355,14 @@ fn auto_commit_worktree_sync(worktree_dir: &str, task_name: &str, task_id: &str)
     let parents = parent_commit.iter().collect::<Vec<_>>();
 
     repository
-        .commit(Some("HEAD"), &signature, &signature, &commit_message, &tree, &parents)
+        .commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            &commit_message,
+            &tree,
+            &parents,
+        )
         .map_err(|error| git2_failure("Failed to create auto-commit", error))?;
 
     Ok(true)
@@ -346,7 +388,12 @@ fn merge_and_cleanup_worktree_sync(
         .ok_or_else(|| git_failure(format!("Source branch {branch} does not point to a commit")))?;
     let source_annotated = repository
         .find_annotated_commit(source_id)
-        .map_err(|error| git2_failure(&format!("Failed to resolve annotated commit for {branch}"), error))?;
+        .map_err(|error| {
+            git2_failure(
+                &format!("Failed to resolve annotated commit for {branch}"),
+                error,
+            )
+        })?;
 
     let (analysis, _) = repository
         .merge_analysis(&[&source_annotated])
@@ -361,12 +408,20 @@ fn merge_and_cleanup_worktree_sync(
 
     if analysis.contains(MergeAnalysis::ANALYSIS_FASTFORWARD) {
         let refname = format!("refs/heads/{target_branch}");
-        let mut reference = repository
-            .find_reference(&refname)
-            .map_err(|error| git2_failure(&format!("Failed to find target branch {target_branch}"), error))?;
+        let mut reference = repository.find_reference(&refname).map_err(|error| {
+            git2_failure(
+                &format!("Failed to find target branch {target_branch}"),
+                error,
+            )
+        })?;
         reference
-            .set_target(source_id, &format!("Fast-forward {target_branch} to {branch}"))
-            .map_err(|error| git2_failure("Failed to update target branch for fast-forward", error))?;
+            .set_target(
+                source_id,
+                &format!("Fast-forward {target_branch} to {branch}"),
+            )
+            .map_err(|error| {
+                git2_failure("Failed to update target branch for fast-forward", error)
+            })?;
         repository
             .set_head(&refname)
             .map_err(|error| git2_failure(&format!("Failed to set HEAD to {refname}"), error))?;
@@ -375,7 +430,9 @@ fn merge_and_cleanup_worktree_sync(
         checkout.force();
         repository
             .checkout_head(Some(&mut checkout))
-            .map_err(|error| git2_failure("Failed to update working tree after fast-forward", error))?;
+            .map_err(|error| {
+                git2_failure("Failed to update working tree after fast-forward", error)
+            })?;
     } else if analysis.contains(MergeAnalysis::ANALYSIS_NORMAL) {
         let mut checkout = CheckoutBuilder::new();
         checkout.force();
@@ -388,12 +445,10 @@ fn merge_and_cleanup_worktree_sync(
             .map_err(|error| git2_failure("Failed to open repository index after merge", error))?;
         if index.has_conflicts() {
             let _ = repository.cleanup_state();
-            return Err(
-                ApiError::conflict(format!(
-                    "Merge conflict detected while merging {branch} into {target_branch}"
-                ))
-                .with_code(ErrorCode::ExecutionOperationFailed),
-            );
+            return Err(ApiError::conflict(format!(
+                "Merge conflict detected while merging {branch} into {target_branch}"
+            ))
+            .with_code(ErrorCode::ExecutionOperationFailed));
         }
 
         let tree_id = index
@@ -459,9 +514,9 @@ fn remove_worktree_sync(base_directory: &str, worktree_dir: &str) -> Result<(), 
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| git_failure(format!("Invalid worktree directory: {worktree_dir}")))?;
-    let worktree = repository
-        .find_worktree(worktree_name)
-        .map_err(|error| git2_failure(&format!("Failed to find worktree {worktree_name}"), error))?;
+    let worktree = repository.find_worktree(worktree_name).map_err(|error| {
+        git2_failure(&format!("Failed to find worktree {worktree_name}"), error)
+    })?;
 
     let mut prune_options = WorktreePruneOptions::new();
     prune_options.valid(true).locked(true).working_tree(true);
@@ -514,7 +569,10 @@ pub async fn create_task_worktree(
     let task_id = task_id.to_string();
     let task_name = task_name.to_string();
     let base_ref = base_ref.to_string();
-    run_git_blocking(move || create_task_worktree_sync(&base_directory, &task_id, &task_name, &base_ref)).await
+    run_git_blocking(move || {
+        create_task_worktree_sync(&base_directory, &task_id, &task_name, &base_ref)
+    })
+    .await
 }
 
 pub async fn auto_commit_worktree(
@@ -580,14 +638,16 @@ pub async fn run_shell_command(command: &str, cwd: &str) -> Result<(), ApiError>
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(
-            ApiError::internal(format!(
-                "Pre-execution command failed in {}: {}",
-                cwd_string,
-                if stderr.is_empty() { "command exited non-zero" } else { &stderr }
-            ))
-            .with_code(ErrorCode::ExecutionOperationFailed),
-        )
+        Err(ApiError::internal(format!(
+            "Pre-execution command failed in {}: {}",
+            cwd_string,
+            if stderr.is_empty() {
+                "command exited non-zero"
+            } else {
+                &stderr
+            }
+        ))
+        .with_code(ErrorCode::ExecutionOperationFailed))
     })
     .await
     .map_err(|error| {

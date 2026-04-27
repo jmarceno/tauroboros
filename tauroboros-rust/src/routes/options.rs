@@ -1,10 +1,10 @@
 use crate::db::queries::*;
-use rocket::routes;
 use crate::error::{ApiError, ApiResult};
 use crate::models::*;
 use crate::state::AppStateType;
-use rocket::State;
+use rocket::routes;
 use rocket::serde::json::{json, Json, Value};
+use rocket::State;
 use rocket::{get, put, Route};
 use serde::Deserialize;
 
@@ -45,10 +45,13 @@ async fn get_options_route(state: &State<AppStateType>) -> ApiResult<Json<Option
 }
 
 #[put("/api/options", data = "<req>")]
-async fn update_options(state: &State<AppStateType>, req: Json<UpdateOptionsRequest>) -> ApiResult<Json<Options>> {
+async fn update_options(
+    state: &State<AppStateType>,
+    req: Json<UpdateOptionsRequest>,
+) -> ApiResult<Json<Options>> {
     // Build update query dynamically
     let mut sets = vec![];
-    
+
     macro_rules! add_option {
         ($field:ident) => {
             if let Some(ref _val) = req.$field {
@@ -56,7 +59,7 @@ async fn update_options(state: &State<AppStateType>, req: Json<UpdateOptionsRequ
             }
         };
     }
-    
+
     add_option!(commit_prompt);
     add_option!(extra_prompt);
     add_option!(branch);
@@ -81,64 +84,111 @@ async fn update_options(state: &State<AppStateType>, req: Json<UpdateOptionsRequ
     add_option!(telegram_notification_level);
     add_option!(max_reviews);
     add_option!(max_json_parse_retries);
-    
+
     if req.column_sorts.is_some() {
         sets.push("column_sorts = ?".to_string());
     }
-    
+
     if sets.is_empty() {
         // Nothing to update, return current options
         return get_options_route(state).await;
     }
-    
+
     let query = format!("UPDATE options SET {} WHERE id = 1", sets.join(", "));
-    
+
     let mut sql = sqlx::query(&query);
-    
+
     // Bind values in same order as sets
-    if req.commit_prompt.is_some() { sql = sql.bind(&req.commit_prompt); }
-    if req.extra_prompt.is_some() { sql = sql.bind(&req.extra_prompt); }
-    if req.branch.is_some() { sql = sql.bind(&req.branch); }
-    if req.plan_model.is_some() { sql = sql.bind(&req.plan_model); }
-    if req.execution_model.is_some() { sql = sql.bind(&req.execution_model); }
-    if req.review_model.is_some() { sql = sql.bind(&req.review_model); }
-    if req.repair_model.is_some() { sql = sql.bind(&req.repair_model); }
-    if req.command.is_some() { sql = sql.bind(&req.command); }
-    if req.parallel_tasks.is_some() { sql = sql.bind(req.parallel_tasks); }
-    if req.auto_delete_normal_sessions.is_some() { sql = sql.bind(req.auto_delete_normal_sessions); }
-    if req.auto_delete_review_sessions.is_some() { sql = sql.bind(req.auto_delete_review_sessions); }
-    if req.show_execution_graph.is_some() { sql = sql.bind(req.show_execution_graph); }
-    if req.port.is_some() { sql = sql.bind(req.port); }
-    if req.thinking_level.is_some() { sql = sql.bind(&req.thinking_level); }
-    if req.plan_thinking_level.is_some() { sql = sql.bind(&req.plan_thinking_level); }
-    if req.execution_thinking_level.is_some() { sql = sql.bind(&req.execution_thinking_level); }
-    if req.review_thinking_level.is_some() { sql = sql.bind(&req.review_thinking_level); }
-    if req.repair_thinking_level.is_some() { sql = sql.bind(&req.repair_thinking_level); }
-    if req.code_style_prompt.is_some() { sql = sql.bind(&req.code_style_prompt); }
-    if req.telegram_bot_token.is_some() { sql = sql.bind(&req.telegram_bot_token); }
-    if req.telegram_chat_id.is_some() { sql = sql.bind(&req.telegram_chat_id); }
-    if req.telegram_notification_level.is_some() { sql = sql.bind(&req.telegram_notification_level); }
-    if req.max_reviews.is_some() { sql = sql.bind(req.max_reviews); }
-    if req.max_json_parse_retries.is_some() { sql = sql.bind(req.max_json_parse_retries); }
-    if let Some(ref sorts) = req.column_sorts { 
-        sql = sql.bind(sorts.to_string()); 
+    if req.commit_prompt.is_some() {
+        sql = sql.bind(&req.commit_prompt);
     }
-    
+    if req.extra_prompt.is_some() {
+        sql = sql.bind(&req.extra_prompt);
+    }
+    if req.branch.is_some() {
+        sql = sql.bind(&req.branch);
+    }
+    if req.plan_model.is_some() {
+        sql = sql.bind(&req.plan_model);
+    }
+    if req.execution_model.is_some() {
+        sql = sql.bind(&req.execution_model);
+    }
+    if req.review_model.is_some() {
+        sql = sql.bind(&req.review_model);
+    }
+    if req.repair_model.is_some() {
+        sql = sql.bind(&req.repair_model);
+    }
+    if req.command.is_some() {
+        sql = sql.bind(&req.command);
+    }
+    if req.parallel_tasks.is_some() {
+        sql = sql.bind(req.parallel_tasks);
+    }
+    if req.auto_delete_normal_sessions.is_some() {
+        sql = sql.bind(req.auto_delete_normal_sessions);
+    }
+    if req.auto_delete_review_sessions.is_some() {
+        sql = sql.bind(req.auto_delete_review_sessions);
+    }
+    if req.show_execution_graph.is_some() {
+        sql = sql.bind(req.show_execution_graph);
+    }
+    if req.port.is_some() {
+        sql = sql.bind(req.port);
+    }
+    if req.thinking_level.is_some() {
+        sql = sql.bind(req.thinking_level);
+    }
+    if req.plan_thinking_level.is_some() {
+        sql = sql.bind(req.plan_thinking_level);
+    }
+    if req.execution_thinking_level.is_some() {
+        sql = sql.bind(req.execution_thinking_level);
+    }
+    if req.review_thinking_level.is_some() {
+        sql = sql.bind(req.review_thinking_level);
+    }
+    if req.repair_thinking_level.is_some() {
+        sql = sql.bind(req.repair_thinking_level);
+    }
+    if req.code_style_prompt.is_some() {
+        sql = sql.bind(&req.code_style_prompt);
+    }
+    if req.telegram_bot_token.is_some() {
+        sql = sql.bind(&req.telegram_bot_token);
+    }
+    if req.telegram_chat_id.is_some() {
+        sql = sql.bind(&req.telegram_chat_id);
+    }
+    if req.telegram_notification_level.is_some() {
+        sql = sql.bind(req.telegram_notification_level);
+    }
+    if req.max_reviews.is_some() {
+        sql = sql.bind(req.max_reviews);
+    }
+    if req.max_json_parse_retries.is_some() {
+        sql = sql.bind(req.max_json_parse_retries);
+    }
+    if let Some(ref sorts) = req.column_sorts {
+        sql = sql.bind(sorts.to_string());
+    }
+
     sql.execute(&state.db).await.map_err(ApiError::Database)?;
-    
+
     let hub = state.sse_hub.read().await;
-    let _ = hub.broadcast(&WSMessage {
-        r#type: "options_updated".to_string(),
-        payload: json!({}),
-    }).await;
-    
+    let _ = hub
+        .broadcast(&WSMessage {
+            r#type: "options_updated".to_string(),
+            payload: json!({}),
+        })
+        .await;
+
     let updated = get_options(&state.db).await?;
     Ok(Json(updated))
 }
 
 pub fn routes() -> Vec<Route> {
-    routes![
-        get_options_route,
-        update_options,
-    ]
+    routes![get_options_route, update_options,]
 }

@@ -55,7 +55,11 @@ pub async fn record_audit_event(
 }
 
 fn log_to_console(event: &CreateAuditEvent) {
-    let details = event.details.clone().unwrap_or_else(|| json!({})).to_string();
+    let details = event
+        .details
+        .clone()
+        .unwrap_or_else(|| json!({}))
+        .to_string();
 
     match event.level {
         AuditLevel::Trace => trace!(
@@ -126,10 +130,7 @@ mod tests {
 
     #[tokio::test]
     async fn record_audit_event_persists_context() {
-        let db_path = std::env::temp_dir().join(format!(
-            "tauroboros-audit-{}.db",
-            Uuid::new_v4()
-        ));
+        let db_path = std::env::temp_dir().join(format!("tauroboros-audit-{}.db", Uuid::new_v4()));
         let db_path_str = db_path.to_string_lossy().to_string();
         let pool = create_pool(&db_path_str).await.expect("create pool");
         run_migrations(&pool).await.expect("run migrations");

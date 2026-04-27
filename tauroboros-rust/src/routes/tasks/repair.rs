@@ -4,9 +4,9 @@ use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
 use crate::state::AppStateType;
 use chrono::Utc;
-use serde::Deserialize;
 use rocket::serde::json::{json, Json, Value};
 use rocket::{get, post, State};
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,7 +24,8 @@ pub(super) async fn repair_task(
     id: String,
     req: Json<RepairRequest>,
 ) -> ApiResult<Json<Value>> {
-    let _task = get_task(&state.db, &id).await?
+    let _task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     let action = req.action.clone().unwrap_or_else(|| "smart".to_string());
@@ -38,7 +39,8 @@ pub(super) async fn repair_task(
             ..Default::default()
         };
 
-        let updated = update_task(&state.db, &id, update).await?
+        let updated = update_task(&state.db, &id, update)
+            .await?
             .ok_or_else(|| ApiError::not_found("Task not found"))?;
 
         super::broadcast_task_update(state, &updated, &base_url).await;
@@ -65,14 +67,23 @@ pub(super) async fn repair_task(
         },
         "fail_task" => UpdateTaskInput {
             status: Some(TaskStatus::Failed),
-            error_message: Some(req.error_message.clone().or_else(|| Some("Manual repair: marked as failed".to_string()))),
+            error_message: Some(
+                req.error_message
+                    .clone()
+                    .or_else(|| Some("Manual repair: marked as failed".to_string())),
+            ),
             ..Default::default()
         },
-        _ => return Err(ApiError::bad_request(format!("Unsupported repair action: {}", action))
-            .with_code(ErrorCode::InvalidRequestBody)),
+        _ => {
+            return Err(
+                ApiError::bad_request(format!("Unsupported repair action: {}", action))
+                    .with_code(ErrorCode::InvalidRequestBody),
+            )
+        }
     };
 
-    let updated = update_task(&state.db, &id, update).await?
+    let updated = update_task(&state.db, &id, update)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found"))?;
 
     super::broadcast_task_update(state, &updated, &base_url).await;
@@ -86,8 +97,12 @@ pub(super) async fn repair_task(
 }
 
 #[get("/api/tasks/<id>/self-heal-reports")]
-pub(super) async fn get_self_heal_reports(state: &State<AppStateType>, id: String) -> ApiResult<Json<Vec<SelfHealReport>>> {
-    let _task = get_task(&state.db, &id).await?
+pub(super) async fn get_self_heal_reports(
+    state: &State<AppStateType>,
+    id: String,
+) -> ApiResult<Json<Vec<SelfHealReport>>> {
+    let _task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     let reports = get_self_heal_reports_for_task(&state.db, &id).await?;

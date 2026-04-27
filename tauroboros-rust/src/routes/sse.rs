@@ -1,7 +1,7 @@
-use rocket::routes;
 use crate::state::AppStateType;
-use rocket::State;
 use rocket::response::stream::{Event, EventStream};
+use rocket::routes;
+use rocket::State;
 use rocket::{get, Route};
 use std::time::Duration;
 use tokio::time::interval;
@@ -13,16 +13,16 @@ async fn event_stream(state: &State<AppStateType>) -> EventStream![Event + '_] {
             let mut hub = state.sse_hub.write().await;
             hub.create_connection(None).await
         };
-        
+
         // Send initial connection open event
         yield Event::json(&serde_json::json!({
             "type": "connected",
             "connectionId": &conn_id,
         })).event("open");
-        
+
         // Setup keepalive
         let mut keepalive = interval(Duration::from_secs(30));
-        
+
         loop {
             tokio::select! {
                 _ = keepalive.tick() => {
@@ -37,7 +37,7 @@ async fn event_stream(state: &State<AppStateType>) -> EventStream![Event + '_] {
                 }
             }
         }
-        
+
         // Cleanup
         let mut hub = state.sse_hub.write().await;
         hub.remove_connection(&conn_id);
@@ -55,8 +55,5 @@ async fn websocket_sse(state: &State<AppStateType>) -> EventStream![Event + '_] 
 }
 
 pub fn routes() -> Vec<Route> {
-    routes![
-        sse_stream,
-        websocket_sse,
-    ]
+    routes![sse_stream, websocket_sse,]
 }

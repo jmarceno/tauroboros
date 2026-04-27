@@ -1,16 +1,19 @@
 use crate::db::queries::*;
-use crate::models::{HourlyUsage, DailyUsage};
-use rocket::routes;
-use crate::error::{ApiResult};
+use crate::error::ApiResult;
+use crate::models::{DailyUsage, HourlyUsage};
 use crate::state::AppStateType;
-use rocket::State;
+use rocket::routes;
 use rocket::serde::json::{json, Json, Value};
+use rocket::State;
 use rocket::{get, Route};
 
 #[get("/api/stats/usage?<range>")]
-async fn get_usage_stats(state: &State<AppStateType>, range: Option<String>) -> ApiResult<Json<Value>> {
+async fn get_usage_stats(
+    state: &State<AppStateType>,
+    range: Option<String>,
+) -> ApiResult<Json<Value>> {
     let range = range.unwrap_or_else(|| "30d".to_string());
-    
+
     // Get messages within range
     let cutoff = match range.as_str() {
         "24h" => chrono::Utc::now().timestamp() - 86400,
@@ -18,7 +21,7 @@ async fn get_usage_stats(state: &State<AppStateType>, range: Option<String>) -> 
         "30d" => chrono::Utc::now().timestamp() - 2592000,
         _ => 0,
     };
-    
+
     let stats: (Option<i64>, Option<f64>) = sqlx::query_as(
         r#"
         SELECT 
@@ -32,7 +35,7 @@ async fn get_usage_stats(state: &State<AppStateType>, range: Option<String>) -> 
     .fetch_one(&state.db)
     .await
     .map_err(crate::error::ApiError::Database)?;
-    
+
     // Generate hourly data for 24h view
     let hourly_data: Vec<Value> = if range == "24h" {
         sqlx::query_as::<_, (String, Option<i64>, Option<f64>)>(
@@ -63,7 +66,7 @@ async fn get_usage_stats(state: &State<AppStateType>, range: Option<String>) -> 
     } else {
         vec![]
     };
-    
+
     // Generate daily data for longer views
     let daily_data: Vec<Value> = if range != "24h" {
         sqlx::query_as::<_, (String, Option<i64>, Option<f64>)>(
@@ -94,7 +97,7 @@ async fn get_usage_stats(state: &State<AppStateType>, range: Option<String>) -> 
     } else {
         vec![]
     };
-    
+
     Ok(Json(json!({
         "range": range,
         "totalTokens": stats.0.unwrap_or(0),
@@ -107,25 +110,27 @@ async fn get_usage_stats(state: &State<AppStateType>, range: Option<String>) -> 
 #[get("/api/stats/tasks")]
 async fn get_task_stats(state: &State<AppStateType>) -> ApiResult<Json<Value>> {
     let tasks = get_tasks(&state.db).await?;
-    
+
     let total = tasks.len() as i32;
-    
+
     let mut by_status = serde_json::Map::new();
     for task in &tasks {
         let status_str = format!("{:?}", task.status).to_lowercase();
-        let count = by_status.get(&status_str)
+        let count = by_status
+            .get(&status_str)
             .and_then(|v| v.as_i64())
-            .unwrap_or(0) + 1;
+            .unwrap_or(0)
+            + 1;
         by_status.insert(status_str, json!(count));
     }
-    
+
     let done_count = by_status.get("done").and_then(|v| v.as_i64()).unwrap_or(0);
     let completion_rate = if total > 0 {
         (done_count as f64 / total as f64) * 100.0
     } else {
         0.0
     };
-    
+
     Ok(Json(json!({
         "total": total,
         "byStatus": by_status,
@@ -152,16 +157,19 @@ async fn get_model_stats(state: &State<AppStateType>) -> ApiResult<Json<Value>> 
     .fetch_all(&state.db)
     .await
     .map_err(crate::error::ApiError::Database)?;
-    
-    let models: Vec<Value> = stats.into_iter().map(|(model, count, tokens, cost)| {
-        json!({
-            "model": model,
-            "count": count,
-            "tokens": tokens.unwrap_or(0),
-            "cost": cost.unwrap_or(0.0),
+
+    let models: Vec<Value> = stats
+        .into_iter()
+        .map(|(model, count, tokens, cost)| {
+            json!({
+                "model": model,
+                "count": count,
+                "tokens": tokens.unwrap_or(0),
+                "cost": cost.unwrap_or(0.0),
+            })
         })
-    }).collect();
-    
+        .collect();
+
     Ok(Json(json!({
         "models": models,
     })))
@@ -217,7 +225,7 @@ async fn get_duration_stats(state: &State<AppStateType>) -> ApiResult<Json<i64>>
 #[get("/api/stats/timeseries/hourly")]
 async fn get_hourly_timeseries(state: &State<AppStateType>) -> ApiResult<Json<Vec<HourlyUsage>>> {
     let cutoff = chrono::Utc::now().timestamp() - 86400; // Last 24 hours
-    
+
     let hourly_data: Vec<HourlyUsage> = sqlx::query_as::<_, (String, Option<i64>, Option<f64>)>(
         r#"
         SELECT 
@@ -244,15 +252,18 @@ async fn get_hourly_timeseries(state: &State<AppStateType>) -> ApiResult<Json<Ve
         }
     })
     .collect();
-    
+
     Ok(Json(hourly_data))
 }
 
 #[get("/api/stats/timeseries/daily?<days>")]
-async fn get_daily_timeseries(state: &State<AppStateType>, days: Option<i64>) -> ApiResult<Json<Vec<DailyUsage>>> {
+async fn get_daily_timeseries(
+    state: &State<AppStateType>,
+    days: Option<i64>,
+) -> ApiResult<Json<Vec<DailyUsage>>> {
     let days = days.unwrap_or(30);
     let cutoff = chrono::Utc::now().timestamp() - (days * 86400);
-    
+
     let daily_data: Vec<DailyUsage> = sqlx::query_as::<_, (String, Option<i64>, Option<f64>)>(
         r#"
         SELECT 
@@ -279,7 +290,7 @@ async fn get_daily_timeseries(state: &State<AppStateType>, days: Option<i64>) ->
         }
     })
     .collect();
-    
+
     Ok(Json(daily_data))
 }
 

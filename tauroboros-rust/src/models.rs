@@ -48,7 +48,7 @@ where
         .serialize(serializer)
 }
 
-fn serialize_json_array_from_string<S>(raw: &String, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_json_array_from_string<S>(raw: &str, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -58,7 +58,7 @@ where
     }
 }
 
-fn serialize_json_object_from_string<S>(raw: &String, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_json_object_from_string<S>(raw: &str, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -676,13 +676,22 @@ pub struct SelfHealReport {
     pub error_message: Option<String>,
     pub diagnostics_summary: String,
     pub is_tauroboros_bug: bool,
-    #[serde(rename = "rootCause", serialize_with = "serialize_json_object_from_string")]
+    #[serde(
+        rename = "rootCause",
+        serialize_with = "serialize_json_object_from_string"
+    )]
     pub root_cause_json: String,
     pub proposed_solution: String,
-    #[serde(rename = "implementationPlan", serialize_with = "serialize_json_array_from_string")]
+    #[serde(
+        rename = "implementationPlan",
+        serialize_with = "serialize_json_array_from_string"
+    )]
     pub implementation_plan_json: String,
     pub confidence: String, // "high", "medium", "low"
-    #[serde(rename = "externalFactors", serialize_with = "serialize_json_array_from_string")]
+    #[serde(
+        rename = "externalFactors",
+        serialize_with = "serialize_json_array_from_string"
+    )]
     pub external_factors_json: String,
     pub source_mode: String, // "local", "github_clone", "github_metadata_only"
     pub source_path: Option<String>,

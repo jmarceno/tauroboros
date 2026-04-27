@@ -6,18 +6,8 @@ use sqlx::{Pool, Sqlite};
 use uuid::Uuid;
 
 const RUN_COLORS: [&str; 12] = [
-    "#ff6b6b",
-    "#4ecdc4",
-    "#45b7d1",
-    "#96ceb4",
-    "#feca57",
-    "#ff9ff3",
-    "#54a0ff",
-    "#48dbfb",
-    "#1dd1a1",
-    "#ffc048",
-    "#5f27cd",
-    "#00d2d3",
+    "#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#feca57", "#ff9ff3", "#54a0ff", "#48dbfb",
+    "#1dd1a1", "#ffc048", "#5f27cd", "#00d2d3",
 ];
 
 #[derive(Debug, Clone)]
@@ -135,7 +125,10 @@ pub struct UpdateWorkflowSessionRecord {
     pub name: Option<Option<String>>,
 }
 
-pub async fn get_prompt_template(pool: &Pool<Sqlite>, key: &str) -> ApiResult<Option<PromptTemplate>> {
+pub async fn get_prompt_template(
+    pool: &Pool<Sqlite>,
+    key: &str,
+) -> ApiResult<Option<PromptTemplate>> {
     sqlx::query_as::<_, PromptTemplate>(
         r#"
         SELECT * FROM prompt_templates WHERE key = ? AND is_active = 1 LIMIT 1
@@ -186,7 +179,9 @@ pub async fn create_workflow_run_record(
     input: CreateWorkflowRunRecord,
 ) -> ApiResult<WorkflowRun> {
     let now = Utc::now().timestamp();
-    let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string()[..8].to_string());
+    let id = input
+        .id
+        .unwrap_or_else(|| Uuid::new_v4().to_string()[..8].to_string());
     let started_at = input.started_at.unwrap_or(now);
     let color = match input.color {
         Some(color) => color,
@@ -226,7 +221,8 @@ pub async fn create_workflow_run_record(
     .await
     .map_err(ApiError::Database)?;
 
-    get_workflow_run(pool, &id).await?
+    get_workflow_run(pool, &id)
+        .await?
         .ok_or_else(|| ApiError::internal("Failed to reload workflow run after insert"))
 }
 
@@ -240,13 +236,16 @@ pub async fn update_workflow_run_record(
     macro_rules! update_field {
         ($value:expr, $column:expr) => {
             if let Some(value) = $value {
-                sqlx::query(&format!("UPDATE workflow_runs SET {} = ?, updated_at = ? WHERE id = ?", $column))
-                    .bind(value)
-                    .bind(now)
-                    .bind(run_id)
-                    .execute(pool)
-                    .await
-                    .map_err(ApiError::Database)?;
+                sqlx::query(&format!(
+                    "UPDATE workflow_runs SET {} = ?, updated_at = ? WHERE id = ?",
+                    $column
+                ))
+                .bind(value)
+                .bind(now)
+                .bind(run_id)
+                .execute(pool)
+                .await
+                .map_err(ApiError::Database)?;
             }
         };
     }
@@ -339,13 +338,15 @@ pub async fn update_workflow_run_record(
     }
 
     if let Some(value) = input.executing_task_count {
-        sqlx::query("UPDATE workflow_runs SET executing_task_count = ?, updated_at = ? WHERE id = ?")
-            .bind(value)
-            .bind(now)
-            .bind(run_id)
-            .execute(pool)
-            .await
-            .map_err(ApiError::Database)?;
+        sqlx::query(
+            "UPDATE workflow_runs SET executing_task_count = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(value)
+        .bind(now)
+        .bind(run_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
     }
 
     get_workflow_run(pool, run_id).await
@@ -365,9 +366,14 @@ pub async fn get_task_run_record(pool: &Pool<Sqlite>, run_id: &str) -> ApiResult
     Ok(run)
 }
 
-pub async fn create_task_run_record(pool: &Pool<Sqlite>, input: CreateTaskRunRecord) -> ApiResult<TaskRun> {
+pub async fn create_task_run_record(
+    pool: &Pool<Sqlite>,
+    input: CreateTaskRunRecord,
+) -> ApiResult<TaskRun> {
     let now = Utc::now().timestamp();
-    let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string()[..8].to_string());
+    let id = input
+        .id
+        .unwrap_or_else(|| Uuid::new_v4().to_string()[..8].to_string());
     let created_at = input.created_at.unwrap_or(now);
 
     sqlx::query(
@@ -393,7 +399,12 @@ pub async fn create_task_run_record(pool: &Pool<Sqlite>, input: CreateTaskRunRec
     .bind(&input.summary)
     .bind(&input.error_message)
     .bind(&input.candidate_id)
-    .bind(input.metadata_json.map(|value| value.to_string()).unwrap_or_else(|| "{}".to_string()))
+    .bind(
+        input
+            .metadata_json
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "{}".to_string()),
+    )
     .bind(created_at)
     .bind(now)
     .bind(input.completed_at)
@@ -401,7 +412,8 @@ pub async fn create_task_run_record(pool: &Pool<Sqlite>, input: CreateTaskRunRec
     .await
     .map_err(ApiError::Database)?;
 
-    get_task_run_record(pool, &id).await?
+    get_task_run_record(pool, &id)
+        .await?
         .ok_or_else(|| ApiError::internal("Failed to reload task run after insert"))
 }
 
@@ -415,13 +427,16 @@ pub async fn update_task_run_record(
     macro_rules! update_field {
         ($value:expr, $column:expr) => {
             if let Some(value) = $value {
-                sqlx::query(&format!("UPDATE task_runs SET {} = ?, updated_at = ? WHERE id = ?", $column))
-                    .bind(value)
-                    .bind(now)
-                    .bind(run_id)
-                    .execute(pool)
-                    .await
-                    .map_err(ApiError::Database)?;
+                sqlx::query(&format!(
+                    "UPDATE task_runs SET {} = ?, updated_at = ? WHERE id = ?",
+                    $column
+                ))
+                .bind(value)
+                .bind(now)
+                .bind(run_id)
+                .execute(pool)
+                .await
+                .map_err(ApiError::Database)?;
             }
         };
     }
@@ -489,7 +504,9 @@ pub async fn update_task_run_record(
     }
 
     if let Some(value) = input.metadata_json {
-        let metadata = value.map(|payload| payload.to_string()).unwrap_or_else(|| "{}".to_string());
+        let metadata = value
+            .map(|payload| payload.to_string())
+            .unwrap_or_else(|| "{}".to_string());
         sqlx::query("UPDATE task_runs SET metadata_json = ?, updated_at = ? WHERE id = ?")
             .bind(metadata)
             .bind(now)
@@ -517,9 +534,13 @@ pub async fn create_workflow_session_record(
     input: CreateWorkflowSessionRecord,
 ) -> ApiResult<PiWorkflowSession> {
     let now = Utc::now().timestamp();
-    let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string()[..8].to_string());
+    let id = input
+        .id
+        .unwrap_or_else(|| Uuid::new_v4().to_string()[..8].to_string());
     let started_at = input.started_at.unwrap_or(now);
-    let name = input.name.unwrap_or_else(|| format!("Session {}", &id[..4]));
+    let name = input
+        .name
+        .unwrap_or_else(|| format!("Session {}", &id[..4]));
 
     sqlx::query(
         r#"
@@ -555,7 +576,8 @@ pub async fn create_workflow_session_record(
     .await
     .map_err(ApiError::Database)?;
 
-    get_workflow_session(pool, &id).await?
+    get_workflow_session(pool, &id)
+        .await?
         .ok_or_else(|| ApiError::internal("Failed to reload workflow session after insert"))
 }
 
@@ -569,13 +591,16 @@ pub async fn update_workflow_session_record(
     macro_rules! update_field {
         ($value:expr, $column:expr) => {
             if let Some(value) = $value {
-                sqlx::query(&format!("UPDATE pi_workflow_sessions SET {} = ?, updated_at = ? WHERE id = ?", $column))
-                    .bind(value)
-                    .bind(now)
-                    .bind(session_id)
-                    .execute(pool)
-                    .await
-                    .map_err(ApiError::Database)?;
+                sqlx::query(&format!(
+                    "UPDATE pi_workflow_sessions SET {} = ?, updated_at = ? WHERE id = ?",
+                    $column
+                ))
+                .bind(value)
+                .bind(now)
+                .bind(session_id)
+                .execute(pool)
+                .await
+                .map_err(ApiError::Database)?;
             }
         };
     }
@@ -586,13 +611,15 @@ pub async fn update_workflow_session_record(
     update_field!(input.thinking_level, "thinking_level");
 
     if let Some(value) = input.worktree_dir {
-        sqlx::query("UPDATE pi_workflow_sessions SET worktree_dir = ?, updated_at = ? WHERE id = ?")
-            .bind(value)
-            .bind(now)
-            .bind(session_id)
-            .execute(pool)
-            .await
-            .map_err(ApiError::Database)?;
+        sqlx::query(
+            "UPDATE pi_workflow_sessions SET worktree_dir = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(value)
+        .bind(now)
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
     }
 
     if let Some(value) = input.branch {
@@ -606,23 +633,27 @@ pub async fn update_workflow_session_record(
     }
 
     if let Some(value) = input.pi_session_id {
-        sqlx::query("UPDATE pi_workflow_sessions SET pi_session_id = ?, updated_at = ? WHERE id = ?")
-            .bind(value)
-            .bind(now)
-            .bind(session_id)
-            .execute(pool)
-            .await
-            .map_err(ApiError::Database)?;
+        sqlx::query(
+            "UPDATE pi_workflow_sessions SET pi_session_id = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(value)
+        .bind(now)
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
     }
 
     if let Some(value) = input.pi_session_file {
-        sqlx::query("UPDATE pi_workflow_sessions SET pi_session_file = ?, updated_at = ? WHERE id = ?")
-            .bind(value)
-            .bind(now)
-            .bind(session_id)
-            .execute(pool)
-            .await
-            .map_err(ApiError::Database)?;
+        sqlx::query(
+            "UPDATE pi_workflow_sessions SET pi_session_file = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(value)
+        .bind(now)
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
     }
 
     if let Some(value) = input.process_pid {
@@ -666,13 +697,15 @@ pub async fn update_workflow_session_record(
     }
 
     if let Some(value) = input.error_message {
-        sqlx::query("UPDATE pi_workflow_sessions SET error_message = ?, updated_at = ? WHERE id = ?")
-            .bind(value)
-            .bind(now)
-            .bind(session_id)
-            .execute(pool)
-            .await
-            .map_err(ApiError::Database)?;
+        sqlx::query(
+            "UPDATE pi_workflow_sessions SET error_message = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(value)
+        .bind(now)
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
     }
 
     if let Some(value) = input.name {

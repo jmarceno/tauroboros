@@ -1,7 +1,6 @@
 use crate::error::{ApiError, ErrorCode};
 use crate::models::{
-    ExecutionPhase, Options, PiSessionKind, PiWorkflowSession, Task, TaskStatus,
-    UpdateTaskInput,
+    ExecutionPhase, Options, PiSessionKind, PiWorkflowSession, Task, TaskStatus, UpdateTaskInput,
 };
 use crate::orchestrator::git::WorktreeInfo;
 use crate::orchestrator::pi::PiSessionExecutor;
@@ -58,8 +57,8 @@ impl Orchestrator {
         };
 
         let prompt = if is_revision {
-            let current_plan = get_latest_tagged_output(&task.agent_output, "plan")
-                .unwrap_or_default();
+            let current_plan =
+                get_latest_tagged_output(&task.agent_output, "plan").unwrap_or_default();
             let revision_feedback =
                 get_latest_tagged_output(&task.agent_output, "user-revision-request")
                     .or_else(|| get_latest_tagged_output(&task.agent_output, "user-revision"))
@@ -115,7 +114,10 @@ impl Orchestrator {
             self.project_root.clone(),
         );
 
-        match executor.run_prompt(session.clone(), &plan_model, &prompt, stop_rx).await {
+        match executor
+            .run_prompt(session.clone(), &plan_model, &prompt, stop_rx)
+            .await
+        {
             Ok(response_text) => {
                 let plan_output = format!("[plan]\n{}\n", response_text.trim());
                 let new_output = if task.agent_output.trim().is_empty() {
@@ -255,14 +257,20 @@ impl Orchestrator {
             self.project_root.clone(),
         );
 
-        let result = executor.run_prompt(session.clone(), &model, &prompt, stop_rx).await;
+        let result = executor
+            .run_prompt(session.clone(), &model, &prompt, stop_rx)
+            .await;
 
         match result {
             Ok(response_text) => {
                 let final_output = if task.agent_output.trim().is_empty() {
                     format!("{}\n", response_text.trim())
                 } else {
-                    format!("{}\n{}\n", task.agent_output.trim_end(), response_text.trim())
+                    format!(
+                        "{}\n{}\n",
+                        task.agent_output.trim_end(),
+                        response_text.trim()
+                    )
                 };
 
                 crate::db::queries::update_task(
@@ -327,6 +335,7 @@ impl Orchestrator {
         .with_code(ErrorCode::InvalidModel))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_plan_session(
         &self,
         task: &Task,

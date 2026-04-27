@@ -20,7 +20,8 @@ hydration:
   blockers:
     - Full TypeScript-to-Rust behavioral parity is not yet verified route by route for runs, sessions, planning, and archives.
     - SSE contract parity is NOT YET verified event by event against the frontend stores (hub fixes applied, but browser-level validation pending).
-    - Rust warnings have been cleaned up to zero.
+    - Rust warnings have been cleaned to zero.
+    - Planning session Pi integration is now real — `PlanningSessionManager` manages Pi RPC lifecycle, event streaming, message persistence, and SSE broadcasting.
     - tauroboros-rust/src/routes/tasks.rs has been split into a module directory with sub-modules:
       - mod.rs (795 lines, under guardrail)
       - best_of_n.rs (135 lines)
@@ -29,6 +30,7 @@ hydration:
       - plan_mode.rs (418 lines)
       - review.rs (371 lines)
       - best_of_n.rs (723 lines)
+    - tauroboros-rust/src/orchestrator/planning_session.rs created (692 lines) — planning session manager with Pi RPC lifecycle.
 ---
 
 # Rust Backend Feature Parity Plan
@@ -252,6 +254,18 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 ## Completed In This Iteration
 
+- Fixed all 61 pre-existing Clippy warnings across the codebase (needless_borrows_for_generic_args, ptr_arg, needless_borrow, unnecessary_unwrap, let_unit_value, derivable_impls, match_like_matches_macro, redundant_closure, question_mark, redundant_pattern_matching, too_many_arguments). Build, tests (6/6), and clippy --deny warnings all pass cleanly.
+
+- Replaced the placeholder planning session Pi integration with a real `PlanningSessionManager` (`tauroboros-rust/src/orchestrator/planning_session.rs`):
+  - Spawns a Pi RPC process on session creation with system prompt
+  - Sends `set_model` and `set_thinking_level` RPC commands to running processes
+  - Persists user messages to DB and forwards them to the Pi process via RPC
+  - Runs a background event processor that reads Pi process stdout, persists streaming events to DB, and broadcasts them via SSE as `planning_session_message` events
+  - Manages process lifecycle: create, send_message, stop (SIGKILL), close (graceful shutdown with timeout)
+  - Supports model changes on live sessions via `set_model` RPC
+  - Wired into `AppState` and `main.rs` as a shared dependency
+  - Maintains zero-warnings compilation and all existing tests pass (6/6)
+
 - Split tauroboros-rust/src/routes/tasks.rs (1011 lines) into a module directory with sub-modules:
   - mod.rs (795 lines) - core CRUD, plan/revision, reset/move, start/create-and-wait
   - best_of_n.rs (135 lines) - candidates, best-of-n summary, select/abort
@@ -306,7 +320,7 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 ## Residual Gaps
 
 - Plan mode, review loops, and best-of-N are now implemented but not yet browser-verified end to end.
-- Planning session Pi integration in Rust is still a placeholder (sends ack, no real Pi process for planning chat).
+- Planning session Pi integration in Rust now has a real `PlanningSessionManager` with Pi RPC process lifecycle, event streaming, and message persistence. The `routes/planning.rs` routes (`create`, `send_message`, `stop`, `close`, `change_model`) now delegate to the manager instead of using placeholders.
 - Run stop, force-stop, clean, and paused-state semantics still need direct comparison against the TypeScript backend.
 - Browser verification now exists for one high-value real workflow, but broader browser coverage is still needed for advanced flows and regression protection.
 - Container execution remains intentionally unsupported in Rust (native-only), but container API endpoints stay frontend-compatible as stubs.
@@ -317,8 +331,9 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 - tauroboros-rust/src/orchestrator/mod.rs (1984 lines, exception header needed — core orchestrator with many interdependent methods)
 - tauroboros-rust/src/routes/tasks.rs (1011 lines, exception header documented)
-- tauroboros-rust/src/routes/planning.rs (852 lines)
+- tauroboros-rust/src/routes/planning.rs (861 lines)
 - tauroboros-rust/src/orchestrator/best_of_n.rs (723 lines)
+- tauroboros-rust/src/orchestrator/planning_session.rs (692 lines)
 - tauroboros-rust/src/routes/sessions.rs
 - tauroboros-rust/src/routes/runs.rs
 
@@ -380,4 +395,4 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 2. Finish route-by-route parity checks for runs, sessions, planning, archives, and SSE payloads against the frontend stores and TypeScript routes.
 3. Add focused compatibility coverage for route/payload parity and expand browser coverage beyond the single standard real-workflow path.
 4. Add browser-level validation of the SSE session streaming contract now that the hub event types are aligned with frontend expectations.
-5. Implement real Pi process integration for planning sessions (currently placeholder/ack only).
+5. ~~Implement real Pi process integration for planning sessions (currently placeholder/ack only).~~ **DONE** — `PlanningSessionManager` with Pi RPC lifecycle, event streaming, message persistence, and SSE broadcasting.

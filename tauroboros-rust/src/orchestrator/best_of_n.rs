@@ -3,7 +3,9 @@ use crate::models::{
     BestOfNConfig, BestOfNSubstage, Options, PiSessionKind, RunPhase, RunStatus, SelectionMode,
     Task, TaskStatus, UpdateTaskInput,
 };
-use crate::orchestrator::git::{create_task_worktree, merge_and_cleanup_worktree, resolve_target_branch, WorktreeInfo};
+use crate::orchestrator::git::{
+    create_task_worktree, merge_and_cleanup_worktree, resolve_target_branch, WorktreeInfo,
+};
 use crate::orchestrator::pi::PiSessionExecutor;
 use crate::orchestrator::Orchestrator;
 use crate::orchestrator::{render_prompt_template, TaskOutcome};
@@ -44,10 +46,8 @@ impl Orchestrator {
             .run_best_of_n_workers(task, run_id, options, &config, stop_rx.clone())
             .await?;
 
-        let successful_workers: Vec<&WorkerResult> = worker_results
-            .iter()
-            .filter(|r| r.success)
-            .collect();
+        let successful_workers: Vec<&WorkerResult> =
+            worker_results.iter().filter(|r| r.success).collect();
 
         if (successful_workers.len() as i32) < config.min_successful_workers {
             crate::db::queries::update_task(
@@ -87,8 +87,7 @@ impl Orchestrator {
             }
         }
 
-        let candidates =
-            crate::db::queries::get_task_candidates(&self.db, &task.id).await?;
+        let candidates = crate::db::queries::get_task_candidates(&self.db, &task.id).await?;
 
         let hub = self.sse_hub.read().await;
         for candidate in &candidates {
@@ -141,13 +140,8 @@ impl Orchestrator {
         )
         .await?;
 
-        let applier_worktree = create_task_worktree(
-            &self.project_root,
-            &task.id,
-            &task.name,
-            &target_branch,
-        )
-        .await?;
+        let applier_worktree =
+            create_task_worktree(&self.project_root, &task.id, &task.name, &target_branch).await?;
 
         let final_result = self
             .run_best_of_n_final_applier(
@@ -175,12 +169,9 @@ impl Orchestrator {
             Ok(_) => {
                 // Mark selected candidate
                 if let Some(best) = candidates.first() {
-                    let _ = crate::db::queries::update_task_candidate(
-                        &self.db,
-                        &best.id,
-                        "selected",
-                    )
-                    .await;
+                    let _ =
+                        crate::db::queries::update_task_candidate(&self.db, &best.id, "selected")
+                            .await;
                     for candidate in &candidates[1..] {
                         let _ = crate::db::queries::update_task_candidate(
                             &self.db,
@@ -403,7 +394,13 @@ impl Orchestrator {
         let candidate_summaries: Vec<String> = workers
             .iter()
             .enumerate()
-            .map(|(i, w)| format!("Candidate {}: {}", i, w.summary.as_deref().unwrap_or("no summary")))
+            .map(|(i, w)| {
+                format!(
+                    "Candidate {}: {}",
+                    i,
+                    w.summary.as_deref().unwrap_or("no summary")
+                )
+            })
             .collect();
         let candidate_summaries_str = candidate_summaries.join("\n---\n");
 
@@ -416,13 +413,12 @@ impl Orchestrator {
                 format!("Additional context:\n{}", options.extra_prompt.trim())
             };
 
-            let template =
-                crate::db::runtime::get_prompt_template(&self.db, "best_of_n_reviewer")
-                    .await?
-                    .ok_or_else(|| {
-                        ApiError::internal("Prompt template 'best_of_n_reviewer' is not configured")
-                            .with_code(ErrorCode::ExecutionOperationFailed)
-                    })?;
+            let template = crate::db::runtime::get_prompt_template(&self.db, "best_of_n_reviewer")
+                .await?
+                .ok_or_else(|| {
+                    ApiError::internal("Prompt template 'best_of_n_reviewer' is not configured")
+                        .with_code(ErrorCode::ExecutionOperationFailed)
+                })?;
 
             let prompt = render_prompt_template(
                 &template.template_text,
@@ -566,15 +562,12 @@ impl Orchestrator {
             SelectionMode::PickOrSynthesize => "pick_or_synthesize",
         };
 
-        let template =
-            crate::db::runtime::get_prompt_template(&self.db, "best_of_n_final_applier")
-                .await?
-                .ok_or_else(|| {
-                    ApiError::internal(
-                        "Prompt template 'best_of_n_final_applier' is not configured",
-                    )
+        let template = crate::db::runtime::get_prompt_template(&self.db, "best_of_n_final_applier")
+            .await?
+            .ok_or_else(|| {
+                ApiError::internal("Prompt template 'best_of_n_final_applier' is not configured")
                     .with_code(ErrorCode::ExecutionOperationFailed)
-                })?;
+            })?;
 
         let prompt = render_prompt_template(
             &template.template_text,
@@ -651,7 +644,12 @@ impl Orchestrator {
         );
 
         let result = executor
-            .run_prompt(session.clone(), &config.final_applier.model.clone(), &prompt, stop_rx)
+            .run_prompt(
+                session.clone(),
+                &config.final_applier.model.clone(),
+                &prompt,
+                stop_rx,
+            )
             .await;
 
         match result {
@@ -716,7 +714,13 @@ fn expand_slots(slots: &[crate::models::BestOfNSlot]) -> Vec<crate::models::Best
 #[allow(dead_code)]
 fn sanitize_name(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()

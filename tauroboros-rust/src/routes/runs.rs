@@ -1,11 +1,11 @@
 use crate::db::queries::*;
-use chrono::Utc;
-use rocket::routes;
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
 use crate::state::AppStateType;
-use rocket::State;
+use chrono::Utc;
+use rocket::routes;
 use rocket::serde::json::{json, Json, Value};
+use rocket::State;
 use rocket::{get, post, Route};
 
 #[get("/api/runs")]
@@ -16,7 +16,8 @@ async fn list_runs(state: &State<AppStateType>) -> ApiResult<Json<Vec<WorkflowRu
 
 #[get("/api/runs/<id>")]
 async fn get_run_by_id(state: &State<AppStateType>, id: String) -> ApiResult<Json<WorkflowRun>> {
-    let run = get_workflow_run(&state.db, &id).await?
+    let run = get_workflow_run(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Run not found").with_code(ErrorCode::RunNotFound))?;
     Ok(Json(run))
 }
@@ -33,17 +34,18 @@ async fn get_active_runs(state: &State<AppStateType>) -> ApiResult<Json<Vec<Work
     .fetch_all(&state.db)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(Json(runs))
 }
 
 #[post("/api/runs/<id>/archive")]
 async fn archive_run(state: &State<AppStateType>, id: String) -> ApiResult<Json<Value>> {
-    let _run = get_workflow_run(&state.db, &id).await?
+    let _run = get_workflow_run(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Run not found").with_code(ErrorCode::RunNotFound))?;
-    
+
     let now = Utc::now().timestamp();
-    
+
     sqlx::query(
         r#"
         UPDATE workflow_runs 
@@ -57,37 +59,47 @@ async fn archive_run(state: &State<AppStateType>, id: String) -> ApiResult<Json<
     .execute(&state.db)
     .await
     .map_err(ApiError::Database)?;
-    
+
     let hub = state.sse_hub.read().await;
     hub.broadcast(&WSMessage {
         r#type: "run_archived".to_string(),
         payload: json!({ "id": id }),
-    }).await;
-    
+    })
+    .await;
+
     Ok(Json(json!({ "id": id, "archived": true })))
 }
 
 #[get("/api/runs/<id>/sessions")]
-async fn get_run_sessions(state: &State<AppStateType>, id: String) -> ApiResult<Json<Vec<PiWorkflowSession>>> {
-    let run = get_workflow_run(&state.db, &id).await?
+async fn get_run_sessions(
+    state: &State<AppStateType>,
+    id: String,
+) -> ApiResult<Json<Vec<PiWorkflowSession>>> {
+    let run = get_workflow_run(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Run not found").with_code(ErrorCode::RunNotFound))?;
-    
+
     // Get task IDs from run
-    let task_order: Vec<String> = serde_json::from_str(&run.task_order.clone().unwrap_or("[]".to_string()))
-        .unwrap_or_default();
-    
+    let task_order: Vec<String> =
+        serde_json::from_str(&run.task_order.clone().unwrap_or("[]".to_string()))
+            .unwrap_or_default();
+
     let mut sessions = vec![];
     for task_id in task_order {
         let mut task_sessions = get_workflow_sessions_by_task(&state.db, &task_id).await?;
         sessions.append(&mut task_sessions);
     }
-    
+
     Ok(Json(sessions))
 }
 
 #[get("/api/runs/<id>/self-heal-reports")]
-async fn get_run_self_heal_reports(state: &State<AppStateType>, id: String) -> ApiResult<Json<Vec<SelfHealReport>>> {
-    let _run = get_workflow_run(&state.db, &id).await?
+async fn get_run_self_heal_reports(
+    state: &State<AppStateType>,
+    id: String,
+) -> ApiResult<Json<Vec<SelfHealReport>>> {
+    let _run = get_workflow_run(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Run not found").with_code(ErrorCode::RunNotFound))?;
 
     let reports = get_self_heal_reports_for_run(&state.db, &id).await?;
@@ -95,8 +107,15 @@ async fn get_run_self_heal_reports(state: &State<AppStateType>, id: String) -> A
 }
 
 #[post("/api/runs/<id>/stop", data = "<req>")]
-async fn stop_run(state: &State<AppStateType>, id: String, req: Json<Value>) -> ApiResult<Json<Value>> {
-    let destructive = req.get("destructive").and_then(|v| v.as_bool()).unwrap_or(false);
+async fn stop_run(
+    state: &State<AppStateType>,
+    id: String,
+    req: Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let destructive = req
+        .get("destructive")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let result = state.orchestrator.stop_run(&id, destructive).await?;
     Ok(Json(json!({
         "success": true,
@@ -148,7 +167,7 @@ async fn get_paused_state(state: &State<AppStateType>) -> ApiResult<Json<PausedS
     .fetch_one(&state.db)
     .await
     .map_err(ApiError::Database)?;
-    
+
     let state_json = if has_paused {
         let paused_run: Option<WorkflowRun> = sqlx::query_as(
             r#"
@@ -161,23 +180,22 @@ async fn get_paused_state(state: &State<AppStateType>) -> ApiResult<Json<PausedS
         .await
         .map_err(ApiError::Database)?;
 
-        paused_run
-            .map(|run| {
-                json!({
-                    "runId": run.id,
-                    "kind": run.kind,
-                    "taskOrder": run.task_order,
-                    "currentTaskIndex": run.current_task_index,
-                    "currentTaskId": run.current_task_id,
-                    "targetTaskId": run.target_task_id,
-                    "pausedAt": run.updated_at,
-                    "executionPhase": if run.pause_requested { "paused" } else { "running" },
-                })
+        paused_run.map(|run| {
+            json!({
+                "runId": run.id,
+                "kind": run.kind,
+                "taskOrder": run.task_order,
+                "currentTaskIndex": run.current_task_index,
+                "currentTaskId": run.current_task_id,
+                "targetTaskId": run.target_task_id,
+                "pausedAt": run.updated_at,
+                "executionPhase": if run.pause_requested { "paused" } else { "running" },
             })
+        })
     } else {
         None
     };
-    
+
     Ok(Json(PausedState {
         has_paused_run: has_paused,
         state: state_json,

@@ -15,12 +15,12 @@ pub async fn create_pool(db_path: &str) -> Result<Pool<Sqlite>, sqlx::Error> {
     if let Some(parent) = Path::new(db_path).parent() {
         tokio::fs::create_dir_all(parent).await.ok();
     }
-    
+
     let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path))?
         .create_if_missing(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
         .busy_timeout(std::time::Duration::from_secs(30));
-    
+
     SqlitePoolOptions::new()
         .max_connections(10)
         .connect_with(options)
@@ -32,7 +32,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     // Note: In a production setup, use sqlx migrate!
     // For now, we assume the database schema already exists from the TypeScript version
     // or create minimal required tables
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS tasks (
@@ -88,7 +88,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS workflow_runs (
@@ -118,7 +118,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS task_runs (
@@ -145,7 +145,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS task_candidates (
@@ -165,7 +165,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS task_groups (
@@ -181,7 +181,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS task_group_members (
@@ -196,7 +196,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS pi_workflow_sessions (
@@ -225,7 +225,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS session_messages (
@@ -285,7 +285,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS options (
@@ -320,7 +320,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    
+
     // Insert default options if not exists
     sqlx::query(
         r#"
@@ -329,7 +329,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS planning_prompts (
@@ -375,7 +375,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS prompt_templates (
@@ -602,12 +602,16 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_planning_prompt_versions_prompt_id ON planning_prompt_versions(planning_prompt_id)")
         .execute(pool)
         .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_self_heal_reports_run_id ON self_heal_reports(run_id)")
-        .execute(pool)
-        .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_self_heal_reports_task_id ON self_heal_reports(task_id)")
-        .execute(pool)
-        .await?;
-    
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_self_heal_reports_run_id ON self_heal_reports(run_id)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_self_heal_reports_task_id ON self_heal_reports(task_id)",
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }

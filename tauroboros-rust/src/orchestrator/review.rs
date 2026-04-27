@@ -4,13 +4,14 @@ use crate::models::{
 };
 use crate::orchestrator::git::WorktreeInfo;
 use crate::orchestrator::pi::PiSessionExecutor;
-use crate::orchestrator::Orchestrator;
 use crate::orchestrator::render_prompt_template;
+use crate::orchestrator::Orchestrator;
 use rocket::serde::json::json;
 use tokio::sync::watch;
 use uuid::Uuid;
 
 impl Orchestrator {
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_review_loop(
         &self,
         task: &Task,
@@ -25,9 +26,7 @@ impl Orchestrator {
             return Ok(true);
         }
 
-        let max_runs = task
-            .max_review_runs_override
-            .unwrap_or(options.max_reviews);
+        let max_runs = task.max_review_runs_override.unwrap_or(options.max_reviews);
         let mut current_review_count = task.review_count;
 
         loop {
@@ -54,7 +53,14 @@ impl Orchestrator {
             }
 
             let passed = self
-                .run_single_review(task, run_id, options, worktree, target_branch, stop_rx.clone())
+                .run_single_review(
+                    task,
+                    run_id,
+                    options,
+                    worktree,
+                    target_branch,
+                    stop_rx.clone(),
+                )
                 .await?;
 
             if passed {
@@ -242,7 +248,10 @@ impl Orchestrator {
             &[
                 ("task.prompt", &task.prompt),
                 ("review_summary", "Review found gaps that need fixing"),
-                ("review_gaps", "Check the review comments above for specific gaps"),
+                (
+                    "review_gaps",
+                    "Check the review comments above for specific gaps",
+                ),
             ],
         );
 
@@ -320,7 +329,9 @@ impl Orchestrator {
             self.project_root.clone(),
         );
 
-        let result = executor.run_prompt(session.clone(), &model, &prompt, stop_rx).await;
+        let result = executor
+            .run_prompt(session.clone(), &model, &prompt, stop_rx)
+            .await;
 
         match result {
             Ok(_response_text) => Ok(true),

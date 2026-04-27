@@ -11,10 +11,10 @@ use crate::db::{CreateTaskInput, UpdateTaskInput};
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
 use crate::state::AppStateType;
-use rocket::serde::json::{json, Json, Value};
-use rocket::{delete, get, patch, post, put, Route};
 use rocket::routes;
+use rocket::serde::json::{json, Json, Value};
 use rocket::State;
+use rocket::{delete, get, patch, post, put, Route};
 use serde::Deserialize;
 use std::collections::HashSet;
 
@@ -88,51 +88,70 @@ pub(crate) fn normalize_task_run_for_client(run: &TaskRun, base_url: &str) -> Va
     json
 }
 
-pub(super) async fn broadcast_task_update(state: &State<AppStateType>, task: &Task, base_url: &str) {
+pub(super) async fn broadcast_task_update(
+    state: &State<AppStateType>,
+    task: &Task,
+    base_url: &str,
+) {
     let hub = state.sse_hub.read().await;
     let normalized = normalize_task_for_client(task, base_url);
-    let _ = hub.broadcast(&WSMessage {
-        r#type: "task_updated".to_string(),
-        payload: normalized,
-    }).await;
+    let _ = hub
+        .broadcast(&WSMessage {
+            r#type: "task_updated".to_string(),
+            payload: normalized,
+        })
+        .await;
 }
 
 async fn broadcast_task_created(state: &State<AppStateType>, task: &Task, base_url: &str) {
     let hub = state.sse_hub.read().await;
     let normalized = normalize_task_for_client(task, base_url);
-    let _ = hub.broadcast(&WSMessage {
-        r#type: "task_created".to_string(),
-        payload: normalized,
-    }).await;
+    let _ = hub
+        .broadcast(&WSMessage {
+            r#type: "task_created".to_string(),
+            payload: normalized,
+        })
+        .await;
 }
 
 async fn broadcast_task_deleted(state: &State<AppStateType>, task_id: &str) {
     let hub = state.sse_hub.read().await;
-    let _ = hub.broadcast(&WSMessage {
-        r#type: "task_deleted".to_string(),
-        payload: json!({ "id": task_id }),
-    }).await;
+    let _ = hub
+        .broadcast(&WSMessage {
+            r#type: "task_deleted".to_string(),
+            payload: json!({ "id": task_id }),
+        })
+        .await;
 }
 
 async fn broadcast_task_archived(state: &State<AppStateType>, task_id: &str) {
     let hub = state.sse_hub.read().await;
-    let _ = hub.broadcast(&WSMessage {
-        r#type: "task_archived".to_string(),
-        payload: json!({ "id": task_id }),
-    }).await;
+    let _ = hub
+        .broadcast(&WSMessage {
+            r#type: "task_archived".to_string(),
+            payload: json!({ "id": task_id }),
+        })
+        .await;
 }
 
-async fn broadcast_group_event(state: &State<AppStateType>, event_type: &str, group_id: &str, task_id: Option<&str>) {
+async fn broadcast_group_event(
+    state: &State<AppStateType>,
+    event_type: &str,
+    group_id: &str,
+    task_id: Option<&str>,
+) {
     let hub = state.sse_hub.read().await;
     let payload = if let Some(tid) = task_id {
         json!({ "groupId": group_id, "taskId": tid })
     } else {
         json!({ "groupId": group_id })
     };
-    let _ = hub.broadcast(&WSMessage {
-        r#type: event_type.to_string(),
-        payload,
-    }).await;
+    let _ = hub
+        .broadcast(&WSMessage {
+            r#type: event_type.to_string(),
+            payload,
+        })
+        .await;
 }
 
 // ============================================================================
@@ -143,14 +162,18 @@ async fn broadcast_group_event(state: &State<AppStateType>, event_type: &str, gr
 async fn list_tasks(state: &State<AppStateType>) -> ApiResult<Json<Vec<Value>>> {
     let tasks = get_tasks(&state.db).await?;
     let base_url = format!("http://localhost:{}", state.port);
-    let normalized: Vec<Value> = tasks.iter()
+    let normalized: Vec<Value> = tasks
+        .iter()
         .map(|t| normalize_task_for_client(t, &base_url))
         .collect();
     Ok(Json(normalized))
 }
 
 #[post("/api/tasks", data = "<req>")]
-async fn create_task(state: &State<AppStateType>, req: Json<CreateTaskRequest>) -> ApiResult<Json<Value>> {
+async fn create_task(
+    state: &State<AppStateType>,
+    req: Json<CreateTaskRequest>,
+) -> ApiResult<Json<Value>> {
     let base_url = format!("http://localhost:{}", state.port);
 
     let all_tasks = get_tasks(&state.db).await?;
@@ -172,7 +195,7 @@ async fn create_task(state: &State<AppStateType>, req: Json<CreateTaskRequest>) 
     input.requirements = Some(valid_requirements);
 
     let task = create_task_db(&state.db, input).await?;
-    broadcast_task_created(&state, &task, &base_url).await;
+    broadcast_task_created(state, &task, &base_url).await;
 
     let normalized = normalize_task_for_client(&task, &base_url);
 
@@ -190,7 +213,8 @@ async fn create_task(state: &State<AppStateType>, req: Json<CreateTaskRequest>) 
 
 #[get("/api/tasks/<id>")]
 async fn get_task_by_id(state: &State<AppStateType>, id: String) -> ApiResult<Json<Value>> {
-    let task = get_task(&state.db, &id).await?
+    let task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     let base_url = format!("http://localhost:{}", state.port);
@@ -203,26 +227,27 @@ async fn update_task_route(
     id: String,
     req: Json<UpdateTaskRequest>,
 ) -> ApiResult<Json<Value>> {
-    let existing = get_task(&state.db, &id).await?
+    let existing = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     let active_run = get_active_workflow_run_for_task(&state.db, &id).await?;
-    if active_run.is_some() {
+    if let Some(active_run) = active_run {
         let input = &req.input;
-        let only_status_or_done =
-            input.name.is_none() &&
-            input.prompt.is_none() &&
-            input.branch.is_none() &&
-            input.plan_model.is_none() &&
-            input.execution_model.is_none() &&
-            input.requirements.is_none();
+        let only_status_or_done = input.name.is_none()
+            && input.prompt.is_none()
+            && input.branch.is_none()
+            && input.plan_model.is_none()
+            && input.execution_model.is_none()
+            && input.requirements.is_none();
 
         if !only_status_or_done {
             return Err(ApiError::conflict(format!(
                 "Cannot modify task \"{}\" while it is executing in run {}.",
                 existing.name,
-                active_run.unwrap().id
-            )).with_code(ErrorCode::TaskAlreadyExecuting));
+                active_run.id
+            ))
+            .with_code(ErrorCode::TaskAlreadyExecuting));
         }
     }
 
@@ -244,16 +269,17 @@ async fn update_task_route(
         if existing.group_id.is_some() {
             if let Some(ref group_id) = existing.group_id {
                 remove_task_from_group(&state.db, group_id, &id).await.ok();
-                broadcast_group_event(&state, "group_task_removed", group_id, Some(&id)).await;
+                broadcast_group_event(state, "group_task_removed", group_id, Some(&id)).await;
             }
             input.group_id = None;
         }
     }
 
-    let task = update_task(&state.db, &id, input).await?
+    let task = update_task(&state.db, &id, input)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found"))?;
 
-    broadcast_task_update(&state, &task, &base_url).await;
+    broadcast_task_update(state, &task, &base_url).await;
 
     if task.status == TaskStatus::Done {
         if let Some(ref group_id) = task.group_id {
@@ -272,7 +298,15 @@ async fn update_task_route(
                 }
 
                 if all_done && !group.task_ids.is_empty() {
-                    update_task_group(&state.db, group_id, None, None, Some(TaskGroupStatus::Completed)).await.ok();
+                    update_task_group(
+                        &state.db,
+                        group_id,
+                        None,
+                        None,
+                        Some(TaskGroupStatus::Completed),
+                    )
+                    .await
+                    .ok();
                 }
             }
         }
@@ -283,40 +317,47 @@ async fn update_task_route(
 
 #[delete("/api/tasks/<id>")]
 async fn delete_task(state: &State<AppStateType>, id: String) -> ApiResult<Value> {
-    let existing = get_task(&state.db, &id).await?
+    let existing = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     let active_run = get_active_workflow_run_for_task(&state.db, &id).await?;
-    if active_run.is_some() {
+    if let Some(active_run) = active_run {
         return Err(ApiError::conflict(format!(
             "Cannot modify task \"{}\" while it is executing in run {}.",
             existing.name,
-            active_run.unwrap().id
-        )).with_code(ErrorCode::TaskAlreadyExecuting));
+            active_run.id
+        ))
+        .with_code(ErrorCode::TaskAlreadyExecuting));
     }
 
     let has_history = has_task_execution_history(&state.db, &id).await?;
 
     if has_history {
         archive_task(&state.db, &id).await?;
-        broadcast_task_archived(&state, &id).await;
+        broadcast_task_archived(state, &id).await;
         Ok(json!({ "id": id, "archived": true }))
     } else {
         hard_delete_task(&state.db, &id).await?;
-        broadcast_task_deleted(&state, &id).await;
+        broadcast_task_deleted(state, &id).await;
         Ok(Value::Null)
     }
 }
 
 #[put("/api/tasks/reorder", data = "<req>")]
-async fn reorder_task_route(state: &State<AppStateType>, req: Json<ReorderRequest>) -> ApiResult<Json<Value>> {
+async fn reorder_task_route(
+    state: &State<AppStateType>,
+    req: Json<ReorderRequest>,
+) -> ApiResult<Json<Value>> {
     reorder_task(&state.db, &req.id, req.new_idx).await?;
 
     let hub = state.sse_hub.read().await;
-    let _ = hub.broadcast(&WSMessage {
-        r#type: "task_reordered".to_string(),
-        payload: json!({}),
-    }).await;
+    let _ = hub
+        .broadcast(&WSMessage {
+            r#type: "task_reordered".to_string(),
+            payload: json!({}),
+        })
+        .await;
 
     Ok(Json(json!({ "ok": true })))
 }
@@ -333,11 +374,11 @@ async fn delete_done_tasks(state: &State<AppStateType>) -> ApiResult<Json<Value>
 
         if has_history {
             archive_task(&state.db, &task.id).await.ok();
-            broadcast_task_archived(&state, &task.id).await;
+            broadcast_task_archived(state, &task.id).await;
             archived += 1;
         } else {
             hard_delete_task(&state.db, &task.id).await.ok();
-            broadcast_task_deleted(&state, &task.id).await;
+            broadcast_task_deleted(state, &task.id).await;
             deleted += 1;
         }
     }
@@ -350,7 +391,10 @@ async fn delete_done_tasks(state: &State<AppStateType>) -> ApiResult<Json<Value>
 // ============================================================================
 
 #[get("/api/tasks/<id>/runs")]
-async fn get_task_runs_route(state: &State<AppStateType>, id: String) -> ApiResult<Json<Vec<Value>>> {
+async fn get_task_runs_route(
+    state: &State<AppStateType>,
+    id: String,
+) -> ApiResult<Json<Vec<Value>>> {
     let task_exists = get_task(&state.db, &id).await?.is_some()
         || get_archived_task(&state.db, &id).await?.is_some();
 
@@ -361,7 +405,8 @@ async fn get_task_runs_route(state: &State<AppStateType>, id: String) -> ApiResu
     let runs = get_task_runs(&state.db, &id).await?;
     let base_url = format!("http://localhost:{}", state.port);
 
-    let normalized: Vec<Value> = runs.iter()
+    let normalized: Vec<Value> = runs
+        .iter()
         .map(|r| normalize_task_run_for_client(r, &base_url))
         .collect();
 
@@ -369,7 +414,10 @@ async fn get_task_runs_route(state: &State<AppStateType>, id: String) -> ApiResu
 }
 
 #[get("/api/tasks/<id>/sessions")]
-async fn get_task_sessions(state: &State<AppStateType>, id: String) -> ApiResult<Json<Vec<PiWorkflowSession>>> {
+async fn get_task_sessions(
+    state: &State<AppStateType>,
+    id: String,
+) -> ApiResult<Json<Vec<PiWorkflowSession>>> {
     let task_exists = get_task(&state.db, &id).await?.is_some()
         || get_archived_task(&state.db, &id).await?.is_some();
 
@@ -382,14 +430,18 @@ async fn get_task_sessions(state: &State<AppStateType>, id: String) -> ApiResult
 }
 
 #[get("/api/tasks/<id>/messages")]
-async fn get_task_messages(state: &State<AppStateType>, id: String) -> ApiResult<Json<Vec<SessionMessage>>> {
+async fn get_task_messages(
+    state: &State<AppStateType>,
+    id: String,
+) -> ApiResult<Json<Vec<SessionMessage>>> {
     let messages = get_session_messages_for_task(&state.db, &id).await?;
     Ok(Json(messages))
 }
 
 #[get("/api/tasks/<id>/last-update")]
 async fn get_task_last_update(state: &State<AppStateType>, id: String) -> ApiResult<Json<Value>> {
-    let task = get_task(&state.db, &id).await?
+    let task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     let last_update: Option<i64> = sqlx::query_scalar(
@@ -412,7 +464,8 @@ async fn get_task_last_update(state: &State<AppStateType>, id: String) -> ApiRes
 
 #[get("/api/tasks/<id>/review-status")]
 async fn get_review_status(state: &State<AppStateType>, id: String) -> ApiResult<Json<Value>> {
-    let task = get_task(&state.db, &id).await?
+    let task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     let options = get_options(&state.db).await?;
@@ -435,7 +488,8 @@ async fn approve_plan(
     id: String,
     req: Json<ApprovalRequest>,
 ) -> ApiResult<Json<Value>> {
-    let task = get_task(&state.db, &id).await?
+    let task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     if !task.plan_mode {
@@ -459,11 +513,12 @@ async fn approve_plan(
         ..Default::default()
     };
 
-    let updated = update_task(&state.db, &id, update).await?
+    let updated = update_task(&state.db, &id, update)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found"))?;
 
     let base_url = format!("http://localhost:{}", state.port);
-    broadcast_task_update(&state, &updated, &base_url).await;
+    broadcast_task_update(state, &updated, &base_url).await;
 
     Ok(Json(normalize_task_for_client(&updated, &base_url)))
 }
@@ -474,7 +529,8 @@ async fn request_plan_revision(
     id: String,
     req: Json<FeedbackRequest>,
 ) -> ApiResult<Json<Value>> {
-    let task = get_task(&state.db, &id).await?
+    let task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     if !task.plan_mode {
@@ -502,17 +558,20 @@ async fn request_plan_revision(
         ..Default::default()
     };
 
-    let updated = update_task(&state.db, &id, update).await?
+    let updated = update_task(&state.db, &id, update)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found"))?;
 
     let hub = state.sse_hub.read().await;
-    let _ = hub.broadcast(&WSMessage {
-        r#type: "plan_revision_requested".to_string(),
-        payload: json!({ "taskId": id }),
-    }).await;
+    let _ = hub
+        .broadcast(&WSMessage {
+            r#type: "plan_revision_requested".to_string(),
+            payload: json!({ "taskId": id }),
+        })
+        .await;
 
     let base_url = format!("http://localhost:{}", state.port);
-    broadcast_task_update(&state, &updated, &base_url).await;
+    broadcast_task_update(state, &updated, &base_url).await;
 
     Ok(Json(normalize_task_for_client(&updated, &base_url)))
 }
@@ -538,16 +597,18 @@ async fn start_task(state: &State<AppStateType>, id: String) -> ApiResult<Json<V
 
 #[post("/api/tasks/<id>/reset")]
 async fn reset_task(state: &State<AppStateType>, id: String) -> ApiResult<Json<Value>> {
-    let task = get_task(&state.db, &id).await?
+    let task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     let active_run = get_active_workflow_run_for_task(&state.db, &id).await?;
-    if active_run.is_some() {
+    if let Some(active_run) = active_run {
         return Err(ApiError::conflict(format!(
             "Cannot modify task \"{}\" while it is executing in run {}.",
             task.name,
-            active_run.unwrap().id
-        )).with_code(ErrorCode::TaskAlreadyExecuting));
+            active_run.id
+        ))
+        .with_code(ErrorCode::TaskAlreadyExecuting));
     }
 
     let membership = get_task_group_membership(&state.db, &id).await?;
@@ -566,11 +627,12 @@ async fn reset_task(state: &State<AppStateType>, id: String) -> ApiResult<Json<V
         ..Default::default()
     };
 
-    let reset = update_task(&state.db, &id, update).await?
+    let reset = update_task(&state.db, &id, update)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found"))?;
 
     let base_url = format!("http://localhost:{}", state.port);
-    broadcast_task_update(&state, &reset, &base_url).await;
+    broadcast_task_update(state, &reset, &base_url).await;
 
     if membership.0.is_some() {
         Ok(Json(json!({
@@ -588,22 +650,27 @@ async fn reset_task(state: &State<AppStateType>, id: String) -> ApiResult<Json<V
 
 #[post("/api/tasks/<id>/reset-to-group")]
 async fn reset_to_group(state: &State<AppStateType>, id: String) -> ApiResult<Json<Value>> {
-    let task = get_task(&state.db, &id).await?
+    let task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     let active_run = get_active_workflow_run_for_task(&state.db, &id).await?;
-    if active_run.is_some() {
+    if let Some(active_run) = active_run {
         return Err(ApiError::conflict(format!(
             "Cannot modify task \"{}\" while it is executing in run {}.",
             task.name,
-            active_run.unwrap().id
-        )).with_code(ErrorCode::TaskAlreadyExecuting));
+            active_run.id
+        ))
+        .with_code(ErrorCode::TaskAlreadyExecuting));
     }
 
     let membership = get_task_group_membership(&state.db, &id).await?;
-    let group_id = membership.0.clone()
+    let group_id = membership
+        .0
+        .clone()
         .ok_or_else(|| ApiError::bad_request("Task was not in a group"))?;
-    let group = membership.1
+    let group = membership
+        .1
         .ok_or_else(|| ApiError::not_found("Group not found"))?;
 
     let update = UpdateTaskInput {
@@ -620,14 +687,15 @@ async fn reset_to_group(state: &State<AppStateType>, id: String) -> ApiResult<Js
         ..Default::default()
     };
 
-    let reset = update_task(&state.db, &id, update).await?
+    let reset = update_task(&state.db, &id, update)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found"))?;
 
     add_task_to_group(&state.db, &group_id, &id).await?;
 
     let base_url = format!("http://localhost:{}", state.port);
-    broadcast_task_update(&state, &reset, &base_url).await;
-    broadcast_group_event(&state, "group_task_added", &group_id, Some(&id)).await;
+    broadcast_task_update(state, &reset, &base_url).await;
+    broadcast_group_event(state, "group_task_added", &group_id, Some(&id)).await;
 
     Ok(Json(json!({
         "task": normalize_task_for_client(&reset, &base_url),
@@ -642,16 +710,18 @@ async fn move_to_group(
     id: String,
     req: Json<MoveToGroupRequest>,
 ) -> ApiResult<Json<Value>> {
-    let task = get_task(&state.db, &id).await?
+    let task = get_task(&state.db, &id)
+        .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
     let active_run = get_active_workflow_run_for_task(&state.db, &id).await?;
-    if active_run.is_some() {
+    if let Some(active_run) = active_run {
         return Err(ApiError::conflict(format!(
             "Cannot modify task \"{}\" while it is executing in run {}.",
             task.name,
-            active_run.unwrap().id
-        )).with_code(ErrorCode::TaskAlreadyExecuting));
+            active_run.id
+        ))
+        .with_code(ErrorCode::TaskAlreadyExecuting));
     }
 
     let base_url = format!("http://localhost:{}", state.port);
@@ -660,37 +730,50 @@ async fn move_to_group(
         None => {
             if let Some(ref old_group_id) = task.group_id {
                 remove_task_from_group(&state.db, old_group_id, &id).await?;
-                broadcast_group_event(&state, "group_task_removed", old_group_id, Some(&id)).await;
+                broadcast_group_event(state, "group_task_removed", old_group_id, Some(&id)).await;
             }
 
-            let updated = update_task(&state.db, &id, UpdateTaskInput {
-                group_id: Some(None),
-                ..Default::default()
-            }).await?;
+            let updated = update_task(
+                &state.db,
+                &id,
+                UpdateTaskInput {
+                    group_id: Some(None),
+                    ..Default::default()
+                },
+            )
+            .await?;
 
             if let Some(ref task) = updated {
-                broadcast_task_update(&state, task, &base_url).await;
+                broadcast_task_update(state, task, &base_url).await;
             }
 
-            Ok(Json(normalize_task_for_client(&updated.unwrap_or(task), &base_url)))
+            Ok(Json(normalize_task_for_client(
+                &updated.unwrap_or(task),
+                &base_url,
+            )))
         }
         Some(group_id) => {
             if get_task_group(&state.db, group_id).await?.is_none() {
-                return Err(ApiError::not_found("Group not found").with_code(ErrorCode::TaskGroupNotFound));
+                return Err(
+                    ApiError::not_found("Group not found").with_code(ErrorCode::TaskGroupNotFound)
+                );
             }
 
             if let Some(ref old_group_id) = task.group_id {
                 if old_group_id != group_id {
-                    remove_task_from_group(&state.db, old_group_id, &id).await.ok();
-                    broadcast_group_event(&state, "group_task_removed", old_group_id, Some(&id)).await;
+                    remove_task_from_group(&state.db, old_group_id, &id)
+                        .await
+                        .ok();
+                    broadcast_group_event(state, "group_task_removed", old_group_id, Some(&id))
+                        .await;
                 }
             }
 
             add_task_to_group(&state.db, group_id, &id).await?;
 
             let updated = get_task(&state.db, &id).await?.unwrap_or(task);
-            broadcast_task_update(&state, &updated, &base_url).await;
-            broadcast_group_event(&state, "group_task_added", group_id, Some(&id)).await;
+            broadcast_task_update(state, &updated, &base_url).await;
+            broadcast_group_event(state, "group_task_added", group_id, Some(&id)).await;
 
             Ok(Json(normalize_task_for_client(&updated, &base_url)))
         }
@@ -702,7 +785,10 @@ async fn move_to_group(
 // ============================================================================
 
 #[post("/api/tasks/create-and-wait", data = "<req>")]
-async fn create_and_wait_task(state: &State<AppStateType>, req: Json<CreateAndWaitTaskRequest>) -> ApiResult<Json<Value>> {
+async fn create_and_wait_task(
+    state: &State<AppStateType>,
+    req: Json<CreateAndWaitTaskRequest>,
+) -> ApiResult<Json<Value>> {
     let base_url = format!("http://localhost:{}", state.port);
 
     let all_tasks = get_tasks(&state.db).await?;
@@ -720,7 +806,7 @@ async fn create_and_wait_task(state: &State<AppStateType>, req: Json<CreateAndWa
     input.status = Some(TaskStatus::Backlog);
 
     let task = create_task_db(&state.db, input).await?;
-    broadcast_task_created(&state, &task, &base_url).await;
+    broadcast_task_created(state, &task, &base_url).await;
 
     let run = state.orchestrator.start_single(&task.id).await?;
     let timeout_ms = req.timeout_ms.unwrap_or(1_800_000).clamp(60_000, 7_200_000);
@@ -730,10 +816,15 @@ async fn create_and_wait_task(state: &State<AppStateType>, req: Json<CreateAndWa
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(poll_interval_ms)).await;
 
-        let current_task = get_task(&state.db, &task.id).await?
-            .ok_or_else(|| ApiError::internal("Task was deleted during execution").with_code(ErrorCode::TaskNotFound))?;
+        let current_task = get_task(&state.db, &task.id).await?.ok_or_else(|| {
+            ApiError::internal("Task was deleted during execution")
+                .with_code(ErrorCode::TaskNotFound)
+        })?;
 
-        if matches!(current_task.status, TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stuck) {
+        if matches!(
+            current_task.status,
+            TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stuck
+        ) {
             let current_run = get_workflow_run(&state.db, &run.id).await?;
             return Ok(Json(json!({
                 "task": normalize_task_for_client(&current_task, &base_url),

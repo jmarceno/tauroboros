@@ -17,8 +17,8 @@ use crate::db::runtime::{
 use crate::error::{ApiError, ErrorCode};
 use crate::models::{
     AuditLevel, ExecutionPhase, ExecutionStrategy, Options, PiSessionKind, PiSessionStatus,
-    RunPhase, RunStatus, Task, TaskGroupStatus, TaskStatus, UpdateTaskInput, WorkflowRun,
-    WorkflowRunKind, WorkflowRunStatus, WSMessage,
+    RunPhase, RunStatus, Task, TaskGroupStatus, TaskStatus, UpdateTaskInput, WSMessage,
+    WorkflowRun, WorkflowRunKind, WorkflowRunStatus,
 };
 use crate::sse::hub::SseHub;
 use rocket::serde::json::json;
@@ -26,8 +26,8 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::pin::Pin;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{watch, Mutex, RwLock};
 use tracing::error;
@@ -35,8 +35,9 @@ use uuid::Uuid;
 
 pub mod best_of_n;
 pub mod git;
-pub mod plan_mode;
 pub mod pi;
+pub mod plan_mode;
+pub mod planning_session;
 pub mod review;
 
 #[derive(Debug)]
@@ -98,6 +99,7 @@ impl Orchestrator {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn audit_event(
         &self,
         level: AuditLevel,
@@ -127,6 +129,7 @@ impl Orchestrator {
         .map(|_| ())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn audit_info(
         &self,
         event_type: &'static str,
@@ -150,6 +153,7 @@ impl Orchestrator {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn audit_warn(
         &self,
         event_type: &'static str,
@@ -173,6 +177,7 @@ impl Orchestrator {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn audit_error(
         &self,
         event_type: &'static str,
@@ -203,16 +208,20 @@ impl Orchestrator {
         let tasks = get_tasks(&self.db).await?;
         let selected = select_all_runnable_tasks(&tasks)?;
         if selected.is_empty() {
-            return Err(
-                ApiError::internal("No tasks in backlog")
-                    .with_code(ErrorCode::ExecutionOperationFailed),
-            );
+            return Err(ApiError::internal("No tasks in backlog")
+                .with_code(ErrorCode::ExecutionOperationFailed));
         }
 
         self.ensure_supported_tasks(&selected)?;
 
         let run = self
-            .create_run(WorkflowRunKind::AllTasks, "Workflow run".to_string(), &selected, None, None)
+            .create_run(
+                WorkflowRunKind::AllTasks,
+                "Workflow run".to_string(),
+                &selected,
+                None,
+                None,
+            )
             .await?;
         self.schedule().await?;
         self.reload_run(&run.id).await
@@ -225,17 +234,17 @@ impl Orchestrator {
         let tasks = get_tasks(&self.db).await?;
         let selected = resolve_single_task_chain(&tasks, task_id)?;
         if selected.is_empty() {
-            return Err(
-                ApiError::internal("No tasks in backlog")
-                    .with_code(ErrorCode::ExecutionOperationFailed),
-            );
+            return Err(ApiError::internal("No tasks in backlog")
+                .with_code(ErrorCode::ExecutionOperationFailed));
         }
 
         self.ensure_supported_tasks(&selected)?;
         let target = selected
             .iter()
             .find(|task| task.id == task_id)
-            .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
+            .ok_or_else(|| {
+                ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound)
+            })?;
 
         let run = self
             .create_run(
@@ -254,35 +263,46 @@ impl Orchestrator {
         self.cleanup_stale_runs().await?;
         self.ensure_no_active_run().await?;
 
-        let group = get_task_group(&self.db, group_id).await?
-            .ok_or_else(|| ApiError::not_found("Task group not found").with_code(ErrorCode::TaskGroupNotFound))?;
+        let group = get_task_group(&self.db, group_id).await?.ok_or_else(|| {
+            ApiError::not_found("Task group not found").with_code(ErrorCode::TaskGroupNotFound)
+        })?;
         if group.task_ids.is_empty() {
-            return Err(
-                ApiError::bad_request("Cannot start group with no tasks")
-                    .with_code(ErrorCode::InvalidRequestBody),
-            );
+            return Err(ApiError::bad_request("Cannot start group with no tasks")
+                .with_code(ErrorCode::InvalidRequestBody));
         }
 
         let all_tasks = get_tasks(&self.db).await?;
-        let task_map = all_tasks.iter().cloned().map(|task| (task.id.clone(), task)).collect::<HashMap<_, _>>();
+        let task_map = all_tasks
+            .iter()
+            .cloned()
+            .map(|task| (task.id.clone(), task))
+            .collect::<HashMap<_, _>>();
         let group_tasks = group
             .task_ids
             .iter()
             .map(|task_id| {
                 task_map.get(task_id).cloned().ok_or_else(|| {
-                    ApiError::internal(format!("Task '{}' in group '{}' was not found", task_id, group.name))
-                        .with_code(ErrorCode::TaskNotFound)
+                    ApiError::internal(format!(
+                        "Task '{}' in group '{}' was not found",
+                        task_id, group.name
+                    ))
+                    .with_code(ErrorCode::TaskNotFound)
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let group_task_ids = group_tasks.iter().map(|task| task.id.clone()).collect::<HashSet<_>>();
+        let group_task_ids = group_tasks
+            .iter()
+            .map(|task| task.id.clone())
+            .collect::<HashSet<_>>();
         let external_deps = group_tasks
             .iter()
             .flat_map(|task| {
                 task.requirements_vec()
                     .into_iter()
-                    .filter(|dependency| task_map.contains_key(dependency) && !group_task_ids.contains(dependency))
+                    .filter(|dependency| {
+                        task_map.contains_key(dependency) && !group_task_ids.contains(dependency)
+                    })
                     .map(move |dependency| (task.name.clone(), dependency))
             })
             .collect::<Vec<_>>();
@@ -328,16 +348,23 @@ impl Orchestrator {
             )
             .await?;
 
-        self.broadcast("group_execution_started", json!({ "groupId": group.id, "runId": run.id }))
-            .await;
+        self.broadcast(
+            "group_execution_started",
+            json!({ "groupId": group.id, "runId": run.id }),
+        )
+        .await;
         self.schedule().await?;
         self.reload_run(&run.id).await
     }
 
     pub async fn pause_run(&self, run_id: &str) -> Result<WorkflowRun, ApiError> {
         let run = self.reload_run(run_id).await?;
-        if !matches!(run.status, WorkflowRunStatus::Queued | WorkflowRunStatus::Running | WorkflowRunStatus::Paused) {
-            return Err(ApiError::conflict("Run is not active").with_code(ErrorCode::ExecutionOperationFailed));
+        if !matches!(
+            run.status,
+            WorkflowRunStatus::Queued | WorkflowRunStatus::Running | WorkflowRunStatus::Paused
+        ) {
+            return Err(ApiError::conflict("Run is not active")
+                .with_code(ErrorCode::ExecutionOperationFailed));
         }
 
         let updated = update_workflow_run_record(
@@ -352,19 +379,24 @@ impl Orchestrator {
         .await?
         .ok_or_else(|| ApiError::not_found("Run not found").with_code(ErrorCode::RunNotFound))?;
         self.broadcast_run(&updated).await;
-        self.broadcast("run_paused", json!({ "runId": run_id })).await;
+        self.broadcast("run_paused", json!({ "runId": run_id }))
+            .await;
         Ok(updated)
     }
 
     pub async fn resume_run(&self, run_id: &str) -> Result<WorkflowRun, ApiError> {
         let run = self.reload_run(run_id).await?;
         if run.status != WorkflowRunStatus::Paused {
-            return Err(ApiError::conflict("Run is not paused").with_code(ErrorCode::ExecutionOperationFailed));
+            return Err(ApiError::conflict("Run is not paused")
+                .with_code(ErrorCode::ExecutionOperationFailed));
         }
 
         let has_active_task = {
             let runtime = self.runtime.lock().await;
-            runtime.active_tasks.values().any(|control| control.run_id == run_id)
+            runtime
+                .active_tasks
+                .values()
+                .any(|control| control.run_id == run_id)
         };
 
         let updated = update_workflow_run_record(
@@ -384,14 +416,19 @@ impl Orchestrator {
         .ok_or_else(|| ApiError::not_found("Run not found").with_code(ErrorCode::RunNotFound))?;
 
         self.broadcast_run(&updated).await;
-        self.broadcast("run_resumed", json!({ "runId": run_id })).await;
+        self.broadcast("run_resumed", json!({ "runId": run_id }))
+            .await;
         if !has_active_task {
             self.schedule().await?;
         }
         self.reload_run(run_id).await
     }
 
-    pub async fn stop_run(&self, run_id: &str, destructive: bool) -> Result<CleanRunResult, ApiError> {
+    pub async fn stop_run(
+        &self,
+        run_id: &str,
+        destructive: bool,
+    ) -> Result<CleanRunResult, ApiError> {
         let run = self.reload_run(run_id).await?;
         if !matches!(
             run.status,
@@ -400,7 +437,8 @@ impl Orchestrator {
                 | WorkflowRunStatus::Paused
                 | WorkflowRunStatus::Stopping
         ) {
-            return Err(ApiError::conflict("Run is not active").with_code(ErrorCode::ExecutionOperationFailed));
+            return Err(ApiError::conflict("Run is not active")
+                .with_code(ErrorCode::ExecutionOperationFailed));
         }
 
         let updated = update_workflow_run_record(
@@ -442,9 +480,13 @@ impl Orchestrator {
             self.finalize_run_after_stop(run_id).await?;
         }
 
-        self.broadcast("run_stopped", json!({ "runId": run_id, "destructive": destructive }))
+        self.broadcast(
+            "run_stopped",
+            json!({ "runId": run_id, "destructive": destructive }),
+        )
+        .await;
+        self.broadcast("execution_stopped", json!({ "runId": run_id }))
             .await;
-        self.broadcast("execution_stopped", json!({ "runId": run_id })).await;
 
         let run = self.reload_run(run_id).await?;
         Ok(CleanRunResult {
@@ -454,9 +496,19 @@ impl Orchestrator {
         })
     }
 
-    pub async fn clean_run(&self, run_id: &str, destructive: bool) -> Result<CleanRunResult, ApiError> {
+    pub async fn clean_run(
+        &self,
+        run_id: &str,
+        destructive: bool,
+    ) -> Result<CleanRunResult, ApiError> {
         let run = self.reload_run(run_id).await?;
-        let killed = if matches!(run.status, WorkflowRunStatus::Queued | WorkflowRunStatus::Running | WorkflowRunStatus::Paused | WorkflowRunStatus::Stopping) {
+        let killed = if matches!(
+            run.status,
+            WorkflowRunStatus::Queued
+                | WorkflowRunStatus::Running
+                | WorkflowRunStatus::Paused
+                | WorkflowRunStatus::Stopping
+        ) {
             self.stop_run(run_id, destructive).await?.killed
         } else {
             0
@@ -490,7 +542,8 @@ impl Orchestrator {
             }
         }
 
-        self.broadcast("run_cleaned", json!({ "runId": run_id })).await;
+        self.broadcast("run_cleaned", json!({ "runId": run_id }))
+            .await;
 
         Ok(CleanRunResult {
             run: self.reload_run(run_id).await?,
@@ -506,7 +559,10 @@ impl Orchestrator {
             .slots
             .iter()
             .enumerate()
-            .filter_map(|(index, slot)| slot.as_ref().map(|assignment| (index, assignment.task_id.clone())))
+            .filter_map(|(index, slot)| {
+                slot.as_ref()
+                    .map(|assignment| (index, assignment.task_id.clone()))
+            })
             .map(|(index, task_id)| async move {
                 let task_name = get_task(&self.db, &task_id)
                     .await
@@ -544,7 +600,9 @@ impl Orchestrator {
                 match task.status {
                     TaskStatus::Queued => queued_tasks += 1,
                     TaskStatus::Executing => executing_tasks += 1,
-                    TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stuck => completed_tasks += 1,
+                    TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stuck => {
+                        completed_tasks += 1
+                    }
                     _ => {}
                 }
             }
@@ -626,8 +684,10 @@ impl Orchestrator {
             runtime.active_run_id = Some(run.id.clone());
         }
 
-        self.broadcast("run_created", serde_json::to_value(&run)?).await;
-        self.broadcast("execution_queued", json!({ "runId": run.id })).await;
+        self.broadcast("run_created", serde_json::to_value(&run)?)
+            .await;
+        self.broadcast("execution_queued", json!({ "runId": run.id }))
+            .await;
         self.audit_info(
             "run.created",
             format!("Created workflow run {}", run.id),
@@ -649,8 +709,10 @@ impl Orchestrator {
 
     async fn ensure_no_active_run(&self) -> Result<(), ApiError> {
         if self.active_run().await?.is_some() {
-            return Err(ApiError::conflict("A workflow is already running. Stop it first.")
-                .with_code(ErrorCode::ExecutionOperationFailed));
+            return Err(
+                ApiError::conflict("A workflow is already running. Stop it first.")
+                    .with_code(ErrorCode::ExecutionOperationFailed),
+            );
         }
         Ok(())
     }
@@ -662,17 +724,28 @@ impl Orchestrator {
 
         let runs = get_workflow_runs(&self.db).await?;
         for run in runs.into_iter().filter(|run| {
-            matches!(run.status, WorkflowRunStatus::Queued | WorkflowRunStatus::Running | WorkflowRunStatus::Paused | WorkflowRunStatus::Stopping)
+            matches!(
+                run.status,
+                WorkflowRunStatus::Queued
+                    | WorkflowRunStatus::Running
+                    | WorkflowRunStatus::Paused
+                    | WorkflowRunStatus::Stopping
+            )
         }) {
             for task_id in run.task_order_vec()? {
                 if let Some(task) = get_task(&self.db, &task_id).await? {
-                    if matches!(task.status, TaskStatus::Queued | TaskStatus::Executing | TaskStatus::Review) {
+                    if matches!(
+                        task.status,
+                        TaskStatus::Queued | TaskStatus::Executing | TaskStatus::Review
+                    ) {
                         update_task(
                             &self.db,
                             &task.id,
                             UpdateTaskInput {
                                 status: Some(TaskStatus::Backlog),
-                                error_message: Some(Some("Auto-recovered stale workflow run".to_string())),
+                                error_message: Some(Some(
+                                    "Auto-recovered stale workflow run".to_string(),
+                                )),
                                 session_id: Some(None),
                                 session_url: Some(None),
                                 ..Default::default()
@@ -716,7 +789,11 @@ impl Orchestrator {
 
     fn ensure_supported_tasks(&self, tasks: &[Task]) -> Result<(), ApiError> {
         for task in tasks {
-            if task.container_image.as_ref().is_some_and(|value| !value.trim().is_empty()) {
+            if task
+                .container_image
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
+            {
                 return Err(ApiError::internal(format!(
                     "Task '{}' requires container image execution, but the Rust backend is native-only",
                     task.name
@@ -748,7 +825,10 @@ impl Orchestrator {
                     }
                 };
 
-                if !matches!(run.status, WorkflowRunStatus::Queued | WorkflowRunStatus::Running) {
+                if !matches!(
+                    run.status,
+                    WorkflowRunStatus::Queued | WorkflowRunStatus::Running
+                ) {
                     return Ok(());
                 }
 
@@ -846,8 +926,13 @@ impl Orchestrator {
             let run_id = run.id.clone();
             let task_id = task.id.clone();
             tokio::spawn(async move {
-                let outcome = orchestrator.execute_task(run_id.clone(), task_id.clone(), slot_index, stop_rx).await;
-                if let Err(error) = orchestrator.handle_task_completion(run_id, task_id, slot_index, outcome).await {
+                let outcome = orchestrator
+                    .execute_task(run_id.clone(), task_id.clone(), slot_index, stop_rx)
+                    .await;
+                if let Err(error) = orchestrator
+                    .handle_task_completion(run_id, task_id, slot_index, outcome)
+                    .await
+                {
                     error!("failed to finalize task execution: {}", error);
                 }
             });
@@ -865,17 +950,26 @@ impl Orchestrator {
                 },
             )
             .await?
-            .ok_or_else(|| ApiError::not_found("Run not found").with_code(ErrorCode::RunNotFound))?;
+            .ok_or_else(|| {
+                ApiError::not_found("Run not found").with_code(ErrorCode::RunNotFound)
+            })?;
             self.broadcast_run(&updated).await;
-            self.broadcast("execution_started", json!({ "runId": run.id })).await;
+            self.broadcast("execution_started", json!({ "runId": run.id }))
+                .await;
         }
 
         self.refresh_run_counts(&run.id).await?;
-        self.broadcast("slot_started", json!({ "runId": run.id, "taskId": task.id, "slotIndex": slot_index }))
-            .await;
+        self.broadcast(
+            "slot_started",
+            json!({ "runId": run.id, "taskId": task.id, "slotIndex": slot_index }),
+        )
+        .await;
         self.audit_info(
             "task.dispatched",
-            format!("Dispatched task {} into execution slot {}", task.id, slot_index),
+            format!(
+                "Dispatched task {} into execution slot {}",
+                task.id, slot_index
+            ),
             Some(&run.id),
             Some(&task.id),
             None,
@@ -897,7 +991,10 @@ impl Orchestrator {
         slot_index: usize,
         stop_rx: watch::Receiver<bool>,
     ) -> TaskOutcome {
-        match self.execute_task_inner(&run_id, &task_id, slot_index, stop_rx).await {
+        match self
+            .execute_task_inner(&run_id, &task_id, slot_index, stop_rx)
+            .await
+        {
             Ok(outcome) => outcome,
             Err(error) => TaskOutcome {
                 status: TaskStatus::Failed,
@@ -913,9 +1010,9 @@ impl Orchestrator {
         slot_index: usize,
         stop_rx: watch::Receiver<bool>,
     ) -> Result<TaskOutcome, ApiError> {
-        let task = get_task(&self.db, task_id)
-            .await?
-            .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
+        let task = get_task(&self.db, task_id).await?.ok_or_else(|| {
+            ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound)
+        })?;
         let options = get_options(&self.db).await?;
         self.ensure_supported_tasks(std::slice::from_ref(&task))?;
 
@@ -929,7 +1026,9 @@ impl Orchestrator {
 
         // Best-of-N: full lifecycle with its own worktree management
         if task.execution_strategy == ExecutionStrategy::BestOfN {
-            return self.run_best_of_n(&task, run_id, &options, slot_index, stop_rx).await;
+            return self
+                .run_best_of_n(&task, run_id, &options, slot_index, stop_rx)
+                .await;
         }
 
         // Plan mode: planning or implementation phase
@@ -947,14 +1046,15 @@ impl Orchestrator {
                 Some(options.branch.as_str()),
             )
             .await?;
-            let worktree = create_task_worktree(&self.project_root, &task.id, &task.name, &target_branch)
-                .await?;
+            let worktree =
+                create_task_worktree(&self.project_root, &task.id, &task.name, &target_branch)
+                    .await?;
             if !options.command.trim().is_empty() {
-                if let Err(error) = run_shell_command(options.command.trim(), &worktree.directory).await {
-                    return Err(error);
-                }
+                run_shell_command(options.command.trim(), &worktree.directory).await?;
             }
-            return self.run_plan_mode(&task, run_id, &options, &worktree, slot_index, stop_rx).await;
+            return self
+                .run_plan_mode(&task, run_id, &options, &worktree, slot_index, stop_rx)
+                .await;
         }
 
         self.audit_info(
@@ -980,11 +1080,15 @@ impl Orchestrator {
             task.branch.as_deref(),
             Some(options.branch.as_str()),
         )
-        .await {
+        .await
+        {
             Ok(branch) => {
                 self.audit_info(
                     "task.branch_resolved",
-                    format!("Resolved execution branch '{}' for task {}", branch, task.id),
+                    format!(
+                        "Resolved execution branch '{}' for task {}",
+                        branch, task.id
+                    ),
                     Some(run_id),
                     Some(&task.id),
                     None,
@@ -1016,41 +1120,44 @@ impl Orchestrator {
                 return Err(error);
             }
         };
-        let worktree = match create_task_worktree(&self.project_root, &task.id, &task.name, &target_branch).await {
-            Ok(worktree) => {
-                self.audit_info(
-                    "task.worktree_created",
-                    format!("Created worktree for task {}", task.id),
-                    Some(run_id),
-                    Some(&task.id),
-                    None,
-                    None,
-                    json!({
-                        "worktreeDir": worktree.directory,
-                        "worktreeBranch": worktree.branch,
-                        "baseRef": worktree.base_ref
-                    }),
-                )
-                .await?;
-                worktree
-            }
-            Err(error) => {
-                self.audit_error(
-                    "task.worktree_create_failed",
-                    format!("Failed to create worktree for task {}", task.id),
-                    Some(run_id),
-                    Some(&task.id),
-                    None,
-                    None,
-                    json!({
-                        "targetBranch": target_branch,
-                        "error": error.to_string()
-                    }),
-                )
-                .await?;
-                return Err(error);
-            }
-        };
+        let worktree =
+            match create_task_worktree(&self.project_root, &task.id, &task.name, &target_branch)
+                .await
+            {
+                Ok(worktree) => {
+                    self.audit_info(
+                        "task.worktree_created",
+                        format!("Created worktree for task {}", task.id),
+                        Some(run_id),
+                        Some(&task.id),
+                        None,
+                        None,
+                        json!({
+                            "worktreeDir": worktree.directory,
+                            "worktreeBranch": worktree.branch,
+                            "baseRef": worktree.base_ref
+                        }),
+                    )
+                    .await?;
+                    worktree
+                }
+                Err(error) => {
+                    self.audit_error(
+                        "task.worktree_create_failed",
+                        format!("Failed to create worktree for task {}", task.id),
+                        Some(run_id),
+                        Some(&task.id),
+                        None,
+                        None,
+                        json!({
+                            "targetBranch": target_branch,
+                            "error": error.to_string()
+                        }),
+                    )
+                    .await?;
+                    return Err(error);
+                }
+            };
 
         if !options.command.trim().is_empty() {
             self.audit_info(
@@ -1067,7 +1174,8 @@ impl Orchestrator {
             )
             .await?;
 
-            if let Err(error) = run_shell_command(options.command.trim(), &worktree.directory).await {
+            if let Err(error) = run_shell_command(options.command.trim(), &worktree.directory).await
+            {
                 self.audit_error(
                     "task.pre_execution_command_failed",
                     format!("Pre-execution command failed for task {}", task.id),
@@ -1201,14 +1309,17 @@ impl Orchestrator {
         )
         .await?;
 
-        let prompt = render_execution_prompt(&self.db, &task, &options, &worktree.directory).await?;
+        let prompt =
+            render_execution_prompt(&self.db, &task, &options, &worktree.directory).await?;
         let executor = PiSessionExecutor::new(
             self.db.clone(),
             self.sse_hub.clone(),
             self.project_root.clone(),
         );
 
-        let response = executor.run_prompt(session.clone(), &model, &prompt, stop_rx.clone()).await;
+        let response = executor
+            .run_prompt(session.clone(), &model, &prompt, stop_rx.clone())
+            .await;
         match response {
             Ok(response_text) => {
                 let committed = if task.auto_commit {
@@ -1246,7 +1357,11 @@ impl Orchestrator {
                 } else if task.agent_output.trim().is_empty() {
                     format!("{}\n", response_text.trim())
                 } else {
-                    format!("{}\n{}\n", task.agent_output.trim_end(), response_text.trim())
+                    format!(
+                        "{}\n{}\n",
+                        task.agent_output.trim_end(),
+                        response_text.trim()
+                    )
                 };
 
                 update_task(
@@ -1261,9 +1376,9 @@ impl Orchestrator {
                     },
                 )
                 .await?;
-                let updated_task = get_task(&self.db, &task.id)
-                    .await?
-                    .ok_or_else(|| ApiError::internal("Task disappeared after successful execution"))?;
+                let updated_task = get_task(&self.db, &task.id).await?.ok_or_else(|| {
+                    ApiError::internal("Task disappeared after successful execution")
+                })?;
                 self.broadcast_task(&updated_task).await;
 
                 update_task_run_record(
@@ -1434,7 +1549,8 @@ impl Orchestrator {
         }
 
         if outcome.status == TaskStatus::Failed {
-            self.mark_remaining_tasks_blocked(&run_id, &task_id, outcome.error_message.as_deref()).await?;
+            self.mark_remaining_tasks_blocked(&run_id, &task_id, outcome.error_message.as_deref())
+                .await?;
             if remaining_active > 0 {
                 let _ = self.signal_stop_for_run(&run_id).await;
             }
@@ -1458,7 +1574,9 @@ impl Orchestrator {
         let message = format!(
             "Workflow halted after task '{}' failed{}",
             failed_task_id,
-            reason.map(|value| format!(": {}", value)).unwrap_or_default()
+            reason
+                .map(|value| format!(": {}", value))
+                .unwrap_or_default()
         );
 
         for task_id in run.task_order_vec()? {
@@ -1499,7 +1617,10 @@ impl Orchestrator {
         self.broadcast_run(&updated).await;
         self.audit_warn(
             "run.blocked_after_task_failure",
-            format!("Workflow run {} halted after task {} failed", run_id, failed_task_id),
+            format!(
+                "Workflow run {} halted after task {} failed",
+                run_id, failed_task_id
+            ),
             Some(run_id),
             Some(failed_task_id),
             None,
@@ -1529,13 +1650,21 @@ impl Orchestrator {
             }
         }
 
-        let any_failed = loaded.iter().any(|task| matches!(task.status, TaskStatus::Failed | TaskStatus::Stuck));
-        let all_terminal = loaded
+        let any_failed = loaded
             .iter()
-            .all(|task| matches!(task.status, TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stuck));
+            .any(|task| matches!(task.status, TaskStatus::Failed | TaskStatus::Stuck));
+        let all_terminal = loaded.iter().all(|task| {
+            matches!(
+                task.status,
+                TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stuck
+            )
+        });
         let has_active_tasks = {
             let runtime = self.runtime.lock().await;
-            runtime.active_tasks.values().any(|control| control.run_id == run_id)
+            runtime
+                .active_tasks
+                .values()
+                .any(|control| control.run_id == run_id)
         };
 
         if has_active_tasks {
@@ -1575,9 +1704,19 @@ impl Orchestrator {
 
         if final_status == WorkflowRunStatus::Completed {
             if let Some(group_id) = updated.group_id.clone() {
-                let _ = update_task_group(&self.db, &group_id, None, None, Some(TaskGroupStatus::Completed)).await?;
-                self.broadcast("group_execution_complete", json!({ "groupId": group_id, "runId": updated.id }))
-                    .await;
+                let _ = update_task_group(
+                    &self.db,
+                    &group_id,
+                    None,
+                    None,
+                    Some(TaskGroupStatus::Completed),
+                )
+                .await?;
+                self.broadcast(
+                    "group_execution_complete",
+                    json!({ "groupId": group_id, "runId": updated.id }),
+                )
+                .await;
             }
         }
 
@@ -1600,7 +1739,10 @@ impl Orchestrator {
                 AuditLevel::Warn
             },
             "run.finalized",
-            format!("Workflow run {} finalized with status {:?}", updated.id, final_status),
+            format!(
+                "Workflow run {} finalized with status {:?}",
+                updated.id, final_status
+            ),
             Some(&updated.id),
             updated.current_task_id.as_deref(),
             None,
@@ -1708,7 +1850,10 @@ impl Orchestrator {
     }
 
     fn session_url_for(&self, session_id: &str) -> String {
-        format!("http://localhost:{}/sessions/{}?mode=compact", self.port, session_id)
+        format!(
+            "http://localhost:{}/sessions/{}?mode=compact",
+            self.port, session_id
+        )
     }
 
     fn pi_session_file_for(&self, session_id: &str) -> String {
@@ -1746,7 +1891,11 @@ pub(super) struct TaskOutcome {
 }
 
 fn select_all_runnable_tasks(tasks: &[Task]) -> Result<Vec<Task>, ApiError> {
-    let task_map = tasks.iter().cloned().map(|task| (task.id.clone(), task)).collect::<HashMap<_, _>>();
+    let task_map = tasks
+        .iter()
+        .cloned()
+        .map(|task| (task.id.clone(), task))
+        .collect::<HashMap<_, _>>();
     let pending = tasks
         .iter()
         .filter(|task| matches!(task.status, TaskStatus::Backlog | TaskStatus::Template))
@@ -1764,7 +1913,10 @@ fn select_all_runnable_tasks(tasks: &[Task]) -> Result<Vec<Task>, ApiError> {
 
             let dependencies_ready = task.requirements_vec().into_iter().all(|dependency_id| {
                 match task_map.get(&dependency_id) {
-                    Some(dependency) => dependency.status == TaskStatus::Done || selected_ids.contains(&dependency_id),
+                    Some(dependency) => {
+                        dependency.status == TaskStatus::Done
+                            || selected_ids.contains(&dependency_id)
+                    }
                     None => true,
                 }
             });
@@ -1785,7 +1937,11 @@ fn select_all_runnable_tasks(tasks: &[Task]) -> Result<Vec<Task>, ApiError> {
 }
 
 fn resolve_single_task_chain(tasks: &[Task], task_id: &str) -> Result<Vec<Task>, ApiError> {
-    let task_map = tasks.iter().cloned().map(|task| (task.id.clone(), task)).collect::<HashMap<_, _>>();
+    let task_map = tasks
+        .iter()
+        .cloned()
+        .map(|task| (task.id.clone(), task))
+        .collect::<HashMap<_, _>>();
     let mut ordered = Vec::new();
     let mut visited = HashSet::new();
     let mut visiting = HashSet::new();
@@ -1802,10 +1958,11 @@ fn resolve_single_task_chain(tasks: &[Task], task_id: &str) -> Result<Vec<Task>,
             return Ok(());
         }
         if !visiting.insert(task_id.to_string()) {
-            return Err(
-                ApiError::internal(format!("Circular dependency detected while resolving {}", task_id))
-                    .with_code(ErrorCode::ExecutionOperationFailed),
-            );
+            return Err(ApiError::internal(format!(
+                "Circular dependency detected while resolving {}",
+                task_id
+            ))
+            .with_code(ErrorCode::ExecutionOperationFailed));
         }
 
         let task = task_map.get(task_id).cloned().ok_or_else(|| {
@@ -1819,7 +1976,10 @@ fn resolve_single_task_chain(tasks: &[Task], task_id: &str) -> Result<Vec<Task>,
             if dependency.status == TaskStatus::Done {
                 continue;
             }
-            if !matches!(dependency.status, TaskStatus::Backlog | TaskStatus::Template) {
+            if !matches!(
+                dependency.status,
+                TaskStatus::Backlog | TaskStatus::Template
+            ) {
                 let message = if is_target {
                     format!(
                         "Task '{}' is blocked by dependency '{}' in status '{:?}'",
@@ -1831,7 +1991,9 @@ fn resolve_single_task_chain(tasks: &[Task], task_id: &str) -> Result<Vec<Task>,
                         dependency.name, dependency.status
                     )
                 };
-                return Err(ApiError::conflict(message).with_code(ErrorCode::ExecutionOperationFailed));
+                return Err(
+                    ApiError::conflict(message).with_code(ErrorCode::ExecutionOperationFailed)
+                );
             }
             visit(&dependency.id, task_map, visited, visiting, ordered, false)?;
         }
@@ -1840,13 +2002,11 @@ fn resolve_single_task_chain(tasks: &[Task], task_id: &str) -> Result<Vec<Task>,
         visited.insert(task_id.to_string());
         if task.status != TaskStatus::Done {
             if !matches!(task.status, TaskStatus::Backlog | TaskStatus::Template) {
-                return Err(
-                    ApiError::conflict(format!(
-                        "Task '{}' is not runnable from status '{:?}'",
-                        task.name, task.status
-                    ))
-                    .with_code(ErrorCode::ExecutionOperationFailed),
-                );
+                return Err(ApiError::conflict(format!(
+                    "Task '{}' is not runnable from status '{:?}'",
+                    task.name, task.status
+                ))
+                .with_code(ErrorCode::ExecutionOperationFailed));
             }
             ordered.push(task);
         }
@@ -1854,12 +2014,23 @@ fn resolve_single_task_chain(tasks: &[Task], task_id: &str) -> Result<Vec<Task>,
         Ok(())
     }
 
-    visit(task_id, &task_map, &mut visited, &mut visiting, &mut ordered, true)?;
+    visit(
+        task_id,
+        &task_map,
+        &mut visited,
+        &mut visiting,
+        &mut ordered,
+        true,
+    )?;
     Ok(ordered)
 }
 
 fn order_subset_by_dependencies(tasks: &[Task]) -> Result<Vec<Task>, ApiError> {
-    let task_map = tasks.iter().cloned().map(|task| (task.id.clone(), task)).collect::<HashMap<_, _>>();
+    let task_map = tasks
+        .iter()
+        .cloned()
+        .map(|task| (task.id.clone(), task))
+        .collect::<HashMap<_, _>>();
     let mut ordered = Vec::new();
     let mut visited = HashSet::new();
     let mut visiting = HashSet::new();
@@ -1875,10 +2046,11 @@ fn order_subset_by_dependencies(tasks: &[Task]) -> Result<Vec<Task>, ApiError> {
             return Ok(());
         }
         if !visiting.insert(task.id.clone()) {
-            return Err(
-                ApiError::internal(format!("Circular dependency detected in group at task '{}'", task.name))
-                    .with_code(ErrorCode::ExecutionOperationFailed),
-            );
+            return Err(ApiError::internal(format!(
+                "Circular dependency detected in group at task '{}'",
+                task.name
+            ))
+            .with_code(ErrorCode::ExecutionOperationFailed));
         }
 
         for dependency_id in task.requirements_vec() {
@@ -1902,20 +2074,23 @@ fn order_subset_by_dependencies(tasks: &[Task]) -> Result<Vec<Task>, ApiError> {
 }
 
 pub(super) fn resolve_execution_model(task: &Task, options: &Options) -> Result<String, ApiError> {
-    if let Some(model) = task.execution_model.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty() && *value != "default") {
+    if let Some(model) = task
+        .execution_model
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty() && *value != "default")
+    {
         return Ok(model.to_string());
     }
     let global = options.execution_model.trim();
     if !global.is_empty() && global != "default" {
         return Ok(global.to_string());
     }
-    Err(
-        ApiError::bad_request(format!(
-            "Task '{}' has no execution model configured and options.executionModel is empty",
-            task.name
-        ))
-        .with_code(ErrorCode::InvalidModel),
-    )
+    Err(ApiError::bad_request(format!(
+        "Task '{}' has no execution model configured and options.executionModel is empty",
+        task.name
+    ))
+    .with_code(ErrorCode::InvalidModel))
 }
 
 pub(super) fn render_prompt_template(template: &str, variables: &[(&str, &str)]) -> String {
@@ -1948,10 +2123,13 @@ async fn render_execution_prompt(
 
     Ok(template
         .template_text
-        .replace("{{execution_intro}}", &format!(
-            "Implement the task directly from the task prompt. Work inside this worktree: {}",
-            worktree_dir
-        ))
+        .replace(
+            "{{execution_intro}}",
+            &format!(
+                "Implement the task directly from the task prompt. Work inside this worktree: {}",
+                worktree_dir
+            ),
+        )
         .replace("{{task.prompt}}", &task.prompt)
         .replace("{{approved_plan_block}}", "")
         .replace("{{user_guidance_block}}", "")

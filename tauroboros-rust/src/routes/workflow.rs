@@ -1,11 +1,11 @@
 use crate::db::queries::*;
-use rocket::routes;
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
 use crate::state::AppStateType;
 use rocket::form::FromForm;
-use rocket::State;
+use rocket::routes;
 use rocket::serde::json::{json, Json, Value};
+use rocket::State;
 use rocket::{get, post, Route};
 use serde::Deserialize;
 
@@ -31,8 +31,11 @@ async fn build_execution_graph_response(
     let options = get_options(&state.db).await?;
 
     if let Some(ref selected_group_id) = group_id {
-        let group = get_task_group(&state.db, selected_group_id).await?
-            .ok_or_else(|| ApiError::not_found("Task group not found").with_code(ErrorCode::TaskGroupNotFound))?;
+        let group = get_task_group(&state.db, selected_group_id)
+            .await?
+            .ok_or_else(|| {
+                ApiError::not_found("Task group not found").with_code(ErrorCode::TaskGroupNotFound)
+            })?;
         tasks.retain(|task| group.task_ids.contains(&task.id));
     }
 
@@ -40,8 +43,9 @@ async fn build_execution_graph_response(
     let mut edges = vec![];
 
     for task in &tasks {
-        let requirements: Vec<String> = serde_json::from_str(&task.requirements.clone().unwrap_or("[]".to_string()))
-            .unwrap_or_default();
+        let requirements: Vec<String> =
+            serde_json::from_str(&task.requirements.clone().unwrap_or("[]".to_string()))
+                .unwrap_or_default();
 
         nodes.push(json!({
             "id": task.id,
@@ -70,7 +74,7 @@ async fn build_execution_graph_response(
 #[get("/api/workflow/status")]
 async fn get_workflow_status(state: &State<AppStateType>) -> ApiResult<Json<Value>> {
     let has_running = has_running_workflows(&state.db).await?;
-    
+
     Ok(Json(json!({
         "hasRunningWorkflows": has_running,
     })))
@@ -83,8 +87,13 @@ async fn start_workflow(state: &State<AppStateType>) -> ApiResult<Json<Value>> {
 }
 
 #[post("/api/workflow/start-single", data = "<req>")]
-async fn start_single_task(state: &State<AppStateType>, req: Json<Value>) -> ApiResult<Json<Value>> {
-    let task_id = req.get("taskId").and_then(|v| v.as_str())
+async fn start_single_task(
+    state: &State<AppStateType>,
+    req: Json<Value>,
+) -> ApiResult<Json<Value>> {
+    let task_id = req
+        .get("taskId")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| ApiError::bad_request("taskId is required"))?;
 
     let run = state.orchestrator.start_single(task_id).await?;
@@ -111,7 +120,9 @@ async fn stop_workflow(state: &State<AppStateType>) -> ApiResult<Json<Value>> {
 async fn pause_workflow(state: &State<AppStateType>) -> ApiResult<Json<Value>> {
     let active = state.orchestrator.active_run().await?;
     let Some(run) = active else {
-        return Err(ApiError::not_found("No running workflow run").with_code(ErrorCode::RunNotFound));
+        return Err(
+            ApiError::not_found("No running workflow run").with_code(ErrorCode::RunNotFound)
+        );
     };
 
     let updated = state.orchestrator.pause_run(&run.id).await?;
@@ -122,10 +133,13 @@ async fn pause_workflow(state: &State<AppStateType>) -> ApiResult<Json<Value>> {
 async fn resume_workflow(state: &State<AppStateType>) -> ApiResult<Json<Value>> {
     let active = state.orchestrator.active_run().await?;
     let Some(run) = active else {
-        let paused = get_workflow_runs(&state.db).await?
+        let paused = get_workflow_runs(&state.db)
+            .await?
             .into_iter()
             .find(|candidate| candidate.status == WorkflowRunStatus::Paused)
-            .ok_or_else(|| ApiError::not_found("No paused workflow run").with_code(ErrorCode::RunNotFound))?;
+            .ok_or_else(|| {
+                ApiError::not_found("No paused workflow run").with_code(ErrorCode::RunNotFound)
+            })?;
         let updated = state.orchestrator.resume_run(&paused.id).await?;
         return Ok(Json(json!({ "success": true, "run": updated })));
     };
@@ -145,7 +159,10 @@ async fn get_run_queue_status(state: &State<AppStateType>, id: String) -> ApiRes
 }
 
 #[post("/api/workflow/clean-run", data = "<req>")]
-async fn clean_run(state: &State<AppStateType>, req: Json<CleanRunRequest>) -> ApiResult<Json<Value>> {
+async fn clean_run(
+    state: &State<AppStateType>,
+    req: Json<CleanRunRequest>,
+) -> ApiResult<Json<Value>> {
     let run_id = &req.run_id;
     let destructive = req.destructive.unwrap_or(false);
 
@@ -160,12 +177,18 @@ async fn clean_run(state: &State<AppStateType>, req: Json<CleanRunRequest>) -> A
 }
 
 #[get("/api/execution-graph?<query..>")]
-async fn get_execution_graph(state: &State<AppStateType>, query: Option<ExecutionGraphQuery>) -> ApiResult<Json<Value>> {
+async fn get_execution_graph(
+    state: &State<AppStateType>,
+    query: Option<ExecutionGraphQuery>,
+) -> ApiResult<Json<Value>> {
     build_execution_graph_response(state, query.and_then(|value| value.group_id)).await
 }
 
 #[get("/api/workflow/execution-graph?<query..>")]
-async fn get_workflow_execution_graph(state: &State<AppStateType>, query: Option<ExecutionGraphQuery>) -> ApiResult<Json<Value>> {
+async fn get_workflow_execution_graph(
+    state: &State<AppStateType>,
+    query: Option<ExecutionGraphQuery>,
+) -> ApiResult<Json<Value>> {
     build_execution_graph_response(state, query.and_then(|value| value.group_id)).await
 }
 

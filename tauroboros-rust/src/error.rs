@@ -1,6 +1,6 @@
 use rocket::http::Status;
-use rocket::serde::json::{json, Value};
 use rocket::response::{self, Responder, Response};
+use rocket::serde::json::{json, Value};
 use rocket::Request;
 use thiserror::Error;
 
@@ -14,27 +14,27 @@ pub enum ErrorCode {
     ServiceUnavailable = 1002,
     InvalidJsonBody = 1003,
     InvalidRequestBody = 1004,
-    
+
     // Task errors
     TaskNotFound = 2000,
     TaskAlreadyExists = 2001,
     TaskBlocked = 2002,
     TaskAlreadyExecuting = 2003,
     InvalidTaskCreationInput = 2004,
-    
+
     // Run errors
     RunNotFound = 3000,
     RunAlreadyExists = 3001,
     ExecutionOperationFailed = 3002,
-    
+
     // Session errors
     SessionNotFound = 4000,
     SessionAlreadyExists = 4001,
-    
+
     // Task group errors
     TaskGroupNotFound = 5000,
     TaskAlreadyInGroup = 5001,
-    
+
     // Planning errors
     PlanningPromptNotConfigured = 6000,
     PlanningSessionCreateFailed = 6001,
@@ -44,18 +44,18 @@ pub enum ErrorCode {
     PlanningSessionCloseFailed = 6005,
     NotAPlanningSession = 6006,
     MessageSendFailed = 6007,
-    
+
     // Validation errors
     InvalidModel = 7000,
     InvalidThinkingLevel = 7001,
     InvalidExecutionStrategy = 7002,
     InvalidColor = 7003,
     InvalidTaskGroupStatus = 7004,
-    
+
     // Container errors (kept for compatibility but not used)
     ContainerOperationFailed = 8000,
     ProfileNotFound = 8001,
-    
+
     // External dependency errors
     ExternalDependenciesBlocked = 9000,
     InvalidContainerImages = 9001,
@@ -107,23 +107,14 @@ impl ErrorCode {
 #[derive(Error, Debug)]
 pub enum ApiError {
     #[error("{message}")]
-    BadRequest {
-        message: String,
-        code: ErrorCode,
-    },
-    
+    BadRequest { message: String, code: ErrorCode },
+
     #[error("{message}")]
-    NotFound {
-        message: String,
-        code: ErrorCode,
-    },
-    
+    NotFound { message: String, code: ErrorCode },
+
     #[error("{message}")]
-    Conflict {
-        message: String,
-        code: ErrorCode,
-    },
-    
+    Conflict { message: String, code: ErrorCode },
+
     #[error("{message}")]
     InternalError {
         message: String,
@@ -131,17 +122,14 @@ pub enum ApiError {
         #[source]
         cause: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
-    
+
     #[error("Service unavailable: {message}")]
     #[allow(dead_code)]
-    ServiceUnavailable {
-        message: String,
-        code: ErrorCode,
-    },
-    
+    ServiceUnavailable { message: String, code: ErrorCode },
+
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
-    
+
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 }
@@ -153,21 +141,21 @@ impl ApiError {
             code: ErrorCode::InvalidRequestBody,
         }
     }
-    
+
     pub fn not_found(message: impl Into<String>) -> Self {
         ApiError::NotFound {
             message: message.into(),
             code: ErrorCode::Unknown,
         }
     }
-    
+
     pub fn conflict(message: impl Into<String>) -> Self {
         ApiError::Conflict {
             message: message.into(),
             code: ErrorCode::Unknown,
         }
     }
-    
+
     pub fn internal(message: impl Into<String>) -> Self {
         ApiError::InternalError {
             message: message.into(),
@@ -175,7 +163,7 @@ impl ApiError {
             cause: None,
         }
     }
-    
+
     pub fn with_code(mut self, code: ErrorCode) -> Self {
         match &mut self {
             ApiError::BadRequest { code: c, .. } => *c = code,
@@ -187,7 +175,7 @@ impl ApiError {
         }
         self
     }
-    
+
     fn status_code(&self) -> Status {
         match self {
             ApiError::BadRequest { .. } => Status::BadRequest,
@@ -199,7 +187,7 @@ impl ApiError {
             ApiError::Serialization(_) => Status::BadRequest,
         }
     }
-    
+
     fn to_json(&self) -> Value {
         let (message, code) = match self {
             ApiError::BadRequest { message, code } => (message.clone(), *code),
@@ -210,7 +198,7 @@ impl ApiError {
             ApiError::Database(e) => (e.to_string(), ErrorCode::InternalServerError),
             ApiError::Serialization(e) => (e.to_string(), ErrorCode::InvalidJsonBody),
         };
-        
+
         json!({
             "error": message,
             "code": code.as_str(),
@@ -222,7 +210,7 @@ impl<'r> Responder<'r, 'static> for ApiError {
     fn respond_to(self, req: &'r Request<'_>) -> response::Result<'static> {
         let status = self.status_code();
         let json = self.to_json();
-        
+
         Response::build_from(json.respond_to(req)?)
             .status(status)
             .header(rocket::http::ContentType::JSON)

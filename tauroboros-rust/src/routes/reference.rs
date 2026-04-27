@@ -2,10 +2,10 @@ use crate::error::{ApiError, ApiResult};
 use crate::models::*;
 use crate::orchestrator::git::list_branches;
 use crate::state::AppStateType;
-use rocket::serde::json::Json;
 use rocket::routes;
-use rocket::{get, Route};
+use rocket::serde::json::Json;
 use rocket::State;
+use rocket::{get, Route};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
@@ -40,11 +40,17 @@ fn model_catalog_candidates(state: &AppStateType) -> Vec<PathBuf> {
 
 fn load_model_catalog_from_path(path: &Path) -> Result<ModelCatalog, ApiError> {
     let raw = fs::read_to_string(path).map_err(|error| {
-        ApiError::internal(format!("Failed to read model catalog {}: {error}", path.display()))
+        ApiError::internal(format!(
+            "Failed to read model catalog {}: {error}",
+            path.display()
+        ))
     })?;
 
     let parsed: RawModelsFile = serde_json::from_str(&raw).map_err(|error| {
-        ApiError::internal(format!("Failed to parse model catalog {}: {error}", path.display()))
+        ApiError::internal(format!(
+            "Failed to parse model catalog {}: {error}",
+            path.display()
+        ))
     })?;
 
     let mut providers = parsed
@@ -84,7 +90,10 @@ fn load_model_catalog_from_path(path: &Path) -> Result<ModelCatalog, ApiError> {
     providers.sort_by(|left, right| left.name.cmp(&right.name));
 
     if providers.is_empty() {
-        return Err(ApiError::internal(format!("No models found in {}", path.display())));
+        return Err(ApiError::internal(format!(
+            "No models found in {}",
+            path.display()
+        )));
     }
 
     Ok(ModelCatalog {
@@ -109,7 +118,9 @@ async fn get_models(state: &State<AppStateType>) -> ApiResult<Json<ModelCatalog>
         }
     }
 
-    Err(ApiError::internal("No model catalog file found in .tauroboros/agent/models.json or ~/.pi/agent/models.json"))
+    Err(ApiError::internal(
+        "No model catalog file found in .tauroboros/agent/models.json or ~/.pi/agent/models.json",
+    ))
 }
 
 #[get("/api/version")]
@@ -130,10 +141,5 @@ async fn get_branches(state: &State<AppStateType>) -> ApiResult<Json<BranchList>
 }
 
 pub fn routes() -> Vec<Route> {
-    routes![
-        healthz,
-        get_models,
-        get_version,
-        get_branches,
-    ]
+    routes![healthz, get_models, get_version, get_branches,]
 }

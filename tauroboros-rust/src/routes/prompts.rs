@@ -1,9 +1,9 @@
-use rocket::routes;
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::PromptTemplate;
 use crate::state::AppStateType;
-use rocket::State;
+use rocket::routes;
 use rocket::serde::json::{json, Json, Value};
+use rocket::State;
 use rocket::{get, post, Route};
 use serde::Deserialize;
 
@@ -22,7 +22,7 @@ async fn list_prompts(state: &State<AppStateType>) -> ApiResult<Json<Vec<PromptT
     .fetch_all(&state.db)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(Json(prompts))
 }
 
@@ -36,13 +36,19 @@ async fn get_prompt(state: &State<AppStateType>, key: String) -> ApiResult<Json<
     .bind(&key)
     .fetch_one(&state.db)
     .await
-    .map_err(|_| ApiError::not_found("Prompt template not found").with_code(ErrorCode::TaskNotFound))?;
-    
+    .map_err(|_| {
+        ApiError::not_found("Prompt template not found").with_code(ErrorCode::TaskNotFound)
+    })?;
+
     Ok(Json(prompt))
 }
 
 #[post("/api/prompts/<key>/render", data = "<req>")]
-async fn render_prompt(state: &State<AppStateType>, key: String, req: Json<RenderTemplateRequest>) -> ApiResult<Json<Value>> {
+async fn render_prompt(
+    state: &State<AppStateType>,
+    key: String,
+    req: Json<RenderTemplateRequest>,
+) -> ApiResult<Json<Value>> {
     let prompt: PromptTemplate = sqlx::query_as(
         r#"
         SELECT * FROM prompt_templates WHERE key = ? LIMIT 1
@@ -51,11 +57,13 @@ async fn render_prompt(state: &State<AppStateType>, key: String, req: Json<Rende
     .bind(&key)
     .fetch_one(&state.db)
     .await
-    .map_err(|_| ApiError::not_found("Prompt template not found").with_code(ErrorCode::TaskNotFound))?;
-    
+    .map_err(|_| {
+        ApiError::not_found("Prompt template not found").with_code(ErrorCode::TaskNotFound)
+    })?;
+
     // Simple template rendering - replace {{variable}} with values
     let mut rendered = prompt.template_text.clone();
-    
+
     if let Some(vars) = &req.variables {
         if let Some(obj) = vars.as_object() {
             for (key, value) in obj {
@@ -66,7 +74,7 @@ async fn render_prompt(state: &State<AppStateType>, key: String, req: Json<Rende
             }
         }
     }
-    
+
     Ok(Json(json!({
         "template": prompt,
         "renderedText": rendered,
@@ -75,9 +83,5 @@ async fn render_prompt(state: &State<AppStateType>, key: String, req: Json<Rende
 }
 
 pub fn routes() -> Vec<Route> {
-    routes![
-        list_prompts,
-        get_prompt,
-        render_prompt,
-    ]
+    routes![list_prompts, get_prompt, render_prompt,]
 }

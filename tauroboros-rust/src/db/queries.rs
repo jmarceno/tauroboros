@@ -17,7 +17,7 @@ pub async fn get_tasks(pool: &Pool<Sqlite>) -> ApiResult<Vec<Task>> {
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(tasks)
 }
 
@@ -31,7 +31,7 @@ pub async fn get_task(pool: &Pool<Sqlite>, task_id: &str) -> ApiResult<Option<Ta
     .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(task)
 }
 
@@ -45,7 +45,7 @@ pub async fn get_archived_task(pool: &Pool<Sqlite>, task_id: &str) -> ApiResult<
     .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(task)
 }
 
@@ -59,14 +59,16 @@ pub async fn get_tasks_by_status(pool: &Pool<Sqlite>, status: TaskStatus) -> Api
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(tasks)
 }
 
 pub async fn create_task_db(pool: &Pool<Sqlite>, input: CreateTaskInput) -> ApiResult<Task> {
     let now = Utc::now().timestamp();
-    let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string()[..8].to_string());
-    
+    let id = input
+        .id
+        .unwrap_or_else(|| Uuid::new_v4().to_string()[..8].to_string());
+
     // Get next idx
     let max_idx: i32 = sqlx::query_scalar(
         r#"
@@ -76,14 +78,16 @@ pub async fn create_task_db(pool: &Pool<Sqlite>, input: CreateTaskInput) -> ApiR
     .fetch_one(pool)
     .await
     .map_err(ApiError::Database)?;
-    
-    let requirements_json = input.requirements
+
+    let requirements_json = input
+        .requirements
         .map(|r| serde_json::to_string(&r).unwrap_or_default())
         .unwrap_or_else(|| "[]".to_string());
-    
-    let best_of_n_config_json = input.best_of_n_config
+
+    let best_of_n_config_json = input
+        .best_of_n_config
         .map(|c| serde_json::to_string(&c).unwrap_or_default());
-    
+
     sqlx::query(
         r#"
         INSERT INTO tasks (
@@ -130,8 +134,9 @@ pub async fn create_task_db(pool: &Pool<Sqlite>, input: CreateTaskInput) -> ApiR
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
-    
-    get_task(pool, &id).await?
+
+    get_task(pool, &id)
+        .await?
         .ok_or_else(|| ApiError::internal("Failed to create task"))
 }
 
@@ -141,24 +146,27 @@ pub async fn update_task(
     input: UpdateTaskInput,
 ) -> ApiResult<Option<Task>> {
     let now = Utc::now().timestamp();
-    
+
     // Execute individual field updates for each provided field
     // This is less efficient than a single UPDATE but is type-safe
-    
+
     macro_rules! update_field {
         ($field:expr, $column:expr) => {
             if let Some(val) = $field {
-                sqlx::query(&format!("UPDATE tasks SET {} = ?, updated_at = ? WHERE id = ?", $column))
-                    .bind(val)
-                    .bind(now)
-                    .bind(task_id)
-                    .execute(pool)
-                    .await
-                    .map_err(ApiError::Database)?;
+                sqlx::query(&format!(
+                    "UPDATE tasks SET {} = ?, updated_at = ? WHERE id = ?",
+                    $column
+                ))
+                .bind(val)
+                .bind(now)
+                .bind(task_id)
+                .execute(pool)
+                .await
+                .map_err(ApiError::Database)?;
             }
         };
     }
-    
+
     update_field!(input.name, "name");
     update_field!(input.prompt, "prompt");
     update_field!(input.status, "status");
@@ -172,7 +180,7 @@ pub async fn update_task(
     update_field!(input.auto_deploy, "auto_deploy");
     update_field!(input.auto_deploy_condition, "auto_deploy_condition");
     update_field!(input.delete_worktree, "delete_worktree");
-    
+
     if let Some(reqs) = input.requirements {
         sqlx::query("UPDATE tasks SET requirements = ?, updated_at = ? WHERE id = ?")
             .bind(serde_json::to_string(&reqs).unwrap_or_default())
@@ -182,7 +190,7 @@ pub async fn update_task(
             .await
             .map_err(ApiError::Database)?;
     }
-    
+
     update_field!(input.agent_output, "agent_output");
     update_field!(input.session_id, "session_id");
     update_field!(input.session_url, "session_url");
@@ -198,7 +206,7 @@ pub async fn update_task(
     update_field!(input.awaiting_plan_approval, "awaiting_plan_approval");
     update_field!(input.plan_revision_count, "plan_revision_count");
     update_field!(input.execution_strategy, "execution_strategy");
-    
+
     if let Some(config) = input.best_of_n_config {
         sqlx::query("UPDATE tasks SET best_of_n_config = ?, updated_at = ? WHERE id = ?")
             .bind(serde_json::to_string(&config).unwrap_or_default())
@@ -208,7 +216,7 @@ pub async fn update_task(
             .await
             .map_err(ApiError::Database)?;
     }
-    
+
     update_field!(input.best_of_n_substage, "best_of_n_substage");
     update_field!(input.skip_permission_asking, "skip_permission_asking");
     update_field!(input.max_review_runs_override, "max_review_runs_override");
@@ -222,13 +230,13 @@ pub async fn update_task(
     update_field!(input.self_heal_status, "self_heal_status");
     update_field!(input.self_heal_message, "self_heal_message");
     update_field!(input.self_heal_report_id, "self_heal_report_id");
-    
+
     get_task(pool, task_id).await
 }
 
 pub async fn archive_task(pool: &Pool<Sqlite>, task_id: &str) -> ApiResult<()> {
     let now = Utc::now().timestamp();
-    
+
     sqlx::query(
         r#"
         UPDATE tasks SET is_archived = 1, archived_at = ?, updated_at = ?
@@ -241,7 +249,7 @@ pub async fn archive_task(pool: &Pool<Sqlite>, task_id: &str) -> ApiResult<()> {
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(())
 }
 
@@ -251,7 +259,7 @@ pub async fn hard_delete_task(pool: &Pool<Sqlite>, task_id: &str) -> ApiResult<(
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
-    
+
     Ok(())
 }
 
@@ -265,7 +273,7 @@ pub async fn has_task_execution_history(pool: &Pool<Sqlite>, task_id: &str) -> A
     .fetch_one(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(count > 0)
 }
 
@@ -281,7 +289,7 @@ pub async fn reorder_task(pool: &Pool<Sqlite>, task_id: &str, new_idx: i32) -> A
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(())
 }
 
@@ -304,7 +312,7 @@ pub async fn get_active_workflow_run_for_task(
     .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(run)
 }
 
@@ -321,7 +329,7 @@ pub async fn get_task_groups(pool: &Pool<Sqlite>) -> ApiResult<Vec<TaskGroup>> {
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     // Load task_ids for each group
     let mut result = vec![];
     for mut group in groups {
@@ -335,11 +343,11 @@ pub async fn get_task_groups(pool: &Pool<Sqlite>) -> ApiResult<Vec<TaskGroup>> {
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)?;
-        
+
         group.task_ids = task_ids;
         result.push(group);
     }
-    
+
     Ok(result)
 }
 
@@ -353,7 +361,7 @@ pub async fn get_task_group(pool: &Pool<Sqlite>, group_id: &str) -> ApiResult<Op
     .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     if let Some(ref mut g) = group {
         let task_ids: Vec<String> = sqlx::query_scalar(
             r#"
@@ -365,10 +373,10 @@ pub async fn get_task_group(pool: &Pool<Sqlite>, group_id: &str) -> ApiResult<Op
         .fetch_all(pool)
         .await
         .map_err(ApiError::Database)?;
-        
+
         g.task_ids = task_ids;
     }
-    
+
     Ok(group)
 }
 
@@ -381,7 +389,7 @@ pub async fn create_task_group(
     let now = Utc::now().timestamp();
     let id = Uuid::new_v4().to_string()[..8].to_string();
     let color = color.unwrap_or_else(|| "#888888".to_string());
-    
+
     sqlx::query(
         r#"
         INSERT INTO task_groups (id, name, color, status, created_at, updated_at)
@@ -397,7 +405,7 @@ pub async fn create_task_group(
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     // Add member tasks
     for (idx, task_id) in member_task_ids.iter().enumerate() {
         sqlx::query(
@@ -414,8 +422,9 @@ pub async fn create_task_group(
         .await
         .map_err(ApiError::Database)?;
     }
-    
-    get_task_group(pool, &id).await?
+
+    get_task_group(pool, &id)
+        .await?
         .ok_or_else(|| ApiError::internal("Failed to create task group"))
 }
 
@@ -427,7 +436,7 @@ pub async fn update_task_group(
     status: Option<TaskGroupStatus>,
 ) -> ApiResult<Option<TaskGroup>> {
     let now = Utc::now().timestamp();
-    
+
     if let Some(name) = name {
         sqlx::query(r#"UPDATE task_groups SET name = ? WHERE id = ?"#)
             .bind(name)
@@ -436,7 +445,7 @@ pub async fn update_task_group(
             .await
             .map_err(ApiError::Database)?;
     }
-    
+
     if let Some(color) = color {
         sqlx::query(r#"UPDATE task_groups SET color = ? WHERE id = ?"#)
             .bind(color)
@@ -445,14 +454,14 @@ pub async fn update_task_group(
             .await
             .map_err(ApiError::Database)?;
     }
-    
+
     if let Some(status) = status {
         let completed_at = if status == TaskGroupStatus::Completed {
             Some(now)
         } else {
             None
         };
-        
+
         sqlx::query(
             r#"
             UPDATE task_groups 
@@ -468,7 +477,7 @@ pub async fn update_task_group(
         .await
         .map_err(ApiError::Database)?;
     }
-    
+
     get_task_group(pool, group_id).await
 }
 
@@ -479,19 +488,23 @@ pub async fn delete_task_group(pool: &Pool<Sqlite>, group_id: &str) -> ApiResult
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
-    
+
     let result = sqlx::query(r#"DELETE FROM task_groups WHERE id = ?"#)
         .bind(group_id)
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
-    
+
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn add_task_to_group(pool: &Pool<Sqlite>, group_id: &str, task_id: &str) -> ApiResult<()> {
+pub async fn add_task_to_group(
+    pool: &Pool<Sqlite>,
+    group_id: &str,
+    task_id: &str,
+) -> ApiResult<()> {
     let now = Utc::now().timestamp();
-    
+
     // Get next idx
     let max_idx: i32 = sqlx::query_scalar(
         r#"
@@ -502,7 +515,7 @@ pub async fn add_task_to_group(pool: &Pool<Sqlite>, group_id: &str, task_id: &st
     .fetch_one(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     sqlx::query(
         r#"
         INSERT OR REPLACE INTO task_group_members (group_id, task_id, idx, added_at)
@@ -516,7 +529,7 @@ pub async fn add_task_to_group(pool: &Pool<Sqlite>, group_id: &str, task_id: &st
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     // Update task's group_id
     sqlx::query(r#"UPDATE tasks SET group_id = ? WHERE id = ?"#)
         .bind(group_id)
@@ -524,7 +537,7 @@ pub async fn add_task_to_group(pool: &Pool<Sqlite>, group_id: &str, task_id: &st
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
-    
+
     Ok(())
 }
 
@@ -534,7 +547,7 @@ pub async fn add_tasks_to_group(
     task_ids: Vec<String>,
 ) -> ApiResult<i32> {
     let now = Utc::now().timestamp();
-    
+
     let mut added = 0;
     for task_id in task_ids {
         let max_idx: i32 = sqlx::query_scalar(
@@ -546,7 +559,7 @@ pub async fn add_tasks_to_group(
         .fetch_one(pool)
         .await
         .map_err(ApiError::Database)?;
-        
+
         let result = sqlx::query(
             r#"
             INSERT INTO task_group_members (group_id, task_id, idx, added_at)
@@ -561,7 +574,7 @@ pub async fn add_tasks_to_group(
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
-        
+
         if result.rows_affected() > 0 {
             added += 1;
             // Update task's group_id
@@ -573,11 +586,15 @@ pub async fn add_tasks_to_group(
                 .map_err(ApiError::Database)?;
         }
     }
-    
+
     Ok(added)
 }
 
-pub async fn remove_task_from_group(pool: &Pool<Sqlite>, group_id: &str, task_id: &str) -> ApiResult<bool> {
+pub async fn remove_task_from_group(
+    pool: &Pool<Sqlite>,
+    group_id: &str,
+    task_id: &str,
+) -> ApiResult<bool> {
     let result = sqlx::query(
         r#"
         DELETE FROM task_group_members WHERE group_id = ? AND task_id = ?
@@ -588,7 +605,7 @@ pub async fn remove_task_from_group(pool: &Pool<Sqlite>, group_id: &str, task_id
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     if result.rows_affected() > 0 {
         // Clear task's group_id
         sqlx::query(r#"UPDATE tasks SET group_id = NULL WHERE id = ?"#)
@@ -597,7 +614,7 @@ pub async fn remove_task_from_group(pool: &Pool<Sqlite>, group_id: &str, task_id
             .await
             .map_err(ApiError::Database)?;
     }
-    
+
     Ok(result.rows_affected() > 0)
 }
 
@@ -607,7 +624,7 @@ pub async fn remove_tasks_from_group(
     task_ids: &[String],
 ) -> ApiResult<i32> {
     let mut removed = 0;
-    
+
     for task_id in task_ids {
         let result = sqlx::query(
             r#"
@@ -619,7 +636,7 @@ pub async fn remove_tasks_from_group(
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
-        
+
         if result.rows_affected() > 0 {
             removed += 1;
             // Clear task's group_id
@@ -630,7 +647,7 @@ pub async fn remove_tasks_from_group(
                 .map_err(ApiError::Database)?;
         }
     }
-    
+
     Ok(removed)
 }
 
@@ -639,14 +656,14 @@ pub async fn get_task_group_membership(
     task_id: &str,
 ) -> ApiResult<(Option<String>, Option<TaskGroup>)> {
     let task = get_task(pool, task_id).await?;
-    
+
     if let Some(task) = task {
         if let Some(group_id) = &task.group_id {
             let group = get_task_group(pool, group_id).await?;
             return Ok((Some(group_id.clone()), group));
         }
     }
-    
+
     Ok((None, None))
 }
 
@@ -663,7 +680,7 @@ pub async fn get_workflow_runs(pool: &Pool<Sqlite>) -> ApiResult<Vec<WorkflowRun
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(runs)
 }
 
@@ -677,7 +694,7 @@ pub async fn get_workflow_run(pool: &Pool<Sqlite>, run_id: &str) -> ApiResult<Op
     .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(run)
 }
 
@@ -691,7 +708,7 @@ pub async fn has_running_workflows(pool: &Pool<Sqlite>) -> ApiResult<bool> {
     .fetch_one(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(count > 0)
 }
 
@@ -712,7 +729,7 @@ pub async fn get_workflow_session(
     .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(session)
 }
 
@@ -729,7 +746,7 @@ pub async fn get_workflow_sessions_by_task(
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(sessions)
 }
 
@@ -753,7 +770,7 @@ pub async fn get_session_messages_db(
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(messages)
 }
 
@@ -832,9 +849,9 @@ pub async fn create_session_message(
     .bind(&message.task_id)
     .bind(&message.task_run_id)
     .bind(message.timestamp)
-    .bind(&message.role)
+    .bind(message.role)
     .bind(&message.event_name)
-    .bind(&message.message_type)
+    .bind(message.message_type)
     .bind(&message.content_json)
     .bind(&message.model_provider)
     .bind(&message.model_id)
@@ -876,7 +893,7 @@ pub async fn get_options(pool: &Pool<Sqlite>) -> ApiResult<Options> {
     .fetch_one(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(options)
 }
 
@@ -884,7 +901,10 @@ pub async fn get_options(pool: &Pool<Sqlite>) -> ApiResult<Options> {
 // Task Candidate Queries
 // ============================================================================
 
-pub async fn get_task_candidates(pool: &Pool<Sqlite>, task_id: &str) -> ApiResult<Vec<TaskCandidate>> {
+pub async fn get_task_candidates(
+    pool: &Pool<Sqlite>,
+    task_id: &str,
+) -> ApiResult<Vec<TaskCandidate>> {
     let candidates = sqlx::query_as::<_, TaskCandidate>(
         r#"
         SELECT * FROM task_candidates WHERE task_id = ? ORDER BY created_at DESC
@@ -894,7 +914,7 @@ pub async fn get_task_candidates(pool: &Pool<Sqlite>, task_id: &str) -> ApiResul
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(candidates)
 }
 
@@ -904,7 +924,7 @@ pub async fn update_task_candidate(
     status: &str,
 ) -> ApiResult<Option<TaskCandidate>> {
     let now = Utc::now().timestamp();
-    
+
     sqlx::query(
         r#"
         UPDATE task_candidates SET status = ?, updated_at = ? WHERE id = ?
@@ -916,7 +936,7 @@ pub async fn update_task_candidate(
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     let candidate = sqlx::query_as::<_, TaskCandidate>(
         r#"
         SELECT * FROM task_candidates WHERE id = ?
@@ -926,7 +946,7 @@ pub async fn update_task_candidate(
     .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(candidate)
 }
 
@@ -947,7 +967,7 @@ pub async fn get_self_heal_reports_for_run(
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(reports)
 }
 
@@ -1003,7 +1023,7 @@ pub async fn get_task_runs(pool: &Pool<Sqlite>, task_id: &str) -> ApiResult<Vec<
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(runs)
 }
 
@@ -1023,7 +1043,7 @@ pub async fn get_task_runs_by_phase(
     .fetch_all(pool)
     .await
     .map_err(ApiError::Database)?;
-    
+
     Ok(runs)
 }
 

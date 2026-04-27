@@ -11,7 +11,7 @@ pub struct StartupSettings {
     pub db_path: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 struct InfrastructureSettings {
     skills: SkillsSettings,
@@ -34,7 +34,7 @@ struct ProjectSettings {
     r#type: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 struct WorkflowSettings {
     server: ServerSettings,
@@ -78,16 +78,6 @@ struct ContainerSettings {
     mount_podman_socket: bool,
 }
 
-impl Default for InfrastructureSettings {
-    fn default() -> Self {
-        Self {
-            skills: SkillsSettings::default(),
-            project: ProjectSettings::default(),
-            workflow: WorkflowSettings::default(),
-        }
-    }
-}
-
 impl Default for SkillsSettings {
     fn default() -> Self {
         Self {
@@ -103,15 +93,6 @@ impl Default for ProjectSettings {
         Self {
             name: "tauroboros".to_string(),
             r#type: "workflow".to_string(),
-        }
-    }
-}
-
-impl Default for WorkflowSettings {
-    fn default() -> Self {
-        Self {
-            server: ServerSettings::default(),
-            container: ContainerSettings::default(),
         }
     }
 }
@@ -211,7 +192,10 @@ pub fn load_startup_settings() -> Result<StartupSettings, String> {
         infrastructure_settings.workflow.container.cpu_count,
         infrastructure_settings.workflow.container.port_range_start,
         infrastructure_settings.workflow.container.port_range_end,
-        infrastructure_settings.workflow.container.mount_podman_socket,
+        infrastructure_settings
+            .workflow
+            .container
+            .mount_podman_socket,
     );
 
     let port = parse_port_from_env()?.unwrap_or(infrastructure_settings.workflow.server.port);
