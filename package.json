@@ -14,13 +14,15 @@
     "kanban:build": "cd src/kanban-solid && bun install --no-save && bun run build",
     "kanban:dev": "SERVER_PORT=3789 DEV_PORT=5174 bun run src/index.ts & sleep 3 && cd src/kanban-solid && bun install --no-save && SERVER_PORT=3789 DEV_PORT=5174 bun run dev",
     "pretest": "bun run scripts/generate-version.ts && bun run scripts/generate-embedded-assets.ts",
-    "test": "bun test --path-ignore-patterns='tests/e2e/**/*' tests/*.test.ts",
+    "test": "bun run node_modules/vitest/vitest.mjs run --exclude='tests/e2e/**/*'",
+    "test:watch": "bun run node_modules/vitest/vitest.mjs --exclude='tests/e2e/**/*'",
+    "test:coverage": "bun run node_modules/vitest/vitest.mjs run --coverage --exclude='tests/e2e/**/*'",
     "test:e2e": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test",
     "test:e2e:ui": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --ui",
     "test:e2e:debug": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --debug",
     "test:e2e:headed": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --headed",
     "test:e2e:real": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && TEST_TYPE=real-workflow USE_MOCK_LLM=true bunx playwright test tests/e2e/real-workflow.spec.ts",
-    "test:effect-migration": "bun run scripts/verify-migration.ts && bun test tests/effect-http-boundary.test.ts tests/frontend-store-boundaries.test.ts",
+    "test:effect-migration": "bun run scripts/verify-migration.ts && bun run node_modules/vitest/vitest.mjs run tests/effect-http-boundary.test.ts tests/frontend-store-boundaries.test.ts",
     "skills:sync": "bun run scripts/sync-skills.ts",
     "skills:install": "bun run scripts/sync-skills.ts --clean",
     "skills:verify": "bun run scripts/verify-setup.ts",
@@ -39,9 +41,9 @@
   "devDependencies": {
     "@effect/language-service": "^0.85.1",
     "@playwright/test": "^1.51.0",
-    "@types/bun": "latest",
-    "bun-types": "^1.3.11",
-    "typescript": "^6.0.3"
+    "@vitest/coverage-v8": "^3.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^3.0.0"
   },
   "dependencies": {
     "@effect/platform": "^0.96.0",

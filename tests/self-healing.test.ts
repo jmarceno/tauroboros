@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test"
+import { describe, it, expect } from "vitest"
 import { parseStrictJsonObject } from "../src/runtime/strict-json.ts"
 
 describe("Self-Healing JSON Format", () => {

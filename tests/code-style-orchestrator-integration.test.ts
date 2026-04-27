@@ -8,7 +8,7 @@
  * 4. Integration with review loop
  */
 
-import { describe, expect, it, mock, beforeEach, afterEach } from "bun:test"
+import { describe, expect, it, beforeEach, afterEach } from "vitest"
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"

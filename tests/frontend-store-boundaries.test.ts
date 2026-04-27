@@ -1,8 +1,11 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
-import { resolve } from "node:path"
+import { resolve, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 
-const ROOT = resolve(import.meta.dir, "..")
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+const ROOT = resolve(__dirname, "..")
 
 const readStore = (relativePath: string) =>
   readFileSync(resolve(ROOT, relativePath), "utf-8")
