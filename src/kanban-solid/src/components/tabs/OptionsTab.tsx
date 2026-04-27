@@ -71,20 +71,13 @@ export function OptionsTab() {
     updatedAt: number
   } | null>(null)
 
-  const [editedPlanningPrompt, setEditedPlanningPrompt] = createSignal({
-    name: '',
-    description: '',
-    promptText: '',
-  })
+  const [editedPlanningPromptText, setEditedPlanningPromptText] = createSignal('')
 
   const [isPlanningPromptLoading, setIsPlanningPromptLoading] = createSignal(true)
-  const [isPlanningPromptSaving, setIsPlanningPromptSaving] = createSignal(false)
   const [planningPromptError, setPlanningPromptError] = createSignal<string | null>(null)
 
   const hasPlanningPromptChanges = () => planningPromptData()
-    ? editedPlanningPrompt().name !== planningPromptData()!.name ||
-      editedPlanningPrompt().description !== planningPromptData()!.description ||
-      editedPlanningPrompt().promptText !== planningPromptData()!.promptText
+    ? editedPlanningPromptText() !== planningPromptData()!.promptText
     : false
 
   // Queries
@@ -188,11 +181,7 @@ export function OptionsTab() {
         const prompt = await runApiEffect(planningApi.getPrompt())
         if (cancelled) return
         setPlanningPromptData(prompt)
-        setEditedPlanningPrompt({
-          name: prompt.name,
-          description: prompt.description,
-          promptText: prompt.promptText,
-        })
+        setEditedPlanningPromptText(prompt.promptText)
       } catch (e) {
         if (!cancelled) {
           setPlanningPromptError(e instanceof Error ? e.message : 'Failed to load planning prompt')
@@ -227,6 +216,20 @@ export function OptionsTab() {
         codeStylePrompt: formData().codeStylePrompt?.trim() ? formData().codeStylePrompt : DEFAULT_CODE_STYLE_PROMPT,
       }
       await runApiEffect(optionsApi.update(optionsToSave))
+
+      // Also save planning prompt if it has changes
+      if (hasPlanningPromptChanges() && planningPromptData()) {
+        await runApiEffect(planningApi.updatePrompt({
+          key: planningPromptData()!.key,
+          name: planningPromptData()!.name,
+          description: planningPromptData()!.description,
+          promptText: editedPlanningPromptText(),
+        }))
+        // Refresh local prompt data
+        const updated = await runApiEffect(planningApi.getPrompt())
+        setPlanningPromptData(updated)
+      }
+
       await queryClient.invalidateQueries({ queryKey: ['options'] })
       uiStore.showToast('Options saved successfully', 'success')
     } catch (e) {
@@ -278,38 +281,9 @@ export function OptionsTab() {
     }
   }
 
-  const savePlanningPrompt = async () => {
-    if (!hasPlanningPromptChanges() || !planningPromptData()) return
-
-    setIsPlanningPromptSaving(true)
-    setPlanningPromptError(null)
-    try {
-      const updated = await runApiEffect(planningApi.updatePrompt({
-        key: planningPromptData()!.key,
-        name: editedPlanningPrompt().name,
-        description: editedPlanningPrompt().description,
-        promptText: editedPlanningPrompt().promptText,
-      }))
-      setPlanningPromptData(updated)
-      uiStore.showToast('Planning prompt saved successfully', 'success')
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : 'Failed to save planning prompt'
-      setPlanningPromptError(errorMessage)
-      uiStore.showToast(errorMessage, 'error')
-    } finally {
-      setIsPlanningPromptSaving(false)
-    }
-  }
-
   const resetPlanningPromptToDefault = () => {
     if (!confirm('Reset to default planning prompt? This will overwrite your customizations.')) return
-
-    setEditedPlanningPrompt(prev => ({
-      ...prev,
-      name: 'Default Planning Prompt',
-      description: 'System prompt for the planning assistant agent',
-      promptText: DEFAULT_PLANNING_PROMPT,
-    }))
+    setEditedPlanningPromptText(DEFAULT_PLANNING_PROMPT)
   }
 
   const DEFAULT_PLANNING_PROMPT = `You are a specialized Planning Assistant for software development task management.
@@ -752,64 +726,26 @@ You have access to file exploration tools to understand the codebase structure w
           <Show when={!isPlanningPromptLoading() && !planningPromptError()}>
             <div class="space-y-4">
               <div>
-                <label class="block text-sm font-medium text-dark-text mb-1">Name</label>
-                <input
-                  type="text"
-                  class="form-input"
-                  value={editedPlanningPrompt().name}
-                  onChange={(e) => setEditedPlanningPrompt(prev => ({ ...prev, name: e.currentTarget.value }))}
-                />
-              </div>
-
-              <div>
-                <label class="block text-sm font-medium text-dark-text mb-1">Description</label>
-                <input
-                  type="text"
-                  class="form-input"
-                  value={editedPlanningPrompt().description}
-                  onChange={(e) => setEditedPlanningPrompt(prev => ({ ...prev, description: e.currentTarget.value }))}
-                />
-              </div>
-
-              <div>
                 <label class="block text-sm font-medium text-dark-text mb-1">System Prompt</label>
                 <p class="text-xs text-dark-text-muted mb-2">
                   This prompt defines how the planning assistant behaves. It uses Markdown formatting.
                 </p>
                 <textarea
                   class="form-textarea font-mono text-sm min-h-[300px]"
-                  value={editedPlanningPrompt().promptText}
+                  value={editedPlanningPromptText()}
                   placeholder="Enter the system prompt for the planning assistant..."
-                  onChange={(e) => setEditedPlanningPrompt(prev => ({ ...prev, promptText: e.currentTarget.value }))}
+                  onChange={(e) => setEditedPlanningPromptText(e.currentTarget.value)}
                 />
               </div>
 
               <div class="flex items-center justify-between">
                 <button
                   class="btn btn-sm"
-                  disabled={isPlanningPromptLoading() || isPlanningPromptSaving()}
+                  disabled={isPlanningPromptLoading()}
                   onClick={resetPlanningPromptToDefault}
                 >
                   Reset to Default
                 </button>
-
-                <button
-                  class="btn btn-primary btn-sm"
-                  disabled={!hasPlanningPromptChanges() || isPlanningPromptSaving()}
-                  onClick={savePlanningPrompt}
-                >
-                  {isPlanningPromptSaving() ? 'Saving...' : 'Save Prompt'}
-                </button>
-              </div>
-
-              <div class="bg-dark-surface rounded p-3 text-sm space-y-2">
-                <h4 class="font-medium text-dark-text">Prompt Tips</h4>
-                <ul class="text-dark-text-muted space-y-1 text-xs">
-                  <li>Be specific about the assistant's role and expertise</li>
-                  <li>Define clear interaction guidelines</li>
-                  <li>Specify output formats for better structured responses</li>
-                  <li>Mention available tools and when to use them</li>
-                </ul>
               </div>
             </div>
           </Show>
