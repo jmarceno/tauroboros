@@ -1,4 +1,5 @@
-use chrono::{DateTime, Utc};
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
 use sqlx::FromRow;

@@ -6,6 +6,7 @@ use thiserror::Error;
 
 /// Error codes matching the TypeScript ErrorCode enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ErrorCode {
     // General errors
     Unknown = 1000,
@@ -132,6 +133,7 @@ pub enum ApiError {
     },
     
     #[error("Service unavailable: {message}")]
+    #[allow(dead_code)]
     ServiceUnavailable {
         message: String,
         code: ErrorCode,

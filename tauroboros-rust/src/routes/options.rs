@@ -1,11 +1,9 @@
 use crate::db::queries::*;
 use rocket::routes;
-use crate::error::{ApiError, ApiResult, ErrorCode};
+use crate::error::{ApiError, ApiResult};
 use crate::models::*;
-use crate::sse::hub::SseHub;
 use crate::state::AppStateType;
 use rocket::State;
-use chrono::Utc;
 use rocket::serde::json::{json, Json, Value};
 use rocket::{get, put, Route};
 use serde::Deserialize;
@@ -53,7 +51,7 @@ async fn update_options(state: &State<AppStateType>, req: Json<UpdateOptionsRequ
     
     macro_rules! add_option {
         ($field:ident) => {
-            if let Some(ref val) = req.$field {
+            if let Some(ref _val) = req.$field {
                 sets.push(format!("{} = ?", stringify!($field).replace("_", "_")));
             }
         };

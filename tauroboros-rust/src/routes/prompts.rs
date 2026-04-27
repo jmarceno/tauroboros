@@ -1,7 +1,6 @@
-use crate::db::queries::*;
 use rocket::routes;
 use crate::error::{ApiError, ApiResult, ErrorCode};
-use crate::models::*;
+use crate::models::PromptTemplate;
 use crate::state::AppStateType;
 use rocket::State;
 use rocket::serde::json::{json, Json, Value};

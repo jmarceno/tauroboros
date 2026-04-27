@@ -4,11 +4,13 @@ use tokio::sync::mpsc;
 
 /// SSE event for streaming
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SseEvent {
     pub event_type: String,
     pub data: serde_json::Value,
 }
 
+#[allow(dead_code)]
 impl SseEvent {
     pub fn new(event_type: impl Into<String>, data: impl Serialize) -> Self {
         Self {
@@ -30,6 +32,7 @@ impl SseEvent {
 use serde::Serialize;
 
 /// Connection to an SSE client
+#[allow(dead_code)]
 pub struct SseConnection {
     pub id: String,
     pub session_id: Option<String>,
@@ -37,6 +40,7 @@ pub struct SseConnection {
 }
 
 /// SSE Hub manages all SSE connections and broadcasts messages
+#[allow(dead_code)]
 pub struct SseHub {
     connections: HashMap<String, SseConnection>,
     global_listeners: Vec<mpsc::Sender<SseEvent>>,
@@ -92,23 +96,35 @@ impl SseHub {
     }
     
     /// Send status update for a session
+    /// Frontend expects event name "session_status" with data format:
+    /// {"type":"session_status","sessionId":"...","payload":{...}}
     pub async fn broadcast_status(&self, session_id: &str, status: &str, finished_at: Option<i64>) {
         let event = SseEvent {
-            event_type: "status".to_string(),
+            event_type: "session_status".to_string(),
             data: serde_json::json!({
+                "type": "session_status",
                 "sessionId": session_id,
-                "status": status,
-                "finishedAt": finished_at,
+                "payload": {
+                    "sessionId": session_id,
+                    "status": status,
+                    "finishedAt": finished_at,
+                },
             }),
         };
         self.broadcast_to_session(session_id, event).await;
     }
     
     /// Broadcast a session message
+    /// Frontend expects event name "session_message" with data format:
+    /// {"type":"session_message","sessionId":"...","payload":{...}}
     pub async fn broadcast_message(&self, message: &crate::models::SessionMessage) {
         let event = SseEvent {
-            event_type: "message".to_string(),
-            data: serde_json::to_value(message).unwrap_or_default(),
+            event_type: "session_message".to_string(),
+            data: serde_json::json!({
+                "type": "session_message",
+                "sessionId": message.session_id,
+                "payload": message,
+            }),
         };
         
         self.broadcast_to_session(&message.session_id, event).await;

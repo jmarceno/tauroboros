@@ -2,7 +2,6 @@ use crate::db::queries::*;
 use rocket::routes;
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
-use crate::sse::hub::SseHub;
 use crate::state::AppStateType;
 use rocket::State;
 use chrono::Utc;
@@ -31,6 +30,7 @@ struct CreatePlanningSessionRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct SendMessageRequest {
     content: String,
     context_attachments: Option<Vec<Value>>,

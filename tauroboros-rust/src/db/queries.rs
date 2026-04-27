@@ -1,5 +1,5 @@
 use crate::db::models::*;
-use crate::error::{ApiError, ApiResult, ErrorCode};
+use crate::error::{ApiError, ApiResult};
 use chrono::Utc;
 use sqlx::{Pool, Sqlite};
 use uuid::Uuid;
@@ -1005,4 +1005,70 @@ pub async fn get_task_runs(pool: &Pool<Sqlite>, task_id: &str) -> ApiResult<Vec<
     .map_err(ApiError::Database)?;
     
     Ok(runs)
+}
+
+#[allow(dead_code)]
+pub async fn get_task_runs_by_phase(
+    pool: &Pool<Sqlite>,
+    task_id: &str,
+    phase: &str,
+) -> ApiResult<Vec<TaskRun>> {
+    let runs = sqlx::query_as::<_, TaskRun>(
+        r#"
+        SELECT * FROM task_runs WHERE task_id = ? AND phase = ? ORDER BY created_at DESC
+        "#,
+    )
+    .bind(task_id)
+    .bind(phase)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    
+    Ok(runs)
+}
+
+pub async fn create_task_candidate(
+    pool: &Pool<Sqlite>,
+    task_id: &str,
+    worker_run_id: &str,
+    summary: Option<&str>,
+    changed_files_json: Option<&str>,
+    diff_stats_json: Option<&str>,
+    verification_json: Option<&str>,
+) -> ApiResult<TaskCandidate> {
+    let now = Utc::now().timestamp();
+    let id = uuid::Uuid::new_v4().to_string();
+
+    sqlx::query(
+        r#"
+        INSERT INTO task_candidates (
+            id, task_id, worker_run_id, status, changed_files_json, diff_stats_json,
+            verification_json, summary, created_at, updated_at
+        ) VALUES (?, ?, ?, 'available', ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&id)
+    .bind(task_id)
+    .bind(worker_run_id)
+    .bind(changed_files_json)
+    .bind(diff_stats_json)
+    .bind(verification_json)
+    .bind(summary)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let candidate = sqlx::query_as::<_, TaskCandidate>(
+        r#"
+        SELECT * FROM task_candidates WHERE id = ?
+        "#,
+    )
+    .bind(&id)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(candidate)
 }

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::error::{ApiError, ErrorCode};
 use git2::{
     build::CheckoutBuilder, BranchType, IndexAddOption, MergeAnalysis, Repository,

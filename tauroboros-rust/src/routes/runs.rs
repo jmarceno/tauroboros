@@ -14,6 +14,13 @@ async fn list_runs(state: &State<AppStateType>) -> ApiResult<Json<Vec<WorkflowRu
     Ok(Json(runs))
 }
 
+#[get("/api/runs/<id>")]
+async fn get_run_by_id(state: &State<AppStateType>, id: String) -> ApiResult<Json<WorkflowRun>> {
+    let run = get_workflow_run(&state.db, &id).await?
+        .ok_or_else(|| ApiError::not_found("Run not found").with_code(ErrorCode::RunNotFound))?;
+    Ok(Json(run))
+}
+
 #[get("/api/runs/active")]
 async fn get_active_runs(state: &State<AppStateType>) -> ApiResult<Json<Vec<WorkflowRun>>> {
     let runs: Vec<WorkflowRun> = sqlx::query_as(
@@ -191,6 +198,7 @@ async fn force_stop_run(state: &State<AppStateType>, id: String) -> ApiResult<Js
 pub fn routes() -> Vec<Route> {
     routes![
         list_runs,
+        get_run_by_id,
         get_active_runs,
         get_paused_state,
         archive_run,

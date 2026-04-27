@@ -1,6 +1,5 @@
 use crate::db::queries::*;
 use crate::models::{HourlyUsage, DailyUsage};
-use chrono::Utc;
 use rocket::routes;
 use crate::error::{ApiResult};
 use crate::state::AppStateType;

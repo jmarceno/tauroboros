@@ -1,9 +1,7 @@
 use crate::db::queries::*;
-use chrono::Utc;
 use rocket::routes;
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
-use crate::sse::hub::SseHub;
 use crate::state::AppStateType;
 use rocket::State;
 use rocket::serde::json::{json, Json, Value};
@@ -183,7 +181,7 @@ async fn update_group(
     id: String,
     req: Json<UpdateGroupRequest>,
 ) -> ApiResult<Json<TaskGroup>> {
-    let existing = get_task_group(&state.db, &id).await?
+    let _existing = get_task_group(&state.db, &id).await?
         .ok_or_else(|| ApiError::not_found("Task group not found").with_code(ErrorCode::TaskGroupNotFound))?;
     
     // Validate name if provided
@@ -219,7 +217,7 @@ async fn update_group(
 
 #[delete("/api/task-groups/<id>")]
 async fn delete_group(state: &State<AppStateType>, id: String) -> ApiResult<()> {
-    let group = get_task_group(&state.db, &id).await?
+    let _group = get_task_group(&state.db, &id).await?
         .ok_or_else(|| ApiError::not_found("Task group not found").with_code(ErrorCode::TaskGroupNotFound))?;
     
     let success = delete_task_group(&state.db, &id).await?;
@@ -238,7 +236,7 @@ async fn add_tasks(
     id: String,
     req: Json<AddTasksRequest>,
 ) -> ApiResult<Json<TaskGroup>> {
-    let group = get_task_group(&state.db, &id).await?
+    let _group = get_task_group(&state.db, &id).await?
         .ok_or_else(|| ApiError::not_found("Task group not found").with_code(ErrorCode::TaskGroupNotFound))?;
     
     if req.task_ids.is_empty() {
@@ -272,7 +270,7 @@ async fn remove_tasks(
     id: String,
     req: Json<RemoveTasksRequest>,
 ) -> ApiResult<Json<TaskGroup>> {
-    let group = get_task_group(&state.db, &id).await?
+    let _group = get_task_group(&state.db, &id).await?
         .ok_or_else(|| ApiError::not_found("Task group not found").with_code(ErrorCode::TaskGroupNotFound))?;
     
     if req.task_ids.is_empty() {

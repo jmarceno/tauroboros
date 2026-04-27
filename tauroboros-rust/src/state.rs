@@ -45,6 +45,7 @@ impl AppState {
     }
     
     /// Get the base URL for session links
+    #[allow(dead_code)]
     pub fn session_url_for(&self, session_id: &str) -> String {
         format!("http://localhost:{}/sessions/{}?mode=compact", self.port, session_id)
     }

@@ -8,8 +8,6 @@ pub mod queries;
 pub mod runtime;
 
 pub use models::*;
-pub use queries::*;
-pub use runtime::*;
 
 /// Create a database connection pool
 pub async fn create_pool(db_path: &str) -> Result<Pool<Sqlite>, sqlx::Error> {
@@ -469,6 +467,101 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
         "Finalize the implementation in git.\n\nTarget branch: {{base_ref}}\nTask: {{task_name}} ({{task_id}})\n\n{{keep_worktree_note}}\n\nCreate a clear commit if changes are present and report the result.",
     )
     .bind("[\"base_ref\",\"keep_worktree_note\",\"task_name\",\"task_id\"]")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO prompt_templates (
+            key, name, description, template_text, variables_json, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("review")
+    .bind("Review")
+    .bind("Strict repository review prompt with JSON output contract")
+    .bind(
+        "You are the workflow review agent. You are strict and thorough.\n\nReview the current repository state against the task review file named in the user prompt.\nUse that review file as the source of truth for goals and review instructions.\nInspect the codebase and branch state directly.\nDo not rely on prior session history.\nDo not make code changes.\n\nReview the task review file at: {{review_file_path}}\n\nReview Criteria:\n1) Goal completeness: every goal must map to verified working code.\n2) Errors and bugs: logic issues, null handling, boundary failures, race conditions, exceptions.\n3) Security flaws: injection, missing validation, hardcoded secrets, unsafe file/path operations.\n4) Best practices: error handling, type safety, cleanup, edge cases, project conventions.\n5) Test coverage: critical paths and new behavior should be testable and covered.\n\nStrictness directive: default to finding gaps. Only return pass when all goals are complete and no unresolved defects remain.\n\nIMPORTANT: Your FINAL action MUST be to call the emit_review_result tool with the review findings. Do NOT output any text or JSON after calling the tool. The tool will submit your structured result automatically.\n\nCall emit_review_result with: status (\"pass\"|\"gaps_found\"|\"blocked\"), summary (brief findings), gaps (array of specific issues, empty if none), recommendedPrompt (instructions to fix gaps, or \"\" if none).\n\nContext:\nTask ID: {{task.id}}\nTask Name: {{task.name}}",
+    )
+    .bind("[\"task\",\"review_file_path\"]")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO prompt_templates (
+            key, name, description, template_text, variables_json, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("review_fix")
+    .bind("Review Fix")
+    .bind("Follow-up prompt that fixes issues identified by review")
+    .bind(
+        "Address the issues found during review and update the implementation.\n\nTask:\n{{task.prompt}}\n\nReview summary:\n{{review_summary}}\n\nGaps:\n{{review_gaps}}\n\nRequirements:\n- Fix all listed gaps completely.\n- Preserve existing correct behavior.\n- Keep the solution scoped and production-ready.",
+    )
+    .bind("[\"task\",\"review_summary\",\"review_gaps\"]")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO prompt_templates (
+            key, name, description, template_text, variables_json, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("best_of_n_worker")
+    .bind("Best-of-N Worker")
+    .bind("Worker prompt for candidate implementation generation in best-of-n")
+    .bind(
+        "EXECUTE END-TO-END. Do not ask follow-up questions unless blocked by: missing credentials, missing required external input, or an irreversible product decision. Make reasonable assumptions from the codebase.\n\nYou are one candidate implementation worker in a best-of-n workflow.\nProduce the best complete solution you can in this worktree.\n\nTask:\n{{task.prompt}}\n\n{{additional_context_block}}\n\nWorker metadata:\n- Slot index: {{slot_index}}\n- Model: {{model}}\n- Worker instructions: {{task_suffix}}\n\nDeliver complete implementation and a concise summary of what changed.",
+    )
+    .bind("[\"task\",\"slot_index\",\"model\",\"task_suffix\",\"additional_context_block\"]")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO prompt_templates (
+            key, name, description, template_text, variables_json, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("best_of_n_reviewer")
+    .bind("Best-of-N Reviewer")
+    .bind("Reviewer prompt for evaluating best-of-n candidates with strict JSON output")
+    .bind(
+        "You are a reviewer in a best-of-n workflow.\nYour job is to evaluate the candidate implementations and provide structured guidance.\n\nOriginal Task:\n{{task.prompt}}\n\n{{additional_context_block}}\n\nCandidates:\n{{candidate_summaries}}\n\nYour FINAL action MUST be to call the emit_best_of_n_vote tool with your evaluation. Do NOT output any text or JSON after calling the tool.\n\nCall emit_best_of_n_vote with: status (\"pass\"|\"needs_manual_review\"), summary (evaluation), bestCandidateIds (array of best candidate IDs), gaps (array of issues), recommendedFinalStrategy (\"pick_best\"|\"synthesize\"|\"pick_or_synthesize\"), recommendedPrompt (optional instructions for final applier).\n\nAdditional reviewer instructions:\n{{task_suffix}}",
+    )
+    .bind("[\"task\",\"candidate_summaries\",\"task_suffix\",\"additional_context_block\"]")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO prompt_templates (
+            key, name, description, template_text, variables_json, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("best_of_n_final_applier")
+    .bind("Best-of-N Final Applier")
+    .bind("Final applier prompt to produce final implementation from best-of-n results")
+    .bind(
+        "EXECUTE END-TO-END. Do not ask follow-up questions unless blocked by: missing credentials, missing required external input, or an irreversible product decision. Make reasonable assumptions from the codebase.\n\nYou are the final applier in a best-of-n workflow.\nProduce the final implementation based on the original task and reviewer guidance.\n\nOriginal Task:\n{{task.prompt}}\n\n{{additional_context_block}}\n\nSelection mode:\n{{selection_mode}}\n\nCandidate guidance:\n{{candidate_guidance}}\n\nRecurring reviewer gaps:\n{{recurring_gaps}}\n\nReviewer recommended prompts:\n{{reviewer_recommended_prompts}}\n\nConsensus reached: {{consensus_reached}}\n\nAdditional final-applier instructions:\n{{task_suffix}}\n\nProduce the final implementation now.",
+    )
+    .bind("[\"task\",\"selection_mode\",\"candidate_guidance\",\"recurring_gaps\",\"reviewer_recommended_prompts\",\"consensus_reached\",\"task_suffix\",\"additional_context_block\"]")
     .bind(now)
     .bind(now)
     .execute(pool)

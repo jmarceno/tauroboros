@@ -16,8 +16,8 @@ use crate::db::runtime::{
 };
 use crate::error::{ApiError, ErrorCode};
 use crate::models::{
-    AuditLevel, ExecutionStrategy, Options, PiSessionKind, PiSessionStatus, RunPhase,
-    RunStatus, Task, TaskGroupStatus, TaskStatus, UpdateTaskInput, WorkflowRun,
+    AuditLevel, ExecutionPhase, ExecutionStrategy, Options, PiSessionKind, PiSessionStatus,
+    RunPhase, RunStatus, Task, TaskGroupStatus, TaskStatus, UpdateTaskInput, WorkflowRun,
     WorkflowRunKind, WorkflowRunStatus, WSMessage,
 };
 use crate::sse::hub::SseHub;
@@ -33,16 +33,21 @@ use tokio::sync::{watch, Mutex, RwLock};
 use tracing::error;
 use uuid::Uuid;
 
+pub mod best_of_n;
 pub mod git;
+pub mod plan_mode;
 pub mod pi;
+pub mod review;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct SlotAssignment {
     run_id: String,
     task_id: String,
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ActiveTaskControl {
     run_id: String,
     slot_index: usize,
@@ -711,27 +716,6 @@ impl Orchestrator {
 
     fn ensure_supported_tasks(&self, tasks: &[Task]) -> Result<(), ApiError> {
         for task in tasks {
-            if task.plan_mode {
-                return Err(ApiError::internal(format!(
-                    "Task '{}' uses plan mode, which is not implemented in the Rust orchestrator yet",
-                    task.name
-                ))
-                .with_code(ErrorCode::ExecutionOperationFailed));
-            }
-            if task.review || task.code_style_review {
-                return Err(ApiError::internal(format!(
-                    "Task '{}' uses automated review, which is not implemented in the Rust orchestrator yet",
-                    task.name
-                ))
-                .with_code(ErrorCode::ExecutionOperationFailed));
-            }
-            if task.execution_strategy != ExecutionStrategy::Standard {
-                return Err(ApiError::internal(format!(
-                    "Task '{}' uses execution strategy '{:?}', which is not implemented in the Rust orchestrator yet",
-                    task.name, task.execution_strategy
-                ))
-                .with_code(ErrorCode::ExecutionOperationFailed));
-            }
             if task.container_image.as_ref().is_some_and(|value| !value.trim().is_empty()) {
                 return Err(ApiError::internal(format!(
                     "Task '{}' requires container image execution, but the Rust backend is native-only",
@@ -934,6 +918,44 @@ impl Orchestrator {
             .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
         let options = get_options(&self.db).await?;
         self.ensure_supported_tasks(std::slice::from_ref(&task))?;
+
+        // Plan mode: skip execution when waiting for approval
+        if task.awaiting_plan_approval {
+            return Ok(TaskOutcome {
+                status: TaskStatus::Review,
+                error_message: None,
+            });
+        }
+
+        // Best-of-N: full lifecycle with its own worktree management
+        if task.execution_strategy == ExecutionStrategy::BestOfN {
+            return self.run_best_of_n(&task, run_id, &options, slot_index, stop_rx).await;
+        }
+
+        // Plan mode: planning or implementation phase
+        if task.plan_mode
+            && matches!(
+                task.execution_phase,
+                ExecutionPhase::NotStarted
+                    | ExecutionPhase::PlanRevisionPending
+                    | ExecutionPhase::ImplementationPending
+            )
+        {
+            let target_branch = resolve_target_branch(
+                &self.project_root,
+                task.branch.as_deref(),
+                Some(options.branch.as_str()),
+            )
+            .await?;
+            let worktree = create_task_worktree(&self.project_root, &task.id, &task.name, &target_branch)
+                .await?;
+            if !options.command.trim().is_empty() {
+                if let Err(error) = run_shell_command(options.command.trim(), &worktree.directory).await {
+                    return Err(error);
+                }
+            }
+            return self.run_plan_mode(&task, run_id, &options, &worktree, slot_index, stop_rx).await;
+        }
 
         self.audit_info(
             "task.execution.preparing",
@@ -1186,7 +1208,7 @@ impl Orchestrator {
             self.project_root.clone(),
         );
 
-        let response = executor.run_prompt(session.clone(), &model, &prompt, stop_rx).await;
+        let response = executor.run_prompt(session.clone(), &model, &prompt, stop_rx.clone()).await;
         match response {
             Ok(response_text) => {
                 let committed = if task.auto_commit {
@@ -1275,6 +1297,27 @@ impl Orchestrator {
                     }),
                 )
                 .await?;
+
+                // Review loop for standard execution
+                if task.review || task.code_style_review {
+                    let review_passed = self
+                        .run_review_loop(
+                            &task,
+                            run_id,
+                            &options,
+                            &worktree,
+                            &target_branch,
+                            slot_index,
+                            stop_rx,
+                        )
+                        .await?;
+                    if !review_passed {
+                        return Ok(TaskOutcome {
+                            status: TaskStatus::Stuck,
+                            error_message: Some("Review loop failed".to_string()),
+                        });
+                    }
+                }
 
                 Ok(TaskOutcome {
                     status: TaskStatus::Done,
@@ -1697,9 +1740,9 @@ impl Orchestrator {
 }
 
 #[derive(Debug, Clone)]
-struct TaskOutcome {
-    status: TaskStatus,
-    error_message: Option<String>,
+pub(super) struct TaskOutcome {
+    pub(super) status: TaskStatus,
+    pub(super) error_message: Option<String>,
 }
 
 fn select_all_runnable_tasks(tasks: &[Task]) -> Result<Vec<Task>, ApiError> {
@@ -1858,7 +1901,7 @@ fn order_subset_by_dependencies(tasks: &[Task]) -> Result<Vec<Task>, ApiError> {
     Ok(ordered)
 }
 
-fn resolve_execution_model(task: &Task, options: &Options) -> Result<String, ApiError> {
+pub(super) fn resolve_execution_model(task: &Task, options: &Options) -> Result<String, ApiError> {
     if let Some(model) = task.execution_model.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty() && *value != "default") {
         return Ok(model.to_string());
     }
@@ -1873,6 +1916,15 @@ fn resolve_execution_model(task: &Task, options: &Options) -> Result<String, Api
         ))
         .with_code(ErrorCode::InvalidModel),
     )
+}
+
+pub(super) fn render_prompt_template(template: &str, variables: &[(&str, &str)]) -> String {
+    let mut result = template.to_string();
+    for (key, value) in variables {
+        let placeholder = format!("{{{{{}}}}}", key);
+        result = result.replace(&placeholder, value);
+    }
+    result
 }
 
 async fn render_execution_prompt(

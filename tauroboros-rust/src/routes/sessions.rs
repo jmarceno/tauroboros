@@ -2,7 +2,6 @@ use crate::db::queries::*;
 use rocket::routes;
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
-use crate::sse::hub::{SseEvent, SseHub};
 use crate::state::AppStateType;
 use rocket::State;
 use chrono::Utc;
@@ -52,7 +51,7 @@ async fn get_session_messages(
     limit: Option<i32>,
     offset: Option<i32>,
 ) -> ApiResult<Json<Vec<SessionMessage>>> {
-    let session = get_workflow_session(&state.db, &id).await?
+    let _session = get_workflow_session(&state.db, &id).await?
         .ok_or_else(|| ApiError::not_found("Session not found").with_code(ErrorCode::SessionNotFound))?;
     
     let messages = get_session_messages_db(&state.db, &id, limit.unwrap_or(500), offset.unwrap_or(0)).await?;
@@ -90,7 +89,7 @@ async fn get_session_timeline(state: &State<AppStateType>, id: String) -> ApiRes
 
 #[get("/api/sessions/<id>/usage")]
 async fn get_session_usage(state: &State<AppStateType>, id: String) -> ApiResult<Json<Value>> {
-    let session = get_workflow_session(&state.db, &id).await?
+    let _session = get_workflow_session(&state.db, &id).await?
         .ok_or_else(|| ApiError::not_found("Session not found").with_code(ErrorCode::SessionNotFound))?;
     
     let messages = get_session_messages_db(&state.db, &id, 10000, 0).await?;

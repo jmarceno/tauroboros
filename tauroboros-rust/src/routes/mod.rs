@@ -1,5 +1,4 @@
 use rocket::Route;
-use rocket::routes;
 
 pub mod tasks;
 pub mod sessions;
