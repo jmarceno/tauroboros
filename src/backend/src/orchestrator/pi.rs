@@ -23,7 +23,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 const STRUCTURED_OUTPUT_EXTENSION_SOURCE: &str =
-    include_str!("../../../extensions/pi-tools/structured-output.ts");
+    include_str!("../../../../extensions/pi-tools/structured-output.ts");
 const STRUCTURED_OUTPUT_EXTENSION_RELATIVE_PATH: [&str; 4] =
     [".pi", "extensions", "pi-tools", "structured-output.ts"];
 const MODEL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);

@@ -4,7 +4,7 @@ import { Effect } from "effect"
 import {
   ensureSettingsEffect,
   type InfrastructureSettings,
-} from "../src/config/settings.ts"
+} from "../src/backend-ts/config/settings.ts"
 import { discoverSkills, getProjectRoot } from "./sync-skills.ts"
 
 interface PiSettings {

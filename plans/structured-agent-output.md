@@ -2,7 +2,7 @@
 
 ## Problem
 
-We currently rely on the agent to output free-text JSON, which we then parse with `parseStrictJsonObject()` (a fragile brace-counting scanner in `src/runtime/strict-json.ts`). This fails when:
+We currently rely on the agent to output free-text JSON, which we then parse with `parseStrictJsonObject()` (a fragile brace-counting scanner in `src/backend-ts/runtime/strict-json.ts`). This fails when:
 
 - The agent wraps JSON in markdown code blocks (despite prompt instructions)
 - The agent adds explanatory text before/after the JSON
@@ -10,7 +10,7 @@ We currently rely on the agent to output free-text JSON, which we then parse wit
 - The agent outputs partial/incomplete JSON
 - The agent's JSON has subtle syntax issues (trailing commas, unescaped chars)
 
-The review session (`src/runtime/review-session.ts:118-162`) has retry logic for JSON parse failures, but this is a band-aid — the root cause is that we're asking the LLM to produce structured output through free-text generation, which is inherently unreliable.
+The review session (`src/backend-ts/runtime/review-session.ts:118-162`) has retry logic for JSON parse failures, but this is a band-aid — the root cause is that we're asking the LLM to produce structured output through free-text generation, which is inherently unreliable.
 
 ## Solution: Pi Extension Tools with Schema Validation
 
@@ -159,7 +159,7 @@ A minimal package.json so Pi can discover the extension:
 
 ## Phase 2: Update Pi Process Startup
 
-### Changes to `src/runtime/pi-process.ts`
+### Changes to `src/backend-ts/runtime/pi-process.ts`
 
 Add `--extension` arg pointing to our tools file when spawning Pi:
 
@@ -172,7 +172,7 @@ if (this.structuredOutputToolsPath) {
 
 The path should be resolved relative to the project root. Use a setting or a well-known path like `extensions/pi-tools/structured-output.ts`.
 
-### Changes to `src/runtime/pi-process-factory.ts`
+### Changes to `src/backend-ts/runtime/pi-process-factory.ts`
 
 Pass the extension path through `UnifiedPiProcessOptions`:
 ```typescript
@@ -184,7 +184,7 @@ export interface UnifiedPiProcessOptions {
 
 ## Phase 3: Structured Output Extractor
 
-### New File: `src/runtime/structured-output-extractor.ts`
+### New File: `src/backend-ts/runtime/structured-output-extractor.ts`
 
 A utility that listens for `tool_execution_end` events in the RPC stream and extracts structured data:
 
@@ -229,7 +229,7 @@ export class StructuredOutputExtractor {
 }
 ```
 
-### Integration with `src/runtime/session-manager.ts`
+### Integration with `src/backend-ts/runtime/session-manager.ts`
 
 The `executePrompt()` method already returns `events: Record<string, unknown>[]`. We can add a helper method to extract structured output from the events:
 
@@ -278,7 +278,7 @@ export class StructuredOutputNotFoundError extends Schema.TaggedError<Structured
 
 ## Phase 4: Update Review Session
 
-### Changes to `src/runtime/review-session.ts`
+### Changes to `src/backend-ts/runtime/review-session.ts`
 
 Replace the `parseStrictJsonObject()` + `asReviewResultEffect()` flow with tool-based extraction:
 
@@ -321,7 +321,7 @@ run(input: RunReviewScratchInput): Effect.Effect<RunReviewScratchResult, ReviewS
 
 ## Phase 5: Update Smart Repair
 
-### Changes to `src/runtime/smart-repair.ts`
+### Changes to `src/backend-ts/runtime/smart-repair.ts`
 
 Replace `parseRepairDecisionEffect()` with tool-based extraction:
 
@@ -342,7 +342,7 @@ decide(taskId: string): Effect.Effect<SmartRepairDecision, SmartRepairError> {
 
 ## Phase 6: Update Prompts
 
-### Changes to `src/prompts/prompt-catalog.json`
+### Changes to `src/backend-ts/prompts/prompt-catalog.json`
 
 Update prompts to instruct the agent to use the tool instead of outputting free-text JSON:
 
@@ -367,9 +367,9 @@ After migration, `parseStrictJsonObject` is no longer needed for structured outp
 ### Remove JSON Parse Retry Logic
 
 The `jsonParseRetryCount`, `maxJsonParseRetries`, `currentJsonParseRetryCount`, and `json_parse_max_retries` status in:
-- `src/runtime/review-session.ts`
-- `src/db/migrations.ts` (`json_parse_retry_count` column)
-- `src/orchestrator.ts` (review loop retry logic)
+- `src/backend-ts/runtime/review-session.ts`
+- `src/backend-ts/db/migrations.ts` (`json_parse_retry_count` column)
+- `src/backend-ts/orchestrator.ts` (review loop retry logic)
 
 ## Taskplane-Inspired Patterns to Also Adopt
 
@@ -404,18 +404,18 @@ These could be layered on top after the core structured output migration is comp
 |------|--------|
 | `extensions/pi-tools/structured-output.ts` | **NEW** — Pi extension with all structured output tools |
 | `extensions/pi-tools/package.json` | **NEW** — Extension package manifest |
-| `src/runtime/structured-output-extractor.ts` | **NEW** — Extract structured data from tool events |
-| `src/runtime/pi-process.ts` | Add `--extension` arg when spawning Pi |
-| `src/runtime/pi-process-factory.ts` | Pass extension path through options |
-| `src/runtime/session-manager.ts` | Add `executePromptStructured()` method |
-| `src/runtime/review-session.ts` | Use tool-based extraction, remove JSON retry |
-| `src/runtime/smart-repair.ts` | Use tool-based extraction |
-| `src/runtime/planning-session.ts` | Use tool-based extraction (if applicable) |
-| `src/prompts/prompt-catalog.json` | Update review/repair/best-of-n prompts |
-| `src/types.ts` | Remove `json_parse_max_retries` from `ReviewResult` |
-| `src/db/migrations.ts` | Remove `json_parse_retry_count` column |
-| `src/orchestrator.ts` | Remove JSON parse retry logic from review loop |
-| `src/runtime/strict-json.ts` | Remove or reduce to fallback-only |
+| `src/backend-ts/runtime/structured-output-extractor.ts` | **NEW** — Extract structured data from tool events |
+| `src/backend-ts/runtime/pi-process.ts` | Add `--extension` arg when spawning Pi |
+| `src/backend-ts/runtime/pi-process-factory.ts` | Pass extension path through options |
+| `src/backend-ts/runtime/session-manager.ts` | Add `executePromptStructured()` method |
+| `src/backend-ts/runtime/review-session.ts` | Use tool-based extraction, remove JSON retry |
+| `src/backend-ts/runtime/smart-repair.ts` | Use tool-based extraction |
+| `src/backend-ts/runtime/planning-session.ts` | Use tool-based extraction (if applicable) |
+| `src/backend-ts/prompts/prompt-catalog.json` | Update review/repair/best-of-n prompts |
+| `src/backend-ts/types.ts` | Remove `json_parse_max_retries` from `ReviewResult` |
+| `src/backend-ts/db/migrations.ts` | Remove `json_parse_retry_count` column |
+| `src/backend-ts/orchestrator.ts` | Remove JSON parse retry logic from review loop |
+| `src/backend-ts/runtime/strict-json.ts` | Remove or reduce to fallback-only |
 
 ## Key Design Decisions
 

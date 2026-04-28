@@ -18,7 +18,7 @@ import {
   parseWorktreeList,
   removeWorktree,
   resolveTargetBranch,
-} from "../src/runtime/worktree.ts"
+} from "../src/backend-ts/runtime/worktree.ts"
 
 const createdDirs: string[] = []
 

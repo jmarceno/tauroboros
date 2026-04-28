@@ -3,7 +3,7 @@
  */
 
 import { Effect, Schema } from 'effect'
-import { detectErrorCodeFromMessage, type ApiError, type ErrorCode } from '../../../shared/error-codes.ts'
+import { detectErrorCodeFromMessage, type ApiError, type ErrorCode } from '../../../backend-ts/shared/error-codes.ts'
 
 const API_BASE = (import.meta as unknown as { env: Record<string, string> }).env?.VITE_API_URL || location.origin
 

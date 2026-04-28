@@ -59,7 +59,7 @@ Add to `package.json`:
 
 Run `bun install` to install the new packages.
 
-#### 1.2 Create `src/services/database.ts` — DatabaseService Tag
+#### 1.2 Create `src/backend-ts/services/database.ts` — DatabaseService Tag
 
 Create a service tag for the Kysely instance:
 
@@ -74,7 +74,7 @@ export class DatabaseService extends Context.Tag("Database/DatabaseService")<
 >() {}
 ```
 
-#### 1.3 Create `src/db/errors.ts` — Tagged Errors
+#### 1.3 Create `src/backend-ts/db/errors.ts` — Tagged Errors
 
 Create Effect `Schema.TaggedError` types for database operations:
 
@@ -84,7 +84,7 @@ Create Effect `Schema.TaggedError` types for database operations:
 
 All errors use `Schema.TaggedError` pattern from Effect.
 
-#### 1.4 Create `src/db/schema.ts` — Kysely Table Interfaces
+#### 1.4 Create `src/backend-ts/db/schema.ts` — Kysely Table Interfaces
 
 Define the `DatabaseSchema` interface and all table interfaces matching the reference database at `/home/jmarceno/Projects/tmp/TESTS/tauroboros/.tauroboros/tasks.db`.
 
@@ -137,7 +137,7 @@ Use Kysely types:
 
 Also export `Selectable`, `Insertable`, and `Updateable` wrapper types for each table (e.g., `type Task = Selectable<TasksTable>`, `type NewTask = Insertable<TasksTable>`, `type TaskUpdate = Updateable<TasksTable>`).
 
-#### 1.5 Create `src/layers/database.ts` — Connection Layer
+#### 1.5 Create `src/backend-ts/layers/database.ts` — Connection Layer
 
 Create the `DatabaseLive` layer using `Effect.acquireRelease`:
 
@@ -166,7 +166,7 @@ export const DatabaseLive = (dbPath: string) =>
   )
 ```
 
-#### 1.6 Create `src/db/init.ts` — Schema Initialization
+#### 1.6 Create `src/backend-ts/db/init.ts` — Schema Initialization
 
 Create `initializeSchema` that runs the DDL. The DDL must match the reference database **exactly** (every column, every default, every index). The `schema_migrations` table must **not** be created.
 
@@ -194,7 +194,7 @@ export const initializeSchema = Effect.gen(function* () {
 
 Include ALL indexes from the reference database. Do NOT create the `schema_migrations` table.
 
-#### 1.7 Create `src/db/index.ts` — Barrel Exports
+#### 1.7 Create `src/backend-ts/db/index.ts` — Barrel Exports
 
 Re-export everything from the new db module:
 - `DatabaseService` from `../services/database.ts`
@@ -203,9 +203,9 @@ Re-export everything from the new db module:
 - `initializeSchema` from `./init.ts`
 - `DatabaseLive` from `../layers/database.ts`
 
-#### 1.8 Update `src/db/index.ts` (the existing barrel file)
+#### 1.8 Update `src/backend-ts/db/index.ts` (the existing barrel file)
 
-The existing `src/db/index.ts` currently re-exports `PiKanbanDB` from `../db.ts`. **Do not remove this yet** — Phase 5 handles removal. For this phase, add the new exports alongside the existing ones. The old `PiKanbanDB` still works for now.
+The existing `src/backend-ts/db/index.ts` currently re-exports `PiKanbanDB` from `../db.ts`. **Do not remove this yet** — Phase 5 handles removal. For this phase, add the new exports alongside the existing ones. The old `PiKanbanDB` still works for now.
 
 #### 1.9 Verification
 
@@ -237,15 +237,15 @@ Implement the complete repository layer using Kysely's query builder. Every tabl
 
 ### Repository Files to Create
 
-All repositories go in `src/db/repositories/`. Create them in dependency order:
+All repositories go in `src/backend-ts/db/repositories/`. Create them in dependency order:
 
-#### 2.1 `src/db/repositories/options-repository.ts`
+#### 2.1 `src/backend-ts/db/repositories/options-repository.ts`
 
 - `getAll()` → `Effect.Effect<OptionsTable[], DatabaseError>`
 - `updateOptions(partial: Partial<OptionsTable>)` → `Effect.Effect<void, DatabaseError>`
 - `getOption(key: string)` → `Effect.Effect<OptionsTable | undefined, DatabaseError>`
 
-#### 2.2 `src/db/repositories/prompt-repository.ts`
+#### 2.2 `src/backend-ts/db/repositories/prompt-repository.ts`
 
 - `getPromptTemplate(key: string)` → `Effect.Effect<PromptTemplatesTable | undefined, DatabaseError>`
 - `upsertPromptTemplate(input)` → `Effect.Effect<PromptTemplatesTable, DatabaseError>`
@@ -253,14 +253,14 @@ All repositories go in `src/db/repositories/`. Create them in dependency order:
 - `createPromptTemplateVersion(input)` → `Effect.Effect<PromptTemplateVersionsTable, DatabaseError>`
 - `renderPrompt(key: string, variables: Record<string, string>)` → `Effect.Effect<string, DatabaseError>`
 
-#### 2.3 `src/db/repositories/planning-prompt-repository.ts`
+#### 2.3 `src/backend-ts/db/repositories/planning-prompt-repository.ts`
 
 - `getPlanningPrompt(key: string)` → `Effect.Effect<PlanningPromptsTable | undefined, DatabaseError>`
 - `upsertPlanningPrompt(input)` → `Effect.Effect<PlanningPromptsTable, DatabaseError>`
 - `getPlanningPromptVersions(promptId: number)` → `Effect.Effect<PlanningPromptVersionsTable[], DatabaseError>`
 - `createPlanningPromptVersion(input)` → `Effect.Effect<PlanningPromptVersionsTable, DatabaseError>`
 
-#### 2.4 `src/db/repositories/container-repository.ts`
+#### 2.4 `src/backend-ts/db/repositories/container-repository.ts`
 
 - `getContainerPackages()` → `Effect.Effect<ContainerPackagesTable[], DatabaseError>`
 - `addContainerPackage(input)` → `Effect.Effect<ContainerPackagesTable, DatabaseError>`
@@ -269,7 +269,7 @@ All repositories go in `src/db/repositories/`. Create them in dependency order:
 - `updateContainerBuild(id: number, input)` → `Effect.Effect<void, DatabaseError>`
 - `getContainerBuilds()` → `Effect.Effect<ContainerBuildsTable[], DatabaseError>`
 
-#### 2.5 `src/db/repositories/task-group-repository.ts`
+#### 2.5 `src/backend-ts/db/repositories/task-group-repository.ts`
 
 - `getAll()` → `Effect.Effect<TaskGroupsTable[], DatabaseError>`
 - `getById(id: string)` → `Effect.Effect<TaskGroupsTable, NotFoundError | DatabaseError>`
@@ -280,7 +280,7 @@ All repositories go in `src/db/repositories/`. Create them in dependency order:
 - `removeTasksFromGroup(groupId: string, taskIds: string[])` → `Effect.Effect<void, DatabaseError>`
 - `getGroupMembers(groupId: string)` → `Effect.Effect<TaskGroupMembersTable[], DatabaseError>`
 
-#### 2.6 `src/db/repositories/task-repository.ts`
+#### 2.6 `src/backend-ts/db/repositories/task-repository.ts`
 
 - `getAll()` → `Effect.Effect<TasksTable[], DatabaseError>`
 - `getById(id: string)` → `Effect.Effect<TasksTable, NotFoundError | DatabaseError>`
@@ -292,7 +292,7 @@ All repositories go in `src/db/repositories/`. Create them in dependency order:
 - `getByStatus(status: string)` → `Effect.Effect<TasksTable[], DatabaseError>`
 - `getByGroupId(groupId: string)` → `Effect.Effect<TasksTable[], DatabaseError>`
 
-#### 2.7 `src/db/repositories/workflow-run-repository.ts`
+#### 2.7 `src/backend-ts/db/repositories/workflow-run-repository.ts`
 
 - `getAll()` → `Effect.Effect<WorkflowRunsTable[], DatabaseError>`
 - `getById(id: string)` → `Effect.Effect<WorkflowRunsTable, NotFoundError | DatabaseError>`
@@ -300,7 +300,7 @@ All repositories go in `src/db/repositories/`. Create them in dependency order:
 - `update(id: string, input)` → `Effect.Effect<WorkflowRunsTable, NotFoundError | DatabaseError>`
 - `archive(id: string)` → `Effect.Effect<void, NotFoundError | DatabaseError>`
 
-#### 2.8 `src/db/repositories/session-repository.ts`
+#### 2.8 `src/backend-ts/db/repositories/session-repository.ts`
 
 - `getById(id: string)` → `Effect.Effect<WorkflowSessionsTable, NotFoundError | DatabaseError>`
 - `create(input)` → `Effect.Effect<WorkflowSessionsTable, DatabaseError>`
@@ -308,28 +308,28 @@ All repositories go in `src/db/repositories/`. Create them in dependency order:
 - `getByTaskId(taskId: string)` → `Effect.Effect<WorkflowSessionsTable[], DatabaseError>`
 - `getByStatus(status: string)` → `Effect.Effect<WorkflowSessionsTable[], DatabaseError>`
 
-#### 2.9 `src/db/repositories/message-repository.ts`
+#### 2.9 `src/backend-ts/db/repositories/message-repository.ts`
 
 - `getBySessionId(sessionId: string)` → `Effect.Effect<SessionMessagesTable[], DatabaseError>`
 - `create(input)` → `Effect.Effect<SessionMessagesTable, DatabaseError>`
 - `update(id: number, input)` → `Effect.Effect<SessionMessagesTable, NotFoundError | DatabaseError>`
 - `getBySessionIdAndSeq(sessionId: string, seq: number)` → `Effect.Effect<SessionMessagesTable | undefined, DatabaseError>`
 
-#### 2.10 `src/db/repositories/task-run-repository.ts`
+#### 2.10 `src/backend-ts/db/repositories/task-run-repository.ts`
 
 - `getByTaskId(taskId: string)` → `Effect.Effect<TaskRunsTable[], DatabaseError>`
 - `getById(id: string)` → `Effect.Effect<TaskRunsTable, NotFoundError | DatabaseError>`
 - `create(input)` → `Effect.Effect<TaskRunsTable, DatabaseError>`
 - `update(id: string, input)` → `Effect.Effect<TaskRunsTable, NotFoundError | DatabaseError>`
 
-#### 2.11 `src/db/repositories/task-candidate-repository.ts`
+#### 2.11 `src/backend-ts/db/repositories/task-candidate-repository.ts`
 
 - `getByTaskId(taskId: string)` → `Effect.Effect<TaskCandidatesTable[], DatabaseError>`
 - `getById(id: string)` → `Effect.Effect<TaskCandidatesTable, NotFoundError | DatabaseError>`
 - `create(input)` → `Effect.Effect<TaskCandidatesTable, DatabaseError>`
 - `update(id: string, input)` → `Effect.Effect<TaskCandidatesTable, NotFoundError | DatabaseError>`
 
-#### 2.12 `src/db/repositories/paused-state-repository.ts`
+#### 2.12 `src/backend-ts/db/repositories/paused-state-repository.ts`
 
 - `saveSessionState(state: PausedSessionStatesTable)` → `Effect.Effect<void, DatabaseError>`
 - `loadSessionState(sessionId: string)` → `Effect.Effect<PausedSessionStatesTable | undefined, DatabaseError>`
@@ -338,18 +338,18 @@ All repositories go in `src/db/repositories/`. Create them in dependency order:
 - `loadRunState(runId: string)` → `Effect.Effect<PausedRunStatesTable | undefined, DatabaseError>`
 - `deleteRunState(runId: string)` → `Effect.Effect<void, DatabaseError>`
 
-#### 2.13 `src/db/repositories/indicators-repository.ts`
+#### 2.13 `src/backend-ts/db/repositories/indicators-repository.ts`
 
 - `getById(id: string)` → `Effect.Effect<WorkflowRunsIndicatorsTable | undefined, DatabaseError>`
 - `upsert(id: string, jsonOutFails: string)` → `Effect.Effect<void, DatabaseError>`
 
-#### 2.14 `src/db/repositories/self-heal-repository.ts`
+#### 2.14 `src/backend-ts/db/repositories/self-heal-repository.ts`
 
 - `getById(id: string)` → `Effect.Effect<SelfHealReportsTable, NotFoundError | DatabaseError>`
 - `getByRunId(runId: string)` → `Effect.Effect<SelfHealReportsTable[], DatabaseError>`
 - `create(input)` → `Effect.Effect<SelfHealReportsTable, DatabaseError>`
 
-#### 2.15 `src/db/repositories/index.ts`
+#### 2.15 `src/backend-ts/db/repositories/index.ts`
 
 Barrel file that re-exports all repositories.
 
@@ -379,7 +379,7 @@ Create the type mapping layer that transforms between Kysely DB row types (snake
 
 ### Steps
 
-#### 3.1 Create `src/db/transforms.ts` — JSON Column Helpers
+#### 3.1 Create `src/backend-ts/db/transforms.ts` — JSON Column Helpers
 
 ```typescript
 export const parseJSON = <T>(value: string | null): T | null => {
@@ -404,44 +404,44 @@ export const fromBoolNullable = (value: boolean | null): number | null =>
   value === null ? null : value ? 1 : 0
 ```
 
-#### 3.2 Create `src/db/mappers/task-mapper.ts`
+#### 3.2 Create `src/backend-ts/db/mappers/task-mapper.ts`
 
 - `toTask(row: TasksTable): Task` — Maps from DB row (snake_case, 0/1) to domain type (camelCase, boolean). Every field must be mapped explicitly.
 - `fromTaskInput(input: Partial<Task>): Partial<TasksTable>` — Maps from domain to DB. Conditional mapping.
 - `fromNewTask(input: NewTask): Insertable<TasksTable>` — Maps insert input.
 
-#### 3.3 Create `src/db/mappers/workflow-run-mapper.ts`
+#### 3.3 Create `src/backend-ts/db/mappers/workflow-run-mapper.ts`
 
 - `toWorkflowRun(row: WorkflowRunsTable): WorkflowRun`
 - `fromWorkflowRunInput(input: Partial<WorkflowRun>): Partial<WorkflowRunsTable>`
 - Handle `task_order_json` ↔ `taskOrder` (JSON array)
 
-#### 3.4 Create `src/db/mappers/session-mapper.ts`
+#### 3.4 Create `src/backend-ts/db/mappers/session-mapper.ts`
 
 - `toWorkflowSession(row: WorkflowSessionsTable): WorkflowSession`
 - `fromWorkflowSessionInput(input: Partial<WorkflowSession>): Partial<WorkflowSessionsTable>`
 
-#### 3.5 Create `src/db/mappers/message-mapper.ts`
+#### 3.5 Create `src/backend-ts/db/mappers/message-mapper.ts`
 
 - `toSessionMessage(row: SessionMessagesTable): SessionMessage`
 - Handle JSON fields: `content_json`, `cost_json`, `tool_args_json`, `tool_result_json`, `raw_event_json`
 
-#### 3.6 Create `src/db/mappers/task-run-mapper.ts`
+#### 3.6 Create `src/backend-ts/db/mappers/task-run-mapper.ts`
 
 - `toTaskRun(row: TaskRunsTable): TaskRun`
 - Handle `metadata_json` ↔ `metadataJson` (Record)
 
-#### 3.7 Create `src/db/mappers/task-candidate-mapper.ts`
+#### 3.7 Create `src/backend-ts/db/mappers/task-candidate-mapper.ts`
 
 - `toTaskCandidate(row: TaskCandidatesTable): TaskCandidate`
 - Handle JSON fields: `changed_files_json`, `diff_stats_json`, `verification_json`
 
-#### 3.8 Create `src/db/mappers/self-heal-mapper.ts`
+#### 3.8 Create `src/backend-ts/db/mappers/self-heal-mapper.ts`
 
 - `toSelfHealReport(row: SelfHealReportsTable): SelfHealReport`
 - Handle JSON fields: `root_cause_json`, `implementation_plan_json`, `external_factors_json`, `db_schema_json`
 
-#### 3.9 Create `src/db/mappers/index.ts`
+#### 3.9 Create `src/backend-ts/db/mappers/index.ts`
 
 Barrel file re-exporting all mappers.
 
@@ -472,104 +472,104 @@ This is the largest phase. Every file that currently imports and uses `PiKanbanD
 
 ### Steps
 
-#### 4.1 Update `src/shared/services.ts`
+#### 4.1 Update `src/backend-ts/shared/services.ts`
 
 - Change `DatabaseContext` from `Context.GenericTag<PiKanbanDB>` to `Context.GenericTag<Kysely<DatabaseSchema>>` (or just re-export `DatabaseService` from `../services/database.ts`)
 - Update `ServerRuntimeContext` to use the new `DatabaseService` type
 
-#### 4.2 Update `src/server.ts` (main server entry)
+#### 4.2 Update `src/backend-ts/server.ts` (main server entry)
 
 - Replace `new PiKanbanDB(dbPath)` with `DatabaseLive(dbPath)` layer
 - Wire up `DatabaseService` layer to the application
 - Remove `PiKanbanDB` import
 
-#### 4.3 Update `src/server/server.ts`
+#### 4.3 Update `src/backend-ts/server/server.ts`
 
 - Replace `PiKanbanDB` usage with `DatabaseService` (Kysely instance via Effect context)
 - Update route handler construction to use repository functions
 
-#### 4.4 Update `src/server/types.ts`
+#### 4.4 Update `src/backend-ts/server/types.ts`
 
 - Change `RequestContext.db` type from `PiKanbanDB` to `Kysely<DatabaseSchema>`
 
-#### 4.5 Update all route files in `src/server/routes/`
+#### 4.5 Update all route files in `src/backend-ts/server/routes/`
 
 Each route file currently accesses `db` through the request context. Update to use repository functions and `DatabaseService`.
 
 Files to update:
-- `src/server/routes/task-group-routes.ts`
+- `src/backend-ts/server/routes/task-group-routes.ts`
 
-#### 4.6 Update `src/runtime/session-manager.ts`
+#### 4.6 Update `src/backend-ts/runtime/session-manager.ts`
 
 - Replace `db: PiKanbanDB` constructor parameter with Effect-based access to repositories
 - Convert methods to `Effect.Effect<T, E>` return types
 
-#### 4.7 Update `src/runtime/pi-process.ts`
+#### 4.7 Update `src/backend-ts/runtime/pi-process.ts`
 
 - Replace `db: PiKanbanDB` with repository access
 - Convert to Effect patterns
 
-#### 4.8 Update `src/runtime/container-pi-process.ts`
+#### 4.8 Update `src/backend-ts/runtime/container-pi-process.ts`
 
 
 
-#### 4.9 Update `src/runtime/review-session.ts`
+#### 4.9 Update `src/backend-ts/runtime/review-session.ts`
 
 
 
-#### 4.10 Update `src/runtime/message-streamer.ts`
+#### 4.10 Update `src/backend-ts/runtime/message-streamer.ts`
 
 
 
-#### 4.11 Update `src/runtime/codestyle-session.ts`
+#### 4.11 Update `src/backend-ts/runtime/codestyle-session.ts`
 
 
 
-#### 4.12 Update `src/runtime/self-healing.ts`
+#### 4.12 Update `src/backend-ts/runtime/self-healing.ts`
 
 
 
-#### 4.13 Update `src/runtime/smart-repair.ts`
+#### 4.13 Update `src/backend-ts/runtime/smart-repair.ts`
 
 
 
-#### 4.14 Update `src/runtime/planning-session.ts`
+#### 4.14 Update `src/backend-ts/runtime/planning-session.ts`
 
 
 
-#### 4.15 Update `src/runtime/pi-process-factory.ts`
+#### 4.15 Update `src/backend-ts/runtime/pi-process-factory.ts`
 
 
 
-#### 4.16 Update `src/runtime/session-pause-state.ts`
+#### 4.16 Update `src/backend-ts/runtime/session-pause-state.ts`
 
 
 
-#### 4.17 Update `src/runtime/best-of-n.ts`
+#### 4.17 Update `src/backend-ts/runtime/best-of-n.ts`
 
 
 
-#### 4.18 Update `src/orchestrator.ts`
+#### 4.18 Update `src/backend-ts/orchestrator.ts`
 
 
 
-#### 4.19 Update `src/orchestrator/auto-deploy.ts`
+#### 4.19 Update `src/backend-ts/orchestrator/auto-deploy.ts`
 
 
 
-#### 4.20 Update `src/orchestrator/self-healing.ts`
+#### 4.20 Update `src/backend-ts/orchestrator/self-healing.ts`
 
 
 
-#### 4.21 Update `src/orchestrator/clean-run.ts`
+#### 4.21 Update `src/backend-ts/orchestrator/clean-run.ts`
 
 
 
-#### 4.22 Update `src/recovery/startup-recovery.ts`
+#### 4.22 Update `src/backend-ts/recovery/startup-recovery.ts`
 
 
 
-#### 4.23 Update `src/db/index.ts` (barrel file)
+#### 4.23 Update `src/backend-ts/db/index.ts` (barrel file)
 
 Replace the old re-exports (`PiKanbanDB` from `../db.ts`) with the new re-exports from `./repositories/index.ts`, `./mappers/index.ts`, `./schema.ts`, `./errors.ts`, `./init.ts`, and `../services/database.ts`, `../layers/database.ts`.
 
@@ -598,19 +598,19 @@ Remove all vestiges of the old `bun:sqlite`-based database layer. Delete the old
 
 ### Steps
 
-#### 5.1 Delete `src/db.ts`
+#### 5.1 Delete `src/backend-ts/db.ts`
 
 The main `PiKanbanDB` class file. All its functionality has been replaced by repositories.
 
-#### 5.2 Delete `src/db/migrations.ts`
+#### 5.2 Delete `src/backend-ts/db/migrations.ts`
 
 All 33 migrations. The schema is now the source of truth via `init.ts`.
 
-#### 5.3 Delete `src/db/stats-repository.ts`
+#### 5.3 Delete `src/backend-ts/db/stats-repository.ts`
 
-Stats queries. If stats functionality is needed, it should be re-implemented as a repository in Phase 4. Verify nothing outside `src/db.ts` imports from `stats-repository.ts`.
+Stats queries. If stats functionality is needed, it should be re-implemented as a repository in Phase 4. Verify nothing outside `src/backend-ts/db.ts` imports from `stats-repository.ts`.
 
-#### 5.4 Clean up `src/types.ts`
+#### 5.4 Clean up `src/backend-ts/types.ts`
 
 Remove any types that were only used by the old `PiKanbanDB`. Keep domain types that are still referenced by mappers and application code. The domain types (`Task`, `WorkflowRun`, etc.) should remain — they're used by the mappers.
 
@@ -660,9 +660,9 @@ Create a test helper that:
 
 ```typescript
 import { Effect, Layer, Scope } from "effect"
-import { DatabaseService } from "../../src/services/database.ts"
-import { DatabaseLive } from "../../src/layers/database.ts"
-import { initializeSchema } from "../../src/db/init.ts"
+import { DatabaseService } from "../../src/backend-ts/services/database.ts"
+import { DatabaseLive } from "../../src/backend-ts/layers/database.ts"
+import { initializeSchema } from "../../src/backend-ts/db/init.ts"
 import { tmpdir } from "os"
 import { randomUUID } from "crypto"
 import { join } from "path"

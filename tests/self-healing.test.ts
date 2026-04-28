@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { parseStrictJsonObject } from "../src/runtime/strict-json.ts"
+import { parseStrictJsonObject } from "../src/backend-ts/runtime/strict-json.ts"
 
 describe("Self-Healing JSON Format", () => {
   it("parses new Tauroboros bug-focused format correctly", () => {

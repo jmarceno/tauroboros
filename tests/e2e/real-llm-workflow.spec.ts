@@ -46,7 +46,7 @@ test.describe('REAL LLM Workflow (validates structured output extension)', () =>
     execSync('bun install', { cwd: projectDir, stdio: 'pipe' })
 
     // Build Kanban frontend
-    const kanbanDir = join(projectDir, 'src/kanban-solid')
+    const kanbanDir = join(projectDir, 'src/frontend')
     execSync('npm install', { cwd: kanbanDir, stdio: 'pipe' })
     execSync('npm run build', { cwd: kanbanDir, stdio: 'pipe' })
 

@@ -3,7 +3,7 @@ import { execFileSync } from "child_process"
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
-import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../src/config/settings.ts"
+import { DEFAULT_INFRASTRUCTURE_SETTINGS, type InfrastructureSettings } from "../src/backend-ts/config/settings.ts"
 import { createPiServer } from "./test-utils"
 
 function createTestSettings(mockPiBin: string): InfrastructureSettings {

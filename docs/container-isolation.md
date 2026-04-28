@@ -366,10 +366,10 @@ If issues arise, you can quickly disable containers:
 
 ### Key Files
 
-- `src/runtime/container-manager.ts` - Podman container lifecycle management
-- `src/runtime/container-pi-process.ts` - Containerized pi process backend
-- `src/runtime/pi-process-factory.ts` - Runtime mode selection
-- `src/runtime/port-allocator.ts` - Port isolation management
+- `src/backend-ts/runtime/container-manager.ts` - Podman container lifecycle management
+- `src/backend-ts/runtime/container-pi-process.ts` - Containerized pi process backend
+- `src/backend-ts/runtime/pi-process-factory.ts` - Runtime mode selection
+- `src/backend-ts/runtime/port-allocator.ts` - Port isolation management
 - `docker/pi-agent/Dockerfile` - Agent container image
 - `tests/e2e/` - End-to-end tests
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { projectPiEventToSessionMessage } from "../src/runtime/message-projection.ts"
+import { projectPiEventToSessionMessage } from "../src/backend-ts/runtime/message-projection.ts"
 
 describe("projectPiEventToSessionMessage", () => {
   it("captures assistant message payload, usage, and cost from pi message_end events", () => {

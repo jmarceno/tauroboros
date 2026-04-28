@@ -19,7 +19,7 @@
 
 import { test, expect, type Page } from '@playwright/test'
 import { execSync } from "child_process";
-import { BASE_IMAGES } from "../../src/config/base-images.ts";
+import { BASE_IMAGES } from "../../src/backend-ts/config/base-images.ts";
 
 import { createTaskViaUI, gotoKanban } from './ui-helpers'
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { CollectEventsTimeoutError } from "../src/runtime/pi-process.ts"
+import { CollectEventsTimeoutError } from "../src/backend-ts/runtime/pi-process.ts"
 
 /**
  * Test helper that mirrors the logic in orchestrator.ts

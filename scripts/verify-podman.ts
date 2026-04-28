@@ -4,8 +4,8 @@
  * Checks Podman and image availability
  */
 
-import { PiContainerManager } from "../src/runtime/container-manager.ts"
-import { BASE_IMAGES } from "../src/config/base-images.ts"
+import { PiContainerManager } from "../src/backend-ts/runtime/container-manager.ts"
+import { BASE_IMAGES } from "../src/backend-ts/config/base-images.ts"
 
 console.log("=========================================")
 console.log("TaurOboros - Container Setup Verification")

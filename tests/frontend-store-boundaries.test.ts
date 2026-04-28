@@ -10,10 +10,10 @@ const readStore = (relativePath: string) =>
 describe("frontend store migration boundaries", () => {
   it("keeps migrated stores free of async wrapper function declarations", () => {
     const files = [
-      "src/kanban-solid/src/stores/tasksStore.ts",
-      "src/kanban-solid/src/stores/runsStore.ts",
-      "src/kanban-solid/src/stores/optionsStore.ts",
-      "src/kanban-solid/src/stores/sseStore.ts",
+      "src/frontend/src/stores/tasksStore.ts",
+      "src/frontend/src/stores/runsStore.ts",
+      "src/frontend/src/stores/optionsStore.ts",
+      "src/frontend/src/stores/sseStore.ts",
     ]
 
     for (const file of files) {
@@ -23,14 +23,14 @@ describe("frontend store migration boundaries", () => {
   })
 
   it("keeps SSE reconnection Effect-based (no sleepMs Promise loop)", () => {
-    const content = readStore("src/kanban-solid/src/stores/sseStore.ts")
+    const content = readStore("src/frontend/src/stores/sseStore.ts")
 
     expect(content).not.toContain("sleepMs(")
     expect(content).toContain("Effect.sleep")
   })
 
   it("keeps batch task updates Effect-based (no Promise.all orchestration)", () => {
-    const content = readStore("src/kanban-solid/src/stores/tasksStore.ts")
+    const content = readStore("src/frontend/src/stores/tasksStore.ts")
 
     expect(content).not.toContain("Promise.all(")
     expect(content).toContain("Effect.forEach")

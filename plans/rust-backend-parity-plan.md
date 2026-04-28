@@ -4,9 +4,9 @@ status: completed
 updated_at: 2026-04-28
 owner: github-copilot
 scope:
-  target: tauroboros-rust
+  target: src/backend
   source_of_truth:
-    - frontend API contracts in src/kanban-solid/src/api
+    - frontend API contracts in src/frontend/src/api
     - TypeScript backend routes in src/server
 constraints:
   - Rust backend must stay native-only for now; no container execution support.
@@ -39,28 +39,28 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 ### Source Of Truth
 
 - Frontend API modules:
-  - src/kanban-solid/src/api/tasks.ts
-  - src/kanban-solid/src/api/runs.ts
-  - src/kanban-solid/src/api/options.ts
-  - src/kanban-solid/src/api/sessions.ts
-  - src/kanban-solid/src/api/taskGroups.ts
-  - src/kanban-solid/src/api/planning.ts
-  - src/kanban-solid/src/api/reference.ts
-  - src/kanban-solid/src/api/stats.ts
-  - src/kanban-solid/src/api/selfHeal.ts
-  - src/kanban-solid/src/api/containers.ts
+  - src/frontend/src/api/tasks.ts
+  - src/frontend/src/api/runs.ts
+  - src/frontend/src/api/options.ts
+  - src/frontend/src/api/sessions.ts
+  - src/frontend/src/api/taskGroups.ts
+  - src/frontend/src/api/planning.ts
+  - src/frontend/src/api/reference.ts
+  - src/frontend/src/api/stats.ts
+  - src/frontend/src/api/selfHeal.ts
+  - src/frontend/src/api/containers.ts
 - TypeScript backend route registration:
-  - src/server/server.ts
-  - src/server/routes/task-routes.ts
-  - src/server/routes/execution-routes.ts
-  - src/server/routes/session-routes.ts
-  - src/server/routes/planning-routes.ts
-  - src/server/routes/task-group-routes.ts
-  - src/server/routes/stats-routes.ts
-  - src/server/routes/container-routes.ts
+  - src/backend-ts/server/server.ts
+  - src/backend-ts/server/routes/task-routes.ts
+  - src/backend-ts/server/routes/execution-routes.ts
+  - src/backend-ts/server/routes/session-routes.ts
+  - src/backend-ts/server/routes/planning-routes.ts
+  - src/backend-ts/server/routes/task-group-routes.ts
+  - src/backend-ts/server/routes/stats-routes.ts
+  - src/backend-ts/server/routes/container-routes.ts
 - Rust backend route registration:
-  - tauroboros-rust/src/main.rs
-  - tauroboros-rust/src/routes/mod.rs
+  - src/backend/src/main.rs
+  - src/backend/src/routes/mod.rs
 
 ### Route Surface Expected By The Frontend
 
@@ -237,7 +237,7 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 ## Completed In This Iteration
 
-- Fixed Rust stop/finalization lifecycle regressions in `tauroboros-rust/src/orchestrator/mod.rs` and aligned `/api/runs/:id/stop` plus `/api/workflow/stop` payloads to include `cleaned`.
+- Fixed Rust stop/finalization lifecycle regressions in `src/backend/src/orchestrator/mod.rs` and aligned `/api/runs/:id/stop` plus `/api/workflow/stop` payloads to include `cleaned`.
 - Added explicit no-op execution failure handling in Rust standard execution and plan-mode implementation so empty-output/no-change runs fail instead of silently succeeding.
 - Fixed plan-mode auto-approve so Rust flows directly from planning into implementation and uses the execution model for implementation runs.
 - Corrected Rust review-loop ordering so review runs before worktree merge/removal, preventing deleted-worktree follow-up failures.
@@ -279,7 +279,7 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 - Replaced the placeholder planning session Pi integration with a real `PlanningSessionManager`.
 
-- Split `tauroboros-rust/src/routes/tasks.rs` (1011 lines) into a module directory with sub-modules.
+- Split `src/backend/src/routes/tasks.rs` (1011 lines) into a module directory with sub-modules.
 
 - Reduced Rust warnings from 77 to 0; the codebase now compiles cleanly with no warnings.
 
@@ -352,22 +352,22 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 ### Files To Watch
 
-- tauroboros-rust/src/orchestrator/mod.rs (1984 lines, exception header needed — core orchestrator with many interdependent methods)
-- tauroboros-rust/src/routes/tasks.rs (1011 lines, exception header documented)
-- tauroboros-rust/src/routes/planning.rs (1007 lines)
-- tauroboros-rust/src/orchestrator/best_of_n.rs (723 lines)
-- tauroboros-rust/src/orchestrator/planning_session.rs (692 lines)
-- tauroboros-rust/src/routes/sessions.rs
-- tauroboros-rust/src/routes/runs.rs
+- src/backend/src/orchestrator/mod.rs (1984 lines, exception header needed — core orchestrator with many interdependent methods)
+- src/backend/src/routes/tasks.rs (1011 lines, exception header documented)
+- src/backend/src/routes/planning.rs (1007 lines)
+- src/backend/src/orchestrator/best_of_n.rs (723 lines)
+- src/backend/src/orchestrator/planning_session.rs (692 lines)
+- src/backend/src/routes/sessions.rs
+- src/backend/src/routes/runs.rs
 
 ### Split Strategy
 
-- tauroboros-rust/src/routes/tasks/ has been split into a module directory:
+- src/backend/src/routes/tasks/ has been split into a module directory:
   - mod.rs (795 lines) - core CRUD, plan/revision, reset/move, start/create-and-wait
   - best_of_n.rs (135 lines) - candidates, best-of-n summary, select/abort
   - repair.rs (95 lines) - repair-state, self-heal-reports
   - All sub-modules are well under the 1000-line guardrail.
-- tauroboros-rust/src/orchestrator has been split into execution mode sub-modules:
+- src/backend/src/orchestrator has been split into execution mode sub-modules:
   - mod.rs (1984 lines) - core orchestrator with scheduler, standard execution, run lifecycle
   - plan_mode.rs (418 lines) - plan mode execution (plan generation, revision, approved implementation)
   - review.rs (371 lines) - review loop execution

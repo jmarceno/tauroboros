@@ -5,12 +5,12 @@ import {
   formatLocalTime,
   formatLocalDateTimeWithTz,
   formatTimestampForNotification,
-} from "../src/utils/date-format.ts"
+} from "../src/backend-ts/utils/date-format.ts"
 import {
   getServerTimezone,
   getTimezoneAbbreviation,
   getUTCOffsetMinutes,
-} from "../src/utils/timezone.ts"
+} from "../src/backend-ts/utils/timezone.ts"
 
 describe("timezone utilities", () => {
   it("getServerTimezone returns a valid IANA timezone", () => {

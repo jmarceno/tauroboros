@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import { Effect } from "effect"
-import { ErrorCode } from "../src/shared/error-codes.ts"
+import { ErrorCode } from "../src/backend-ts/shared/error-codes.ts"
 import {
   HttpRouteError,
   badRequestError,
   runRouteEffect,
-} from "../src/server/route-interpreter.ts"
+} from "../src/backend-ts/server/route-interpreter.ts"
 
 describe("route interpreter boundary", () => {
   it("passes through successful responses", async () => {

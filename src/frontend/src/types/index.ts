@@ -2,7 +2,7 @@
  * Types Index - browser-safe shared type exports for the Solid frontend.
  */
 
-import promptCatalog from '../../../prompts/prompt-catalog.json'
+import promptCatalog from '../../../backend-ts/prompts/prompt-catalog.json'
 
 type PromptCatalogData = {
 	defaultCodeStylePromptLines: string[]

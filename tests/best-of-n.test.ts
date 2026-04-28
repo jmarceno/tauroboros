@@ -4,9 +4,9 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { Effect } from "effect"
-import { PiKanbanDB } from "../src/db.ts"
-import { PiOrchestrator } from "../src/orchestrator.ts"
-import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
+import { PiKanbanDB } from "../src/backend-ts/db.ts"
+import { PiOrchestrator } from "../src/backend-ts/orchestrator.ts"
+import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/backend-ts/config/settings.ts"
 
 const runEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect)
 

@@ -55,14 +55,14 @@ The system guarantees that every task creates exactly one container at task star
 ### Task Schema Updates
 
 ```typescript
-// src/types.ts - Task interface
+// src/backend-ts/types.ts - Task interface
 interface Task {
   // ... existing fields ...
   containerId: string | null           // ID of the task container
   containerName: string | null         // Named reference for management
 }
 
-// src/db/types.ts - UpdateTaskInput
+// src/backend-ts/db/types.ts - UpdateTaskInput
 interface UpdateTaskInput {
   // ... existing fields ...
   containerId?: string | null
@@ -73,7 +73,7 @@ interface UpdateTaskInput {
 ### Task Container State
 
 ```typescript
-// src/runtime/task-container.ts
+// src/backend-ts/runtime/task-container.ts
 
 export type TaskContainerStatus = 
   | "creating" 
@@ -385,7 +385,7 @@ process.on("SIGINT", () => daemon.stop())
 Centralized manager for all task containers. Guarantees exactly one container per task.
 
 ```typescript
-// src/runtime/task-container-manager.ts
+// src/backend-ts/runtime/task-container-manager.ts
 
 import { Effect, Schema } from "effect"
 import { spawn } from "child_process"
@@ -814,7 +814,7 @@ export class TaskContainerManager {
 ## Orchestrator Integration
 
 ```typescript
-// src/orchestrator.ts
+// src/backend-ts/orchestrator.ts
 
 export class PiOrchestrator {
   private taskContainerManager: TaskContainerManager
@@ -1191,7 +1191,7 @@ export class PiOrchestrator {
 ## Best-of-N with Task Containers
 
 ```typescript
-// src/runtime/best-of-n.ts
+// src/backend-ts/runtime/best-of-n.ts
 
 export class BestOfNRunner {
   run(task: Task, options: Options): Effect.Effect<void, BestOfNError> {
@@ -1285,7 +1285,7 @@ export class BestOfNRunner {
 ## Cleanup on System Shutdown
 
 ```typescript
-// src/index.ts or server shutdown handler
+// src/backend-ts/index.ts or server shutdown handler
 
 process.on("SIGTERM", () => {
   // Cleanup all task containers

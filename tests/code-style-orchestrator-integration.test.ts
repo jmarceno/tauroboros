@@ -12,10 +12,10 @@ import { describe, expect, it, mock, beforeEach, afterEach } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
-import { PiKanbanDB } from "../src/db.ts"
-import { PiOrchestrator } from "../src/orchestrator.ts"
-import { DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
-import { DEFAULT_CODE_STYLE_PROMPT, type Task, type WSMessage } from "../src/types.ts"
+import { PiKanbanDB } from "../src/backend-ts/db.ts"
+import { PiOrchestrator } from "../src/backend-ts/orchestrator.ts"
+import { DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/backend-ts/config/settings.ts"
+import { DEFAULT_CODE_STYLE_PROMPT, type Task, type WSMessage } from "../src/backend-ts/types.ts"
 
 const tempDirs: string[] = []
 

@@ -22,8 +22,8 @@ test.describe('Rust Planning Chat', () => {
 
   test.beforeAll(async () => {
     const repoRoot = join(import.meta.dirname, '../..')
-    const rustDir = join(repoRoot, 'tauroboros-rust')
-    projectDir = mkdtempSync(join(tmpdir(), 'tauroboros-rust-planning-'))
+    const rustDir = join(repoRoot, 'src/backend')
+    projectDir = mkdtempSync(join(tmpdir(), 'src/backend-planning-'))
     serverPort = 3797
     baseUrl = `http://localhost:${serverPort}`
 
@@ -39,7 +39,7 @@ test.describe('Rust Planning Chat', () => {
     writeFileSync(
       join(projectDir, '.tauroboros', 'settings.json'),
       JSON.stringify({
-        project: { name: 'tauroboros-rust-planning', type: 'workflow' },
+        project: { name: 'src/backend-planning', type: 'workflow' },
         workflow: {
           server: { port: serverPort, dbPath: join(projectDir, '.tauroboros', 'tasks.db') },
           container: { enabled: false },
@@ -47,7 +47,7 @@ test.describe('Rust Planning Chat', () => {
       }, null, 2),
     )
 
-    execSync('npm run build', { cwd: join(repoRoot, 'src/kanban-solid'), stdio: 'pipe' })
+    execSync('npm run build', { cwd: join(repoRoot, 'src/frontend'), stdio: 'pipe' })
     execSync('cargo build', { cwd: rustDir, stdio: 'pipe' })
 
     serverProcess = spawn(join(rustDir, 'target', 'debug', 'tauroboros-server'), {

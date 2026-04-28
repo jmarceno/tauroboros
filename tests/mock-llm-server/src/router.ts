@@ -2,7 +2,7 @@ import { FakeListChatModel } from '@langchain/core/utils/testing';
 import { StringOutputParser } from '@langchain/core/output_parsers';
 import { PromptTemplate } from '@langchain/core/prompts';
 import { RunnableSequence } from '@langchain/core/runnables';
-import { PROMPT_CATALOG, joinPrompt } from '../../src/prompts/catalog.ts';
+import { PROMPT_CATALOG, joinPrompt } from '../../src/backend-ts/prompts/catalog.ts';
 
 const classificationPrompt = PromptTemplate.fromTemplate(joinPrompt(PROMPT_CATALOG.mockClassificationPromptLines));
 

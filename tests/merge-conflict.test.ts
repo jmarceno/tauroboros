@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { WorktreeError } from "../src/runtime/worktree.ts"
+import { WorktreeError } from "../src/backend-ts/runtime/worktree.ts"
 
 /**
  * Test helper that mirrors the logic in orchestrator.ts

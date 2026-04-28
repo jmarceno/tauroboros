@@ -24,6 +24,7 @@
     "src/**/*.ts"
   ],
   "exclude": [
-    "src/kanban-solid/**/*"
+    "src/frontend/**/*",
+    "src/backend/**/*"
   ]
 }

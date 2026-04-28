@@ -74,8 +74,8 @@ test.describe('Rust Advanced Execution Modes', () => {
 
   test.beforeAll(async () => {
     const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
-    rustDir = join(repoRoot, 'tauroboros-rust')
-    projectDir = mkdtempSync(join(tmpdir(), 'tauroboros-rust-advanced-'))
+    rustDir = join(repoRoot, 'src/backend')
+    projectDir = mkdtempSync(join(tmpdir(), 'src/backend-advanced-'))
     homeDir = join(projectDir, '.home')
     serverPort = 3793
 
@@ -87,7 +87,7 @@ test.describe('Rust Advanced Execution Modes', () => {
     writeFileSync(
       join(projectDir, '.tauroboros', 'settings.json'),
       JSON.stringify({
-        project: { name: 'tauroboros-rust-advanced', type: 'workflow' },
+        project: { name: 'src/backend-advanced', type: 'workflow' },
         workflow: {
           server: { port: serverPort, dbPath: join(projectDir, '.tauroboros', 'tasks.db') },
           container: { enabled: false },
@@ -95,7 +95,7 @@ test.describe('Rust Advanced Execution Modes', () => {
       }, null, 2),
     )
 
-    execSync('npm run build', { cwd: join(repoRoot, 'src/kanban-solid'), stdio: 'pipe' })
+    execSync('npm run build', { cwd: join(repoRoot, 'src/frontend'), stdio: 'pipe' })
     execSync('cargo build', { cwd: rustDir, stdio: 'pipe' })
 
     serverProcess = spawn(join(rustDir, 'target', 'debug', 'tauroboros-server'), {

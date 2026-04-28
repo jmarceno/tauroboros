@@ -10,7 +10,7 @@ import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
-import { BASE_IMAGES } from "../../src/config/base-images.ts";
+import { BASE_IMAGES } from "../../src/backend-ts/config/base-images.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = resolve(__filename, '..');
@@ -63,7 +63,7 @@ console.log(`[PREPARE] Created: ${projectDir}`);
 
 // Copy the entire project structure
 console.log('[PREPARE] Copying project files...');
-const itemsToCopy = ['src', 'docker', 'skills', 'mock-llm-server', 'package.json', 'bun.lock', 'bunfig.toml'];
+const itemsToCopy = ['src', 'docker', 'skills', 'tests/mock-llm-server', 'package.json', 'bun.lock', 'bunfig.toml'];
 for (const item of itemsToCopy) {
   const src = join(PROJECT_ROOT, item);
   const dest = join(projectDir, item);
@@ -92,7 +92,7 @@ execSync('bun install', { cwd: projectDir, stdio: 'inherit' });
 console.log('[PREPARE] ✓ Bun dependencies installed');
 
 console.log('[PREPARE] Building Kanban frontend assets...');
-const kanbanDir = join(projectDir, 'src/kanban-solid');
+const kanbanDir = join(projectDir, 'src/frontend');
 execSync('npm install', { cwd: kanbanDir, stdio: 'inherit' });
 execSync('npm run build', { cwd: kanbanDir, stdio: 'inherit' });
 console.log('[PREPARE] ✓ Kanban frontend assets built');
@@ -181,7 +181,7 @@ if (useMockLLM) {
   const mockServer = new MockServerManager(9999);
 
   try {
-    const mockLlmServerPath = join(PROJECT_ROOT, 'mock-llm-server');
+    const mockLlmServerPath = join(PROJECT_ROOT, 'tests/mock-llm-server');
     if (!existsSync(join(mockLlmServerPath, 'node_modules'))) {
       console.log('[PREPARE] Installing mock LLM server dependencies...');
       execSync('npm install', { cwd: mockLlmServerPath, stdio: 'inherit' });

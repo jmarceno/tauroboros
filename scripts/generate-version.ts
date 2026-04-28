@@ -9,7 +9,7 @@ import { resolve, join } from "path"
 import { existsSync } from "fs"
 
 const PROJECT_ROOT = resolve(import.meta.dir, "..")
-const OUTPUT_FILE = join(PROJECT_ROOT, "src", "server", "version.ts")
+const OUTPUT_FILE = join(PROJECT_ROOT, "src", "backend-ts", "server", "version.ts")
 
 async function main() {
   // Read version from package.json

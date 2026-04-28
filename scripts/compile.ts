@@ -14,7 +14,7 @@ import { existsSync, rmSync } from "fs"
 import { resolve, join } from "path"
 
 const PROJECT_ROOT = resolve(import.meta.dir, "..")
-const KANBAN_SOLID_DIR = join(PROJECT_ROOT, "src", "kanban-solid")
+const KANBAN_SOLID_DIR = join(PROJECT_ROOT, "src", "frontend")
 const DIST_DIR = join(KANBAN_SOLID_DIR, "dist")
 const BIN_OUTPUT = join(PROJECT_ROOT, "tauroboros")
 
@@ -79,7 +79,7 @@ async function compileBinary(): Promise<void> {
     "--compile",
     "--target=bun",
     "--outfile", BIN_OUTPUT,
-    join(PROJECT_ROOT, "src", "index.ts")
+    join(PROJECT_ROOT, "src", "backend-ts", "index.ts")
   ]
 
   console.log("  → Running bun build --compile...")

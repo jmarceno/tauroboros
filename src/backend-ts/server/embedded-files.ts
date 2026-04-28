@@ -15,7 +15,7 @@ import { Effect, Schema } from "effect"
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 // Static file serving paths - SolidJS kanban
-export const KANBAN_DIST = join(__dirname, "..", "kanban-solid", "dist")
+export const KANBAN_DIST = join(__dirname, "..", "..", "frontend", "dist")
 export const KANBAN_INDEX = join(KANBAN_DIST, "index.html")
 
 // Static import ensures Bun compile captures generated assets at compile time.
@@ -37,7 +37,7 @@ export class EmbeddedFileError extends Schema.TaggedError<EmbeddedFileError>()("
 
 /**
  * Extract asset key from full path
- * Converts "/path/to/kanban-solid/dist/assets/file.js" → "/assets/file.js"
+ * Converts "/path/to/frontend/dist/assets/file.js" → "/assets/file.js"
  */
 function extractAssetKey(path: string): string | null {
   // Look for /assets/ in the path

@@ -40,8 +40,8 @@ fi
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUST_DIR="${SCRIPT_DIR}/tauroboros-rust"
-FRONTEND_DIR="${SCRIPT_DIR}/src/kanban-solid"
+RUST_DIR="${SCRIPT_DIR}/src/backend"
+FRONTEND_DIR="${SCRIPT_DIR}/src/frontend"
 RUST_PORT="${SERVER_PORT:-3789}"
 FRONTEND_PORT="${DEV_PORT:-5173}"
 

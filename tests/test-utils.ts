@@ -1,7 +1,7 @@
 import { Effect } from "effect"
-import type { InfrastructureSettings } from "../src/config/settings.ts"
-import { BASE_IMAGES } from "../src/config/base-images.ts"
-import { createPiServerScopedEffect, type CreateServerOptions, type PiKanbanServer } from "../src/server.ts"
+import type { InfrastructureSettings } from "../src/backend-ts/config/settings.ts"
+import { BASE_IMAGES } from "../src/backend-ts/config/base-images.ts"
+import { createPiServerScopedEffect, type CreateServerOptions, type PiKanbanServer } from "../src/backend-ts/server.ts"
 
 type TestPiKanbanServer = PiKanbanServer & {
   start: (port?: number) => Promise<number>

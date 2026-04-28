@@ -196,7 +196,7 @@ export class PiContainerManager {
         })
       }
 
-      const mockLlmServerPath = path.join(process.cwd(), 'mock-llm-server')
+      const mockLlmServerPath = path.join(process.cwd(), 'tests/mock-llm-server')
       yield* this.mockServerManager.start(mockLlmServerPath).pipe(
         Effect.mapError((cause) => new ContainerManagerError({
           operation: "startMockServerIfNeeded",

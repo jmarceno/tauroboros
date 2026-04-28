@@ -5,7 +5,7 @@ use std::process::Command;
 fn main() {
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR missing"));
-    let frontend_dir = manifest_dir.join("../src/kanban-solid");
+    let frontend_dir = manifest_dir.join("../frontend");
 
     println!(
         "cargo:rerun-if-changed={}",

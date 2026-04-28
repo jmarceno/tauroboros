@@ -29,8 +29,8 @@ bun run dev
 ### Generated Files (DO NOT COMMIT)
 
 Two files are auto-generated and in `.gitignore`:
-- `src/server/generated-assets.ts` — embeds kanban UI, skills, config, and docker files
-- `src/server/version.ts` — git commit hash and version info
+- `src/backend-ts/server/generated-assets.ts` — embeds kanban UI, skills, config, and docker files
+- `src/backend-ts/server/version.ts` — git commit hash and version info
 
 They are regenerated automatically via `predev`/`pretest` hooks:
 ```bash
@@ -165,7 +165,7 @@ One-command compile and install:
 ```
 
 The install script will:
-1. Build the kanban-solid frontend (refreshing all assets)
+1. Build the frontend (refreshing all assets)
 2. Generate embedded assets
 3. Compile the Bun binary
 4. Install to the target directory

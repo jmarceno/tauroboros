@@ -4,8 +4,8 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { createPiServer } from "./test-utils"
-import type { InfrastructureSettings } from "../src/config/settings.ts"
-import { BASE_IMAGES } from "../src/config/base-images.ts"
+import type { InfrastructureSettings } from "../src/backend-ts/config/settings.ts"
+import { BASE_IMAGES } from "../src/backend-ts/config/base-images.ts"
 
 function createTestSettings(): InfrastructureSettings {
   return {

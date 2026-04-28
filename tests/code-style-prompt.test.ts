@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { DEFAULT_CODE_STYLE_PROMPT, resolveCodeStylePrompt } from "../src/types.ts"
+import { DEFAULT_CODE_STYLE_PROMPT, resolveCodeStylePrompt } from "../src/backend-ts/types.ts"
 
 describe("DEFAULT_CODE_STYLE_PROMPT", () => {
   it("should be a non-empty string containing code style enforcement instructions", () => {

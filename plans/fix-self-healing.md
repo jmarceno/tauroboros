@@ -48,7 +48,7 @@ flowchart TD
 **Current:** Asks agent to decide between `restart_task` vs `keep_failed`  
 **New:** Focus exclusively on Tauroboros bug investigation
 
-**Changes needed in `src/prompts/prompt-catalog.json`:**
+**Changes needed in `src/backend-ts/prompts/prompt-catalog.json`:**
 - Remove `recoverability` section from expected output
 - Add focus on Tauroboros codebase inspection
 - Change output format to identify Tauroboros bugs vs external issues
@@ -72,7 +72,7 @@ flowchart TD
 ```
 
 ### Task 2: Update SelfHealingService to Use Default Container
-**File:** `src/runtime/self-healing.ts`
+**File:** `src/backend-ts/runtime/self-healing.ts`
 
 **Changes:**
 1. Always use default container image (don't resolve from task)
@@ -90,7 +90,7 @@ const imageToUse = self.settings?.workflow?.container?.image || DEFAULT_CONTAINE
 ```
 
 ### Task 3: Update Orchestrator Self-Healing Logic
-**File:** `src/orchestrator/self-healing.ts`
+**File:** `src/backend-ts/orchestrator/self-healing.ts`
 
 **Changes:**
 1. `maybeSelfHealTask` should only trigger investigation, NOT modify task state
@@ -112,9 +112,9 @@ if (result.isTauroborosBug) {
 
 ### Task 4: Update Types and Database Schema
 **Files:** 
-- `src/types.ts`
-- `src/db/types.ts`
-- `src/db/index.ts` (migrations)
+- `src/backend-ts/types.ts`
+- `src/backend-ts/db/types.ts`
+- `src/backend-ts/db/index.ts` (migrations)
 
 **Changes to `SelfHealReport`:**
 - Add `isTauroborosBug: boolean`
@@ -135,7 +135,7 @@ ADD COLUMN external_factors JSON DEFAULT '[]';
 
 ### Task 5: Update UI Components
 **Files:**
-- `src/kanban-solid/src/api/selfHeal.ts`
+- `src/frontend/src/api/selfHeal.ts`
 - Components that display self-heal reports
 
 **Changes:**
@@ -145,7 +145,7 @@ ADD COLUMN external_factors JSON DEFAULT '[]';
 4. Remove "Restart Task" button from self-heal UI (that's repair's job)
 
 ### Task 6: Add Self-Healing Trigger Logic
-**File:** `src/orchestrator.ts` or execution logic
+**File:** `src/backend-ts/orchestrator.ts` or execution logic
 
 **Changes:**
 1. Define when self-healing should trigger:
@@ -165,16 +165,16 @@ ADD COLUMN external_factors JSON DEFAULT '[]';
 
 ### Task 8: Add Self-Healing Enable/Disable Option
 **Files:**
-- `src/types.ts` - Add to Options interface
-- `src/db/migrations.ts` - Add migration
-- `src/db.ts` - Update DEFAULT_OPTIONS
-- `src/kanban-solid/src/components/modals/OptionsModal.tsx` - Add checkbox
-- `src/kanban-solid/src/components/tabs/OptionsTab.tsx` - Add checkbox
+- `src/backend-ts/types.ts` - Add to Options interface
+- `src/backend-ts/db/migrations.ts` - Add migration
+- `src/backend-ts/db.ts` - Update DEFAULT_OPTIONS
+- `src/frontend/src/components/modals/OptionsModal.tsx` - Add checkbox
+- `src/frontend/src/components/tabs/OptionsTab.tsx` - Add checkbox
 
 **Changes:**
 1. Add `selfHealingEnabled: boolean` to Options interface (default: `false`)
 2. Create migration 32 to add the option to database with default `'false'`
-3. Update `DEFAULT_OPTIONS` in `src/db.ts` to include `selfHealingEnabled: false`
+3. Update `DEFAULT_OPTIONS` in `src/backend-ts/db.ts` to include `selfHealingEnabled: false`
 4. Add UI checkbox in OptionsModal (with `DEFAULT_FORM_DATA` update)
 5. Add UI checkbox in OptionsTab (with `DEFAULT_FORM_DATA` update)
 6. The orchestrator should check this option before triggering self-healing

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from "bun:test"
 import { Effect } from "effect"
-import { PiKanbanDB } from "../src/db.ts"
-import { PiOrchestrator } from "../src/orchestrator.ts"
-import { buildExecutionGraph } from "../src/execution-plan.ts"
-import type { WorkflowRun } from "../src/types.ts"
+import { PiKanbanDB } from "../src/backend-ts/db.ts"
+import { PiOrchestrator } from "../src/backend-ts/orchestrator.ts"
+import { buildExecutionGraph } from "../src/backend-ts/execution-plan.ts"
+import type { WorkflowRun } from "../src/backend-ts/types.ts"
 
 const runEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect)
 

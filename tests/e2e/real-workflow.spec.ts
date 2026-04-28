@@ -2,7 +2,7 @@ import { execSync } from 'child_process'
 
 import { test, expect, type Locator, type Page } from '@playwright/test'
 
-import { BASE_IMAGES } from '../../src/config/base-images.ts'
+import { BASE_IMAGES } from '../../src/backend-ts/config/base-images.ts'
 import { createTaskViaUI, getTaskCard, gotoKanban } from './ui-helpers'
 
 const WORKFLOW_TIMEOUT_MS = 10 * 60 * 1000

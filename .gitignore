@@ -7,6 +7,8 @@ plans/reports
 
 generated-assets.ts
 version.ts
+.vscode
+target
 
 .playwright-mcp
 test-results

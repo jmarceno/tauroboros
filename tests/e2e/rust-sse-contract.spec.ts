@@ -34,8 +34,8 @@ test.describe('Rust SSE Contract', () => {
 
   test.beforeAll(async () => {
     const repoRoot = join(import.meta.dirname, '../..')
-    const rustDir = join(repoRoot, 'tauroboros-rust')
-    projectDir = mkdtempSync(join(tmpdir(), 'tauroboros-rust-sse-'))
+    const rustDir = join(repoRoot, 'src/backend')
+    projectDir = mkdtempSync(join(tmpdir(), 'src/backend-sse-'))
     serverPort = 3794
 
     writeFileSync(join(projectDir, '.gitignore'), '.tauroboros/\n.worktrees/\n')
@@ -50,7 +50,7 @@ test.describe('Rust SSE Contract', () => {
     writeFileSync(
       join(projectDir, '.tauroboros', 'settings.json'),
       JSON.stringify({
-        project: { name: 'tauroboros-rust-sse', type: 'workflow' },
+        project: { name: 'src/backend-sse', type: 'workflow' },
         workflow: {
           server: { port: serverPort, dbPath: join(projectDir, '.tauroboros', 'tasks.db') },
           container: { enabled: false },
@@ -58,7 +58,7 @@ test.describe('Rust SSE Contract', () => {
       }, null, 2),
     )
 
-    execSync('npm run build', { cwd: join(repoRoot, 'src/kanban-solid'), stdio: 'pipe' })
+    execSync('npm run build', { cwd: join(repoRoot, 'src/frontend'), stdio: 'pipe' })
     execSync('cargo build', { cwd: rustDir, stdio: 'pipe' })
 
     serverProcess = spawn(join(rustDir, 'target', 'debug', 'tauroboros-server'), {

@@ -3,11 +3,11 @@ import { Effect } from "effect"
 import { mkdtempSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
-import { PiKanbanDB } from "../src/db.ts"
-import { CodeStyleSessionRunner, RunCodeStyleInput } from "../src/runtime/codestyle-session.ts"
-import { PiSessionManager, ExecuteSessionPromptResult, SessionManagerExecuteError } from "../src/runtime/session-manager.ts"
-import { DEFAULT_CODE_STYLE_PROMPT, resolveCodeStylePrompt } from "../src/types.ts"
-import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/config/settings.ts"
+import { PiKanbanDB } from "../src/backend-ts/db.ts"
+import { CodeStyleSessionRunner, RunCodeStyleInput } from "../src/backend-ts/runtime/codestyle-session.ts"
+import { PiSessionManager, ExecuteSessionPromptResult, SessionManagerExecuteError } from "../src/backend-ts/runtime/session-manager.ts"
+import { DEFAULT_CODE_STYLE_PROMPT, resolveCodeStylePrompt } from "../src/backend-ts/types.ts"
+import { InfrastructureSettings, DEFAULT_INFRASTRUCTURE_SETTINGS } from "../src/backend-ts/config/settings.ts"
 
 const tempDirs: string[] = []
 

@@ -97,7 +97,7 @@ type NotificationJob =
   | { readonly _tag: "shutdown" };
 
 // Static file serving paths - SolidJS kanban
-const KANBAN_DIST = join(__dirname, "..", "kanban-solid", "dist");
+const KANBAN_DIST = join(__dirname, "..", "..", "frontend", "dist");
 const KANBAN_INDEX = join(KANBAN_DIST, "index.html");
 
 import type {

@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from "bun:test"
 import { mkdtempSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
-import { PiKanbanDB } from "../src/db.ts"
-import type { AggregatedReviewResult, Task, TaskCandidate } from "../src/types.ts"
+import { PiKanbanDB } from "../src/backend-ts/db.ts"
+import type { AggregatedReviewResult, Task, TaskCandidate } from "../src/backend-ts/types.ts"
 import {
   buildBestOfNFinalApplierVariables,
   buildBestOfNReviewerVariables,
@@ -16,7 +16,7 @@ import {
   buildReviewFixVariables,
   buildReviewVariables,
   renderTemplate,
-} from "../src/prompts/renderer.ts"
+} from "../src/backend-ts/prompts/renderer.ts"
 
 const tempDirs: string[] = []
 

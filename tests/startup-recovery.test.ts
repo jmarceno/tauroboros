@@ -3,8 +3,8 @@ import { mkdtempSync, mkdirSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { Effect } from "effect"
-import { PiKanbanDB } from "../src/db.ts"
-import { runStartupRecoveryEffect } from "../src/recovery/startup-recovery.ts"
+import { PiKanbanDB } from "../src/backend-ts/db.ts"
+import { runStartupRecoveryEffect } from "../src/backend-ts/recovery/startup-recovery.ts"
 
 const tempDirs: string[] = []
 

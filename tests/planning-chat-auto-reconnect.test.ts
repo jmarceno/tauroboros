@@ -3,8 +3,8 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "fs"
 import { tmpdir } from "os"
 import { join } from "path"
 import { execFileSync } from "child_process"
-import { ErrorCode, isErrorCode, detectErrorCodeFromMessage } from "../src/shared/error-codes.ts"
-import type { InfrastructureSettings } from "../src/config/settings.ts"
+import { ErrorCode, isErrorCode, detectErrorCodeFromMessage } from "../src/backend-ts/shared/error-codes.ts"
+import type { InfrastructureSettings } from "../src/backend-ts/config/settings.ts"
 import { createPiServer } from "./test-utils"
 
 // Default test settings with container mode disabled

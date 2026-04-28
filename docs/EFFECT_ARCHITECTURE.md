@@ -12,10 +12,10 @@ TaurOboros uses a fully Effect-first architecture. This guide documents the patt
 
 Effects may only be executed at these approved runtime boundaries:
 
-- **Backend entrypoint** (`src/index.ts`) - Main application startup
-- **Bun HTTP adapter** (`src/server/server.ts`) - Request handling boundary
+- **Backend entrypoint** (`src/backend-ts/index.ts`) - Main application startup
+- **Bun HTTP adapter** (`src/backend-ts/server/server.ts`) - Request handling boundary
 - **WebSocket handlers** - Real-time event boundaries
-- **Frontend UI boundary** (`src/kanban-solid/src/`) - User interaction handlers
+- **Frontend UI boundary** (`src/frontend/src/`) - User interaction handlers
 - **Test harness** (`tests/`) - Test execution boundary
 
 **Rule**: No other module may call `Effect.runPromise`, `Effect.runSync`, or similar execution functions.
@@ -147,40 +147,40 @@ const program = Effect.gen(function* () {
 
 All backend modules follow the Effect-first architecture:
 
-- `src/shared/errors.ts` - Domain error definitions (Schema.TaggedError)
-- `src/shared/logger.ts` - Structured logging service
-- `src/shared/services.ts` - Service tags (Context.GenericTag)
-- `src/shared/error-codes.ts` - Error codes for API compatibility
-- `src/index.ts` - Backend entrypoint (runtime boundary)
-- `src/server.ts` - Server composition via layers
-- `src/server/server.ts` - HTTP server with scoped resources
-- `src/server/router.ts` - HTTP routing via Effect interpreters
-- `src/server/route-interpreter.ts` - Central route error handling
-- `src/server/routes/*.ts` - All route handlers (Effect-based)
-- `src/server/websocket.ts` - WebSocket hub with scoped ownership
-- `src/orchestrator.ts` - Main orchestration engine (Effect-native)
-- `src/db.ts` - Database with typed errors
-- `src/telegram.ts` - Telegram integration (Effect-based)
-- `src/runtime/planning-session.ts` - Planning sessions
-- `src/runtime/session-manager.ts` - Session management
-- `src/runtime/pi-process.ts` - Pi process management
-- `src/runtime/container-pi-process.ts` - Container process management
-- `src/runtime/container-manager.ts` - Container management
-- `src/runtime/container-image-manager.ts` - Container image management
-- `src/runtime/global-scheduler.ts` - Task scheduling
-- `src/runtime/best-of-n.ts` - Best-of-N execution
-- `src/runtime/review-session.ts` - Review sessions
-- `src/runtime/smart-repair.ts` - Smart repair service
-- `src/runtime/self-healing.ts` - Self-healing service
-- `src/runtime/codestyle-session.ts` - Code style sessions
-- `src/runtime/worktree.ts` - Git worktree operations
+- `src/backend-ts/shared/errors.ts` - Domain error definitions (Schema.TaggedError)
+- `src/backend-ts/shared/logger.ts` - Structured logging service
+- `src/backend-ts/shared/services.ts` - Service tags (Context.GenericTag)
+- `src/backend-ts/shared/error-codes.ts` - Error codes for API compatibility
+- `src/backend-ts/index.ts` - Backend entrypoint (runtime boundary)
+- `src/backend-ts/server.ts` - Server composition via layers
+- `src/backend-ts/server/server.ts` - HTTP server with scoped resources
+- `src/backend-ts/server/router.ts` - HTTP routing via Effect interpreters
+- `src/backend-ts/server/route-interpreter.ts` - Central route error handling
+- `src/backend-ts/server/routes/*.ts` - All route handlers (Effect-based)
+- `src/backend-ts/server/websocket.ts` - WebSocket hub with scoped ownership
+- `src/backend-ts/orchestrator.ts` - Main orchestration engine (Effect-native)
+- `src/backend-ts/db.ts` - Database with typed errors
+- `src/backend-ts/telegram.ts` - Telegram integration (Effect-based)
+- `src/backend-ts/runtime/planning-session.ts` - Planning sessions
+- `src/backend-ts/runtime/session-manager.ts` - Session management
+- `src/backend-ts/runtime/pi-process.ts` - Pi process management
+- `src/backend-ts/runtime/container-pi-process.ts` - Container process management
+- `src/backend-ts/runtime/container-manager.ts` - Container management
+- `src/backend-ts/runtime/container-image-manager.ts` - Container image management
+- `src/backend-ts/runtime/global-scheduler.ts` - Task scheduling
+- `src/backend-ts/runtime/best-of-n.ts` - Best-of-N execution
+- `src/backend-ts/runtime/review-session.ts` - Review sessions
+- `src/backend-ts/runtime/smart-repair.ts` - Smart repair service
+- `src/backend-ts/runtime/self-healing.ts` - Self-healing service
+- `src/backend-ts/runtime/codestyle-session.ts` - Code style sessions
+- `src/backend-ts/runtime/worktree.ts` - Git worktree operations
 
 ### Frontend Modules (Fully Migrated)
 
-- `src/kanban-solid/src/api/client.ts` - Effect-based HTTP client
-- `src/kanban-solid/src/api/*.ts` - All API modules (Effect-based)
-- `src/kanban-solid/src/stores/*.ts` - All stores (Effect-based)
-- `src/kanban-solid/src/App.tsx` - Main app with Effect boundaries
+- `src/frontend/src/api/client.ts` - Effect-based HTTP client
+- `src/frontend/src/api/*.ts` - All API modules (Effect-based)
+- `src/frontend/src/stores/*.ts` - All stores (Effect-based)
+- `src/frontend/src/App.tsx` - Main app with Effect boundaries
 
 ## Code Standards
 

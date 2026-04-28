@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test"
 import { mkdtempSync, rmSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
-import { PiKanbanDB } from "../src/db.ts"
+import { PiKanbanDB } from "../src/backend-ts/db.ts"
 
 const tempDirs: string[] = []
 

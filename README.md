@@ -130,7 +130,7 @@ bun run container:verify
 # Set workflow.container.enabled to true
 
 # 4. Run as normal - agents now run in isolated containers
-bun run src/index.ts
+bun run src/backend-ts/index.ts
 ```
 
 This process will be done automatically to you if you have Podman installed the first time you run Tauroboros in project directory.
@@ -293,9 +293,9 @@ The application uses an **Effect-first** architecture:
 - **Structured Logging**: All logging uses `Effect.log*` for observability
 
 **Runtime Boundaries**: Effects are only executed at approved boundaries:
-- Backend entrypoint (`src/index.ts`)
-- Bun HTTP adapter (`src/server/router.ts`)
-- Frontend UI boundary (`src/kanban-solid/src/api/client.ts`)
+- Backend entrypoint (`src/backend-ts/index.ts`)
+- Bun HTTP adapter (`src/backend-ts/server/router.ts`)
+- Frontend UI boundary (`src/frontend/src/api/client.ts`)
 - Test harness
 
 ### Database Schema
@@ -327,49 +327,57 @@ The server exposes a comprehensive REST API:
 
 ```
 src/
-├── index.ts              # Entry point (Effect runtime boundary)
-├── server.ts             # HTTP server setup (Layer composition)
-├── orchestrator.ts       # Workflow execution orchestration (Effect-native)
-├── db.ts                 # Database layer (Effect-based)
-├── types.ts              # TypeScript type definitions
-├── execution-plan.ts     # Dependency resolution
-├── task-state.ts         # Task state machine
-├── kanban-solid/         # Solid JS kanban UI (Vite + Tailwind)
-│   ├── package.json      # Frontend dependencies (npm)
-│   ├── vite.config.ts
-│   └── src/
-│       ├── App.tsx
-│       ├── api/          # Effect-based API client
-│       ├── stores/       # Effect-based state management
-│       └── components/
-├── server/               # HTTP server implementation
-│   ├── router.ts         # URL routing
-│   ├── server.ts         # Route handlers
-│   ├── route-interpreter.ts  # Central Effect route interpreter
-│   ├── websocket.ts      # WebSocket hub
-│   ├── types.ts          # Server types (Effect-based)
-│   └── routes/           # Route handlers (Effect-based)
-├── runtime/              # Execution runtime (Effect-native)
-│   ├── session-manager.ts
-│   ├── planning-session.ts
-│   ├── pi-process.ts
-│   ├── container-pi-process.ts
-│   ├── container-manager.ts
-│   ├── container-image-manager.ts
-│   ├── global-scheduler.ts
-│   ├── worktree.ts
-│   ├── best-of-n.ts      # Best-of-N strategy
-│   ├── review-session.ts
-│   ├── smart-repair.ts
-│   └── self-healing.ts
-├── shared/               # Shared utilities
-│   ├── errors.ts        # Domain errors (Schema.TaggedError)
-│   ├── logger.ts        # Logging service
-│   ├── services.ts      # Service tags (Context.GenericTag)
-│   └── error-codes.ts   # Error codes
-├── prompts/              # Prompt templates
-├── db/                   # Database migrations and types
-└── recovery/             # Startup recovery logic
+├── backend/              # Rust backend (Rocket + SQLite)
+│   ├── src/
+│   │   ├── main.rs       # Entry point
+│   │   ├── routes/       # HTTP routes
+│   │   ├── orchestrator/ # Workflow orchestration
+│   │   └── db/           # Database layer
+│   └── Cargo.toml
+├── backend-ts/           # TypeScript backend (Bun + Effect)
+│   ├── index.ts          # Entry point (Effect runtime boundary)
+│   ├── server.ts         # HTTP server setup (Layer composition)
+│   ├── orchestrator.ts   # Workflow execution orchestration (Effect-native)
+│   ├── db.ts             # Database layer (Effect-based)
+│   ├── types.ts          # TypeScript type definitions
+│   ├── execution-plan.ts # Dependency resolution
+│   ├── task-state.ts     # Task state machine
+│   ├── server/           # HTTP server implementation
+│   │   ├── router.ts     # URL routing
+│   │   ├── server.ts     # Route handlers
+│   │   ├── route-interpreter.ts  # Central Effect route interpreter
+│   │   ├── websocket.ts  # WebSocket hub
+│   │   ├── types.ts      # Server types (Effect-based)
+│   │   └── routes/       # Route handlers (Effect-based)
+│   ├── runtime/          # Execution runtime (Effect-native)
+│   │   ├── session-manager.ts
+│   │   ├── planning-session.ts
+│   │   ├── pi-process.ts
+│   │   ├── container-pi-process.ts
+│   │   ├── container-manager.ts
+│   │   ├── container-image-manager.ts
+│   │   ├── global-scheduler.ts
+│   │   ├── worktree.ts
+│   │   ├── best-of-n.ts  # Best-of-N strategy
+│   │   ├── review-session.ts
+│   │   ├── smart-repair.ts
+│   │   └── self-healing.ts
+│   ├── shared/           # Shared utilities
+│   │   ├── errors.ts     # Domain errors (Schema.TaggedError)
+│   │   ├── logger.ts     # Logging service
+│   │   ├── services.ts   # Service tags (Context.GenericTag)
+│   │   └── error-codes.ts # Error codes
+│   ├── prompts/          # Prompt templates
+│   ├── db/               # Database migrations and types
+│   └── recovery/         # Startup recovery logic
+└── frontend/             # Solid JS frontend (Vite + Tailwind)
+    ├── package.json      # Frontend dependencies (npm)
+    ├── vite.config.ts
+    └── src/
+        ├── App.tsx
+        ├── api/          # Effect-based API client
+        ├── stores/       # Effect-based state management
+        └── components/
 ```
 
 # Acknowledgements

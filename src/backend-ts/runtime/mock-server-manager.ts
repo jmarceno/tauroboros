@@ -34,7 +34,7 @@ export class MockServerManager {
     }
 
     return Effect.async<void, MockServerManagerError>((resume) => {
-      const serverPath = mockLlmServerPath || path.join(process.cwd(), "mock-llm-server")
+      const serverPath = mockLlmServerPath || path.join(process.cwd(), "tests/mock-llm-server")
       const distPath = path.join(serverPath, "dist")
 
       const [startCommand, startArgs] = this.isBuilt(distPath)

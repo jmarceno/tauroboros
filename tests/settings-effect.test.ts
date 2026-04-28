@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
 import { Effect } from "effect"
-import { loadSettingsEffect } from "../src/config/settings.ts"
+import { loadSettingsEffect } from "../src/backend-ts/config/settings.ts"
 import { runEffectOrThrow } from "./helpers/effect.ts"
 
 describe("settings effect/schema pipeline", () => {
