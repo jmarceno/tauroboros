@@ -6,6 +6,7 @@
 mod audit;
 mod cors;
 mod db;
+mod embedded_resources;
 mod error;
 mod models;
 mod orchestrator;
@@ -16,7 +17,7 @@ mod state;
 
 use crate::cors::Cors;
 use crate::db::{create_pool, run_migrations};
-use crate::orchestrator::pi::ensure_structured_output_extension;
+use crate::embedded_resources::ensure_embedded_pi_resources;
 use crate::orchestrator::planning_session::PlanningSessionManager;
 use crate::orchestrator::Orchestrator;
 use crate::settings::load_startup_settings;
@@ -54,10 +55,14 @@ async fn rocket() -> Rocket<Build> {
     info!("Server port: {}", port);
     info!("Project root: {}", project_root);
 
-    match ensure_structured_output_extension(&project_root).await {
-        Ok(path) => info!("Prepared Pi structured output extension at {}", path),
+    match ensure_embedded_pi_resources(&project_root).await {
+        Ok(summary) => info!(
+            "Prepared embedded Pi resources at startup ({} skills, {} extensions extracted)",
+            summary.skills_extracted,
+            summary.extensions_extracted
+        ),
         Err(error) => panic!(
-            "Failed to prepare Pi structured output extension: {}",
+            "Failed to prepare embedded Pi resources: {}",
             error
         ),
     }

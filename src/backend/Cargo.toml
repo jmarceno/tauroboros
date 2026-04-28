@@ -6,12 +6,12 @@ rust-version = "1.75"
 
 [features]
 default = []
-embedded-frontend = ["dep:include_dir"]
+embedded-frontend = []
 
 [dependencies]
 # Web framework
 rocket = { version = "0.5.1", features = ["json"] }
-include_dir = { version = "0.7", optional = true }
+include_dir = { version = "0.7" }
 
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
@@ -56,5 +56,5 @@ git2 = { version = "0.20", features = ["vendored-libgit2", "vendored-openssl"] }
 reqwest = { version = "0.11", features = ["json"] }
 
 [[bin]]
-name = "tauroboros-server"
+name = "tauroboros"
 path = "src/main.rs"

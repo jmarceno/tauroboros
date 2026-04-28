@@ -3,6 +3,7 @@ use crate::db::queries::create_session_message;
 use crate::db::runtime::{
     get_next_session_message_seq, update_workflow_session_record, UpdateWorkflowSessionRecord,
 };
+use crate::embedded_resources::ensure_embedded_pi_resources;
 use crate::error::{ApiError, ErrorCode};
 use crate::models::{
     AuditLevel, MessageRole, MessageType, PiSessionStatus, PiWorkflowSession, SessionMessage,
@@ -22,8 +23,6 @@ use tokio::time::{timeout, Duration};
 use tracing::warn;
 use uuid::Uuid;
 
-const STRUCTURED_OUTPUT_EXTENSION_SOURCE: &str =
-    include_str!("../../../../extensions/pi-tools/structured-output.ts");
 const STRUCTURED_OUTPUT_EXTENSION_RELATIVE_PATH: [&str; 4] =
     [".pi", "extensions", "pi-tools", "structured-output.ts"];
 const MODEL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -600,36 +599,30 @@ async fn spawn_process(
 }
 
 pub async fn ensure_structured_output_extension(project_root: &str) -> Result<String, ApiError> {
+    ensure_embedded_pi_resources(project_root).await?;
+
     let extension_path = structured_output_extension_path(project_root);
-    let extension_dir = extension_path.parent().ok_or_else(|| {
-        ApiError::internal(format!(
-            "Failed to resolve directory for structured output extension at {}",
-            extension_path.display()
-        ))
-        .with_code(ErrorCode::ExecutionOperationFailed)
-    })?;
 
-    tokio::fs::create_dir_all(extension_dir)
+    let exists = tokio::fs::try_exists(&extension_path)
         .await
         .map_err(|error| {
             ApiError::internal(format!(
-                "Failed to create structured output extension directory {}: {}",
-                extension_dir.display(),
-                error
-            ))
-            .with_code(ErrorCode::ExecutionOperationFailed)
-        })?;
-
-    tokio::fs::write(&extension_path, STRUCTURED_OUTPUT_EXTENSION_SOURCE)
-        .await
-        .map_err(|error| {
-            ApiError::internal(format!(
-                "Failed to write structured output extension to {}: {}",
+                "Failed to verify structured output extension at {}: {}",
                 extension_path.display(),
                 error
             ))
             .with_code(ErrorCode::ExecutionOperationFailed)
         })?;
+
+    if !exists {
+        return Err(
+            ApiError::internal(format!(
+                "Structured output extension was not embedded at {}",
+                extension_path.display()
+            ))
+            .with_code(ErrorCode::ExecutionOperationFailed),
+        );
+    }
 
     Ok(extension_path.to_string_lossy().to_string())
 }
@@ -968,9 +961,7 @@ fn project_event_to_message(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_pi_args, ensure_structured_output_extension, STRUCTURED_OUTPUT_EXTENSION_SOURCE,
-    };
+    use super::{build_pi_args, ensure_structured_output_extension};
     use std::fs;
     use std::path::Path;
     use uuid::Uuid;
@@ -1012,7 +1003,23 @@ mod tests {
         assert!(Path::new(&extension_path).exists());
 
         let written = fs::read_to_string(&extension_path).expect("read written extension");
-        assert_eq!(written, STRUCTURED_OUTPUT_EXTENSION_SOURCE);
+        let expected = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../extensions/pi-tools/structured-output.ts"),
+        )
+        .expect("read embedded extension source");
+        assert_eq!(written, expected);
+
+        fs::write(&extension_path, "custom extension").expect("override structured output extension");
+
+        let second_path =
+            ensure_structured_output_extension(project_root.to_str().expect("project root to str"))
+                .await
+                .expect("reuse extracted structured output extension");
+
+        assert_eq!(second_path, extension_path);
+        let preserved = fs::read_to_string(&extension_path).expect("read preserved extension");
+        assert_eq!(preserved, "custom extension");
 
         fs::remove_dir_all(&project_root).expect("remove temp project root");
     }

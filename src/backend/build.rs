@@ -6,6 +6,8 @@ fn main() {
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR missing"));
     let frontend_dir = manifest_dir.join("../frontend");
+    let skills_dir = manifest_dir.join("../../skills");
+    let extensions_dir = manifest_dir.join("../../extensions");
 
     println!(
         "cargo:rerun-if-changed={}",
@@ -23,6 +25,8 @@ fn main() {
         "cargo:rerun-if-changed={}",
         frontend_dir.join("src").display()
     );
+    println!("cargo:rerun-if-changed={}", skills_dir.display());
+    println!("cargo:rerun-if-changed={}", extensions_dir.display());
 
     if env::var_os("CARGO_FEATURE_EMBEDDED_FRONTEND").is_none() {
         return;
