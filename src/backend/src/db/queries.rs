@@ -1,5 +1,6 @@
 use crate::db::models::*;
 use crate::error::{ApiError, ApiResult};
+use crate::orchestrator::isolation;
 use chrono::Utc;
 use sqlx::{Pool, Sqlite};
 use uuid::Uuid;
@@ -88,6 +89,15 @@ pub async fn create_task_db(pool: &Pool<Sqlite>, input: CreateTaskInput) -> ApiR
         .best_of_n_config
         .map(|c| serde_json::to_string(&c).unwrap_or_default());
 
+    if let Some(grants) = input.additional_agent_access.as_ref() {
+        isolation::validate_extra_grants(grants)?;
+    }
+
+    let additional_access_json = input
+        .additional_agent_access
+        .as_ref()
+        .map(|grants| serde_json::to_string(grants).unwrap_or_default());
+
     sqlx::query(
         r#"
         INSERT INTO tasks (
@@ -96,9 +106,9 @@ pub async fn create_task_db(pool: &Pool<Sqlite>, input: CreateTaskInput) -> ApiR
             auto_deploy_condition, delete_worktree, requirements, agent_output,
             thinking_level, plan_thinking_level, execution_thinking_level,
             execution_strategy, best_of_n_config, best_of_n_substage,
-            skip_permission_asking, max_review_runs_override, container_image, group_id,
+            skip_permission_asking, max_review_runs_override, container_image, additional_agent_access, group_id,
             created_at, updated_at, self_heal_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
@@ -127,6 +137,7 @@ pub async fn create_task_db(pool: &Pool<Sqlite>, input: CreateTaskInput) -> ApiR
     .bind(input.skip_permission_asking.unwrap_or(false) as i32)
     .bind(input.max_review_runs_override)
     .bind(&input.container_image)
+    .bind(&additional_access_json)
     .bind(&input.group_id)
     .bind(now)
     .bind(now)
@@ -226,6 +237,24 @@ pub async fn update_task(
     update_field!(input.archived_at, "archived_at");
     update_field!(input.container_image, "container_image");
     update_field!(input.code_style_review, "code_style_review");
+
+    if let Some(grants) = input.additional_agent_access {
+        let additional_access_json = match grants {
+            Some(grants) => {
+                isolation::validate_extra_grants(&grants)?;
+                Some(serde_json::to_string(&grants).unwrap_or_default())
+            }
+            None => None,
+        };
+
+        sqlx::query("UPDATE tasks SET additional_agent_access = ?, updated_at = ? WHERE id = ?")
+            .bind(additional_access_json)
+            .bind(now)
+            .bind(task_id)
+            .execute(pool)
+            .await
+            .map_err(ApiError::Database)?;
+    }
     update_field!(input.group_id, "group_id");
     update_field!(input.self_heal_status, "self_heal_status");
     update_field!(input.self_heal_message, "self_heal_message");

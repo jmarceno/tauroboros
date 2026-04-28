@@ -4,7 +4,7 @@
  */
 
 import { createSignal, createMemo, createEffect, onMount, Show, For, Suspense, lazy } from 'solid-js'
-import type { AutoDeployCondition, TaskStatus, CreateTaskDTO, ThinkingLevel, ExecutionStrategy, BestOfNSlot } from '@/types'
+import type { AutoDeployCondition, TaskStatus, CreateTaskDTO, ThinkingLevel, ExecutionStrategy, BestOfNSlot, Options, TaskPathGrant } from '@/types'
 import { ModalWrapper } from '../common/ModalWrapper'
 import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
@@ -60,6 +60,7 @@ export function TaskModal(props: TaskModalProps) {
   const [requirements, setRequirements] = createSignal<string[]>([])
   const [executionStrategy, setExecutionStrategy] = createSignal<ExecutionStrategy>('standard')
   const [containerImage, setContainerImage] = createSignal('')
+  const [additionalAgentAccess, setAdditionalAgentAccess] = createSignal<TaskPathGrant[]>([])
   const [availableBranches, setAvailableBranches] = createSignal<string[]>([])
   const [availableImages, setAvailableImages] = createSignal<Array<{ tag: string }>>([])
   const [isLoading, setIsLoading] = createSignal(true)
@@ -135,6 +136,7 @@ export function TaskModal(props: TaskModalProps) {
     setRequirements(currentTask?.requirements ? [...currentTask.requirements] : [])
     setExecutionStrategy(currentTask?.executionStrategy ?? 'standard')
     setContainerImage(currentTask?.containerImage ?? '')
+    setAdditionalAgentAccess(currentTask?.additionalAgentAccess ? [...currentTask.additionalAgentAccess] : [])
 
     if (currentTask?.executionStrategy === 'best_of_n' && currentTask.bestOfNConfig) {
       const config = currentTask.bestOfNConfig
@@ -185,20 +187,20 @@ export function TaskModal(props: TaskModalProps) {
     setAvailableImages(imageData.images || [])
 
     // Load options (with fallback)
-    const latestOptions = await runApiEffect(optionsApi.get()).catch(() => ({} as Record<string, unknown>))
+    const latestOptions = await runApiEffect(optionsApi.get()).catch(() => null as Options | null)
 
     setBranch(currentBranch => {
       if (currentBranch.trim()) return currentBranch
-      if (latestOptions.branch?.trim()) return latestOptions.branch.trim()
+      if (latestOptions?.branch?.trim()) return latestOptions.branch.trim()
       if (branchData.current) return branchData.current
       if (branchData.branches?.[0]) return branchData.branches[0]
       return currentBranch
     })
 
-    setPlanModel(currentPlanModel => currentPlanModel || latestOptions.planModel || '')
-    setExecutionModel(currentExecutionModel => currentExecutionModel || latestOptions.executionModel || '')
-    setPlanThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions.planThinkingLevel || 'default' : currentLevel)
-    setExecutionThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions.executionThinkingLevel || 'default' : currentLevel)
+    setPlanModel(currentPlanModel => currentPlanModel || latestOptions?.planModel || '')
+    setExecutionModel(currentExecutionModel => currentExecutionModel || latestOptions?.executionModel || '')
+    setPlanThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions?.planThinkingLevel || 'default' : currentLevel)
+    setExecutionThinkingLevel(currentLevel => currentLevel === 'default' ? latestOptions?.executionThinkingLevel || 'default' : currentLevel)
 
     setIsLoading(false)
   })
@@ -280,6 +282,21 @@ export function TaskModal(props: TaskModalProps) {
     }
 
     try {
+      const sanitizedAdditionalAgentAccess = additionalAgentAccess().map((grant) => ({
+        path: grant.path.trim(),
+        access: grant.access,
+      }))
+
+      if (sanitizedAdditionalAgentAccess.some((grant) => !grant.path)) {
+        uiStore.showToast('Additional agent access paths cannot be empty', 'error')
+        return
+      }
+
+      if (sanitizedAdditionalAgentAccess.some((grant) => !(grant.path.startsWith('/') || grant.path === '~' || grant.path.startsWith('~/')))) {
+        uiStore.showToast('Additional agent access paths must be absolute or start with ~/', 'error')
+        return
+      }
+
       const taskData: Record<string, unknown> = {
         name: name().trim(),
         prompt: prompt().trim(),
@@ -300,6 +317,7 @@ export function TaskModal(props: TaskModalProps) {
         executionThinkingLevel: executionThinkingLevel(),
         executionStrategy: executionStrategy(),
         containerImage: containerImage() || undefined,
+        additionalAgentAccess: sanitizedAdditionalAgentAccess.length > 0 ? sanitizedAdditionalAgentAccess : undefined,
       }
 
       if (executionStrategy() === 'best_of_n') {
@@ -490,6 +508,70 @@ export function TaskModal(props: TaskModalProps) {
             <Show when={availableImages().length > 0}>
               <div class="text-xs text-dark-text-muted mt-1">Build custom images in the Image Builder</div>
             </Show>
+          </div>
+
+          {/* Additional Agent Access (Bubblewrap Grants) */}
+          <div class="form-group">
+            <div class="label-row">
+              <label>Additional Agent Access</label>
+              <HelpButton tooltip="Additional filesystem paths to grant the agent inside the sandbox. Use 'ro' for read-only or 'rw' for read-write access. Only applies when bubblewrap is enabled." />
+            </div>
+            <div class="space-y-2">
+              <For each={additionalAgentAccess()}>
+                {(grant, i) => (
+                  <div class="flex gap-2 items-center">
+                    <input
+                      type="text"
+                      class="form-input flex-1"
+                      placeholder="/path/to/dir"
+                      value={grant.path}
+                      onChange={(e) => {
+                        const updated = [...additionalAgentAccess()]
+                        updated[i()] = { ...updated[i()], path: e.currentTarget.value }
+                        setAdditionalAgentAccess(updated)
+                      }}
+                      disabled={isViewOnly()}
+                    />
+                    <select
+                      class="form-select w-20"
+                      value={grant.access}
+                      onChange={(e) => {
+                        const updated = [...additionalAgentAccess()]
+                        updated[i()] = { ...updated[i()], access: e.currentTarget.value as 'ro' | 'rw' }
+                        setAdditionalAgentAccess(updated)
+                      }}
+                      disabled={isViewOnly()}
+                    >
+                      <option value="ro">ro</option>
+                      <option value="rw">rw</option>
+                    </select>
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-danger"
+                      onClick={() => {
+                        setAdditionalAgentAccess(additionalAgentAccess().filter((_, idx) => idx !== i()))
+                      }}
+                      disabled={isViewOnly()}
+                    >
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+              </For>
+              <button
+                type="button"
+                class="btn btn-sm"
+                onClick={() => setAdditionalAgentAccess([...additionalAgentAccess(), { path: '', access: 'ro' }])}
+                disabled={isViewOnly()}
+              >
+                + Add Path
+              </button>
+            </div>
+            <p class="text-xs text-dark-text-muted mt-1">
+              Extra filesystem paths to mount inside the sandbox. Planning sessions ignore these.
+            </p>
           </div>
 
           {/* Best-of-N Config */}

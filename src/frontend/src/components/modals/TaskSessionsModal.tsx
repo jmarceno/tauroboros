@@ -9,7 +9,7 @@ import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { tasksApi, sessionsApi, runApiEffect } from '@/api'
 import { formatLocalTime } from '@/utils/date'
 import { createSessionSseStore } from '@/stores/sessionSseStore'
-import type { Task, Session, TaskRun, SessionMessage } from '@shared-types'
+import type { Task, Session, TaskRun, SessionMessage } from '@/types'
 
 interface TaskSessionsModalProps {
   taskId?: string

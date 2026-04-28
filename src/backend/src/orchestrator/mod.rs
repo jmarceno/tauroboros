@@ -18,7 +18,8 @@ use crate::error::{ApiError, ErrorCode};
 use crate::models::{
     AuditLevel, BestOfNSubstage, CleanRunResult, ExecutionPhase, ExecutionStrategy, Options,
     PiSessionKind, PiSessionStatus, RunPhase, RunStatus, SelfHealStatus, Task, TaskGroupStatus,
-    TaskStatus, UpdateTaskInput, WSMessage, WorkflowRun, WorkflowRunKind, WorkflowRunStatus,
+    TaskStatus, UpdateTaskInput, WSMessage, WorkflowRun, WorkflowRunKind,
+    WorkflowRunStatus,
 };
 use crate::sse::hub::SseHub;
 use rocket::serde::json::json;
@@ -35,6 +36,7 @@ use uuid::Uuid;
 
 pub mod best_of_n;
 pub mod git;
+pub mod isolation;
 pub mod pi;
 pub mod plan_mode;
 pub mod planning_session;
@@ -1431,6 +1433,12 @@ impl Orchestrator {
         let session_id = Uuid::new_v4().to_string()[..8].to_string();
         let session_url = self.session_url_for(&session_id);
         let pi_session_file = self.pi_session_file_for(&session_id);
+        let isolation_spec = isolation::resolve_session_isolation(
+            &task,
+            PiSessionKind::Task,
+            &self.project_root,
+            options.bubblewrap_enabled,
+        )?;
         let session = create_workflow_session_record(
             &self.db,
             CreateWorkflowSessionRecord {
@@ -1453,7 +1461,23 @@ impl Orchestrator {
                 exit_signal: None,
                 error_message: None,
                 name: Some(format!("Task {}", task.id)),
+                isolation_mode: isolation_spec.mode,
+                path_grants_json: isolation_spec.to_grants_json(),
             },
+        )
+        .await?;
+
+        self.audit_info(
+            "task.session_isolation",
+            format!("Isolation mode {:?} for session {}", isolation_spec.mode, session.id),
+            Some(run_id),
+            Some(&task.id),
+            Some(&task_run.id),
+            Some(&session.id),
+            json!({
+                "isolationMode": isolation_spec.mode,
+                "grantCount": isolation_spec.grants.len(),
+            }),
         )
         .await?;
 

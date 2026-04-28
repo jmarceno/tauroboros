@@ -56,7 +56,7 @@ import {
   TaskSessionsModal,
   ChatContainer,
 } from '@/components'
-import { containersApi, runApiEffect, sleepMs } from '@/api'
+import { containersApi, optionsApi, runApiEffect, sleepMs } from '@/api'
 
 import type { Task, TaskGroup, TaskStatus, WorkflowRun } from '@/types'
 import { runsApi } from '@/api/runs'
@@ -236,6 +236,19 @@ function App() {
       taskGroupsStore.loadGroups(),
       loadContainerStatus(),
     ])
+
+    try {
+      const opts = await runApiEffect(optionsApi.get())
+      if (opts.bubblewrapStartupNotice) {
+        uiStore.showToast(opts.bubblewrapStartupNotice, 'warning', 10000)
+        uiStore.addLog(opts.bubblewrapStartupNotice, 'warning')
+      }
+    } catch (e) {
+      uiStore.addLog(
+        `Failed to load startup bubblewrap status: ${e instanceof Error ? e.message : String(e)}`,
+        'warning',
+      )
+    }
 
     const hasPaused = await workflowControl.checkPausedState()
     if (hasPaused) {

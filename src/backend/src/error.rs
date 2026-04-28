@@ -56,6 +56,10 @@ pub enum ErrorCode {
     ContainerOperationFailed = 8000,
     ProfileNotFound = 8001,
 
+    // Isolation errors
+    BubblewrapNotAvailable = 10000,
+    InvalidPathGrant = 10001,
+
     // External dependency errors
     ExternalDependenciesBlocked = 9000,
     InvalidContainerImages = 9001,
@@ -100,6 +104,8 @@ impl ErrorCode {
             ErrorCode::ExternalDependenciesBlocked => "EXTERNAL_DEPENDENCIES_BLOCKED",
             ErrorCode::InvalidContainerImages => "INVALID_CONTAINER_IMAGES",
             ErrorCode::ContainerImageNotFound => "CONTAINER_IMAGE_NOT_FOUND",
+            ErrorCode::BubblewrapNotAvailable => "BUBBLEWRAP_NOT_AVAILABLE",
+            ErrorCode::InvalidPathGrant => "INVALID_PATH_GRANT",
         }
     }
 }

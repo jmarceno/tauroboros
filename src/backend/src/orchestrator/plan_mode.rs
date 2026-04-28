@@ -6,6 +6,7 @@ use crate::orchestrator::git::{
     auto_commit_worktree, merge_and_cleanup_worktree, resolve_target_branch, worktree_has_changes,
     WorktreeInfo,
 };
+use crate::orchestrator::isolation;
 use crate::orchestrator::pi::PiSessionExecutor;
 use crate::orchestrator::Orchestrator;
 use crate::orchestrator::{render_prompt_template, TaskOutcome};
@@ -107,6 +108,7 @@ impl Orchestrator {
                 &session_url,
                 &plan_model,
                 worktree,
+                options.bubblewrap_enabled,
                 PiSessionKind::Plan,
             )
             .await?;
@@ -251,6 +253,7 @@ impl Orchestrator {
                 &session_url,
                 &model,
                 worktree,
+                options.bubblewrap_enabled,
                 PiSessionKind::Task,
             )
             .await?;
@@ -434,9 +437,16 @@ impl Orchestrator {
         session_url: &str,
         model: &str,
         worktree: &WorktreeInfo,
+        bubblewrap_enabled: bool,
         session_kind: PiSessionKind,
     ) -> Result<PiWorkflowSession, ApiError> {
         let pi_session_file = self.pi_session_file_for(session_id);
+        let isolation_spec = isolation::resolve_session_isolation(
+            task,
+            session_kind,
+            &self.project_root,
+            bubblewrap_enabled,
+        )?;
         let session = crate::db::runtime::create_workflow_session_record(
             &self.db,
             crate::db::runtime::CreateWorkflowSessionRecord {
@@ -459,6 +469,8 @@ impl Orchestrator {
                 exit_signal: None,
                 error_message: None,
                 name: Some(format!("Plan {} ({})", task.name, task.id)),
+                isolation_mode: isolation_spec.mode,
+                path_grants_json: isolation_spec.to_grants_json(),
             },
         )
         .await?;

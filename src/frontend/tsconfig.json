@@ -19,7 +19,6 @@
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
-      "@shared-types": ["../types.ts"],
       "@/*": ["src/*"]
     }
   },

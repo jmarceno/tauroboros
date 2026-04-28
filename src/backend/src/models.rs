@@ -247,6 +247,29 @@ pub enum PiSessionKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(rename_all = "lowercase")]
+pub enum PathAccessMode {
+    Ro,
+    Rw,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPathGrant {
+    pub path: String,
+    pub access: PathAccessMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
+pub enum SessionIsolationMode {
+    None,
+    Bubblewrap,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(rename_all = "lowercase")]
 pub enum PiSessionStatus {
     Starting,
     Active,
@@ -413,6 +436,8 @@ pub struct Task {
     pub is_archived: bool,
     pub archived_at: Option<i64>,
     pub container_image: Option<String>,
+    #[serde(serialize_with = "serialize_json_array_or_empty")]
+    pub additional_agent_access: Option<String>, // JSON array of TaskPathGrant
     pub code_style_review: bool,
     pub group_id: Option<String>,
     pub self_heal_status: SelfHealStatus,
@@ -537,6 +562,8 @@ pub struct PiWorkflowSession {
     pub exit_signal: Option<String>,
     pub error_message: Option<String>,
     pub name: Option<String>,
+    pub isolation_mode: SessionIsolationMode,
+    pub path_grants_json: String,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -625,6 +652,7 @@ pub struct Options {
     pub telegram_notification_level: TelegramNotificationLevel,
     pub max_reviews: i32,
     pub max_json_parse_retries: i32,
+    pub bubblewrap_enabled: bool,
     #[serde(serialize_with = "serialize_json_value_or_null")]
     pub column_sorts: Option<String>, // JSON stored as string
 }
@@ -749,6 +777,7 @@ pub struct CreateTaskInput {
     pub max_review_runs_override: Option<i32>,
     pub container_image: Option<String>,
     pub group_id: Option<String>,
+    pub additional_agent_access: Option<Vec<TaskPathGrant>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -794,6 +823,7 @@ pub struct UpdateTaskInput {
     pub archived_at: Option<Option<i64>>,
     pub container_image: Option<Option<String>>,
     pub code_style_review: Option<bool>,
+    pub additional_agent_access: Option<Option<Vec<TaskPathGrant>>>,
     pub group_id: Option<Option<String>>,
     pub self_heal_status: Option<SelfHealStatus>,
     pub self_heal_message: Option<Option<String>>,

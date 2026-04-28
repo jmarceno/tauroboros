@@ -29,9 +29,8 @@ pub async fn create_pool(db_path: &str) -> Result<Pool<Sqlite>, sqlx::Error> {
 
 /// Run database migrations
 pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
-    // Note: In a production setup, use sqlx migrate!
-    // For now, we assume the database schema already exists from the TypeScript version
-    // or create minimal required tables
+    // Canonical schema bootstrap only.
+    // Older schemas are not migrated and are not supported.
 
     sqlx::query(
         r#"
@@ -78,6 +77,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
             is_archived INTEGER NOT NULL DEFAULT 0,
             archived_at INTEGER,
             container_image TEXT,
+            additional_agent_access TEXT,
             code_style_review INTEGER NOT NULL DEFAULT 0,
             group_id TEXT,
             self_heal_status TEXT NOT NULL DEFAULT 'idle',
@@ -219,7 +219,9 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
             exit_code INTEGER,
             exit_signal TEXT,
             error_message TEXT,
-            name TEXT
+            name TEXT,
+            isolation_mode TEXT NOT NULL DEFAULT 'none',
+            path_grants_json TEXT NOT NULL DEFAULT '[]'
         )
         "#,
     )
@@ -314,6 +316,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
             telegram_notification_level TEXT NOT NULL DEFAULT 'all',
             max_reviews INTEGER NOT NULL DEFAULT 2,
             max_json_parse_retries INTEGER NOT NULL DEFAULT 5,
+            bubblewrap_enabled INTEGER NOT NULL DEFAULT 1,
             column_sorts TEXT
         )
         "#,

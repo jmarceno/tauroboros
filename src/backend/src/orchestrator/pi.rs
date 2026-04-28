@@ -9,9 +9,11 @@ use crate::models::{
     AuditLevel, MessageRole, MessageType, PiSessionStatus, PiWorkflowSession, SessionMessage,
     ThinkingLevel,
 };
+use crate::orchestrator::isolation::{self, ResolvedIsolationSpec};
 use crate::sse::hub::SseHub;
 use rocket::serde::json::json;
 use serde_json::{Map, Value};
+use std::io::ErrorKind;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -143,7 +145,9 @@ impl PiSessionExecutor {
                 "branch": session.branch,
                 "model": model,
                 "sessionFile": session.pi_session_file,
-                "extensionPath": structured_output_extension_path(&self.project_root).to_string_lossy().to_string()
+                "extensionPath": structured_output_extension_path(&self.project_root).to_string_lossy().to_string(),
+                "isolationMode": session.isolation_mode,
+                "pathGrants": session.path_grants_json
             }),
         )
         .await?;
@@ -564,9 +568,16 @@ async fn spawn_process(
         })?;
     }
 
-    let mut command = Command::new(std::env::var("PI_BIN").unwrap_or_else(|_| "pi".to_string()));
+    let pi_bin = std::env::var("PI_BIN").unwrap_or_else(|_| "pi".to_string());
+    let pi_args = build_pi_args(&session_file, &extension_path);
+
+    let isolation_spec = reconstruct_isolation_spec(session, project_root)?;
+
+    let (executable, args) = isolation_spec.spawn_plan(&pi_bin, &pi_args);
+
+    let mut command = Command::new(&executable);
     command
-        .args(build_pi_args(&session_file, &extension_path))
+        .args(&args)
         .current_dir(&session.cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -574,6 +585,11 @@ async fn spawn_process(
         .env("PI_CODING_AGENT", "true");
 
     let mut child = command.spawn().map_err(|error| {
+        if executable == "bwrap" && error.kind() == ErrorKind::NotFound {
+            return ApiError::internal("Bubblewrap executable 'bwrap' is not available")
+                .with_code(ErrorCode::BubblewrapNotAvailable);
+        }
+
         ApiError::internal(format!("Failed to start pi process: {}", error))
             .with_code(ErrorCode::ExecutionOperationFailed)
     })?;
@@ -596,6 +612,33 @@ async fn spawn_process(
     spawn_reader(stderr, tx, false);
 
     Ok((child, stdin, rx))
+}
+
+fn reconstruct_isolation_spec(
+    session: &PiWorkflowSession,
+    _project_root: &str,
+) -> Result<ResolvedIsolationSpec, ApiError> {
+    match session.isolation_mode {
+        crate::models::SessionIsolationMode::None => Ok(ResolvedIsolationSpec {
+            mode: crate::models::SessionIsolationMode::None,
+            grants: vec![],
+        }),
+        crate::models::SessionIsolationMode::Bubblewrap => {
+            let grants: Vec<isolation::PathGrant> =
+                serde_json::from_str(&session.path_grants_json)
+                    .map_err(|e| {
+                        ApiError::internal(format!(
+                            "Failed to deserialize path grants for session {}: {}",
+                            session.id, e
+                        ))
+                        .with_code(ErrorCode::ExecutionOperationFailed)
+                    })?;
+            Ok(ResolvedIsolationSpec {
+                mode: crate::models::SessionIsolationMode::Bubblewrap,
+                grants,
+            })
+        }
+    }
 }
 
 pub async fn ensure_structured_output_extension(project_root: &str) -> Result<String, ApiError> {

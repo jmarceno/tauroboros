@@ -15,15 +15,20 @@ mod settings;
 mod sse;
 mod state;
 
+use crate::audit::{record_audit_event, CreateAuditEvent};
 use crate::cors::Cors;
+use crate::db::queries::get_options;
 use crate::db::{create_pool, run_migrations};
 use crate::embedded_resources::ensure_embedded_pi_resources;
+use crate::models::AuditLevel;
 use crate::orchestrator::planning_session::PlanningSessionManager;
+use crate::orchestrator::isolation::bubblewrap_available;
 use crate::orchestrator::Orchestrator;
 use crate::settings::load_startup_settings;
 use crate::sse::hub::SseHub;
 use crate::state::{AppState, AppStateType};
 use rocket::{launch, Build, Rocket};
+use serde_json::json;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -83,6 +88,52 @@ async fn rocket() -> Rocket<Build> {
         warn!("Migration warning (may already exist): {}", e);
     }
 
+    let bubblewrap_is_available = bubblewrap_available();
+    let mut bubblewrap_startup_notice: Option<String> = None;
+
+    if !bubblewrap_is_available {
+        let options = get_options(&db_pool)
+            .await
+            .unwrap_or_else(|error| panic!("Failed to load options during startup: {error}"));
+
+        if options.bubblewrap_enabled {
+            sqlx::query("UPDATE options SET bubblewrap_enabled = 0 WHERE id = 1")
+                .execute(&db_pool)
+                .await
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Failed to auto-disable bubblewrap option when binary is unavailable: {error}"
+                    )
+                });
+
+            let notice = "Bubblewrap sandbox was automatically disabled at startup because 'bwrap' is not installed while it was enabled in Options. Install bubblewrap and re-enable 'Bubblewrap sandbox isolation' in Options to turn it back on.".to_string();
+            bubblewrap_startup_notice = Some(notice.clone());
+            warn!("{}", notice);
+
+            if let Err(error) = record_audit_event(
+                &db_pool,
+                CreateAuditEvent {
+                    level: AuditLevel::Warn,
+                    source: "startup",
+                    event_type: "bubblewrap_auto_disabled",
+                    message: notice,
+                    run_id: None,
+                    task_id: None,
+                    task_run_id: None,
+                    session_id: None,
+                    details: Some(json!({
+                        "bubblewrapAvailable": false,
+                        "bubblewrapEnabledAtStartup": true,
+                    })),
+                },
+            )
+            .await
+            {
+                warn!("Failed to write startup audit event for bubblewrap auto-disable: {}", error);
+            }
+        }
+    }
+
     // Create SSE hub
     let sse_hub = SseHub::new();
     let sse_hub_lock = std::sync::Arc::new(tokio::sync::RwLock::new(sse_hub));
@@ -104,6 +155,8 @@ async fn rocket() -> Rocket<Build> {
         port,
         project_root,
         settings_dir,
+        bubblewrap_is_available,
+        bubblewrap_startup_notice,
         orchestrator,
         planning_session_manager,
     ));

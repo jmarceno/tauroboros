@@ -7,6 +7,7 @@ This is a Rust implementation of the TaurOboros workflow orchestration system ba
 - **100% API Compatible**: Drop-in replacement for the TypeScript/Bun backend
 - **SQLite Database**: Uses the same database schema as the original
 - **Real-time Updates**: SSE (Server-Sent Events) for live frontend updates
+- **Bubblewrap Sandbox**: All non-planning agent sessions run inside a bubblewrap sandbox by default
 - **Native Only**: No container support (native execution mode)
 
 ## Prerequisites
@@ -172,6 +173,14 @@ The Rust server uses the **exact same SQLite schema** as the TypeScript version.
 - Share databases between different TaurOboros instances
 
 ## Differences from TypeScript Version
+
+### Bubblewrap Sandbox Isolation
+- All non-planning agent sessions sandboxed via bubblewrap by default
+- Planning sessions (chat, plan, plan-revision) are exempt
+- Global on/off toggle via Options UI
+- Per-task extra filesystem grants supported
+- Explicit failure if `bwrap` is unavailable (no silent fallback)
+- See [`docs/bubblewrap-isolation.md`](../docs/bubblewrap-isolation.md) for details
 
 ### Not Implemented (Container Support)
 - Container image management

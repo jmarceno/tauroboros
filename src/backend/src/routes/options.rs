@@ -1,5 +1,5 @@
 use crate::db::queries::*;
-use crate::error::{ApiError, ApiResult};
+use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
 use crate::state::AppStateType;
 use rocket::routes;
@@ -35,20 +35,50 @@ struct UpdateOptionsRequest {
     telegram_notification_level: Option<TelegramNotificationLevel>,
     max_reviews: Option<i32>,
     max_json_parse_retries: Option<i32>,
+    bubblewrap_enabled: Option<bool>,
     column_sorts: Option<Value>,
 }
 
+fn build_options_response(options: Options, state: &State<AppStateType>) -> ApiResult<Value> {
+    let mut value = serde_json::to_value(options)?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| ApiError::internal("Failed to serialize options response"))?;
+
+    object.insert(
+        "bubblewrapAvailable".to_string(),
+        Value::Bool(state.bubblewrap_available),
+    );
+    object.insert(
+        "bubblewrapStartupNotice".to_string(),
+        match &state.bubblewrap_startup_notice {
+            Some(message) => Value::String(message.clone()),
+            None => Value::Null,
+        },
+    );
+
+    Ok(value)
+}
+
 #[get("/api/options")]
-async fn get_options_route(state: &State<AppStateType>) -> ApiResult<Json<Options>> {
+async fn get_options_route(state: &State<AppStateType>) -> ApiResult<Json<Value>> {
     let options = get_options(&state.db).await?;
-    Ok(Json(options))
+    let response = build_options_response(options, state)?;
+    Ok(Json(response))
 }
 
 #[put("/api/options", data = "<req>")]
 async fn update_options(
     state: &State<AppStateType>,
     req: Json<UpdateOptionsRequest>,
-) -> ApiResult<Json<Options>> {
+) -> ApiResult<Json<Value>> {
+    if matches!(req.bubblewrap_enabled, Some(true)) && !state.bubblewrap_available {
+        return Err(ApiError::bad_request(
+            "Bubblewrap is unavailable on this host. Install 'bwrap' and then re-enable Bubblewrap sandbox isolation in Options.",
+        )
+        .with_code(ErrorCode::BubblewrapNotAvailable));
+    }
+
     // Build update query dynamically
     let mut sets = vec![];
 
@@ -84,6 +114,7 @@ async fn update_options(
     add_option!(telegram_notification_level);
     add_option!(max_reviews);
     add_option!(max_json_parse_retries);
+    add_option!(bubblewrap_enabled);
 
     if req.column_sorts.is_some() {
         sets.push("column_sorts = ?".to_string());
@@ -171,6 +202,9 @@ async fn update_options(
     if req.max_json_parse_retries.is_some() {
         sql = sql.bind(req.max_json_parse_retries);
     }
+    if req.bubblewrap_enabled.is_some() {
+        sql = sql.bind(req.bubblewrap_enabled);
+    }
     if let Some(ref sorts) = req.column_sorts {
         sql = sql.bind(sorts.to_string());
     }
@@ -186,7 +220,8 @@ async fn update_options(
         .await;
 
     let updated = get_options(&state.db).await?;
-    Ok(Json(updated))
+    let response = build_options_response(updated, state)?;
+    Ok(Json(response))
 }
 
 pub fn routes() -> Vec<Route> {

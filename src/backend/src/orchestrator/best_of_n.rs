@@ -6,6 +6,7 @@ use crate::models::{
 use crate::orchestrator::git::{
     create_task_worktree, merge_and_cleanup_worktree, resolve_target_branch, WorktreeInfo,
 };
+use crate::orchestrator::isolation;
 use crate::orchestrator::pi::PiSessionExecutor;
 use crate::orchestrator::Orchestrator;
 use crate::orchestrator::{render_prompt_template, TaskOutcome};
@@ -381,6 +382,12 @@ impl Orchestrator {
             let _session_url = self.session_url_for(&session_id);
             let pi_session_file = self.pi_session_file_for(&session_id);
 
+            let isolation_spec = isolation::resolve_session_isolation(
+                task,
+                PiSessionKind::TaskRunWorker,
+                &self.project_root,
+                options.bubblewrap_enabled,
+            )?;
             let session = crate::db::runtime::create_workflow_session_record(
                 &self.db,
                 crate::db::runtime::CreateWorkflowSessionRecord {
@@ -403,6 +410,8 @@ impl Orchestrator {
                     exit_signal: None,
                     error_message: None,
                     name: Some(format!("Bon Worker {} ({})", i, task.id)),
+                    isolation_mode: isolation_spec.mode,
+                    path_grants_json: isolation_spec.to_grants_json(),
                 },
             )
             .await?;
@@ -550,6 +559,12 @@ impl Orchestrator {
             let _session_url = self.session_url_for(&session_id);
             let pi_session_file = self.pi_session_file_for(&session_id);
 
+            let isolation_spec = isolation::resolve_session_isolation(
+                task,
+                PiSessionKind::TaskRunReviewer,
+                &self.project_root,
+                options.bubblewrap_enabled,
+            )?;
             let session = crate::db::runtime::create_workflow_session_record(
                 &self.db,
                 crate::db::runtime::CreateWorkflowSessionRecord {
@@ -572,6 +587,8 @@ impl Orchestrator {
                     exit_signal: None,
                     error_message: None,
                     name: Some(format!("Bon Reviewer {} ({})", i, task.id)),
+                    isolation_mode: isolation_spec.mode,
+                    path_grants_json: isolation_spec.to_grants_json(),
                 },
             )
             .await?;
@@ -748,6 +765,12 @@ impl Orchestrator {
         let _session_url = self.session_url_for(&session_id);
         let pi_session_file = self.pi_session_file_for(&session_id);
 
+        let isolation_spec = isolation::resolve_session_isolation(
+            task,
+            PiSessionKind::TaskRunFinalApplier,
+            &self.project_root,
+            options.bubblewrap_enabled,
+        )?;
         let session = crate::db::runtime::create_workflow_session_record(
             &self.db,
             crate::db::runtime::CreateWorkflowSessionRecord {
@@ -770,6 +793,8 @@ impl Orchestrator {
                 exit_signal: None,
                 error_message: None,
                 name: Some(format!("Bon Final Applier {} ({})", task.name, task.id)),
+                isolation_mode: isolation_spec.mode,
+                path_grants_json: isolation_spec.to_grants_json(),
             },
         )
         .await?;

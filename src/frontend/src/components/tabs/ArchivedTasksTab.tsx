@@ -5,7 +5,7 @@
 
 import { createSignal, createMemo, onMount, For, Show } from 'solid-js'
 import { tasksApi, runApiEffect } from '@/api'
-import type { Task, WorkflowRun } from '@shared-types'
+import type { Task, WorkflowRun } from '@/types'
 import { formatLocalDateTime } from '@/utils/date'
 
 type ArchivedTask = Omit<Task, 'sessionId' | 'completedAt'> & {

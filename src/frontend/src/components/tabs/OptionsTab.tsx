@@ -28,6 +28,7 @@ const DEFAULT_FORM_DATA: Partial<Options> = {
   maxReviews: 3,
   maxJsonParseRetries: 5,
   showExecutionGraph: false,
+  bubblewrapEnabled: true,
   autoDeleteNormalSessions: false,
   autoDeleteReviewSessions: false,
   thinkingLevel: 'default',
@@ -106,6 +107,7 @@ export function OptionsTab() {
     }
     return Array.from(options)
   })
+  const bubblewrapAvailable = createMemo(() => formData().bubblewrapAvailable ?? true)
 
   // Function to process loaded data
   const processLoadedData = (options: Options | undefined, branches: import('@/types').BranchList | undefined, error: string | null) => {
@@ -134,6 +136,8 @@ export function OptionsTab() {
           maxReviews: currentOpts.maxReviews ?? 3,
           maxJsonParseRetries: currentOpts.maxJsonParseRetries ?? 5,
           showExecutionGraph: currentOpts.showExecutionGraph ?? false,
+          bubblewrapEnabled: currentOpts.bubblewrapEnabled ?? true,
+          bubblewrapAvailable: currentOpts.bubblewrapAvailable ?? true,
           autoDeleteNormalSessions: currentOpts.autoDeleteNormalSessions ?? false,
           autoDeleteReviewSessions: currentOpts.autoDeleteReviewSessions ?? false,
           thinkingLevel: isValidThinkingLevel(currentOpts.thinkingLevel || '') ? currentOpts.thinkingLevel : 'default',
@@ -211,8 +215,9 @@ export function OptionsTab() {
 
     setIsSaving(true)
     try {
+      const { bubblewrapAvailable: _bubblewrapAvailable, bubblewrapStartupNotice: _bubblewrapStartupNotice, ...persistableOptions } = formData()
       const optionsToSave: Partial<Options> = {
-        ...formData(),
+        ...persistableOptions,
         codeStylePrompt: formData().codeStylePrompt?.trim() ? formData().codeStylePrompt : DEFAULT_CODE_STYLE_PROMPT,
       }
       await runApiEffect(optionsApi.update(optionsToSave))
@@ -262,6 +267,8 @@ export function OptionsTab() {
           maxReviews: opts.maxReviews ?? 3,
           maxJsonParseRetries: opts.maxJsonParseRetries ?? 5,
           showExecutionGraph: opts.showExecutionGraph ?? false,
+          bubblewrapEnabled: opts.bubblewrapEnabled ?? true,
+          bubblewrapAvailable: opts.bubblewrapAvailable ?? true,
           autoDeleteNormalSessions: opts.autoDeleteNormalSessions ?? false,
           autoDeleteReviewSessions: opts.autoDeleteReviewSessions ?? false,
           thinkingLevel: isValidThinkingLevel(opts.thinkingLevel || '') ? opts.thinkingLevel : 'default',
@@ -557,6 +564,32 @@ You have access to file exploration tools to understand the codebase structure w
               onChange={(e) => updateField('maxJsonParseRetries', parseInt(e.currentTarget.value) || 5)}
             />
           </div>
+        </div>
+
+        {/* Bubblewrap Isolation */}
+        <div class="form-group border border-dark-surface3 rounded-lg p-4">
+          <div class="label-row">
+            <label>Bubblewrap Sandbox Isolation</label>
+            <HelpButton tooltip="When enabled, all non-planning agent sessions run inside a bubblewrap sandbox with full repository access, read-only access to ~/.pi, and read-write access to /tmp. Planning sessions are never sandboxed." />
+          </div>
+          <label class="checkbox-item">
+            <input
+              type="checkbox"
+              checked={formData().bubblewrapEnabled ?? true}
+              disabled={!bubblewrapAvailable()}
+              onChange={(e) => updateField('bubblewrapEnabled', e.currentTarget.checked)}
+            />
+            <span>Enable bubblewrap sandbox (default: on)</span>
+          </label>
+          <p class="text-xs text-dark-text-muted mt-1">
+            When enabled, all agent sessions (execution, review, best-of-n) run inside a bubblewrap sandbox.
+            Planning sessions are exempt. Disable globally if bubblewrap causes issues with your environment.
+          </p>
+          <Show when={!bubblewrapAvailable()}>
+            <p class="text-xs text-amber-300 mt-2">
+              Bubblewrap is unavailable on this host. Install bwrap and then re-enable this option.
+            </p>
+          </Show>
         </div>
 
         {/* Session Cleanup & Execution Graph */}

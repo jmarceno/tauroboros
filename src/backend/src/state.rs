@@ -26,6 +26,12 @@ pub struct AppState {
     /// Settings directory (for .tauroboros)
     pub settings_dir: String,
 
+    /// Whether bubblewrap is currently available on this host.
+    pub bubblewrap_available: bool,
+
+    /// Startup notice when bubblewrap had to be auto-disabled.
+    pub bubblewrap_startup_notice: Option<String>,
+
     /// Native workflow orchestrator
     pub orchestrator: Orchestrator,
 
@@ -40,6 +46,8 @@ impl AppState {
         port: u16,
         project_root: String,
         settings_dir: String,
+        bubblewrap_available: bool,
+        bubblewrap_startup_notice: Option<String>,
         orchestrator: Orchestrator,
         planning_session_manager: PlanningSessionManager,
     ) -> Self {
@@ -49,6 +57,8 @@ impl AppState {
             port,
             project_root,
             settings_dir,
+            bubblewrap_available,
+            bubblewrap_startup_notice,
             orchestrator,
             planning_session_manager,
         }

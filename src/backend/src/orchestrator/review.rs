@@ -1,8 +1,10 @@
 use crate::error::{ApiError, ErrorCode};
 use crate::models::{
-    Options, PiSessionKind, RunPhase, RunStatus, Task, TaskStatus, UpdateTaskInput,
+    Options, PiSessionKind, RunPhase, RunStatus, Task, TaskStatus,
+    UpdateTaskInput,
 };
 use crate::orchestrator::git::WorktreeInfo;
+use crate::orchestrator::isolation;
 use crate::orchestrator::pi::PiSessionExecutor;
 use crate::orchestrator::render_prompt_template;
 use crate::orchestrator::Orchestrator;
@@ -159,6 +161,12 @@ impl Orchestrator {
         )
         .await?;
 
+        let isolation_spec = isolation::resolve_session_isolation(
+            task,
+            PiSessionKind::ReviewScratch,
+            &self.project_root,
+            options.bubblewrap_enabled,
+        )?;
         let session = crate::db::runtime::create_workflow_session_record(
             &self.db,
             crate::db::runtime::CreateWorkflowSessionRecord {
@@ -181,6 +189,8 @@ impl Orchestrator {
                 exit_signal: None,
                 error_message: None,
                 name: Some(format!("Review {} ({})", task.name, task.id)),
+                isolation_mode: isolation_spec.mode,
+                path_grants_json: isolation_spec.to_grants_json(),
             },
         )
         .await?;
@@ -285,6 +295,12 @@ impl Orchestrator {
         )
         .await?;
 
+        let isolation_spec = isolation::resolve_session_isolation(
+            task,
+            PiSessionKind::Task,
+            &self.project_root,
+            options.bubblewrap_enabled,
+        )?;
         let session = crate::db::runtime::create_workflow_session_record(
             &self.db,
             crate::db::runtime::CreateWorkflowSessionRecord {
@@ -307,6 +323,8 @@ impl Orchestrator {
                 exit_signal: None,
                 error_message: None,
                 name: Some(format!("Review Fix {} ({})", task.name, task.id)),
+                isolation_mode: isolation_spec.mode,
+                path_grants_json: isolation_spec.to_grants_json(),
             },
         )
         .await?;

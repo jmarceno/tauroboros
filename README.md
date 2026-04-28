@@ -28,7 +28,7 @@ TaurOboros is an agent orchestration system, that uses a Kanban style board to v
 
 ### Isolation & Security
 - **Git Worktree Isolation** – Each task runs in its own git worktree for clean separation
-- **Container Isolation** – Run AI agents inside Podman containers for filesystem and port isolation (can be disabled if you need to run native)
+- **Bubblewrap Sandbox** – All non-planning agent sessions run inside a bubblewrap sandbox with full repository access, read-only access to `~/.pi`, and read-write access to `/tmp` (default: on, can be disabled globally)
 - **Automatic Cleanup** – Worktrees and resources are cleaned up after successful task completion
 
 ### Monitoring & Observability

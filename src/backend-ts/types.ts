@@ -170,6 +170,7 @@ export interface Task {
   isArchived: boolean
   archivedAt: number | null
   containerImage?: string
+  additionalAgentAccess?: { path: string; access: 'ro' | 'rw' }[]
   codeStyleReview: boolean
   groupId?: string
   selfHealStatus: SelfHealStatus
@@ -318,6 +319,7 @@ export interface Options {
   telegramNotificationLevel: TelegramNotificationLevel
   maxReviews: number
   maxJsonParseRetries: number
+  bubblewrapEnabled: boolean
   columnSorts?: ColumnSortPreferences
 }
 
@@ -693,6 +695,14 @@ export interface ModelUsageStats {
   cost: number
 }
 
+// Path grant types for bubblewrap isolation
+export type PathAccessMode = 'ro' | 'rw'
+
+export interface TaskPathGrant {
+  path: string
+  access: PathAccessMode
+}
+
 // DTO types
 export interface CreateTaskDTO {
   name: string
@@ -719,6 +729,7 @@ export interface CreateTaskDTO {
   maxReviewRunsOverride?: number | null
   containerImage?: string
   groupId?: string
+  additionalAgentAccess?: TaskPathGrant[]
 }
 
 export interface UpdateTaskDTO extends Partial<CreateTaskDTO> {
@@ -750,6 +761,8 @@ export interface ControlState {
 }
 
 // Session types
+export type SessionIsolationMode = 'none' | 'bubblewrap'
+
 export interface Session {
   id: string
   taskId: string | null
@@ -759,6 +772,8 @@ export interface Session {
   sessionKind: string
   createdAt: number
   updatedAt: number
+  isolationMode?: SessionIsolationMode
+  pathGrantsJson?: string
 }
 
 // Branch list

@@ -105,6 +105,8 @@ pub struct CreateWorkflowSessionRecord {
     pub exit_signal: Option<String>,
     pub error_message: Option<String>,
     pub name: Option<String>,
+    pub isolation_mode: SessionIsolationMode,
+    pub path_grants_json: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -123,6 +125,8 @@ pub struct UpdateWorkflowSessionRecord {
     pub exit_signal: Option<Option<String>>,
     pub error_message: Option<Option<String>>,
     pub name: Option<Option<String>>,
+    pub isolation_mode: Option<SessionIsolationMode>,
+    pub path_grants_json: Option<String>,
 }
 
 pub async fn get_prompt_template(
@@ -548,8 +552,8 @@ pub async fn create_workflow_session_record(
             id, task_id, task_run_id, session_kind, status, cwd, worktree_dir,
             branch, pi_session_id, pi_session_file, process_pid, model,
             thinking_level, started_at, updated_at, finished_at, exit_code,
-            exit_signal, error_message, name
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            exit_signal, error_message, name, isolation_mode, path_grants_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
@@ -572,6 +576,8 @@ pub async fn create_workflow_session_record(
     .bind(&input.exit_signal)
     .bind(&input.error_message)
     .bind(&name)
+    .bind(input.isolation_mode)
+    .bind(&input.path_grants_json)
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
@@ -710,6 +716,26 @@ pub async fn update_workflow_session_record(
 
     if let Some(value) = input.name {
         sqlx::query("UPDATE pi_workflow_sessions SET name = ?, updated_at = ? WHERE id = ?")
+            .bind(value)
+            .bind(now)
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .map_err(ApiError::Database)?;
+    }
+
+    if let Some(value) = input.isolation_mode {
+        sqlx::query("UPDATE pi_workflow_sessions SET isolation_mode = ?, updated_at = ? WHERE id = ?")
+            .bind(value)
+            .bind(now)
+            .bind(session_id)
+            .execute(pool)
+            .await
+            .map_err(ApiError::Database)?;
+    }
+
+    if let Some(value) = input.path_grants_json {
+        sqlx::query("UPDATE pi_workflow_sessions SET path_grants_json = ?, updated_at = ? WHERE id = ?")
             .bind(value)
             .bind(now)
             .bind(session_id)

@@ -27,7 +27,6 @@ const config: UserConfig = {
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),
-      "@shared-types": resolve(__dirname, "../types.ts"),
     },
   },
   build: {

@@ -328,14 +328,16 @@ async fn create_planning_session(
         exit_signal: None,
         error_message: None,
         name: None,
+        isolation_mode: SessionIsolationMode::None,
+        path_grants_json: "[]".to_string(),
     };
 
     sqlx::query(
         r#"
         INSERT INTO pi_workflow_sessions (
             id, session_kind, status, cwd, model, thinking_level, 
-            started_at, updated_at, name
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            started_at, updated_at, name, isolation_mode, path_grants_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&session.id)
@@ -347,6 +349,8 @@ async fn create_planning_session(
     .bind(session.started_at)
     .bind(session.updated_at)
     .bind(&session.name)
+    .bind(SessionIsolationMode::None)
+    .bind("[]")
     .execute(&state.db)
     .await
     .map_err(crate::error::ApiError::Database)?;
@@ -713,6 +717,7 @@ async fn create_tasks_from_planning(
                 max_review_runs_override: None,
                 container_image: None,
                 group_id: None,
+                additional_agent_access: None,
             };
 
             let hub = state.sse_hub.read().await;
