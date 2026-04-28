@@ -455,6 +455,67 @@
         "keep_worktree_note",
         "task_name"
       ]
+    },
+    "task_setup": {
+      "key": "task_setup",
+      "name": "Task Setup",
+      "description": "Prompt to create kanban tasks from planning conversation.",
+      "templateText": [
+        "Please use the **workflow-task-setup** skill to create kanban tasks from our planning conversation.",
+        "",
+        "**Instructions:**",
+        "1. Review the conversation history in this session to understand the implementation plan we discussed",
+        "2. Use the workflow-task-setup skill to convert the plan into actionable TaurOboros kanban tasks",
+        "3. Create appropriate tasks with proper dependencies, statuses, and configurations",
+        "",
+        "**API Access Information:**",
+        "- The TaurOboros server is running on port: **{{server_port}}**",
+        "- Base URL: http://localhost:{{server_port}}",
+        "- Use the HTTP API endpoints to create tasks (POST /api/tasks)",
+        "- Use the Task Groups API to organize related tasks (POST /api/task-groups)",
+        "",
+        "**Task Creation Guidelines:**",
+        "- Create small, outcome-based tasks that can be completed independently",
+        "- Set appropriate dependencies where one task truly blocks another",
+        "- Use status \"backlog\" for runnable tasks",
+        "- Include clear, actionable prompts for each task",
+        "- Consider using plan-mode (planmode: true) for tasks that need approval before implementation",
+        "",
+        "**IMPORTANT - Create a Task Group:**",
+        "If the implementation plan involves multiple related tasks:",
+        "1. Create ALL tasks first using POST /api/tasks",
+        "2. Then create a **Task Group** using POST /api/task-groups with:",
+        "   - \"name\": A descriptive name for the feature/project (e.g., \"Feature X\")",
+        "   - \"color\": A hex color for visual identification (e.g., \"#6366f1\")",
+        "   - \"taskIds\": Array of the created task IDs to add to the group",
+        "3. Use POST /api/task-groups/:id/tasks to add tasks if the group was created without them",
+        "",
+        "**Group Creation Example:**",
+        "```bash",
+        "# Create tasks first",
+        "curl -X POST http://localhost:{{server_port}}/api/tasks -H \"Content-Type: application/json\" -d '{\"name\": \"Task 1\", \"prompt\": \"Do thing A\", \"status\": \"backlog\"}'",
+        "curl -X POST http://localhost:{{server_port}}/api/tasks -H \"Content-Type: application/json\" -d '{\"name\": \"Task 2\", \"prompt\": \"Do thing B\", \"status\": \"backlog\"}'",
+        "",
+        "# Create group with tasks",
+        "curl -X POST http://localhost:{{server_port}}/api/task-groups -H \"Content-Type: application/json\" -d '{\"name\": \"Feature X\", \"color\": \"#6366f1\", \"taskIds\": [\"task-id-1\", \"task-id-2\"]}'",
+        "```",
+        "",
+        "The group allows you to execute all related tasks together with a single click using the \"Start Group Workflow\" button."
+      ],
+      "variables": ["server_port"]
+    },
+    "mock_classification": {
+      "key": "mock_classification",
+      "name": "Mock Classification",
+      "description": "Prompt to classify messages into categories for mock testing.",
+      "templateText": [
+        "Classify the following message into one of these categories: plan, execute, read, review, default",
+        "",
+        "Message: {message}",
+        "",
+        "Category (one word only):"
+      ],
+      "variables": ["message"]
     }
   },
   "systemPrompts": {

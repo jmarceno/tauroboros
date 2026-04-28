@@ -10,9 +10,8 @@ import { HelpButton } from '@/components/common/HelpButton'
 import { ModelPicker } from '@/components/common/ModelPicker'
 import { ThinkingLevelSelect } from '@/components/common/ThinkingLevelSelect'
 import { uiStore } from '@/stores'
-import { optionsApi, referenceApi, planningApi, runApiEffect } from '@/api'
+import { optionsApi, referenceApi, planningApi, promptsApi, runApiEffect } from '@/api'
 import type { Options, ThinkingLevel, TelegramNotificationLevel } from '@/types'
-import { DEFAULT_CODE_STYLE_PROMPT } from '@/types'
 
 const DEFAULT_FORM_DATA: Partial<Options> = {
   branch: '',
@@ -23,7 +22,7 @@ const DEFAULT_FORM_DATA: Partial<Options> = {
   command: '',
   commitPrompt: '',
   extraPrompt: '',
-  codeStylePrompt: DEFAULT_CODE_STYLE_PROMPT,
+  codeStylePrompt: '', // populated from backend prompt catalog on load
   parallelTasks: 1,
   maxReviews: 3,
   maxJsonParseRetries: 5,
@@ -76,6 +75,9 @@ export function OptionsTab() {
 
   const [isPlanningPromptLoading, setIsPlanningPromptLoading] = createSignal(true)
   const [planningPromptError, setPlanningPromptError] = createSignal<string | null>(null)
+
+  // Code style default prompt — fetched from backend (prompt-catalog.json)
+  const [codeStyleDefault, setCodeStyleDefault] = createSignal('')
 
   const hasPlanningPromptChanges = () => planningPromptData()
     ? editedPlanningPromptText() !== planningPromptData()!.promptText
@@ -131,7 +133,7 @@ export function OptionsTab() {
           command: currentOpts.command || '',
           commitPrompt: currentOpts.commitPrompt || '',
           extraPrompt: currentOpts.extraPrompt || '',
-          codeStylePrompt: currentOpts.codeStylePrompt?.trim() ? currentOpts.codeStylePrompt : DEFAULT_CODE_STYLE_PROMPT,
+          codeStylePrompt: currentOpts.codeStylePrompt?.trim() ? currentOpts.codeStylePrompt : codeStyleDefault(),
           parallelTasks: currentOpts.parallelTasks ?? 1,
           maxReviews: currentOpts.maxReviews ?? 3,
           maxJsonParseRetries: currentOpts.maxJsonParseRetries ?? 5,
@@ -197,6 +199,22 @@ export function OptionsTab() {
     
     loadPlanningPrompt()
     
+    // Fetch code style default prompt from backend
+    const loadCodeStyleDefault = async () => {
+      try {
+        const template = await runApiEffect(promptsApi.getByKey('code_style'))
+        if (!cancelled) {
+          setCodeStyleDefault(template.templateText)
+        }
+      } catch {
+        // If the template isn't seeded yet, fall back to empty
+        if (!cancelled) {
+          setCodeStyleDefault('')
+        }
+      }
+    }
+    loadCodeStyleDefault()
+    
     onCleanup(() => {
       cancelled = true
     })
@@ -218,7 +236,7 @@ export function OptionsTab() {
       const { bubblewrapAvailable: _bubblewrapAvailable, bubblewrapStartupNotice: _bubblewrapStartupNotice, ...persistableOptions } = formData()
       const optionsToSave: Partial<Options> = {
         ...persistableOptions,
-        codeStylePrompt: formData().codeStylePrompt?.trim() ? formData().codeStylePrompt : DEFAULT_CODE_STYLE_PROMPT,
+        codeStylePrompt: formData().codeStylePrompt?.trim() ? formData().codeStylePrompt : codeStyleDefault(),
       }
       await runApiEffect(optionsApi.update(optionsToSave))
 
@@ -262,7 +280,7 @@ export function OptionsTab() {
           command: opts.command || '',
           commitPrompt: opts.commitPrompt || '',
           extraPrompt: opts.extraPrompt || '',
-          codeStylePrompt: opts.codeStylePrompt?.trim() ? opts.codeStylePrompt : DEFAULT_CODE_STYLE_PROMPT,
+          codeStylePrompt: opts.codeStylePrompt?.trim() ? opts.codeStylePrompt : codeStyleDefault(),
           parallelTasks: opts.parallelTasks ?? 1,
           maxReviews: opts.maxReviews ?? 3,
           maxJsonParseRetries: opts.maxJsonParseRetries ?? 5,
@@ -288,89 +306,15 @@ export function OptionsTab() {
     }
   }
 
-  const resetPlanningPromptToDefault = () => {
+  const resetPlanningPromptToDefault = async () => {
     if (!confirm('Reset to default planning prompt? This will overwrite your customizations.')) return
-    setEditedPlanningPromptText(DEFAULT_PLANNING_PROMPT)
+    try {
+      const result = await runApiEffect(planningApi.getDefaultPromptText())
+      setEditedPlanningPromptText(result.promptText)
+    } catch {
+      uiStore.showToast('Failed to load default planning prompt', 'error')
+    }
   }
-
-  const DEFAULT_PLANNING_PROMPT = `You are a specialized Planning Assistant for software development task management.
-
-Your role is to help users create well-structured implementation plans before they become kanban tasks.
-
-## Core Capabilities
-
-1. **Task Planning**: Break down complex requirements into actionable, well-defined tasks
-2. **Architecture Design**: Suggest component structures, APIs, and data models
-3. **Dependency Analysis**: Identify task dependencies and execution order
-4. **Estimation Guidance**: Provide complexity assessments and implementation hints
-5. **Visual Explanation**: Use diagrams and visual aids to explain complex concepts
-
-## Interaction Guidelines
-
-- Ask clarifying questions when requirements are ambiguous
-- Suggest concrete next steps and validation approaches
-- Reference existing codebase patterns when relevant
-- Keep responses focused on planning and design
-- Do NOT write actual implementation code unless specifically requested for prototyping
-- **ALWAYS** try to visually explain things when possible using Mermaid charts
-- **NEVER** use ASCII charts or text-based diagrams - always use Mermaid syntax instead
-
-## Visual Explanations with Mermaid
-
-When explaining:
-- System architecture or component relationships
-- Data flow between components
-- Task dependencies and execution order
-- State machines or workflows
-- Class hierarchies or module structures
-- Sequence of operations
-
-Always use Mermaid chart syntax. Examples:
-
-**Flowchart:**
-\`\`\`mermaid
-flowchart TD
-    A[Start] --> B{Decision}
-    B -->|Yes| C[Action 1]
-    B -->|No| D[Action 2]
-    C --> E[End]
-    D --> E
-\`\`\`
-
-**Sequence Diagram:**
-\`\`\`mermaid
-sequenceDiagram
-    User->>+API: Request
-    API->>+Database: Query
-    Database-->>-API: Results
-    API-->>-User: Response
-\`\`\`
-
-**Class Diagram:**
-\`\`\`mermaid
-classDiagram
-    class User {
-        +String name
-        +login()
-    }
-    class Order {
-        +int id
-        +place()
-    }
-    User "1" --> "*" Order : has
-\`\`\`
-
-## Output Format for Task Creation
-
-When the user is ready to create tasks, help them structure:
-- Clear task names
-- Detailed prompts with context
-- Suggested task dependencies
-- Recommended execution order
-
-## Tool Access
-
-You have access to file exploration tools to understand the codebase structure when needed. Use them to provide context-aware planning suggestions.`
 
   return (
     <Show when={!queryIsLoading()} fallback={

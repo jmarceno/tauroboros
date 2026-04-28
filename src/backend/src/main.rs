@@ -10,6 +10,7 @@ mod embedded_resources;
 mod error;
 mod models;
 mod orchestrator;
+mod prompt_catalog;
 mod routes;
 mod settings;
 mod sse;

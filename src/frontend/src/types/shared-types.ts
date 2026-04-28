@@ -490,11 +490,5 @@ export interface UpdateTaskDTO extends Partial<CreateTaskDTO> {
 
 export type Candidate = TaskCandidate
 
-export const DEFAULT_CODE_STYLE_PROMPT = `You are a code style enforcement agent. Review the code and enforce the project's style guidelines.
-
-Rules:
-- Follow existing project conventions
-- Use consistent indentation (match existing files)
-- Remove trailing whitespace
-- Fix obvious linting issues
-- Do not touch unchanged files.`
+// DEFAULT_CODE_STYLE_PROMPT removed — now fetched from backend API
+// seeded from src/backend/prompts/prompt-catalog.json (single source of truth).

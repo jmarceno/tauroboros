@@ -33,11 +33,14 @@ tauroboros/
 │   ├── backend/                  # Rust backend (PRIMARY)
 │   │   ├── Cargo.toml
 │   │   ├── build.rs              # Builds frontend when embedded-frontend feature is on
+│   │   ├── prompts/              # SINGLE SOURCE OF TRUTH for all prompts
+│   │   │   └── prompt-catalog.json  # Shared between Rust backend and Solid frontend
 │   │   ├── rust-toolchain.toml   # Rust stable, rustfmt + clippy
 │   │   └── src/
 │   │       ├── main.rs           # Entry point - Rocket server setup
 │   │       ├── error.rs          # ApiError enum + ApiResult<T> type
 │   │       ├── models.rs         # Data models (Task, TaskRun, etc.)
+│   │       ├── prompt_catalog.rs # Loads prompt-catalog.json at compile time via include_str!
 │   │       ├── state.rs          # AppState shared via Rocket managed state
 │   │       ├── settings.rs       # Settings loading from .tauroboros/settings.json
 │   │       ├── cors.rs           # CORS fairing
@@ -161,6 +164,18 @@ Settings are loaded from `.tauroboros/settings.json`:
 - `SERVER_PORT` - Override port (default: 3789)
 - `DATABASE_PATH` - Override database path
 - `DEV_PORT` - Vite dev server port (default: 5173/5174)
+
+### Prompt Catalog (Single Source of Truth)
+
+All prompt text is defined in **one place**: `src/backend/prompts/prompt-catalog.json`.
+
+- **Rust backend** embeds the file at compile time via `include_str!` in `src/backend/src/prompt_catalog.rs`, and seeds the database on first run.
+- **Solid frontend** fetches prompt defaults from the backend API (`/api/prompts/<key>`, `/api/planning/prompt/default-text`) rather than importing the JSON directly.
+- **Never hardcode prompt strings** in either backend or frontend code. Always add/modify prompts in `prompt-catalog.json`.
+- The JSON has three top-level sections:
+  - `templates` — seeded into the `prompt_templates` DB table (used by task execution workflows)
+  - `systemPrompts` — seeded into the `planning_prompts` DB table (used by planning chat sessions)
+  - Line-based arrays (`defaultCodeStylePromptLines`, etc.) — for backward compatibility / frontend defaults
 
 ### Testing
 

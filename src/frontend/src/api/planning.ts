@@ -25,6 +25,7 @@ export interface ContextAttachment {
 export const planningApi = {
   // Queries
   getPrompt: () => apiClient.get<PlanningPrompt>('/api/planning/prompt'),
+  getDefaultPromptText: () => apiClient.get<{ promptText: string }>('/api/planning/prompt/default-text'),
   getAllPrompts: () => apiClient.get<PlanningPrompt[]>('/api/planning/prompts'),
   getPromptVersions: (key: string) => apiClient.get<PlanningPromptVersion[]>(`/api/planning/prompt/${key}/versions`),
   getSessions: () => apiClient.get<PlanningSession[]>('/api/planning/sessions'),

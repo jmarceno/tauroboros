@@ -2471,7 +2471,7 @@ pub(super) fn resolve_execution_model(task: &Task, options: &Options) -> Result<
     .with_code(ErrorCode::InvalidModel))
 }
 
-pub(super) fn render_prompt_template(template: &str, variables: &[(&str, &str)]) -> String {
+pub fn render_prompt_template(template: &str, variables: &[(&str, &str)]) -> String {
     let mut result = template.to_string();
     for (key, value) in variables {
         let placeholder = format!("{{{{{}}}}}", key);

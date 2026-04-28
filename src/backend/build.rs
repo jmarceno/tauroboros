@@ -28,6 +28,12 @@ fn main() {
     println!("cargo:rerun-if-changed={}", skills_dir.display());
     println!("cargo:rerun-if-changed={}", extensions_dir.display());
 
+    let prompts_path = manifest_dir.join("prompts/prompt-catalog.json");
+    println!(
+        "cargo:rerun-if-changed={}",
+        prompts_path.display()
+    );
+
     if env::var_os("CARGO_FEATURE_EMBEDDED_FRONTEND").is_none() {
         return;
     }

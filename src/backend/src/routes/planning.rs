@@ -79,6 +79,21 @@ async fn get_planning_prompt(state: &State<AppStateType>) -> ApiResult<Json<Plan
     })
 }
 
+#[get("/api/planning/prompt/default-text")]
+async fn get_default_planning_prompt_text() -> ApiResult<Json<Value>> {
+    // Return the seed value from prompt-catalog.json, not the DB (which may be customized)
+    let system_prompts = crate::prompt_catalog::get_all_system_prompts();
+    let default_prompt = system_prompts
+        .iter()
+        .find(|sp| sp.key == "planning")
+        .ok_or_else(|| {
+            ApiError::internal("Default planning prompt not found in prompt catalog")
+                .with_code(ErrorCode::PlanningPromptNotConfigured)
+        })?;
+    let prompt_text = default_prompt.prompt_text.join("\n");
+    Ok(Json(json!({ "promptText": prompt_text })))
+}
+
 #[get("/api/planning/prompts")]
 async fn get_all_planning_prompts(
     state: &State<AppStateType>,
@@ -646,30 +661,17 @@ async fn create_tasks_from_planning(
 
     let base_url = format!("http://localhost:{}", state.port);
 
-    // Send task setup prompt to the agent
-    let task_setup_prompt = format!(
-        "Please use the **workflow-task-setup** skill to create kanban tasks from our planning conversation.\n\n\
-        **Instructions:**\n\
-        1. Review the conversation history in this session to understand the implementation plan we discussed\n\
-        2. Use the workflow-task-setup skill to convert the plan into actionable TaurOboros kanban tasks\n\
-        3. Create appropriate tasks with proper dependencies, statuses, and configurations\n\n\
-        **API Access Information:**\n\
-        - The TaurOboros server is running on port: **{}**\n\
-        - Base URL: {}\n\
-        - Use the HTTP API endpoints to create tasks (POST /api/tasks)\n\
-        - Use the Task Groups API to organize related tasks (POST /api/task-groups)\n\n\
-        **Task Creation Guidelines:**\n\
-        - Create small, outcome-based tasks that can be completed independently\n\
-        - Set appropriate dependencies where one task truly blocks another\n\
-        - Use status \"backlog\" for runnable tasks\n\
-        - Include clear, actionable prompts for each task\n\
-        - Consider using plan-mode (planmode: true) for tasks that need approval before implementation\n\n\
-        **IMPORTANT - Create a Task Group:**\n\
-        If the implementation plan involves multiple related tasks:\n\
-        1. Create ALL tasks first using POST /api/tasks\n\
-        2. Then create a **Task Group** using POST /api/task-groups\n\
-        3. Use POST /api/task-groups/:id/tasks to add tasks if the group was created without them",
-        state.port, base_url
+    // Load task_setup prompt template from DB (seeded from prompt-catalog.json)
+    let task_setup_template = crate::db::runtime::get_prompt_template(&state.db, "task_setup")
+        .await?
+        .ok_or_else(|| {
+            ApiError::internal("Prompt template 'task_setup' is not configured")
+                .with_code(ErrorCode::ExecutionOperationFailed)
+        })?;
+
+    let task_setup_prompt = crate::orchestrator::render_prompt_template(
+        &task_setup_template.template_text,
+        &[("server_port", &state.port.to_string())],
     );
 
     state
@@ -1012,6 +1014,7 @@ async fn rename_planning_session(
 pub fn routes() -> Vec<Route> {
     routes![
         get_planning_prompt,
+        get_default_planning_prompt_text,
         get_all_planning_prompts,
         update_planning_prompt,
         get_prompt_versions,
