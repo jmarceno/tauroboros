@@ -112,6 +112,7 @@ async fn stop_workflow(state: &State<AppStateType>) -> ApiResult<Json<Value>> {
         "run": result.run,
         "destructive": false,
         "killed": result.killed,
+        "cleaned": result.cleaned,
     })))
 }
 

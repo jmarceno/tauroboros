@@ -13,9 +13,7 @@ fn parse_task_order(run: &WorkflowRun) -> Vec<String> {
         .unwrap_or_default()
 }
 
-async fn get_workflow_runs_with_archived_tasks(
-    pool: &Pool<Sqlite>,
-) -> ApiResult<Vec<WorkflowRun>> {
+async fn get_workflow_runs_with_archived_tasks(pool: &Pool<Sqlite>) -> ApiResult<Vec<WorkflowRun>> {
     let runs: Vec<WorkflowRun> = sqlx::query_as(
         r#"
         SELECT * FROM workflow_runs ORDER BY finished_at DESC, created_at DESC
@@ -57,18 +55,14 @@ async fn get_workflow_runs_with_archived_tasks(
     Ok(result)
 }
 
-async fn get_archived_tasks_by_run(
-    pool: &Pool<Sqlite>,
-    run: &WorkflowRun,
-) -> ApiResult<Vec<Task>> {
+async fn get_archived_tasks_by_run(pool: &Pool<Sqlite>, run: &WorkflowRun) -> ApiResult<Vec<Task>> {
     let task_order = parse_task_order(run);
     if task_order.is_empty() {
         return Ok(Vec::new());
     }
 
-    let mut query = QueryBuilder::<Sqlite>::new(
-        "SELECT * FROM tasks WHERE is_archived = 1 AND id IN (",
-    );
+    let mut query =
+        QueryBuilder::<Sqlite>::new("SELECT * FROM tasks WHERE is_archived = 1 AND id IN (");
     {
         let mut separated = query.separated(", ");
         for task_id in &task_order {

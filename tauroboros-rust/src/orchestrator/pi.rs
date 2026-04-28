@@ -51,6 +51,12 @@ pub struct PiSessionExecutor {
     project_root: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct PiPromptResult {
+    pub response_text: String,
+    pub events: Vec<Value>,
+}
+
 impl PiSessionExecutor {
     pub fn new(db: SqlitePool, sse_hub: Arc<RwLock<SseHub>>, project_root: String) -> Self {
         Self {
@@ -115,6 +121,19 @@ impl PiSessionExecutor {
         prompt_text: &str,
         stop_rx: watch::Receiver<bool>,
     ) -> Result<String, ApiError> {
+        let result = self
+            .run_prompt_with_events(session, model, prompt_text, stop_rx)
+            .await?;
+        Ok(result.response_text)
+    }
+
+    pub async fn run_prompt_with_events(
+        &self,
+        session: PiWorkflowSession,
+        model: &str,
+        prompt_text: &str,
+        stop_rx: watch::Receiver<bool>,
+    ) -> Result<PiPromptResult, ApiError> {
         let (provider, model_id) = parse_model(model)?;
         self.audit_info(
             "session.run_requested",
@@ -181,7 +200,7 @@ impl PiSessionExecutor {
         )
         .await?;
 
-        let result: Result<String, ApiError> = async {
+        let result: Result<PiPromptResult, ApiError> = async {
             send_request(
                 &mut stdin,
                 &json!({
@@ -291,14 +310,17 @@ impl PiSessionExecutor {
                 "status": completed.status,
                 "exitCode": completed.exit_code,
                 "exitSignal": completed.exit_signal,
-                "responseLength": result.as_ref().map(|response| response.trim().len()).unwrap_or(0),
+                "responseLength": result.as_ref().map(|response| response.response_text.trim().len()).unwrap_or(0),
                 "error": session_error_message
             }),
         )
         .await?;
 
         match result {
-            Ok(response_text) => Ok(response_text.trim().to_string()),
+            Ok(mut prompt_result) => {
+                prompt_result.response_text = prompt_result.response_text.trim().to_string();
+                Ok(prompt_result)
+            }
             Err(error) => Err(error),
         }
     }
@@ -384,8 +406,9 @@ impl PiSessionExecutor {
         child: &mut Child,
         rx: &mut mpsc::UnboundedReceiver<ProcessLine>,
         mut stop_rx: watch::Receiver<bool>,
-    ) -> Result<String, ApiError> {
+    ) -> Result<PiPromptResult, ApiError> {
         let mut response_text = String::new();
+        let mut events = Vec::new();
         let idle_timeout = tokio::time::sleep(PROMPT_IDLE_TIMEOUT);
         tokio::pin!(idle_timeout);
 
@@ -402,7 +425,11 @@ impl PiSessionExecutor {
                 }
                 changed = stop_rx.changed() => {
                     if changed.is_ok() && *stop_rx.borrow() {
-                        return interrupt_session(&self.db, session, child).await;
+                        let response_text = interrupt_session(&self.db, session, child).await?;
+                        return Ok(PiPromptResult {
+                            response_text,
+                            events,
+                        });
                     }
                 }
                 maybe_line = rx.recv() => {
@@ -426,9 +453,13 @@ impl PiSessionExecutor {
                             }
 
                             let event_type = parsed.get("type").and_then(Value::as_str);
+                            events.push(parsed.clone());
                             self.persist_event_message(session, parsed.clone()).await?;
                             if event_type == Some("agent_end") {
-                                return Ok(response_text);
+                                return Ok(PiPromptResult {
+                                    response_text,
+                                    events,
+                                });
                             }
                         }
                         ProcessLine::Stderr(content) => {

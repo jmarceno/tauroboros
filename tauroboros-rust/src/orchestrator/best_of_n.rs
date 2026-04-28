@@ -9,8 +9,50 @@ use crate::orchestrator::git::{
 use crate::orchestrator::pi::PiSessionExecutor;
 use crate::orchestrator::Orchestrator;
 use crate::orchestrator::{render_prompt_template, TaskOutcome};
+use rocket::serde::json::Value;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tokio::sync::watch;
 use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviewerOutput {
+    status: ReviewerStatus,
+    summary: String,
+    best_candidate_ids: Vec<String>,
+    gaps: Vec<String>,
+    recommended_final_strategy: SelectionMode,
+    recommended_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ReviewerStatus {
+    Pass,
+    NeedsManualReview,
+}
+
+#[derive(Debug, Clone)]
+struct AggregatedReviewResult {
+    candidate_vote_counts: HashMap<String, usize>,
+    recurring_gaps: Vec<String>,
+    consensus_reached: bool,
+    recommended_final_strategy: SelectionMode,
+    usable_results: Vec<ReviewerOutput>,
+}
+
+impl AggregatedReviewResult {
+    fn default_for(config: &BestOfNConfig) -> Self {
+        Self {
+            candidate_vote_counts: HashMap::new(),
+            recurring_gaps: Vec::new(),
+            consensus_reached: false,
+            recommended_final_strategy: config.selection_mode,
+            usable_results: Vec::new(),
+        }
+    }
+}
 
 impl Orchestrator {
     pub(super) async fn run_best_of_n(
@@ -40,6 +82,7 @@ impl Orchestrator {
             },
         )
         .await?;
+        self.broadcast_task_by_id(&task.id).await?;
 
         // Phase 1: Workers
         let worker_results = self
@@ -65,6 +108,7 @@ impl Orchestrator {
                 },
             )
             .await?;
+            self.broadcast_task_by_id(&task.id).await?;
             return Ok(TaskOutcome {
                 status: TaskStatus::Failed,
                 error_message: Some("Insufficient successful workers".to_string()),
@@ -88,6 +132,7 @@ impl Orchestrator {
         }
 
         let candidates = crate::db::queries::get_task_candidates(&self.db, &task.id).await?;
+        let mut aggregated_review = AggregatedReviewResult::default_for(&config);
 
         let hub = self.sse_hub.read().await;
         for candidate in &candidates {
@@ -110,8 +155,9 @@ impl Orchestrator {
                 },
             )
             .await?;
+                self.broadcast_task_by_id(&task.id).await?;
 
-            let _reviewer_results = self
+                let reviewer_results = self
                 .run_best_of_n_reviewers(
                     task,
                     options,
@@ -120,6 +166,61 @@ impl Orchestrator {
                     stop_rx.clone(),
                 )
                 .await?;
+
+                if reviewer_results.is_empty() {
+                    crate::db::queries::update_task(
+                        &self.db,
+                        &task.id,
+                        UpdateTaskInput {
+                            status: Some(TaskStatus::Review),
+                            best_of_n_substage: Some(BestOfNSubstage::BlockedForManualReview),
+                            error_message: Some(Some(
+                                "No usable reviewer results available".to_string(),
+                            )),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                    self.broadcast_task_by_id(&task.id).await?;
+                    return Ok(TaskOutcome {
+                        status: TaskStatus::Review,
+                        error_message: None,
+                    });
+                }
+
+                aggregated_review = aggregate_reviewer_outputs(reviewer_results);
+
+                let reviewer_requested_manual = aggregated_review
+                    .usable_results
+                    .iter()
+                    .any(|result| result.status == ReviewerStatus::NeedsManualReview);
+                if reviewer_requested_manual
+                    || (!aggregated_review.consensus_reached
+                        && config.selection_mode == SelectionMode::PickBest)
+                {
+                    let message = if reviewer_requested_manual {
+                        "One or more reviewers requested manual review".to_string()
+                    } else {
+                        "Reviewer consensus missing for pick_best mode".to_string()
+                    };
+
+                    crate::db::queries::update_task(
+                        &self.db,
+                        &task.id,
+                        UpdateTaskInput {
+                            status: Some(TaskStatus::Review),
+                            best_of_n_substage: Some(BestOfNSubstage::BlockedForManualReview),
+                            error_message: Some(Some(message)),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                    self.broadcast_task_by_id(&task.id).await?;
+                    return Ok(TaskOutcome {
+                        status: TaskStatus::Review,
+                        error_message: None,
+                    });
+                }
         }
 
         // Phase 3: Final Applier
@@ -132,6 +233,7 @@ impl Orchestrator {
             },
         )
         .await?;
+        self.broadcast_task_by_id(&task.id).await?;
 
         let target_branch = resolve_target_branch(
             &self.project_root,
@@ -149,6 +251,7 @@ impl Orchestrator {
                 options,
                 &config,
                 &candidates,
+                &aggregated_review,
                 &applier_worktree,
                 stop_rx.clone(),
             )
@@ -167,20 +270,8 @@ impl Orchestrator {
 
         match final_result {
             Ok(_) => {
-                // Mark selected candidate
-                if let Some(best) = candidates.first() {
-                    let _ =
-                        crate::db::queries::update_task_candidate(&self.db, &best.id, "selected")
-                            .await;
-                    for candidate in &candidates[1..] {
-                        let _ = crate::db::queries::update_task_candidate(
-                            &self.db,
-                            &candidate.id,
-                            "rejected",
-                        )
-                        .await;
-                    }
-                }
+                self.apply_candidate_selection(&candidates, &aggregated_review)
+                    .await?;
 
                 crate::db::queries::update_task(
                     &self.db,
@@ -193,6 +284,7 @@ impl Orchestrator {
                     },
                 )
                 .await?;
+                self.broadcast_task_by_id(&task.id).await?;
 
                 Ok(TaskOutcome {
                     status: TaskStatus::Done,
@@ -389,7 +481,7 @@ impl Orchestrator {
         config: &BestOfNConfig,
         workers: &[&WorkerResult],
         stop_rx: watch::Receiver<bool>,
-    ) -> Result<Vec<ReviewerResult>, ApiError> {
+    ) -> Result<Vec<ReviewerOutput>, ApiError> {
         let expanded = expand_slots(&config.reviewers);
         let candidate_summaries: Vec<String> = workers
             .iter()
@@ -491,23 +583,36 @@ impl Orchestrator {
             );
 
             let result = executor
-                .run_prompt(session.clone(), &slot.model, &prompt, stop_rx.clone())
+                .run_prompt_with_events(session.clone(), &slot.model, &prompt, stop_rx.clone())
                 .await;
 
             match result {
-                Ok(response_text) => {
+                Ok(prompt_result) => {
+                    let reviewer_output = parse_reviewer_output(
+                        &prompt_result.response_text,
+                        &prompt_result.events,
+                    )?;
                     let _ = crate::db::runtime::update_task_run_record(
                         &self.db,
                         &task_run.id,
                         crate::db::runtime::UpdateTaskRunRecord {
                             status: Some(RunStatus::Done),
-                            summary: Some(Some(response_text.trim().to_string())),
+                            summary: Some(Some(reviewer_output.summary.clone())),
+                            metadata_json: Some(Some(
+                                serde_json::to_value(&reviewer_output).map_err(|error| {
+                                    ApiError::internal(format!(
+                                        "Failed to serialize reviewer output: {}",
+                                        error
+                                    ))
+                                    .with_code(ErrorCode::ExecutionOperationFailed)
+                                })?,
+                            )),
                             completed_at: Some(Some(chrono::Utc::now().timestamp())),
                             ..Default::default()
                         },
                     )
                     .await;
-                    results.push(ReviewerResult { success: true });
+                    results.push(reviewer_output);
                 }
                 Err(error) => {
                     let _ = crate::db::runtime::update_task_run_record(
@@ -521,7 +626,6 @@ impl Orchestrator {
                         },
                     )
                     .await;
-                    results.push(ReviewerResult { success: false });
                 }
             }
         }
@@ -535,6 +639,7 @@ impl Orchestrator {
         options: &Options,
         config: &BestOfNConfig,
         candidates: &[crate::db::models::TaskCandidate],
+        aggregated_review: &AggregatedReviewResult,
         worktree: &WorktreeInfo,
         stop_rx: watch::Receiver<bool>,
     ) -> Result<(), ApiError> {
@@ -548,8 +653,14 @@ impl Orchestrator {
             .iter()
             .map(|c| {
                 format!(
-                    "Candidate {}: {}",
+                    "Candidate {} (status: {}, votes: {}): {}",
                     c.id.get(..6).unwrap_or(&c.id),
+                    c.status,
+                    aggregated_review
+                        .candidate_vote_counts
+                        .get(&c.id)
+                        .copied()
+                        .unwrap_or(0),
                     c.summary.as_deref().unwrap_or("no summary")
                 )
             })
@@ -559,8 +670,24 @@ impl Orchestrator {
         let selection_mode_str = match config.selection_mode {
             SelectionMode::PickBest => "pick_best",
             SelectionMode::Synthesize => "synthesize",
-            SelectionMode::PickOrSynthesize => "pick_or_synthesize",
+            SelectionMode::PickOrSynthesize => {
+                selection_mode_label(aggregated_review.recommended_final_strategy)
+            }
         };
+
+        let recurring_gaps = if aggregated_review.recurring_gaps.is_empty() {
+            "none".to_string()
+        } else {
+            aggregated_review.recurring_gaps.join("\n")
+        };
+        let reviewer_recommended_prompts = aggregated_review
+            .usable_results
+            .iter()
+            .filter_map(|result| result.recommended_prompt.as_deref())
+            .filter(|prompt| !prompt.trim().is_empty())
+            .map(|prompt| prompt.trim().to_string())
+            .collect::<Vec<_>>()
+            .join("\n---\n");
 
         let template = crate::db::runtime::get_prompt_template(&self.db, "best_of_n_final_applier")
             .await?
@@ -575,10 +702,20 @@ impl Orchestrator {
                 ("task.prompt", &task.prompt),
                 ("selection_mode", selection_mode_str),
                 ("candidate_guidance", &candidate_guidance),
-                ("recurring_gaps", ""),
-                ("reviewer_recommended_prompts", ""),
-                ("consensus_reached", "true"),
-                ("task_suffix", ""),
+                ("recurring_gaps", &recurring_gaps),
+                ("reviewer_recommended_prompts", &reviewer_recommended_prompts),
+                (
+                    "consensus_reached",
+                    if aggregated_review.consensus_reached {
+                        "true"
+                    } else {
+                        "false"
+                    },
+                ),
+                (
+                    "task_suffix",
+                    config.final_applier.task_suffix.as_deref().unwrap_or(""),
+                ),
                 ("additional_context_block", &additional_context),
             ],
         );
@@ -692,11 +829,6 @@ struct WorkerResult {
     summary: Option<String>,
 }
 
-#[allow(dead_code)]
-struct ReviewerResult {
-    success: bool,
-}
-
 fn expand_slots(slots: &[crate::models::BestOfNSlot]) -> Vec<crate::models::BestOfNSlot> {
     let mut expanded = Vec::new();
     for slot in slots {
@@ -709,6 +841,152 @@ fn expand_slots(slots: &[crate::models::BestOfNSlot]) -> Vec<crate::models::Best
         }
     }
     expanded
+}
+
+fn parse_reviewer_output(response_text: &str, events: &[Value]) -> Result<ReviewerOutput, ApiError> {
+    if let Some(details) = extract_structured_tool_details(events, "emit_best_of_n_vote") {
+        return reviewer_output_from_value(details);
+    }
+
+    let trimmed = response_text.trim();
+    let parsed: Value = serde_json::from_str(trimmed).map_err(|error| {
+        ApiError::internal(format!(
+            "Best-of-n reviewer response was not valid JSON and no structured tool output was found: {}",
+            error
+        ))
+        .with_code(ErrorCode::ExecutionOperationFailed)
+    })?;
+    reviewer_output_from_value(&parsed)
+}
+
+fn extract_structured_tool_details<'a>(events: &'a [Value], tool_name: &str) -> Option<&'a Value> {
+    events.iter().find_map(|event| {
+        let event_type = event.get("type").and_then(Value::as_str)?;
+        let event_tool_name = event.get("toolName").and_then(Value::as_str)?;
+        if event_type == "tool_execution_end" && event_tool_name == tool_name {
+            event.get("result").and_then(|result| result.get("details"))
+        } else {
+            None
+        }
+    })
+}
+
+fn reviewer_output_from_value(value: &Value) -> Result<ReviewerOutput, ApiError> {
+    serde_json::from_value::<ReviewerOutput>(value.clone()).map_err(|error| {
+        ApiError::internal(format!(
+            "Best-of-n reviewer output did not match the expected schema: {}",
+            error
+        ))
+        .with_code(ErrorCode::ExecutionOperationFailed)
+    })
+}
+
+fn aggregate_reviewer_outputs(outputs: Vec<ReviewerOutput>) -> AggregatedReviewResult {
+    let mut candidate_vote_counts = HashMap::new();
+    let mut recurring_gaps = Vec::new();
+    let mut strategy_votes = [
+        (SelectionMode::PickBest, 0usize),
+        (SelectionMode::Synthesize, 0usize),
+        (SelectionMode::PickOrSynthesize, 0usize),
+    ];
+
+    for output in &outputs {
+        for (mode, count) in &mut strategy_votes {
+            if *mode == output.recommended_final_strategy {
+                *count += 1;
+            }
+        }
+
+        for candidate_id in &output.best_candidate_ids {
+            *candidate_vote_counts.entry(candidate_id.clone()).or_insert(0) += 1;
+        }
+
+        for gap in &output.gaps {
+            if !recurring_gaps.iter().any(|existing| existing == gap) {
+                recurring_gaps.push(gap.clone());
+            }
+        }
+    }
+
+    let top_vote_count = candidate_vote_counts.values().copied().max().unwrap_or(0);
+    let consensus_reached = !outputs.is_empty() && top_vote_count == outputs.len();
+    let recommended_final_strategy = strategy_votes
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(mode, _)| mode)
+        .unwrap_or(SelectionMode::Synthesize);
+
+    AggregatedReviewResult {
+        candidate_vote_counts,
+        recurring_gaps,
+        consensus_reached,
+        recommended_final_strategy,
+        usable_results: outputs,
+    }
+}
+
+fn selection_mode_label(mode: SelectionMode) -> &'static str {
+    match mode {
+        SelectionMode::PickBest => "pick_best",
+        SelectionMode::Synthesize => "synthesize",
+        SelectionMode::PickOrSynthesize => "pick_or_synthesize",
+    }
+}
+
+impl Orchestrator {
+    async fn broadcast_task_by_id(&self, task_id: &str) -> Result<(), ApiError> {
+        if let Some(task) = crate::db::queries::get_task(&self.db, task_id).await? {
+            self.broadcast_task(&task).await;
+        }
+        Ok(())
+    }
+
+    async fn apply_candidate_selection(
+        &self,
+        candidates: &[crate::db::models::TaskCandidate],
+        aggregated_review: &AggregatedReviewResult,
+    ) -> Result<(), ApiError> {
+        let Some((candidate_id, _)) = aggregated_review
+            .candidate_vote_counts
+            .iter()
+            .max_by_key(|(_, count)| *count)
+        else {
+            return Ok(());
+        };
+
+        let selected_candidate_id = if candidates.iter().any(|candidate| candidate.id == *candidate_id) {
+            candidate_id.clone()
+        } else if let Some(candidate) = candidates.first() {
+            candidate.id.clone()
+        } else {
+            return Ok(());
+        };
+
+        for candidate in candidates {
+            let next_status = if candidate.id == selected_candidate_id {
+                "selected"
+            } else {
+                "rejected"
+            };
+
+            if let Some(updated) = crate::db::queries::update_task_candidate(
+                &self.db,
+                &candidate.id,
+                next_status,
+            )
+            .await?
+            {
+                let hub = self.sse_hub.read().await;
+                hub.broadcast(&crate::models::WSMessage {
+                    r#type: "task_candidate_updated".to_string(),
+                    payload: serde_json::to_value(updated).unwrap_or_default(),
+                })
+                .await;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[allow(dead_code)]

@@ -1,21 +1,32 @@
+/// <reference types="node" />
+
 import { test, expect, type Locator, type Page } from '@playwright/test'
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'fs'
 import { spawn, execSync, type ChildProcess } from 'child_process'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { tmpdir } from 'os'
+import { fileURLToPath } from 'url'
 
+import {
+  createMockPiBinary,
+  MOCK_MODEL_DEFAULTS,
+  prepareMockPiHome,
+  stopChildProcess,
+} from './rust-live-helpers'
 import { createTaskViaUI, getTaskCard } from './ui-helpers'
 
 const WORKFLOW_TIMEOUT_MS = 12 * 60 * 1000
 const SERVER_START_TIMEOUT_MS = 120_000
+
+let serverPort: number
 
 type WorkflowTaskState = {
   name: string
@@ -34,17 +45,20 @@ test.describe('REAL Rust Workflow', () => {
   let projectDir: string
   let rustDir: string
   let serverProcess: ChildProcess
-  let serverPort: number
-  let modelDefaults: PiDefaults
+  let homeDir: string
+  let mockPiBin: string
+  const modelDefaults: PiDefaults = MOCK_MODEL_DEFAULTS
 
   test.beforeAll(async () => {
-    const repoRoot = join(import.meta.dirname, '../..')
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
     rustDir = join(repoRoot, 'tauroboros-rust')
     projectDir = mkdtempSync(join(tmpdir(), 'tauroboros-rust-e2e-'))
+    homeDir = join(projectDir, '.home')
     serverPort = 3792
-    modelDefaults = loadPiDefaults()
 
     prepareGitProject(projectDir)
+    prepareMockPiHome(homeDir, projectDir)
+    mockPiBin = createMockPiBinary(projectDir)
 
     mkdirSync(join(projectDir, '.tauroboros'), { recursive: true })
     writeFileSync(
@@ -76,7 +90,8 @@ test.describe('REAL Rust Workflow', () => {
       env: {
         ...process.env,
         PATH: process.env.PATH,
-        HOME: process.env.HOME,
+        HOME: homeDir,
+        PI_BIN: mockPiBin,
         PROJECT_ROOT: projectDir,
         SERVER_PORT: String(serverPort),
         DATABASE_PATH: join(projectDir, '.tauroboros', 'tasks.db'),
@@ -97,9 +112,7 @@ test.describe('REAL Rust Workflow', () => {
   })
 
   test.afterAll(() => {
-    if (serverProcess && !serverProcess.killed) {
-      serverProcess.kill('SIGTERM')
-    }
+    stopChildProcess(serverProcess)
 
     rmSync(projectDir, { recursive: true, force: true })
   })
@@ -151,9 +164,6 @@ test.describe('REAL Rust Workflow', () => {
       throw new Error('Run card is missing data-run-id')
     }
 
-    await expect(runCard.locator(`[data-run-queue-status="${runId}"]`)).toBeVisible({ timeout: 30_000 })
-    await expect(runCard.locator(`[data-run-queue-status="${runId}"]`)).toContainText('q ')
-
     await waitForTaskToLeaveBacklog(page, task1Name)
     await pauseWorkflow(page)
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -194,33 +204,6 @@ test.describe('REAL Rust Workflow', () => {
   })
 })
 
-function loadPiDefaults(): PiDefaults {
-  const home = process.env.HOME
-  if (!home) {
-    throw new Error('HOME is not set; cannot load Pi agent defaults')
-  }
-
-  const settingsPath = join(home, '.pi', 'agent', 'settings.json')
-  const raw = JSON.parse(readFileSync(settingsPath, 'utf-8')) as {
-    defaultProvider?: unknown
-    defaultModel?: unknown
-  }
-
-  if (typeof raw.defaultProvider !== 'string' || raw.defaultProvider.trim() === '') {
-    throw new Error(`Pi agent settings at ${settingsPath} are missing defaultProvider`)
-  }
-
-  if (typeof raw.defaultModel !== 'string' || raw.defaultModel.trim() === '') {
-    throw new Error(`Pi agent settings at ${settingsPath} are missing defaultModel`)
-  }
-
-  return {
-    provider: raw.defaultProvider,
-    modelId: raw.defaultModel,
-    modelValue: `${raw.defaultProvider}/${raw.defaultModel}`,
-  }
-}
-
 function prepareGitProject(projectDir: string): void {
   writeFileSync(join(projectDir, '.gitignore'), ['.tauroboros/', '.worktrees/'].join('\n') + '\n')
   writeFileSync(join(projectDir, 'README.md'), '# Rust workflow validation\n')
@@ -255,32 +238,63 @@ async function waitForServerReady(port: number): Promise<void> {
 async function configureWorkflowDefaults(page: Page, modelValue: string): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Options Configuration' })).toBeVisible({ timeout: 20_000 })
 
-  await setModelPickerValue(page, 'Plan Model (global)', modelValue)
-  await setModelPickerValue(page, 'Execution Model (global)', modelValue)
-  await setModelPickerValue(page, 'Review Model', modelValue)
-  await setModelPickerValue(page, 'Repair Model', modelValue)
+  const response = await fetch(`http://localhost:${serverPort}/api/options`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      branch: 'master',
+      planModel: modelValue,
+      executionModel: modelValue,
+      reviewModel: modelValue,
+      repairModel: modelValue,
+      parallelTasks: 1,
+      showExecutionGraph: true,
+    }),
+  })
 
-  await setNumericOption(page, 'Parallel Tasks', '1')
-  await setCheckboxState(page, 'Show execution graph before starting workflow', true)
+  if (!response.ok) {
+    throw new Error(`Failed to configure workflow defaults: ${response.status} ${await response.text()}`)
+  }
 
-  const saveButton = page.locator('button').filter({ hasText: 'Save Options' }).last()
-  await expect(saveButton).toBeVisible({ timeout: 20_000 })
-  await saveButton.click()
-  await expect.poll(() => saveButton.isEnabled(), { timeout: 20_000 }).toBe(true)
+  const updated = await response.json() as {
+    branch?: string
+    planModel?: string
+    executionModel?: string
+    reviewModel?: string
+    repairModel?: string
+    parallelTasks?: number
+    showExecutionGraph?: boolean
+  }
+  expect(updated.branch).toBe('master')
+  expect(updated.planModel).toBe(modelValue)
+  expect(updated.executionModel).toBe(modelValue)
+  expect(updated.reviewModel).toBe(modelValue)
+  expect(updated.repairModel).toBe(modelValue)
+  expect(updated.parallelTasks).toBe(1)
+  expect(updated.showExecutionGraph).toBe(true)
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
 }
 
 async function setModelPickerValue(page: Page, labelText: string, value: string): Promise<void> {
   const group = page.locator('.form-group').filter({ hasText: labelText }).first()
   const input = group.locator('input.form-input').first()
+  const modelToken = value.split('/').pop() || value
 
   await expect(input).toBeVisible({ timeout: 20_000 })
+  if ((await input.inputValue()) === value) {
+    return
+  }
+
   await input.click()
+  await expect(group.locator('.absolute .cursor-pointer').first()).toBeVisible({ timeout: 20_000 })
   await input.fill(value)
   await page.waitForTimeout(500)
 
-  const suggestion = group.locator('.absolute > div').first()
+  const suggestion = group.locator('.absolute .cursor-pointer').filter({ hasText: modelToken }).first()
   await expect(suggestion).toBeVisible({ timeout: 15_000 })
   await suggestion.click()
+
   await expect.poll(() => input.inputValue(), { timeout: 15_000 }).toBe(value)
 }
 

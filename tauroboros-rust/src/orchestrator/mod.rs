@@ -1,6 +1,6 @@
 use self::git::{
     auto_commit_worktree, create_task_worktree, merge_and_cleanup_worktree, remove_worktree,
-    resolve_target_branch, run_shell_command,
+    resolve_target_branch, run_shell_command, worktree_has_changes,
 };
 use self::pi::PiSessionExecutor;
 use crate::audit::{record_audit_event, CreateAuditEvent};
@@ -17,9 +17,8 @@ use crate::db::runtime::{
 use crate::error::{ApiError, ErrorCode};
 use crate::models::{
     AuditLevel, BestOfNSubstage, CleanRunResult, ExecutionPhase, ExecutionStrategy, Options,
-    PiSessionKind, PiSessionStatus, RunPhase, RunStatus, SelfHealStatus, Task,
-    TaskGroupStatus, TaskStatus, UpdateTaskInput, WSMessage, WorkflowRun, WorkflowRunKind,
-    WorkflowRunStatus,
+    PiSessionKind, PiSessionStatus, RunPhase, RunStatus, SelfHealStatus, Task, TaskGroupStatus,
+    TaskStatus, UpdateTaskInput, WSMessage, WorkflowRun, WorkflowRunKind, WorkflowRunStatus,
 };
 use crate::sse::hub::SseHub;
 use rocket::serde::json::json;
@@ -68,6 +67,28 @@ pub struct RunStopResult {
     pub run: WorkflowRun,
     pub killed: i32,
     pub cleaned: i32,
+}
+
+const GRACEFUL_STOP_MESSAGE: &str = "Workflow stopped by user";
+const DESTRUCTIVE_STOP_MESSAGE: &str = "Workflow stopped by user - all work discarded";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StopMode {
+    Graceful,
+    Destructive,
+    Failure,
+}
+
+fn stop_mode_for_run(run: &WorkflowRun) -> Option<StopMode> {
+    if !run.stop_requested {
+        return None;
+    }
+
+    match run.error_message.as_deref() {
+        Some(GRACEFUL_STOP_MESSAGE) => Some(StopMode::Graceful),
+        Some(DESTRUCTIVE_STOP_MESSAGE) => Some(StopMode::Destructive),
+        _ => Some(StopMode::Failure),
+    }
 }
 
 #[derive(Clone)]
@@ -359,7 +380,7 @@ impl Orchestrator {
         let run = self.reload_run(run_id).await?;
         if !matches!(
             run.status,
-            WorkflowRunStatus::Queued | WorkflowRunStatus::Running | WorkflowRunStatus::Paused
+            WorkflowRunStatus::Queued | WorkflowRunStatus::Running | WorkflowRunStatus::Stopping
         ) {
             return Err(ApiError::conflict("Run is not active")
                 .with_code(ErrorCode::ExecutionOperationFailed));
@@ -428,16 +449,28 @@ impl Orchestrator {
         destructive: bool,
     ) -> Result<RunStopResult, ApiError> {
         let run = self.reload_run(run_id).await?;
+        if run.status == WorkflowRunStatus::Stopping {
+            return Err(ApiError::conflict("Run is already stopping")
+                .with_code(ErrorCode::ExecutionOperationFailed));
+        }
         if !matches!(
             run.status,
-            WorkflowRunStatus::Queued
-                | WorkflowRunStatus::Running
-                | WorkflowRunStatus::Paused
-                | WorkflowRunStatus::Stopping
+            WorkflowRunStatus::Queued | WorkflowRunStatus::Running | WorkflowRunStatus::Paused
         ) {
             return Err(ApiError::conflict("Run is not active")
                 .with_code(ErrorCode::ExecutionOperationFailed));
         }
+
+        let stop_message = if destructive {
+            DESTRUCTIVE_STOP_MESSAGE
+        } else {
+            GRACEFUL_STOP_MESSAGE
+        };
+        let queued_task_status = if destructive {
+            TaskStatus::Failed
+        } else {
+            TaskStatus::Backlog
+        };
 
         let updated = update_workflow_run_record(
             &self.db,
@@ -445,7 +478,7 @@ impl Orchestrator {
             UpdateWorkflowRunRecord {
                 status: Some(WorkflowRunStatus::Stopping),
                 stop_requested: Some(true),
-                error_message: Some(Some("Workflow stopped by user".to_string())),
+                error_message: Some(Some(stop_message.to_string())),
                 ..Default::default()
             },
         )
@@ -460,8 +493,10 @@ impl Orchestrator {
                         &self.db,
                         task_id,
                         UpdateTaskInput {
-                            status: Some(TaskStatus::Backlog),
-                            error_message: Some(Some("Workflow stopped by user".to_string())),
+                            status: Some(queued_task_status),
+                            error_message: Some(Some(stop_message.to_string())),
+                            session_id: Some(None),
+                            session_url: Some(None),
                             ..Default::default()
                         },
                     )
@@ -474,8 +509,13 @@ impl Orchestrator {
         }
 
         let killed = self.signal_stop_for_run(run_id).await;
+        let cleaned = if destructive && killed == 0 {
+            self.cleanup_stopped_run_worktrees(&task_ids).await?
+        } else {
+            0
+        };
         if killed == 0 {
-            self.finalize_run_after_stop(run_id).await?;
+            self.finalize_run_after_stop(run_id, destructive).await?;
         }
 
         self.broadcast(
@@ -490,7 +530,7 @@ impl Orchestrator {
         Ok(RunStopResult {
             run,
             killed,
-            cleaned: 0,
+            cleaned,
         })
     }
 
@@ -1179,6 +1219,21 @@ impl Orchestrator {
                     | ExecutionPhase::ImplementationPending
             )
         {
+            let _ = update_task(
+                &self.db,
+                &task.id,
+                UpdateTaskInput {
+                    status: Some(TaskStatus::Executing),
+                    error_message: Some(None),
+                    completed_at: Some(None),
+                    ..Default::default()
+                },
+            )
+            .await?;
+            if let Some(updated_task) = get_task(&self.db, &task.id).await? {
+                self.broadcast_task(&updated_task).await;
+            }
+
             let target_branch = resolve_target_branch(
                 &self.project_root,
                 task.branch.as_deref(),
@@ -1461,6 +1516,84 @@ impl Orchestrator {
             .await;
         match response {
             Ok(response_text) => {
+                let has_changes = worktree_has_changes(&worktree.directory).await?;
+                if response_text.trim().is_empty() && !has_changes {
+                    let message = format!(
+                        "Task '{}' completed without agent output or repository changes",
+                        task.name
+                    );
+
+                    update_task(
+                        &self.db,
+                        &task.id,
+                        UpdateTaskInput {
+                            status: Some(TaskStatus::Failed),
+                            error_message: Some(Some(message.clone())),
+                            worktree_dir: Some(Some(worktree.directory.clone())),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                    if let Some(updated_task) = get_task(&self.db, &task.id).await? {
+                        self.broadcast_task(&updated_task).await;
+                    }
+
+                    update_task_run_record(
+                        &self.db,
+                        &task_run.id,
+                        UpdateTaskRunRecord {
+                            status: Some(RunStatus::Failed),
+                            error_message: Some(Some(message.clone())),
+                            completed_at: Some(Some(chrono::Utc::now().timestamp())),
+                            worktree_dir: Some(Some(worktree.directory.clone())),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+
+                    self.audit_error(
+                        "task.execution_noop",
+                        format!("Task {} finished without visible changes", task.id),
+                        Some(run_id),
+                        Some(&task.id),
+                        Some(&task_run.id),
+                        Some(&session.id),
+                        json!({
+                            "worktreeDir": worktree.directory,
+                            "mergedInto": target_branch,
+                            "responseLength": 0,
+                            "hasChanges": false
+                        }),
+                    )
+                    .await?;
+
+                    return Ok(TaskOutcome {
+                        status: TaskStatus::Failed,
+                        error_message: Some(message),
+                    });
+                }
+
+                // Review loop for standard execution
+                if task.review || task.code_style_review {
+                    let review_passed = self
+                        .run_review_loop(
+                            &task,
+                            run_id,
+                            &options,
+                            &worktree,
+                            &target_branch,
+                            slot_index,
+                            stop_rx,
+                        )
+                        .await?;
+                    if !review_passed {
+                        return Ok(TaskOutcome {
+                            status: TaskStatus::Stuck,
+                            error_message: Some("Review loop failed".to_string()),
+                        });
+                    }
+                }
+
                 let committed = if task.auto_commit {
                     auto_commit_worktree(&worktree.directory, &task.name, &task.id).await?
                 } else {
@@ -1552,27 +1685,6 @@ impl Orchestrator {
                 )
                 .await?;
 
-                // Review loop for standard execution
-                if task.review || task.code_style_review {
-                    let review_passed = self
-                        .run_review_loop(
-                            &task,
-                            run_id,
-                            &options,
-                            &worktree,
-                            &target_branch,
-                            slot_index,
-                            stop_rx,
-                        )
-                        .await?;
-                    if !review_passed {
-                        return Ok(TaskOutcome {
-                            status: TaskStatus::Stuck,
-                            error_message: Some("Review loop failed".to_string()),
-                        });
-                    }
-                }
-
                 Ok(TaskOutcome {
                     status: TaskStatus::Done,
                     error_message: None,
@@ -1652,6 +1764,42 @@ impl Orchestrator {
 
         self.refresh_run_counts(&run_id).await?;
 
+        let run = self.reload_run(&run_id).await?;
+        let stop_mode = stop_mode_for_run(&run);
+
+        if outcome.status == TaskStatus::Failed {
+            if let Some(mode) = stop_mode {
+                let (task_status, message) = match mode {
+                    StopMode::Graceful => (TaskStatus::Backlog, GRACEFUL_STOP_MESSAGE),
+                    StopMode::Destructive => (TaskStatus::Failed, DESTRUCTIVE_STOP_MESSAGE),
+                    StopMode::Failure => (
+                        TaskStatus::Failed,
+                        run.error_message
+                            .as_deref()
+                            .unwrap_or("Workflow halted after task failure"),
+                    ),
+                };
+
+                update_task(
+                    &self.db,
+                    &task_id,
+                    UpdateTaskInput {
+                        status: Some(task_status),
+                        error_message: Some(Some(message.to_string())),
+                        session_id: Some(None),
+                        session_url: Some(None),
+                        completed_at: Some(None),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+
+                if let Some(updated_task) = get_task(&self.db, &task_id).await? {
+                    self.broadcast_task(&updated_task).await;
+                }
+            }
+        }
+
         match outcome.status {
             TaskStatus::Done => {
                 self.audit_info(
@@ -1668,7 +1816,7 @@ impl Orchestrator {
                 )
                 .await?;
             }
-            TaskStatus::Failed | TaskStatus::Stuck => {
+            TaskStatus::Failed | TaskStatus::Stuck if stop_mode.is_none() => {
                 self.audit_warn(
                     "task.completion_recorded_with_failure",
                     format!("Recorded failed completion for task {}", task_id),
@@ -1789,13 +1937,20 @@ impl Orchestrator {
             }
         }
 
-        let any_failed = loaded
-            .iter()
-            .any(|task| matches!(task.status, TaskStatus::Failed | TaskStatus::Stuck));
         let all_terminal = loaded.iter().all(|task| {
             matches!(
                 task.status,
                 TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stuck
+            )
+        });
+        let all_stopped = loaded.iter().all(|task| {
+            matches!(
+                task.status,
+                TaskStatus::Done
+                    | TaskStatus::Failed
+                    | TaskStatus::Stuck
+                    | TaskStatus::Backlog
+                    | TaskStatus::Template
             )
         });
         let has_active_tasks = {
@@ -1815,15 +1970,30 @@ impl Orchestrator {
             return Ok(());
         }
 
-        if !all_terminal && !run.stop_requested {
+        let stop_mode = stop_mode_for_run(&run);
+        if stop_mode.is_some() {
+            if !all_stopped {
+                self.refresh_run_counts(run_id).await?;
+                return Ok(());
+            }
+        } else if !all_terminal {
             self.refresh_run_counts(run_id).await?;
             return Ok(());
         }
 
-        let final_status = if any_failed || run.stop_requested {
-            WorkflowRunStatus::Failed
-        } else {
-            WorkflowRunStatus::Completed
+        let any_failed = loaded
+            .iter()
+            .any(|task| matches!(task.status, TaskStatus::Failed | TaskStatus::Stuck));
+        let final_status = match stop_mode {
+            Some(StopMode::Graceful) => WorkflowRunStatus::Completed,
+            Some(StopMode::Destructive) | Some(StopMode::Failure) => WorkflowRunStatus::Failed,
+            None => {
+                if any_failed {
+                    WorkflowRunStatus::Failed
+                } else {
+                    WorkflowRunStatus::Completed
+                }
+            }
         };
         let updated = update_workflow_run_record(
             &self.db,
@@ -1900,13 +2070,24 @@ impl Orchestrator {
         Ok(())
     }
 
-    async fn finalize_run_after_stop(&self, run_id: &str) -> Result<(), ApiError> {
+    async fn finalize_run_after_stop(
+        &self,
+        run_id: &str,
+        destructive: bool,
+    ) -> Result<(), ApiError> {
+        let run = self.reload_run(run_id).await?;
+        let task_count = run.task_order_vec()?.len() as i32;
         let updated = update_workflow_run_record(
             &self.db,
             run_id,
             UpdateWorkflowRunRecord {
-                status: Some(WorkflowRunStatus::Failed),
+                status: Some(if destructive {
+                    WorkflowRunStatus::Failed
+                } else {
+                    WorkflowRunStatus::Completed
+                }),
                 current_task_id: Some(None),
+                current_task_index: Some(task_count),
                 finished_at: Some(Some(chrono::Utc::now().timestamp())),
                 queued_task_count: Some(Some(0)),
                 executing_task_count: Some(Some(0)),
@@ -1918,6 +2099,43 @@ impl Orchestrator {
         self.runtime.lock().await.active_run_id = None;
         self.broadcast_run(&updated).await;
         Ok(())
+    }
+
+    async fn cleanup_stopped_run_worktrees(&self, task_ids: &[String]) -> Result<i32, ApiError> {
+        let mut cleaned = 0;
+
+        for task_id in task_ids {
+            let Some(task) = get_task(&self.db, task_id).await? else {
+                continue;
+            };
+
+            let Some(worktree_dir) = task.worktree_dir.clone() else {
+                continue;
+            };
+
+            if !Path::new(&worktree_dir).exists() {
+                continue;
+            }
+
+            remove_worktree(&self.project_root, &worktree_dir).await?;
+            update_task(
+                &self.db,
+                task_id,
+                UpdateTaskInput {
+                    worktree_dir: Some(None),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            if let Some(updated_task) = get_task(&self.db, task_id).await? {
+                self.broadcast_task(&updated_task).await;
+            }
+
+            cleaned += 1;
+        }
+
+        Ok(cleaned)
     }
 
     async fn signal_stop_for_run(&self, run_id: &str) -> i32 {

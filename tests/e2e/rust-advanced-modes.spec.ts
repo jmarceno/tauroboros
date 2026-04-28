@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { test, expect, type Locator, type Page } from '@playwright/test'
 import {
   existsSync,
@@ -8,41 +10,20 @@ import {
   writeFileSync,
 } from 'fs'
 import { spawn, execSync, type ChildProcess } from 'child_process'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { tmpdir } from 'os'
+import { fileURLToPath } from 'url'
 
+import {
+  createMockPiBinary,
+  MOCK_MODEL_DEFAULTS,
+  prepareMockPiHome,
+  stopChildProcess,
+} from './rust-live-helpers'
 import { createTaskViaUI, getTaskCard } from './ui-helpers'
 
 const WORKFLOW_TIMEOUT_MS = 15 * 60 * 1000
 const SERVER_START_TIMEOUT_MS = 120_000
-
-type PiDefaults = {
-  provider: string
-  modelId: string
-  modelValue: string
-}
-
-function loadPiDefaults(): PiDefaults {
-  const home = process.env.HOME
-  if (!home) throw new Error('HOME is not set')
-
-  const settingsPath = join(home, '.pi', 'agent', 'settings.json')
-  const raw = JSON.parse(readFileSync(settingsPath, 'utf-8')) as {
-    defaultProvider?: unknown
-    defaultModel?: unknown
-  }
-
-  if (typeof raw.defaultProvider !== 'string' || raw.defaultProvider.trim() === '')
-    throw new Error('Pi agent settings missing defaultProvider')
-  if (typeof raw.defaultModel !== 'string' || raw.defaultModel.trim() === '')
-    throw new Error('Pi agent settings missing defaultModel')
-
-  return {
-    provider: raw.defaultProvider,
-    modelId: raw.defaultModel,
-    modelValue: `${raw.defaultProvider}/${raw.defaultModel}`,
-  }
-}
 
 function prepareGitProject(projectDir: string): void {
   writeFileSync(join(projectDir, '.gitignore'), ['.tauroboros/', '.worktrees/'].join('\n') + '\n')
@@ -84,19 +65,23 @@ let serverProcess: ChildProcess
 let serverPort: number
 let projectDir: string
 let rustDir: string
-let modelDefaults: PiDefaults
+let homeDir: string
+let mockPiBin: string
+const modelDefaults = MOCK_MODEL_DEFAULTS
 
 test.describe('Rust Advanced Execution Modes', () => {
   test.setTimeout(WORKFLOW_TIMEOUT_MS)
 
   test.beforeAll(async () => {
-    const repoRoot = join(import.meta.dirname, '../..')
+    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
     rustDir = join(repoRoot, 'tauroboros-rust')
     projectDir = mkdtempSync(join(tmpdir(), 'tauroboros-rust-advanced-'))
+    homeDir = join(projectDir, '.home')
     serverPort = 3793
-    modelDefaults = loadPiDefaults()
 
     prepareGitProject(projectDir)
+    prepareMockPiHome(homeDir, projectDir)
+    mockPiBin = createMockPiBinary(projectDir)
 
     mkdirSync(join(projectDir, '.tauroboros'), { recursive: true })
     writeFileSync(
@@ -119,7 +104,8 @@ test.describe('Rust Advanced Execution Modes', () => {
       env: {
         ...process.env,
         PATH: process.env.PATH,
-        HOME: process.env.HOME,
+        HOME: homeDir,
+        PI_BIN: mockPiBin,
         PROJECT_ROOT: projectDir,
         SERVER_PORT: String(serverPort),
         DATABASE_PATH: join(projectDir, '.tauroboros', 'tasks.db'),
@@ -139,9 +125,7 @@ test.describe('Rust Advanced Execution Modes', () => {
   })
 
   test.afterAll(() => {
-    if (serverProcess && !serverProcess.killed) {
-      serverProcess.kill('SIGTERM')
-    }
+    stopChildProcess(serverProcess)
     try { rmSync(projectDir, { recursive: true, force: true }) } catch { }
   })
 
@@ -288,35 +272,160 @@ test.describe('Rust Advanced Execution Modes', () => {
     expect(summary.workersTotal).toBeGreaterThanOrEqual(1)
     expect(summary.successfulCandidateCount).toBeGreaterThanOrEqual(0)
   })
+
+  test('best-of-N manual review candidate selection works through the frontend', async ({ page }) => {
+    const workflowId = Date.now()
+    const taskName = `bon-manual-${workflowId}`
+
+    await page.goto(`http://localhost:${serverPort}`, { waitUntil: 'domcontentloaded' })
+    await page.getByRole('tab', { name: 'Options' }).click()
+    await configureWorkflowDefaults(page, modelDefaults.modelValue)
+    await page.getByRole('tab', { name: 'Kanban' }).click()
+    await expect(page.locator('.kanban-wrapper')).toBeVisible({ timeout: 20_000 })
+
+    const createResponse = await fetch(`http://localhost:${serverPort}/api/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: taskName,
+        prompt: 'Create a small implementation and stop for manual best-of-n review.',
+        executionStrategy: 'best_of_n',
+        bestOfNConfig: {
+          workers: [{ model: modelDefaults.modelValue, count: 1 }],
+          reviewers: [{ model: modelDefaults.modelValue, count: 1, taskSuffix: 'force-manual' }],
+          finalApplier: { model: modelDefaults.modelValue },
+          selectionMode: 'pick_best',
+          minSuccessfulWorkers: 1,
+        },
+        review: false,
+        planmode: false,
+      }),
+    })
+    expect(createResponse.ok).toBe(true)
+    const createdTask = await createResponse.json() as { id: string }
+
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await expect(page.locator('.kanban-wrapper')).toBeVisible({ timeout: 20_000 })
+
+    const startResponse = await fetch(`http://localhost:${serverPort}/api/tasks/${createdTask.id}/start`, {
+      method: 'POST',
+    })
+    expect(startResponse.ok).toBe(true)
+
+    await waitForRunCard(page)
+    const terminalState = await waitForTaskCompletion(page, taskName, ['review', 'failed', 'stuck', 'done'])
+    expect(terminalState).toBe('review')
+
+    const preSelectionSummaryResponse = await fetch(
+      `http://localhost:${serverPort}/api/tasks/${createdTask.id}/best-of-n-summary`,
+    )
+    expect(preSelectionSummaryResponse.ok).toBe(true)
+    const preSelectionSummary = await preSelectionSummaryResponse.json() as {
+      substage: string
+      selectedCandidate: string | null
+      availableCandidates: number
+    }
+    expect(preSelectionSummary.substage).toBe('blocked_for_manual_review')
+    expect(preSelectionSummary.selectedCandidate).toBeNull()
+    expect(preSelectionSummary.availableCandidates).toBeGreaterThan(0)
+
+    const taskCard = getTaskCard(page, taskName)
+    await expect(taskCard).toBeVisible({ timeout: 20_000 })
+    await taskCard.getByRole('button', { name: 'View Runs' }).click()
+
+    const modal = page.locator('.modal-overlay').last()
+    await expect(modal.getByRole('heading', { name: new RegExp(`Best-of-N: ${escapeRegExp(taskName)}`) })).toBeVisible({ timeout: 20_000 })
+
+    const selectResponsePromise = page.waitForResponse((response) =>
+      response.request().method() === 'POST' && /\/api\/tasks\/[^/]+\/best-of-n\/select-candidate$/.test(response.url()),
+    )
+    await modal.getByRole('button', { name: 'Select' }).first().click()
+    const selectResponse = await selectResponsePromise
+    expect(selectResponse.ok()).toBe(true)
+    await expect(modal).not.toBeVisible({ timeout: 20_000 })
+
+    const selectedCandidatesResponse = await fetch(`http://localhost:${serverPort}/api/tasks/${createdTask.id}/candidates`)
+    expect(selectedCandidatesResponse.ok).toBe(true)
+    const selectedCandidates = await selectedCandidatesResponse.json() as Array<{ status: string }>
+    expect(selectedCandidates.filter((candidate) => candidate.status === 'selected')).toHaveLength(1)
+
+    const postSelectionSummaryResponse = await fetch(
+      `http://localhost:${serverPort}/api/tasks/${createdTask.id}/best-of-n-summary`,
+    )
+    expect(postSelectionSummaryResponse.ok).toBe(true)
+    const postSelectionSummary = await postSelectionSummaryResponse.json() as {
+      selectedCandidate: string | null
+      selectedCandidates: number
+      availableCandidates: number
+    }
+    expect(postSelectionSummary.selectedCandidate).toBeTruthy()
+    expect(postSelectionSummary.selectedCandidates).toBe(1)
+    expect(postSelectionSummary.availableCandidates).toBe(0)
+  })
 })
 
 // ====== Helper functions (adapted from real-rust-workflow.spec.ts) ======
 
 async function configureWorkflowDefaults(page: Page, modelValue: string): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Options Configuration' })).toBeVisible({ timeout: 20_000 })
-  await setModelPickerValue(page, 'Plan Model (global)', modelValue)
-  await setModelPickerValue(page, 'Execution Model (global)', modelValue)
-  await setModelPickerValue(page, 'Review Model', modelValue)
-  await setModelPickerValue(page, 'Repair Model', modelValue)
-  await setNumericOption(page, 'Parallel Tasks', '1')
-  await setCheckboxState(page, 'Show execution graph before starting workflow', true)
 
-  const saveButton = page.locator('button').filter({ hasText: 'Save Options' }).last()
-  await expect(saveButton).toBeVisible({ timeout: 20_000 })
-  await saveButton.click()
-  await expect.poll(() => saveButton.isEnabled(), { timeout: 20_000 }).toBe(true)
+  const response = await fetch(`http://localhost:${serverPort}/api/options`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      branch: 'master',
+      planModel: modelValue,
+      executionModel: modelValue,
+      reviewModel: modelValue,
+      repairModel: modelValue,
+      parallelTasks: 1,
+      showExecutionGraph: true,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to configure workflow defaults: ${response.status} ${await response.text()}`)
+  }
+
+  const updated = await response.json() as {
+    branch?: string
+    planModel?: string
+    executionModel?: string
+    reviewModel?: string
+    repairModel?: string
+    parallelTasks?: number
+    showExecutionGraph?: boolean
+  }
+  expect(updated.branch).toBe('master')
+  expect(updated.planModel).toBe(modelValue)
+  expect(updated.executionModel).toBe(modelValue)
+  expect(updated.reviewModel).toBe(modelValue)
+  expect(updated.repairModel).toBe(modelValue)
+  expect(updated.parallelTasks).toBe(1)
+  expect(updated.showExecutionGraph).toBe(true)
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
 }
 
 async function setModelPickerValue(page: Page, labelText: string, value: string): Promise<void> {
   const group = page.locator('.form-group').filter({ hasText: labelText }).first()
   const input = group.locator('input.form-input').first()
+  const modelToken = value.split('/').pop() || value
+
   await expect(input).toBeVisible({ timeout: 20_000 })
+  if ((await input.inputValue()) === value) {
+    return
+  }
+
   await input.click()
+  await expect(group.locator('.absolute .cursor-pointer').first()).toBeVisible({ timeout: 20_000 })
   await input.fill(value)
   await page.waitForTimeout(500)
-  const suggestion = group.locator('.absolute > div').first()
+
+  const suggestion = group.locator('.absolute .cursor-pointer').filter({ hasText: modelToken }).first()
   await expect(suggestion).toBeVisible({ timeout: 15_000 })
   await suggestion.click()
+
   await expect.poll(() => input.inputValue(), { timeout: 15_000 }).toBe(value)
 }
 

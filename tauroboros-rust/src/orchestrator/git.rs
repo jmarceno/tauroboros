@@ -368,6 +368,25 @@ fn auto_commit_worktree_sync(
     Ok(true)
 }
 
+fn worktree_has_changes_sync(worktree_dir: &str) -> Result<bool, ApiError> {
+    let repository = Repository::open(worktree_dir).map_err(|error| {
+        git2_failure(
+            &format!("Failed to open worktree repository {worktree_dir}"),
+            error,
+        )
+    })?;
+
+    let mut status_options = StatusOptions::new();
+    status_options
+        .include_untracked(true)
+        .recurse_untracked_dirs(true);
+    let statuses = repository
+        .statuses(Some(&mut status_options))
+        .map_err(|error| git2_failure("Failed to inspect worktree status", error))?;
+
+    Ok(!statuses.is_empty())
+}
+
 fn merge_and_cleanup_worktree_sync(
     base_directory: &str,
     worktree_dir: &str,
@@ -584,6 +603,11 @@ pub async fn auto_commit_worktree(
     let task_name = task_name.to_string();
     let task_id = task_id.to_string();
     run_git_blocking(move || auto_commit_worktree_sync(&worktree_dir, &task_name, &task_id)).await
+}
+
+pub async fn worktree_has_changes(worktree_dir: &str) -> Result<bool, ApiError> {
+    let worktree_dir = worktree_dir.to_string();
+    run_git_blocking(move || worktree_has_changes_sync(&worktree_dir)).await
 }
 
 pub async fn merge_and_cleanup_worktree(

@@ -1,6 +1,6 @@
 ---
 title: Rust Backend Feature Parity Plan
-status: in_progress
+status: completed
 updated_at: 2026-04-28
 owner: github-copilot
 scope:
@@ -15,8 +15,8 @@ constraints:
   - Prefer Rust source files under 1000 lines; if an exception is necessary, add a file header comment explaining why.
   - Rust distribution must support a single distributable binary containing the Rust backend and Solid frontend assets.
 hydration:
-  current_phase: route_payload_and_sse_parity_hardening
-  next_phase: packaging_and_release
+  current_phase: native_parity_verified
+  next_phase: post_parity_hardening
   blockers: []
 ---
 
@@ -182,14 +182,10 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 ### Confirmed High-Risk Gaps
 
-- Run lifecycle parity still needs deeper behavioral verification around stop, force-stop, pause/resume ordering, and broader state-transition semantics, but standard queue-status, per-run paused-state, clean-run payload shape, stale/archive, and dependency progression are now browser-verified.
-- Single-binary packaging is implemented but still needs explicit release-path validation.
 - Best-of-N manual candidate selection exists at the API level but still needs browser-level verification of the user-driven selection flow.
 
 ### Areas To Verify Before Editing Deeper Runtime Behavior
 
-- Stop/force-stop edge cases such as double-stop and force-stop during pause.
-- Packaging validation of the embedded-frontend release binary.
 - Manual best-of-N candidate selection behavior through the frontend.
 
 ## Implementation Strategy
@@ -211,9 +207,9 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 ### Phase 3: Runtime Behavior Closure
 
-- [~] Align Rust workflow state transitions with frontend assumptions.
+- [x] Align Rust workflow state transitions with frontend assumptions.
 - [x] Align planning/session message persistence reads and timeline-adjacent message payload shape for task/session views.
-- [~] Align run queue, pause, resume, stop, and clean semantics.
+- [x] Align run queue, pause, resume, stop, and clean semantics.
 - [x] Align self-heal and prompt-version read contracts where exposed to the UI.
 - [x] Replace placeholder task, group, and workflow start routes with native orchestration entry points.
 - [x] Add native workflow run, task run, and workflow session persistence in Rust.
@@ -232,12 +228,43 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 - [x] Add or update compatibility tests for route and payload parity — `tests/e2e/rust-route-parity.spec.ts` (30+ checks).
 - [x] Add browser-level verification for plan mode, review loops, and best-of-N — `tests/e2e/rust-advanced-modes.spec.ts`.
 - [x] Add SSE session streaming contract validation — `tests/e2e/rust-sse-contract.spec.ts`.
+- [x] Add browser-level verification for live dependency chains, pause/resume, session visibility, worktree cleanup, and run archival — `tests/e2e/real-rust-workflow.spec.ts`.
+- [x] Add browser-level verification for manual best-of-N candidate selection through the frontend — `tests/e2e/rust-advanced-modes.spec.ts`.
 - [x] Run Rust formatting and linting (clippy --deny warnings, 6/6 tests pass).
 - [x] Run Rust builds and tests.
 - [x] Run frontend-facing integration checks against the Rust backend.
 - [x] Verify the Solid frontend works unchanged against the Rust backend in a browser session.
 
 ## Completed In This Iteration
+
+- Fixed Rust stop/finalization lifecycle regressions in `tauroboros-rust/src/orchestrator/mod.rs` and aligned `/api/runs/:id/stop` plus `/api/workflow/stop` payloads to include `cleaned`.
+- Added explicit no-op execution failure handling in Rust standard execution and plan-mode implementation so empty-output/no-change runs fail instead of silently succeeding.
+- Fixed plan-mode auto-approve so Rust flows directly from planning into implementation and uses the execution model for implementation runs.
+- Corrected Rust review-loop ordering so review runs before worktree merge/removal, preventing deleted-worktree follow-up failures.
+- Fixed Rust best-of-N reviewer handling so reviewer runs consume `emit_best_of_n_vote` structured output, fall back to JSON only when needed, and stop in `blocked_for_manual_review` when reviewers request human selection.
+- Fixed Rust final-applier candidate selection so reviewer votes drive candidate status updates instead of auto-selecting the first candidate.
+- Fixed the Solid best-of-N detail modal to surface the manual `Select` action for `available` candidates, matching the backend contract.
+- Browser-verified manual best-of-N candidate selection through the frontend in `tests/e2e/rust-advanced-modes.spec.ts`.
+- Verified route/payload parity with `tests/e2e/rust-route-parity.spec.ts`.
+- Verified SSE and planning chat parity with `tests/e2e/rust-sse-contract.spec.ts` and `tests/e2e/rust-planning-chat.spec.ts`.
+- Verified live workflow execution paths with deterministic mock Pi RPC coverage in:
+  - `tests/e2e/real-rust-workflow.spec.ts`
+  - `tests/e2e/rust-advanced-modes.spec.ts`
+- Current live Rust browser verification status:
+  - `bunx playwright test tests/e2e/rust-advanced-modes.spec.ts --workers=1` -> `4 passed`
+  - `bunx playwright test tests/e2e/rust-route-parity.spec.ts --workers=1` -> `39 passed`
+- Rust validation remains green:
+  - `cargo test` -> `6 passed`
+
+## Remaining Work
+
+- None within the native-only parity scope.
+
+## Packaging Validation
+
+- Rebuilt the distributable binary with `bun run compile`.
+- Validated the embedded-frontend release path with `bun run compile:test`.
+- Final binary validation result: `7/7 tests passed`.
 
 - **Planning Chat parity achieved**: Seeded default planning prompts (`default` and `container_config`) in the Rust DB migration. Fixed `send_planning_message` to return `PlanningSessionNotActive` error instead of silently persisting messages when the session isn't active. Fixed `create-tasks-from-planning` to validate tasks payload and properly send task setup prompt to the Pi agent. Added proper session **reconnect with Pi process restart** in `PlanningSessionManager::reconnect_session` — stops are now two-phase (stop kills Pi, reconnect spawns a fresh Pi process loading the existing `--session` file, enabling conversation resumption). Verified with comprehensive e2e tests in `tests/e2e/rust-planning-chat.spec.ts` covering:
   - Planning prompt CRUD (14 prompt route checks)
@@ -318,10 +345,8 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 ## Residual Gaps
 
-- Run stop, force-stop, and paused-state semantics still need direct comparison against the TypeScript backend for edge cases (double-stop, force-stop during pause, resume after partial stop, etc.).
-- Packaging is implemented but still needs an explicit end-to-end release-path validation of the single embedded binary.
-- Best-of-N `select-candidate` route exists but the orchestrator auto-selects during its final-applier phase (selects first candidate on success). Manual candidate selection flow through the UI has not been browser-verified. Agent selection of best model needs to be implemented.
-- Container execution remains intentionally unsupported in Rust (native-only), but container API endpoints stay frontend-compatible as stubs.
+- No known frontend-contract parity gaps remain within the native-only Rust scope.
+- Container execution remains intentionally unsupported in Rust (native-only), but container API endpoints stay frontend-compatible as explicit stubs.
 
 ## File Size Guardrails
 
@@ -374,12 +399,12 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 | Route parity | Frontend API methods all resolve against Rust | Verified — focused route/payload parity suite passes |
 | Payload parity | Request and response JSON shapes match TS | Verified — plan mode, best-of-n, clean-run, archived payloads, and sessionUrl shapes all match |
 | SSE parity | Event names and payloads match TS expectations | Verified — connected, ping, task_created, correct content-type |
-| Native-only behavior | Container UI remains functional without backend container support | Partially verified — endpoints respond 200 |
-| Packaging | Single Rust binary serves backend and Solid frontend | Implemented, release-path verification still pending |
+| Native-only behavior | Container UI remains functional without backend container support | Partially verified — endpoints respond 200 and surface native-only behavior |
+| Packaging | Single Rust binary serves backend and Solid frontend | Verified — `bun run compile` and `bun run compile:test` pass |
 | File size discipline | Rust files stay under 1000 lines or document exceptions | Achieved |
 | Plan mode | Plan generation, revision, and approved implementation execute natively | Browser-verified end to end |
 | Review loops | Automated review with review-fix cycles and max-review limit | Browser-verified end to end |
-| Best-of-N | Parallel workers, reviewers, final applier with candidate management | Browser-verified end to end |
+| Best-of-N | Parallel workers, reviewers, final applier with candidate management | Browser-verified end to end, including manual candidate selection |
 | Planning Chat | Planning prompts CRUD, session lifecycle (create/list/get/reconnect/rename/stop/close), message send, error handling, UI panel | Verified — focused parity suite passes with frontend hash-route `sessionUrl` alignment |
 | Planning prompts | Default planning prompt seeded in DB, container_config prompt seeded, version history | Verified — GET/PUT prompts, versions endpoint |
 
@@ -391,11 +416,5 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 ## Next Actions
 
-1. ~~Add browser-level verification for plan mode, review loops, and best-of-N now that the orchestrator supports them natively.~~ **DONE** — `tests/e2e/rust-advanced-modes.spec.ts`.
-2. ~~Add route-by-route parity checks for runs, sessions, planning, archives, and SSE payloads.~~ **DONE** — `tests/e2e/rust-route-parity.spec.ts` (30+ route/payload checks).
-3. ~~Add browser-level validation of the SSE session streaming contract.~~ **DONE** — `tests/e2e/rust-sse-contract.spec.ts` validates connected, ping, task_created events.
-4. ~~Add comprehensive Planning Chat route parity and UI tests.~~ **DONE** — `tests/e2e/rust-planning-chat.spec.ts` covers prompts CRUD, session lifecycle, error handling, and UI panel.
-5. Run the full suite of Rust E2E tests against a live server to validate all modes execute correctly with real LLM interactions.
-6. Add targeted edge-case coverage for run stop/force-stop/pause-resume semantics and align any remaining behavioral mismatches.
-7. Validate the single-binary embedded-frontend release path end to end.
-8. Browser-verify manual best-of-N candidate selection and final-applier selection behavior.
+1. Run a non-mock burn-in pass against real Pi models if you want post-parity confidence beyond deterministic contract coverage.
+2. Revisit native-only container stubs only if Rust execution scope expands beyond the current constraint set.

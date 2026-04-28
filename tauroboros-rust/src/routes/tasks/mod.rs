@@ -11,10 +11,10 @@ use crate::db::{CreateTaskInput, UpdateTaskInput};
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
 use crate::state::{session_url_for, AppStateType};
+use rocket::http::Status;
 use rocket::routes;
 use rocket::serde::json::{json, Json, Value};
 use rocket::State;
-use rocket::http::Status;
 use rocket::{delete, get, patch, post, put, Route};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -245,8 +245,7 @@ async fn update_task_route(
         if !only_status_or_done {
             return Err(ApiError::conflict(format!(
                 "Cannot modify task \"{}\" while it is executing in run {}.",
-                existing.name,
-                active_run.id
+                existing.name, active_run.id
             ))
             .with_code(ErrorCode::TaskAlreadyExecuting));
         }
@@ -326,8 +325,7 @@ async fn delete_task(state: &State<AppStateType>, id: String) -> ApiResult<Value
     if let Some(active_run) = active_run {
         return Err(ApiError::conflict(format!(
             "Cannot modify task \"{}\" while it is executing in run {}.",
-            existing.name,
-            active_run.id
+            existing.name, active_run.id
         ))
         .with_code(ErrorCode::TaskAlreadyExecuting));
     }
@@ -607,8 +605,10 @@ async fn request_plan_revision(
             "run": run,
         })))
     } else {
-        Err(ApiError::bad_request("Could not queue plan revision because a prior run is still active")
-            .with_code(ErrorCode::ExecutionOperationFailed))
+        Err(ApiError::bad_request(
+            "Could not queue plan revision because a prior run is still active",
+        )
+        .with_code(ErrorCode::ExecutionOperationFailed))
     }
 }
 
@@ -641,8 +641,7 @@ async fn reset_task(state: &State<AppStateType>, id: String) -> ApiResult<Json<V
     if let Some(active_run) = active_run {
         return Err(ApiError::conflict(format!(
             "Cannot modify task \"{}\" while it is executing in run {}.",
-            task.name,
-            active_run.id
+            task.name, active_run.id
         ))
         .with_code(ErrorCode::TaskAlreadyExecuting));
     }
@@ -694,8 +693,7 @@ async fn reset_to_group(state: &State<AppStateType>, id: String) -> ApiResult<Js
     if let Some(active_run) = active_run {
         return Err(ApiError::conflict(format!(
             "Cannot modify task \"{}\" while it is executing in run {}.",
-            task.name,
-            active_run.id
+            task.name, active_run.id
         ))
         .with_code(ErrorCode::TaskAlreadyExecuting));
     }
@@ -754,8 +752,7 @@ async fn move_to_group(
     if let Some(active_run) = active_run {
         return Err(ApiError::conflict(format!(
             "Cannot modify task \"{}\" while it is executing in run {}.",
-            task.name,
-            active_run.id
+            task.name, active_run.id
         ))
         .with_code(ErrorCode::TaskAlreadyExecuting));
     }
@@ -862,25 +859,31 @@ async fn create_and_wait_task(
             TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stuck
         ) {
             let current_run = get_workflow_run(&state.db, &run.id).await?;
-            return Ok((Status::Created, Json(json!({
-                "task": normalize_task_for_client(&current_task, &base_url),
-                "run": current_run,
-                "completedAt": chrono::Utc::now().timestamp_millis(),
-                "durationMs": start.elapsed().as_millis() as u64,
-                "status": current_task.status,
-            }))));
+            return Ok((
+                Status::Created,
+                Json(json!({
+                    "task": normalize_task_for_client(&current_task, &base_url),
+                    "run": current_run,
+                    "completedAt": chrono::Utc::now().timestamp_millis(),
+                    "durationMs": start.elapsed().as_millis() as u64,
+                    "status": current_task.status,
+                })),
+            ));
         }
 
         if start.elapsed().as_millis() as u64 >= timeout_ms {
             let stop_result = state.orchestrator.stop_run(&run.id, false).await?;
-            return Ok((Status::Created, Json(json!({
-                "error": "Timeout waiting for task completion",
-                "code": ErrorCode::ExecutionOperationFailed.as_str(),
-                "task": normalize_task_for_client(&current_task, &base_url),
-                "run": stop_result.run,
-                "timeoutMs": timeout_ms,
-                "elapsedMs": start.elapsed().as_millis() as u64,
-            }))));
+            return Ok((
+                Status::Created,
+                Json(json!({
+                    "error": "Timeout waiting for task completion",
+                    "code": ErrorCode::ExecutionOperationFailed.as_str(),
+                    "task": normalize_task_for_client(&current_task, &base_url),
+                    "run": stop_result.run,
+                    "timeoutMs": timeout_ms,
+                    "elapsedMs": start.elapsed().as_millis() as u64,
+                })),
+            ));
         }
     }
 }

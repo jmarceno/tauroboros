@@ -2,7 +2,10 @@ use crate::error::{ApiError, ErrorCode};
 use crate::models::{
     ExecutionPhase, Options, PiSessionKind, PiWorkflowSession, Task, TaskStatus, UpdateTaskInput,
 };
-use crate::orchestrator::git::WorktreeInfo;
+use crate::orchestrator::git::{
+    auto_commit_worktree, merge_and_cleanup_worktree, resolve_target_branch, worktree_has_changes,
+    WorktreeInfo,
+};
 use crate::orchestrator::pi::PiSessionExecutor;
 use crate::orchestrator::Orchestrator;
 use crate::orchestrator::{render_prompt_template, TaskOutcome};
@@ -115,7 +118,7 @@ impl Orchestrator {
         );
 
         match executor
-            .run_prompt(session.clone(), &plan_model, &prompt, stop_rx)
+            .run_prompt(session.clone(), &plan_model, &prompt, stop_rx.clone())
             .await
         {
             Ok(response_text) => {
@@ -128,17 +131,18 @@ impl Orchestrator {
 
                 if task.auto_approve_plan {
                     let update = UpdateTaskInput {
-                        status: Some(TaskStatus::Backlog),
                         execution_phase: Some(ExecutionPhase::ImplementationPending),
                         awaiting_plan_approval: Some(false),
                         agent_output: Some(Some(new_output)),
                         ..Default::default()
                     };
                     crate::db::queries::update_task(&self.db, &task.id, update).await?;
-                    Ok(TaskOutcome {
-                        status: TaskStatus::Backlog,
-                        error_message: None,
-                    })
+                    let updated = crate::db::queries::get_task(&self.db, &task.id)
+                        .await?
+                        .ok_or_else(|| ApiError::not_found("Task not found"))?;
+                    self.broadcast_task(&updated).await;
+                    self.run_approved_implementation(&updated, run_id, options, worktree, stop_rx)
+                        .await
                 } else {
                     let update = UpdateTaskInput {
                         status: Some(TaskStatus::Review),
@@ -237,7 +241,7 @@ impl Orchestrator {
 
         let session_id = Uuid::new_v4().to_string()[..8].to_string();
         let session_url = self.session_url_for(&session_id);
-        let model = self.resolve_plan_model(task, options)?;
+        let model = crate::orchestrator::resolve_execution_model(task, options)?;
 
         let session = self
             .create_plan_session(
@@ -263,8 +267,74 @@ impl Orchestrator {
 
         match result {
             Ok(response_text) => {
+                let has_changes = worktree_has_changes(&worktree.directory).await?;
+                if response_text.trim().is_empty() && !has_changes {
+                    let message = format!(
+                        "Task '{}' completed without agent output or repository changes",
+                        task.name
+                    );
+
+                    crate::db::queries::update_task(
+                        &self.db,
+                        &task.id,
+                        UpdateTaskInput {
+                            status: Some(TaskStatus::Failed),
+                            error_message: Some(Some(message.clone())),
+                            worktree_dir: Some(Some(worktree.directory.clone())),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+
+                    return Ok(TaskOutcome {
+                        status: TaskStatus::Failed,
+                        error_message: Some(message),
+                    });
+                }
+
+                let target_branch = resolve_target_branch(
+                    &self.project_root,
+                    task.branch.as_deref(),
+                    Some(options.branch.as_str()),
+                )
+                .await?;
+                let committed = if task.auto_commit {
+                    auto_commit_worktree(&worktree.directory, &task.name, &task.id).await?
+                } else {
+                    false
+                };
+                let final_worktree_dir = if task.delete_worktree {
+                    merge_and_cleanup_worktree(
+                        &self.project_root,
+                        &worktree.directory,
+                        &worktree.branch,
+                        &target_branch,
+                        true,
+                        &format!("{} ({})", task.name, task.id),
+                    )
+                    .await?;
+                    None
+                } else {
+                    merge_and_cleanup_worktree(
+                        &self.project_root,
+                        &worktree.directory,
+                        &worktree.branch,
+                        &target_branch,
+                        false,
+                        &format!("{} ({})", task.name, task.id),
+                    )
+                    .await?;
+                    Some(worktree.directory.clone())
+                };
+
                 let final_output = if task.agent_output.trim().is_empty() {
-                    format!("{}\n", response_text.trim())
+                    if response_text.trim().is_empty() {
+                        task.agent_output.clone()
+                    } else {
+                        format!("{}\n", response_text.trim())
+                    }
+                } else if response_text.trim().is_empty() {
+                    task.agent_output.clone()
                 } else {
                     format!(
                         "{}\n{}\n",
@@ -281,8 +351,28 @@ impl Orchestrator {
                         agent_output: Some(Some(final_output)),
                         completed_at: Some(Some(chrono::Utc::now().timestamp())),
                         execution_phase: Some(ExecutionPhase::ImplementationDone),
+                        worktree_dir: Some(final_worktree_dir.clone()),
                         ..Default::default()
                     },
+                )
+                .await?;
+
+                self.audit_info(
+                    "task.execution_succeeded",
+                    format!("Task {} completed successfully", task.id),
+                    Some(run_id),
+                    Some(&task.id),
+                    None,
+                    Some(&session.id),
+                    json!({
+                        "responseLength": response_text.trim().len(),
+                        "worktreeDir": worktree.directory,
+                        "mergedInto": target_branch,
+                        "autoCommitEnabled": task.auto_commit,
+                        "autoCommitCreated": committed,
+                        "deleteWorktree": task.delete_worktree,
+                        "finalWorktreeDir": final_worktree_dir
+                    }),
                 )
                 .await?;
 

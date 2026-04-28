@@ -122,6 +122,7 @@ async fn stop_run(
         "run": result.run,
         "destructive": destructive,
         "killed": result.killed,
+        "cleaned": result.cleaned,
     })))
 }
 

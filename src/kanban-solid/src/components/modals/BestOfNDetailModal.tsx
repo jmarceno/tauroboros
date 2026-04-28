@@ -131,7 +131,7 @@ export function BestOfNDetailModal(props: BestOfNDetailModalProps) {
                         </span>
                         <div class="flex items-center gap-2">
                           <span class="text-xs text-dark-text-muted">({candidate.status})</span>
-                          <Show when={candidate.status === 'pending'}>
+                          <Show when={candidate.status === 'available'}>
                             <button
                               class="btn btn-xs btn-primary"
                               onClick={() => handleSelectWinner(candidate.id)}

@@ -445,16 +445,15 @@ impl PlanningSessionManager {
             return Ok(());
         }
 
-        let session: Option<PiWorkflowSession> = sqlx::query_as(
-            "SELECT * FROM pi_workflow_sessions WHERE id = ?",
-        )
-        .bind(session_id)
-        .fetch_optional(&self.db)
-        .await
-        .map_err(|e| {
-            ApiError::internal(format!("Failed to fetch session for reconnect: {}", e))
-                .with_code(ErrorCode::ExecutionOperationFailed)
-        })?;
+        let session: Option<PiWorkflowSession> =
+            sqlx::query_as("SELECT * FROM pi_workflow_sessions WHERE id = ?")
+                .bind(session_id)
+                .fetch_optional(&self.db)
+                .await
+                .map_err(|e| {
+                    ApiError::internal(format!("Failed to fetch session for reconnect: {}", e))
+                        .with_code(ErrorCode::ExecutionOperationFailed)
+                })?;
 
         let session = session.ok_or_else(|| {
             ApiError::not_found("Session not found").with_code(ErrorCode::SessionNotFound)
@@ -469,11 +468,8 @@ impl PlanningSessionManager {
 
         if let Some(parent) = Path::new(&session_file).parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|error| {
-                ApiError::internal(format!(
-                    "Failed to create pi session directory: {}",
-                    error
-                ))
-                .with_code(ErrorCode::ExecutionOperationFailed)
+                ApiError::internal(format!("Failed to create pi session directory: {}", error))
+                    .with_code(ErrorCode::ExecutionOperationFailed)
             })?;
         }
 

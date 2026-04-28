@@ -469,18 +469,20 @@ async fn reconnect_planning_session(
             .await
             .map_err(crate::error::ApiError::Database)?;
 
-    let prompt_text = prompt
-        .map(|p| p.prompt_text)
-        .ok_or_else(|| {
-            ApiError::internal("Planning prompt not configured")
-                .with_code(ErrorCode::PlanningPromptNotConfigured)
-        })?;
+    let prompt_text = prompt.map(|p| p.prompt_text).ok_or_else(|| {
+        ApiError::internal("Planning prompt not configured")
+            .with_code(ErrorCode::PlanningPromptNotConfigured)
+    })?;
 
     let model = req.model.as_deref().unwrap_or("default");
     let model_to_use = if model == "default" {
         let opts = crate::db::queries::get_options(&state.db).await?;
         let resolved = opts.plan_model.clone();
-        if resolved.is_empty() { session.model.clone() } else { resolved }
+        if resolved.is_empty() {
+            session.model.clone()
+        } else {
+            resolved
+        }
     } else {
         model.to_string()
     };
@@ -715,8 +717,7 @@ async fn create_tasks_from_planning(
 
             let hub = state.sse_hub.read().await;
             if let Ok(task) = create_task_db(&state.db, input).await {
-                let normalized =
-                    crate::routes::tasks::normalize_task_for_client(&task, &base_url);
+                let normalized = crate::routes::tasks::normalize_task_for_client(&task, &base_url);
 
                 let _ = hub
                     .broadcast(&WSMessage {

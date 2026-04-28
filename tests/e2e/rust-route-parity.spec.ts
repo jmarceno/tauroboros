@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -107,6 +108,58 @@ function seedRunArtifacts(input: {
       ARCHIVED_TASK: input.archivedTask ? '1' : '0',
       ARCHIVED_RUN: input.archivedRun ? '1' : '0',
       STALE_SESSION_URL: input.staleSessionUrl ?? 'https://opencode.invalid/session',
+    },
+  )
+}
+
+function seedLifecycleRun(input: {
+  runId: string
+  taskId: string
+  runStatus: 'queued' | 'running' | 'paused' | 'stopping' | 'completed' | 'failed'
+  taskStatus: 'backlog' | 'queued' | 'done' | 'failed'
+  pauseRequested?: boolean
+  stopRequested?: boolean
+  errorMessage?: string | null
+  worktreeDir?: string | null
+}): void {
+  const now = Math.floor(Date.now() / 1000)
+
+  runDbScript(
+    `
+      import { Database } from "bun:sqlite"
+
+      const db = new Database(process.env.DB_PATH!)
+      const now = Number(process.env.NOW)
+      const runId = process.env.RUN_ID!
+      const taskId = process.env.TASK_ID!
+      const runStatus = process.env.RUN_STATUS!
+      const taskStatus = process.env.TASK_STATUS!
+      const pauseRequested = process.env.PAUSE_REQUESTED === "1" ? 1 : 0
+      const stopRequested = process.env.STOP_REQUESTED === "1" ? 1 : 0
+      const errorMessage = process.env.ERROR_MESSAGE === "__NULL__" ? null : process.env.ERROR_MESSAGE
+      const worktreeDir = process.env.WORKTREE_DIR === "__NULL__" ? null : process.env.WORKTREE_DIR
+      const finishedAt = runStatus === "completed" || runStatus === "failed" ? now : null
+
+      db.query(
+        "UPDATE tasks SET status = ?, worktree_dir = ?, error_message = ?, session_id = NULL, session_url = NULL, updated_at = ?, completed_at = ? WHERE id = ?",
+      ).run(taskStatus, worktreeDir, errorMessage, now, finishedAt, taskId)
+
+      db.query(
+        "INSERT INTO workflow_runs (id, kind, status, display_name, target_task_id, task_order, current_task_id, current_task_index, pause_requested, stop_requested, error_message, created_at, started_at, updated_at, finished_at, is_archived, archived_at, color, group_id, queued_task_count, executing_task_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(runId, "single_task", runStatus, "Seeded lifecycle run", taskId, JSON.stringify([taskId]), taskId, 0, pauseRequested, stopRequested, errorMessage, now, now, now, finishedAt, 0, null, "blue", null, taskStatus === "queued" ? 1 : 0, taskStatus === "running" ? 1 : 0)
+
+      db.close()
+    `,
+    {
+      NOW: String(now),
+      RUN_ID: input.runId,
+      TASK_ID: input.taskId,
+      RUN_STATUS: input.runStatus,
+      TASK_STATUS: input.taskStatus,
+      PAUSE_REQUESTED: input.pauseRequested ? '1' : '0',
+      STOP_REQUESTED: input.stopRequested ? '1' : '0',
+      ERROR_MESSAGE: input.errorMessage ?? '__NULL__',
+      WORKTREE_DIR: input.worktreeDir ?? '__NULL__',
     },
   )
 }
@@ -469,6 +522,130 @@ test.describe('Rust Route/Payload Parity', () => {
     expect(res.status).toBe(200)
     const body = await res.json() as { hasPausedRun: boolean; state: unknown }
     expect(typeof body.hasPausedRun).toBe('boolean')
+  })
+
+  test('POST /api/runs/:id/pause rejects an already paused run', async () => {
+    const createRes = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'paused-run-target', prompt: 'Paused run lifecycle test.' }),
+    })
+    expect(createRes.status).toBe(201)
+    const created = await createRes.json() as { id: string }
+
+    const runId = `paused-run-${Date.now()}`
+    seedLifecycleRun({
+      runId,
+      taskId: created.id,
+      runStatus: 'paused',
+      taskStatus: 'queued',
+      pauseRequested: true,
+    })
+
+    const res = await fetch(`${baseUrl}/api/runs/${runId}/pause`, { method: 'POST' })
+    expect(res.status).toBe(409)
+  })
+
+  test('POST /api/runs/:id/stop gracefully completes a paused run and prevents resume', async () => {
+    const createRes = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'graceful-stop-target', prompt: 'Graceful stop lifecycle test.' }),
+    })
+    expect(createRes.status).toBe(201)
+    const created = await createRes.json() as { id: string }
+
+    const runId = `graceful-stop-${Date.now()}`
+    seedLifecycleRun({
+      runId,
+      taskId: created.id,
+      runStatus: 'paused',
+      taskStatus: 'queued',
+      pauseRequested: true,
+    })
+
+    const stopRes = await fetch(`${baseUrl}/api/runs/${runId}/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destructive: false }),
+    })
+    expect(stopRes.status).toBe(200)
+    const stopped = await stopRes.json() as {
+      success: boolean
+      run: { status: string; stopRequested: boolean }
+      destructive: boolean
+    }
+    expect(stopped.success).toBe(true)
+    expect(stopped.destructive).toBe(false)
+    expect(stopped.run.status).toBe('completed')
+    expect(stopped.run.stopRequested).toBe(true)
+
+    const taskRes = await fetch(`${baseUrl}/api/tasks/${created.id}`)
+    expect(taskRes.status).toBe(200)
+    const task = await taskRes.json() as Record<string, unknown>
+    expect(task).toHaveProperty('status', 'backlog')
+    expect(task).toHaveProperty('errorMessage', 'Workflow stopped by user')
+
+    const resumeRes = await fetch(`${baseUrl}/api/runs/${runId}/resume`, { method: 'POST' })
+    expect(resumeRes.status).toBe(409)
+
+    const secondStopRes = await fetch(`${baseUrl}/api/runs/${runId}/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destructive: false }),
+    })
+    expect(secondStopRes.status).toBe(409)
+  })
+
+  test('POST /api/runs/:id/force-stop fails a paused run, cleans worktree state, and prevents resume', async () => {
+    const createRes = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'force-stop-target', prompt: 'Force stop lifecycle test.' }),
+    })
+    expect(createRes.status).toBe(201)
+    const created = await createRes.json() as { id: string }
+
+    const worktreeBranch = `force-stop-${Date.now()}`
+    const worktreeDir = join(projectDir, '.worktrees', worktreeBranch)
+    execSync(`git worktree add -b ${worktreeBranch} ${worktreeDir} master`, {
+      cwd: projectDir,
+      stdio: 'ignore',
+    })
+    writeFileSync(join(worktreeDir, 'marker.txt'), 'force stop cleanup target\n')
+
+    const runId = `force-stop-${Date.now()}`
+    seedLifecycleRun({
+      runId,
+      taskId: created.id,
+      runStatus: 'paused',
+      taskStatus: 'queued',
+      pauseRequested: true,
+      worktreeDir,
+    })
+
+    const stopRes = await fetch(`${baseUrl}/api/runs/${runId}/force-stop`, { method: 'POST' })
+    expect(stopRes.status).toBe(200)
+    const stopped = await stopRes.json() as {
+      success: boolean
+      cleaned: number
+      run: { status: string; stopRequested: boolean }
+    }
+    expect(stopped.success).toBe(true)
+    expect(stopped.cleaned).toBe(1)
+    expect(stopped.run.status).toBe('failed')
+    expect(stopped.run.stopRequested).toBe(true)
+    expect(existsSync(worktreeDir)).toBe(false)
+
+    const taskRes = await fetch(`${baseUrl}/api/tasks/${created.id}`)
+    expect(taskRes.status).toBe(200)
+    const task = await taskRes.json() as Record<string, unknown>
+    expect(task).toHaveProperty('status', 'failed')
+    expect(task).toHaveProperty('errorMessage', 'Workflow stopped by user - all work discarded')
+    expect(task).toHaveProperty('worktreeDir', null)
+
+    const resumeRes = await fetch(`${baseUrl}/api/runs/${runId}/resume`, { method: 'POST' })
+    expect(resumeRes.status).toBe(409)
   })
 
   test('POST /api/runs/:id/clean resets task state and deletes run artifacts', async () => {

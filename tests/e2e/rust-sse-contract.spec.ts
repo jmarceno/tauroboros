@@ -17,6 +17,18 @@ let serverProcess: ChildProcess
 let serverPort: number
 let projectDir: string
 
+function parseSseLine(line: string): { kind: 'event' | 'data'; value: string } | null {
+  if (line.startsWith('event:')) {
+    return { kind: 'event', value: line.slice(6).trimStart() }
+  }
+
+  if (line.startsWith('data:')) {
+    return { kind: 'data', value: line.slice(5).trimStart() }
+  }
+
+  return null
+}
+
 test.describe('Rust SSE Contract', () => {
   test.setTimeout(TEST_TIMEOUT_MS)
 
@@ -114,10 +126,11 @@ test.describe('Rust SSE Contract', () => {
 
         let eventType = ''
         for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7)
-          } else if (line.startsWith('data: ') && eventType) {
-            const parsed = JSON.parse(line.slice(6))
+          const parsedLine = parseSseLine(line)
+          if (parsedLine?.kind === 'event') {
+            eventType = parsedLine.value
+          } else if (parsedLine?.kind === 'data' && eventType) {
+            const parsed = JSON.parse(parsedLine.value)
             events.push(`${eventType}:${JSON.stringify(parsed)}`)
             if (eventType === 'open' && parsed.type === 'connected') {
               connectedEvent = JSON.stringify(parsed)
@@ -159,9 +172,10 @@ test.describe('Rust SSE Contract', () => {
           buffer = lines.pop() || ''
           let eventType = ''
           for (const line of lines) {
-            if (line.startsWith('event: ')) eventType = line.slice(7)
-            else if (line.startsWith('data: ') && eventType) {
-              const parsed = JSON.parse(line.slice(6))
+            const parsedLine = parseSseLine(line)
+            if (parsedLine?.kind === 'event') eventType = parsedLine.value
+            else if (parsedLine?.kind === 'data' && eventType) {
+              const parsed = JSON.parse(parsedLine.value)
               if (eventType === 'open' && parsed.type === 'connected') {
                 resolve()
                 return
@@ -187,10 +201,11 @@ test.describe('Rust SSE Contract', () => {
           buffer = lines.pop() || ''
           let eventType = ''
           for (const line of lines) {
-            if (line.startsWith('event: ')) eventType = line.slice(7)
-            else if (line.startsWith('data: ') && eventType) {
+            const parsedLine = parseSseLine(line)
+            if (parsedLine?.kind === 'event') eventType = parsedLine.value
+            else if (parsedLine?.kind === 'data' && eventType) {
               try {
-                const parsed = JSON.parse(line.slice(6))
+                const parsed = JSON.parse(parsedLine.value)
                 collectedEvents.push({
                   eventType,
                   payloadType: parsed.type,
@@ -265,7 +280,7 @@ test.describe('Rust SSE Contract', () => {
         const { done, value } = await pingReader.read()
         if (done) break
         pingBuffer += decoder.decode(value, { stream: true })
-        if (pingBuffer.includes('event: ping')) {
+        if (/event:\s*ping/.test(pingBuffer)) {
           foundPing = true
         }
       }
