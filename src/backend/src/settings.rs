@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::env;
 use std::fs;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -100,7 +101,7 @@ impl Default for ProjectSettings {
 impl Default for ServerSettings {
     fn default() -> Self {
         Self {
-            port: 3789,
+            port: 0, // 0 means "assign dynamically on first start"
             db_path: ".tauroboros/tasks.db".to_string(),
         }
     }
@@ -167,11 +168,73 @@ fn resolve_db_path(project_root: &Path, raw_path: &str) -> String {
     project_root.join(db_path).to_string_lossy().to_string()
 }
 
+/// Find an available port by binding to an ephemeral port.
+///
+/// This binds a TCP listener to port 0 (OS-assigned), reads the port,
+/// then drops the listener so the port can be reused by Rocket.
+/// There is a tiny race window, but for a development tool this is acceptable.
+fn find_available_port() -> u16 {
+    let listener = TcpListener::bind("0.0.0.0:0")
+        .expect("Failed to bind to port 0 to find an available port");
+    let port = listener
+        .local_addr()
+        .expect("Failed to get local address from bound socket")
+        .port();
+    // Release the listener so Rocket can bind to this port
+    drop(listener);
+    port
+}
+
+/// Save the server port to `.tauroboros/settings.json`, preserving all
+/// other existing settings.
+fn save_port_to_settings(settings_dir: &str, port: u16) -> Result<(), String> {
+    let settings_path = Path::new(settings_dir).join("settings.json");
+
+    // Ensure the settings directory exists
+    fs::create_dir_all(settings_dir)
+        .map_err(|e| format!("Failed to create settings directory '{settings_dir}': {e}"))?;
+
+    // Read existing settings or start with an empty value
+    let mut settings: serde_json::Value = if settings_path.exists() {
+        let content = fs::read_to_string(&settings_path)
+            .map_err(|e| format!("Failed to read {}: {e}", settings_path.display()))?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        serde_json::Value::default()
+    };
+
+    // Navigate / create the `workflow.server.port` path
+    if let Some(workflow) = settings.get_mut("workflow") {
+        if let Some(server) = workflow.get_mut("server") {
+            server["port"] = serde_json::json!(port);
+        } else {
+            workflow["server"] = serde_json::json!({"port": port, "dbPath": ".tauroboros/tasks.db"});
+        }
+    } else {
+        settings["workflow"] = serde_json::json!({
+            "server": {
+                "port": port,
+                "dbPath": ".tauroboros/tasks.db"
+            }
+        });
+    }
+
+    let content = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("Failed to serialize settings: {e}"))?;
+
+    fs::write(&settings_path, content)
+        .map_err(|e| format!("Failed to write settings to {}: {e}", settings_path.display()))?;
+
+    Ok(())
+}
+
 pub fn load_startup_settings() -> Result<StartupSettings, String> {
     let project_root = resolve_project_root()?;
     let project_root_path = PathBuf::from(&project_root);
     let settings_dir = project_root_path.join(".tauroboros");
     let settings_path = settings_dir.join("settings.json");
+
+    let settings_existed = settings_path.exists();
     let infrastructure_settings = read_infrastructure_settings(&settings_path)?;
 
     let _ = (
@@ -198,7 +261,44 @@ pub fn load_startup_settings() -> Result<StartupSettings, String> {
             .mount_podman_socket,
     );
 
-    let port = parse_port_from_env()?.unwrap_or(infrastructure_settings.workflow.server.port);
+    let settings_port = infrastructure_settings.workflow.server.port;
+
+    // Resolve port:
+    // 1. SERVER_PORT env var takes precedence (0 means dynamic)
+    // 2. settings.json port (0 means dynamic on first start)
+    // 3. Otherwise find an available port dynamically
+    let port = match parse_port_from_env()? {
+        Some(env_port) if env_port > 0 => env_port,
+        Some(_) => {
+            // SERVER_PORT=0 explicitly requests dynamic assignment
+            let port = find_available_port();
+            // Save so subsequent starts (without env var) reuse this port
+            save_port_to_settings(
+                &settings_dir.to_string_lossy(),
+                port,
+            )?;
+            port
+        }
+        None if settings_port > 0 => settings_port,
+        None => {
+            // First start: no env var, settings has port 0 → find one
+            let port = find_available_port();
+            save_port_to_settings(
+                &settings_dir.to_string_lossy(),
+                port,
+            )?;
+            port
+        }
+    };
+
+    // Also persist if the settings file existed but had a different port
+    // (e.g. after port 0 was resolved, or env var changed it).
+    if settings_existed && port != settings_port {
+        save_port_to_settings(
+            &settings_dir.to_string_lossy(),
+            port,
+        )?;
+    }
 
     let db_path = env::var("DATABASE_PATH")
         .unwrap_or_else(|_| infrastructure_settings.workflow.server.db_path.clone());

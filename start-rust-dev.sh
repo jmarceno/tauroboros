@@ -24,15 +24,16 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     echo "  --rebuild    Force rebuild of Rust backend"
     echo "  --help, -h   Show this help message"
     echo ""
-    echo "Environment Variables:"
-    echo "  SERVER_PORT    Backend port (default: 3789)"
-    echo "  DEV_PORT       Frontend port (default: 5173)"
-    echo ""
-    echo "Examples:"
-    echo "  $0                    Start with default ports"
-    echo "  $0 --rebuild          Force Rust rebuild"
-    echo "  SERVER_PORT=4000 $0   Use custom backend port"
-    exit 0
+echo "Environment Variables:"
+echo "  SERVER_PORT    Backend port (default: dynamically assigned on first start,"
+echo "                 then persisted to .tauroboros/settings.json for subsequent runs)"
+echo "  DEV_PORT       Frontend port (default: 5173)"
+echo ""
+echo "Examples:"
+echo "  $0                    Start with default ports (dynamic on first boot)"
+echo "  $0 --rebuild          Force Rust rebuild"
+echo "  SERVER_PORT=4000 $0   Use custom backend port"
+exit 0
 fi
 if [[ "${1:-}" == "--rebuild" ]]; then
     REBUILD=1
@@ -42,8 +43,34 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUST_DIR="${SCRIPT_DIR}/src/backend"
 FRONTEND_DIR="${SCRIPT_DIR}/src/frontend"
-RUST_PORT="${SERVER_PORT:-3789}"
 FRONTEND_PORT="${DEV_PORT:-5173}"
+
+# Resolve the Rust backend port:
+#   1. If SERVER_PORT is explicitly set by the user (and > 0), use it.
+#      SERVER_PORT=0 means "assign dynamically" — treat as unset.
+#   2. Otherwise read from .tauroboros/settings.json (if it has a port > 0).
+#   3. Otherwise leave empty — the binary will dynamically find a port
+#      on first start and persist it to settings.json, then we discover it.
+SETTINGS_FILE="${SCRIPT_DIR}/.tauroboros/settings.json"
+if [[ -n "${SERVER_PORT:-}" && "${SERVER_PORT:-0}" -gt 0 ]]; then
+    RUST_PORT="$SERVER_PORT"
+elif [[ -f "$SETTINGS_FILE" ]]; then
+    # Parse port from settings.json
+    RUST_PORT=$(python3 -c "
+import json
+try:
+    with open('$SETTINGS_FILE') as f:
+        s = json.load(f)
+    print(s.get('workflow', {}).get('server', {}).get('port', 0))
+except:
+    print(0)
+" 2>/dev/null)
+    if [[ -z "$RUST_PORT" || "$RUST_PORT" -eq 0 ]]; then
+        RUST_PORT=""   # will be discovered after server starts
+    fi
+else
+    RUST_PORT=""       # first start — binary will discover & persist
+fi
 
 # Process IDs
 RUST_PID=""
@@ -127,13 +154,15 @@ cleanup() {
     log_info "Releasing ports..."
     
     # Find and kill any processes using the Rust port
-    local rust_port_pids
-    rust_port_pids=$(lsof -ti:$RUST_PORT 2>/dev/null || true)
-    if [[ -n "$rust_port_pids" ]]; then
-        log_warn "Killing processes on port $RUST_PORT: $rust_port_pids"
-        echo "$rust_port_pids" | xargs kill -TERM 2>/dev/null || true
-        sleep 1
-        echo "$rust_port_pids" | xargs kill -KILL 2>/dev/null || true
+    if [[ -n "${RUST_PORT:-}" ]]; then
+        local rust_port_pids
+        rust_port_pids=$(lsof -ti:$RUST_PORT 2>/dev/null || true)
+        if [[ -n "$rust_port_pids" ]]; then
+            log_warn "Killing processes on port $RUST_PORT: $rust_port_pids"
+            echo "$rust_port_pids" | xargs kill -TERM 2>/dev/null || true
+            sleep 1
+            echo "$rust_port_pids" | xargs kill -KILL 2>/dev/null || true
+        fi
     fi
     
     # Find and kill any processes using the frontend port
@@ -224,8 +253,8 @@ if [[ ! -d "$FRONTEND_DIR" ]]; then
     exit 1
 fi
 
-# Check if ports are already in use
-if check_port "$RUST_PORT"; then
+# Check if known ports are already in use
+if [[ -n "${RUST_PORT:-}" ]] && check_port "$RUST_PORT"; then
     log_warn "Port $RUST_PORT is already in use. Attempting to free it..."
     lsof -ti:$RUST_PORT | xargs kill -TERM 2>/dev/null || true
     sleep 2
@@ -256,16 +285,56 @@ fi
 
 # Start Rust backend
 echo ""
-log_server "Starting Rust backend on port $RUST_PORT..."
-export SERVER_PORT="$RUST_PORT"
+if [[ -n "${RUST_PORT:-}" ]]; then
+    log_server "Starting Rust backend on port $RUST_PORT..."
+    export SERVER_PORT="$RUST_PORT"
+else
+    log_server "Starting Rust backend with dynamically assigned port..."
+    unset SERVER_PORT
+fi
 "$RUST_DIR/target/release/tauroboros-server" &
 RUST_PID=$!
 
-# Wait for Rust backend
-if ! wait_for_service "$RUST_PORT" "Rust backend"; then
-    log_error "Failed to start Rust backend"
-    cleanup
-    exit 1
+# Wait for Rust backend and discover the port if needed
+if [[ -n "${RUST_PORT:-}" ]]; then
+    if ! wait_for_service "$RUST_PORT" "Rust backend"; then
+        log_error "Failed to start Rust backend"
+        cleanup
+        exit 1
+    fi
+else
+    # Dynamic port: wait for settings.json to be written, then read the port
+    log_info "Waiting for Rust backend to select a port..."
+    RUST_PORT=""
+    for i in {1..15}; do
+        sleep 1
+        if [[ -f "$SETTINGS_FILE" ]]; then
+            RUST_PORT=$(python3 -c "
+import json
+try:
+    with open('$SETTINGS_FILE') as f:
+        s = json.load(f)
+    print(s.get('workflow', {}).get('server', {}).get('port', 0))
+except:
+    print(0)
+" 2>/dev/null)
+            if [[ -n "$RUST_PORT" && "$RUST_PORT" -gt 0 ]]; then
+                log_success "Rust backend selected port $RUST_PORT"
+                break
+            fi
+        fi
+        RUST_PORT=""
+    done
+    if [[ -z "$RUST_PORT" ]]; then
+        log_error "Failed to discover Rust backend port"
+        cleanup
+        exit 1
+    fi
+    if ! wait_for_service "$RUST_PORT" "Rust backend"; then
+        log_error "Rust backend on port $RUST_PORT is not responding"
+        cleanup
+        exit 1
+    fi
 fi
 
 # Check and install frontend dependencies if needed
