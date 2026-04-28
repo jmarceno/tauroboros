@@ -30,6 +30,7 @@ GLOBAL_BIN="/usr/local/bin"
 INSTALL_GLOBAL=false
 REMOVE_MODE=false
 SKIP_COMPILE=false
+RUST_MODE=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -45,6 +46,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_COMPILE=true
       shift
       ;;
+    --rust)
+      RUST_MODE=true
+      shift
+      ;;
     --help|-h)
       echo "Usage: $0 [OPTIONS]"
       echo ""
@@ -52,6 +57,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --global         Install to /usr/local/bin (requires sudo)"
       echo "  --remove         Remove the binary from install location"
       echo "  --skip-compile   Skip compilation (install existing binary)"
+      echo "  --rust           Compile and install Rust version (rust backend + frontend)"
       echo "  --help, -h       Show this help message"
       echo ""
       echo "Default (no flags): Compile and install to ~/.local/bin"
@@ -103,9 +109,57 @@ compile_project() {
   echo ""
 }
 
+# Rust compile function
+compile_rust_project() {
+  echo -e "${BLUE}🔨 Compiling TaurOboros (Rust version)...${NC}"
+  echo ""
+
+  cd "$PROJECT_ROOT"
+
+  # Check if cargo is available
+  if ! command -v cargo &>/dev/null; then
+    echo -e "${RED}Error: Cargo is not installed or not in PATH${NC}"
+    echo "Please install Rust first: https://rustup.rs"
+    exit 1
+  fi
+
+  # Check if bun is available (needed for frontend build)
+  if ! command -v bun &>/dev/null; then
+    echo -e "${RED}Error: Bun is not installed or not in PATH${NC}"
+    echo "Bun is required to build the frontend assets."
+    echo "Please install Bun first: https://bun.sh"
+    exit 1
+  fi
+
+  RUST_DIR="$PROJECT_ROOT/src/backend"
+  RUST_BINARY="$RUST_DIR/target/release/tauroboros"
+
+  # Build Rust backend with embedded frontend
+  echo -e "${BLUE}Building Rust backend (this may take a while)...${NC}"
+  if ! (cd "$RUST_DIR" && cargo build --release --features embedded-frontend); then
+    echo -e "${RED}Rust compilation failed${NC}"
+    exit 1
+  fi
+
+  # Copy binary to project root
+  echo -e "${BLUE}Copying binary to project root...${NC}"
+  if ! cp "$RUST_BINARY" "$PROJECT_ROOT/tauroboros"; then
+    echo -e "${RED}Failed to copy binary from ${RUST_BINARY}${NC}"
+    exit 1
+  fi
+
+  echo ""
+  echo -e "${GREEN}✓ Rust compilation successful${NC}"
+  echo ""
+}
+
 # Compile if not skipping (and not in remove mode)
 if [[ "$REMOVE_MODE" == false && "$SKIP_COMPILE" == false ]]; then
-  compile_project
+  if [[ "$RUST_MODE" == true ]]; then
+    compile_rust_project
+  else
+    compile_project
+  fi
 fi
 
 # Check if source binary exists (only for install mode)
