@@ -429,60 +429,14 @@ async fn send_planning_message(
             .with_code(ErrorCode::NotAPlanningSession));
     }
 
-    if session.session_kind == PiSessionKind::Planning
-        && state.planning_session_manager.has_active_session(&id).await
-    {
+    if state.planning_session_manager.has_active_session(&id).await {
         state
             .planning_session_manager
             .send_message(&id, &req.content, req.context_attachments.as_ref())
             .await?;
     } else {
-        let seq = crate::db::runtime::get_next_session_message_seq(&state.db, &id).await?;
-        let now = Utc::now().timestamp();
-        let msg = crate::models::SessionMessage {
-            id: 0,
-            seq,
-            message_id: Some(uuid::Uuid::new_v4().to_string()),
-            session_id: id.clone(),
-            task_id: None,
-            task_run_id: None,
-            timestamp: now,
-            role: crate::models::MessageRole::User,
-            event_name: Some("user_message".to_string()),
-            message_type: crate::models::MessageType::UserPrompt,
-            content_json: serde_json::json!({ "text": req.content }).to_string(),
-            model_provider: None,
-            model_id: None,
-            agent_name: None,
-            prompt_tokens: None,
-            completion_tokens: None,
-            cache_read_tokens: None,
-            cache_write_tokens: None,
-            total_tokens: None,
-            cost_json: None,
-            cost_total: None,
-            tool_call_id: None,
-            tool_name: None,
-            tool_args_json: None,
-            tool_result_json: None,
-            tool_status: None,
-            edit_diff: None,
-            edit_file_path: None,
-            session_status: Some("active".to_string()),
-            workflow_phase: Some("planning".to_string()),
-            raw_event_json: None,
-        };
-        let created = create_session_message(&state.db, &msg).await?;
-        let hub = state.sse_hub.read().await;
-        let _ = hub
-            .broadcast(&WSMessage {
-                r#type: "planning_session_message".to_string(),
-                payload: json!({
-                    "sessionId": id,
-                    "message": &created,
-                }),
-            })
-            .await;
+        return Err(ApiError::bad_request("Planning session not active")
+            .with_code(ErrorCode::PlanningSessionNotActive));
     }
 
     Ok(Json(json!({ "ok": true })))
@@ -506,35 +460,65 @@ async fn reconnect_planning_session(
             .with_code(ErrorCode::NotAPlanningSession));
     }
 
-    if session.status == PiSessionStatus::Active
-        || state.planning_session_manager.has_active_session(&id).await
-    {
+    if state.planning_session_manager.has_active_session(&id).await {
         let base_url = format!("http://localhost:{}", state.port);
         let mut json = serde_json::to_value(&session).unwrap_or_default();
         json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, id));
         return Ok(Json(json));
     }
 
-    // Update session
+    let prompt: Option<PlanningPrompt> =
+        sqlx::query_as("SELECT * FROM planning_prompts WHERE key = ? AND is_active = 1 LIMIT 1")
+            .bind("default")
+            .fetch_optional(&state.db)
+            .await
+            .map_err(crate::error::ApiError::Database)?;
+
+    let prompt_text = prompt
+        .map(|p| p.prompt_text)
+        .ok_or_else(|| {
+            ApiError::internal("Planning prompt not configured")
+                .with_code(ErrorCode::PlanningPromptNotConfigured)
+        })?;
+
+    let model = req.model.as_deref().unwrap_or("default");
+    let model_to_use = if model == "default" {
+        let opts = crate::db::queries::get_options(&state.db).await?;
+        let resolved = opts.plan_model.clone();
+        if resolved.is_empty() { session.model.clone() } else { resolved }
+    } else {
+        model.to_string()
+    };
+
+    let actual_model = if model_to_use == "default" || model_to_use.is_empty() {
+        "openai/gpt-4o".to_string()
+    } else {
+        model_to_use
+    };
+
     let now = Utc::now().timestamp();
     let _ = sqlx::query(
         r#"
         UPDATE pi_workflow_sessions 
-        SET status = ?, model = ?, thinking_level = ?, updated_at = ?
+        SET model = ?, thinking_level = ?, updated_at = ?
         WHERE id = ?
         "#,
     )
-    .bind(PiSessionStatus::Active)
-    .bind(req.model.clone().unwrap_or(session.model))
+    .bind(&actual_model)
     .bind(req.thinking_level.unwrap_or(session.thinking_level))
     .bind(now)
     .bind(&id)
     .execute(&state.db)
     .await;
 
+    state
+        .planning_session_manager
+        .reconnect_session(&id, &prompt_text, &actual_model)
+        .await?;
+
     let updated = get_workflow_session(&state.db, &id)
         .await?
-        .ok_or_else(|| ApiError::not_found("Session not found"))?;
+        .ok_or_else(|| ApiError::internal("Failed to update session"))?;
 
     let hub = state.sse_hub.read().await;
     let base_url = format!("http://localhost:{}", state.port);
@@ -655,74 +639,99 @@ async fn create_tasks_from_planning(
             .with_code(ErrorCode::NotAPlanningSession));
     }
 
-    let base_url = format!("http://localhost:{}", state.port);
-    let hub = state.sse_hub.read().await;
+    if !state.planning_session_manager.has_active_session(&id).await {
+        return Err(ApiError::bad_request("Planning session not active")
+            .with_code(ErrorCode::PlanningSessionNotActive));
+    }
 
-    // Send task setup prompt
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "planning_session_message".to_string(),
-            payload: json!({
-                "sessionId": id,
-                "message": {
-                    "content": "Setting up tasks from planning session...",
-                    "timestamp": Utc::now().timestamp(),
-                }
-            }),
-        })
-        .await;
+    let base_url = format!("http://localhost:{}", state.port);
+
+    // Send task setup prompt to the agent
+    let task_setup_prompt = format!(
+        "Please use the **workflow-task-setup** skill to create kanban tasks from our planning conversation.\n\n\
+        **Instructions:**\n\
+        1. Review the conversation history in this session to understand the implementation plan we discussed\n\
+        2. Use the workflow-task-setup skill to convert the plan into actionable TaurOboros kanban tasks\n\
+        3. Create appropriate tasks with proper dependencies, statuses, and configurations\n\n\
+        **API Access Information:**\n\
+        - The TaurOboros server is running on port: **{}**\n\
+        - Base URL: {}\n\
+        - Use the HTTP API endpoints to create tasks (POST /api/tasks)\n\
+        - Use the Task Groups API to organize related tasks (POST /api/task-groups)\n\n\
+        **Task Creation Guidelines:**\n\
+        - Create small, outcome-based tasks that can be completed independently\n\
+        - Set appropriate dependencies where one task truly blocks another\n\
+        - Use status \"backlog\" for runnable tasks\n\
+        - Include clear, actionable prompts for each task\n\
+        - Consider using plan-mode (planmode: true) for tasks that need approval before implementation\n\n\
+        **IMPORTANT - Create a Task Group:**\n\
+        If the implementation plan involves multiple related tasks:\n\
+        1. Create ALL tasks first using POST /api/tasks\n\
+        2. Then create a **Task Group** using POST /api/task-groups\n\
+        3. Use POST /api/task-groups/:id/tasks to add tasks if the group was created without them",
+        state.port, base_url
+    );
+
+    state
+        .planning_session_manager
+        .send_message(&id, &task_setup_prompt, None)
+        .await?;
 
     if let Some(ref tasks) = req.tasks {
         let mut created = vec![];
 
         for task_data in tasks {
-            // Parse task data and create
-            if let (Some(name), Some(prompt)) = (
-                task_data.get("name").and_then(|v| v.as_str()),
-                task_data.get("prompt").and_then(|v| v.as_str()),
-            ) {
-                let input = CreateTaskInput {
-                    id: Some(uuid::Uuid::new_v4().to_string()[..8].to_string()),
-                    name: name.to_string(),
-                    prompt: prompt.to_string(),
-                    status: Some(TaskStatus::Backlog),
-                    branch: None,
-                    plan_model: None,
-                    execution_model: None,
-                    plan_mode: None,
-                    auto_approve_plan: None,
-                    review: None,
-                    code_style_review: None,
-                    auto_commit: None,
-                    auto_deploy: None,
-                    auto_deploy_condition: None,
-                    delete_worktree: None,
-                    requirements: Some(vec![]),
-                    thinking_level: None,
-                    plan_thinking_level: None,
-                    execution_thinking_level: None,
-                    execution_strategy: None,
-                    best_of_n_config: None,
-                    best_of_n_substage: None,
-                    skip_permission_asking: None,
-                    max_review_runs_override: None,
-                    container_image: None,
-                    group_id: None,
-                };
+            let name = match task_data.get("name").and_then(|v| v.as_str()) {
+                Some(n) if !n.trim().is_empty() => n.to_string(),
+                _ => continue,
+            };
+            let prompt = match task_data.get("prompt").and_then(|v| v.as_str()) {
+                Some(p) if !p.trim().is_empty() => p.to_string(),
+                _ => continue,
+            };
 
-                if let Ok(task) = create_task_db(&state.db, input).await {
-                    let normalized =
-                        crate::routes::tasks::normalize_task_for_client(&task, &base_url);
+            let input = CreateTaskInput {
+                id: Some(uuid::Uuid::new_v4().to_string()[..8].to_string()),
+                name,
+                prompt,
+                status: Some(TaskStatus::Backlog),
+                branch: None,
+                plan_model: None,
+                execution_model: None,
+                plan_mode: None,
+                auto_approve_plan: None,
+                review: None,
+                code_style_review: None,
+                auto_commit: None,
+                auto_deploy: None,
+                auto_deploy_condition: None,
+                delete_worktree: None,
+                requirements: Some(vec![]),
+                thinking_level: None,
+                plan_thinking_level: None,
+                execution_thinking_level: None,
+                execution_strategy: None,
+                best_of_n_config: None,
+                best_of_n_substage: None,
+                skip_permission_asking: None,
+                max_review_runs_override: None,
+                container_image: None,
+                group_id: None,
+            };
 
-                    let _ = hub
-                        .broadcast(&WSMessage {
-                            r#type: "task_created".to_string(),
-                            payload: normalized.clone(),
-                        })
-                        .await;
+            let hub = state.sse_hub.read().await;
+            if let Ok(task) = create_task_db(&state.db, input).await {
+                let normalized =
+                    crate::routes::tasks::normalize_task_for_client(&task, &base_url);
 
-                    created.push(normalized);
-                }
+                let _ = hub
+                    .broadcast(&WSMessage {
+                        r#type: "task_created".to_string(),
+                        payload: normalized.clone(),
+                    })
+                    .await;
+
+                created.push(normalized);
             }
         }
 

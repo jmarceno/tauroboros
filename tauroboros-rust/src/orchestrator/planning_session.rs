@@ -435,6 +435,149 @@ impl PlanningSessionManager {
         Ok(())
     }
 
+    pub async fn reconnect_session(
+        &self,
+        session_id: &str,
+        system_prompt: &str,
+        model: &str,
+    ) -> Result<(), ApiError> {
+        if self.sessions.lock().await.contains_key(session_id) {
+            return Ok(());
+        }
+
+        let session: Option<PiWorkflowSession> = sqlx::query_as(
+            "SELECT * FROM pi_workflow_sessions WHERE id = ?",
+        )
+        .bind(session_id)
+        .fetch_optional(&self.db)
+        .await
+        .map_err(|e| {
+            ApiError::internal(format!("Failed to fetch session for reconnect: {}", e))
+                .with_code(ErrorCode::ExecutionOperationFailed)
+        })?;
+
+        let session = session.ok_or_else(|| {
+            ApiError::not_found("Session not found").with_code(ErrorCode::SessionNotFound)
+        })?;
+
+        let session_file = session.pi_session_file.clone().ok_or_else(|| {
+            ApiError::internal("Workflow session is missing piSessionFile")
+                .with_code(ErrorCode::ExecutionOperationFailed)
+        })?;
+
+        let extension_path = ensure_structured_output_extension(&self.project_root).await?;
+
+        if let Some(parent) = Path::new(&session_file).parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|error| {
+                ApiError::internal(format!(
+                    "Failed to create pi session directory: {}",
+                    error
+                ))
+                .with_code(ErrorCode::ExecutionOperationFailed)
+            })?;
+        }
+
+        let mut command =
+            Command::new(std::env::var("PI_BIN").unwrap_or_else(|_| "pi".to_string()));
+        command
+            .args(vec![
+                "--mode".to_string(),
+                "rpc".to_string(),
+                "--session".to_string(),
+                session_file,
+                "--extension".to_string(),
+                extension_path,
+                "--system-prompt".to_string(),
+                system_prompt.to_string(),
+            ])
+            .current_dir(&session.cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("PI_CODING_AGENT", "true");
+
+        let mut child = command.spawn().map_err(|error| {
+            ApiError::internal(format!(
+                "Failed to start planning pi process during reconnect: {}",
+                error
+            ))
+            .with_code(ErrorCode::ExecutionOperationFailed)
+        })?;
+
+        let pid = child.id().map(|pid| pid as i32);
+        let _ = update_workflow_session_record(
+            &self.db,
+            session_id,
+            UpdateWorkflowSessionRecord {
+                status: Some(PiSessionStatus::Active),
+                process_pid: Some(pid),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            ApiError::internal("Failed to capture planning pi stdin during reconnect")
+                .with_code(ErrorCode::ExecutionOperationFailed)
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            ApiError::internal("Failed to capture planning pi stdout during reconnect")
+                .with_code(ErrorCode::ExecutionOperationFailed)
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            ApiError::internal("Failed to capture planning pi stderr during reconnect")
+                .with_code(ErrorCode::ExecutionOperationFailed)
+        })?;
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        spawn_reader(stdout, tx.clone(), true);
+        spawn_reader(stderr, tx, false);
+
+        let (provider, model_id) = parse_model(model)?;
+        send_rpc(
+            &mut stdin,
+            &json!({
+                "type": "set_model",
+                "id": "req_set_model",
+                "provider": provider,
+                "modelId": model_id,
+            }),
+        )
+        .await?;
+
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        tokio::spawn(event_processor(
+            self.db.clone(),
+            self.sse_hub.clone(),
+            session_id.to_string(),
+            rx,
+            shutdown_rx,
+        ));
+
+        let active = Arc::new(ActivePlanningSession {
+            session_id: session_id.to_string(),
+            child: Arc::new(Mutex::new(child)),
+            stdin: Arc::new(Mutex::new(stdin)),
+            shutdown_tx,
+        });
+
+        self.sessions
+            .lock()
+            .await
+            .insert(session_id.to_string(), active);
+
+        let hub = self.sse_hub.read().await;
+        let _ = hub
+            .broadcast(&WSMessage {
+                r#type: "planning_session_updated".to_string(),
+                payload: json!({ "sessionId": session_id, "status": "active" }),
+            })
+            .await;
+
+        Ok(())
+    }
+
     pub async fn has_active_session(&self, session_id: &str) -> bool {
         self.sessions.lock().await.contains_key(session_id)
     }

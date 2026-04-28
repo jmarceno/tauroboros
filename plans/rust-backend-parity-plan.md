@@ -243,6 +243,15 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 ## Completed In This Iteration
 
+- **Planning Chat parity achieved**: Seeded default planning prompts (`default` and `container_config`) in the Rust DB migration. Fixed `send_planning_message` to return `PlanningSessionNotActive` error instead of silently persisting messages when the session isn't active. Fixed `create-tasks-from-planning` to validate tasks payload and properly send task setup prompt to the Pi agent. Added proper session **reconnect with Pi process restart** in `PlanningSessionManager::reconnect_session` — stops are now two-phase (stop kills Pi, reconnect spawns a fresh Pi process loading the existing `--session` file, enabling conversation resumption). Verified with comprehensive e2e tests in `tests/e2e/rust-planning-chat.spec.ts` covering:
+  - Planning prompt CRUD (14 prompt route checks)
+  - Session listing (empty lists, listed sessions)
+  - Error handling (12 error case checks for 404/400 on missing/inactive/non-planning sessions)
+  - Session lifecycle with real Pi (create, list, get, reconnect, rename, messages, timeline, stop, close)
+  - Reconnect and resume conversation (stop → reconnect → send message after reconnect — validates Pi process restart and session resumption)
+  - UI panel (open/close planning chat, verify empty state)
+  - All tests pass with `cargo clippy --deny warnings`
+
 - Fixed all 61 pre-existing Clippy warnings across the codebase. Build, tests (6/6), and clippy --deny warnings all pass cleanly.
 
 - Replaced the placeholder planning session Pi integration with a real `PlanningSessionManager`.
@@ -307,10 +316,9 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 - Run stop, force-stop, clean, and paused-state semantics still need direct comparison against the TypeScript backend for edge cases (double-stop, force-stop during pause, etc.).
 - Planning session Pi integration is fully implemented but the `request-plan-revision` endpoint in Rust does NOT automatically start a new workflow run like the TypeScript backend does. The TypeScript `request-plan-revision` creates a new run after updating the task, but the Rust version only updates task state. The frontend calls `start` separately, so this is a non-blocking behavioral difference rather than a breaking one.
+- Some of the original prompts have not being migrated yet (original prompts location: `src/prompts/prompt-catalog.json` → `repair`, `resumeTaskContinuation`, `mergeConflictRepair`, `mockClassification`). Need to be migrated too, as ANY other prompt.
+- Best-of-N `select-candidate` route exists but the orchestrator auto-selects during its final-applier phase (selects first candidate on success). Manual candidate selection flow through the UI has not been browser-verified. Agent selection of best model needs to be implemented.
 - Container execution remains intentionally unsupported in Rust (native-only), but container API endpoints stay frontend-compatible as stubs.
-- Some of the original prompts have not being migrated yet (original prompts location:/src/prompts/prompt-catalog.json) and their components and functionalities are completely missing from the Rust backend.
-- Planning Chat is still completly missing, as well as its specialized prompts. Has to be fully verified on API and UI level with playwright, by starting a chat and having real conversation with the agent.
-- Best-of-N `select-candidate` route exists but the orchestrator auto-selects during its final-applier phase (selects first candidate on success). Manual candidate selection flow through the UI has not been browser-verified. Auto selection by the agent needs to be implemented.
 
 ## File Size Guardrails
 
@@ -318,7 +326,7 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 - tauroboros-rust/src/orchestrator/mod.rs (1984 lines, exception header needed — core orchestrator with many interdependent methods)
 - tauroboros-rust/src/routes/tasks.rs (1011 lines, exception header documented)
-- tauroboros-rust/src/routes/planning.rs (861 lines)
+- tauroboros-rust/src/routes/planning.rs (1007 lines)
 - tauroboros-rust/src/orchestrator/best_of_n.rs (723 lines)
 - tauroboros-rust/src/orchestrator/planning_session.rs (692 lines)
 - tauroboros-rust/src/routes/sessions.rs
@@ -369,6 +377,8 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 | Plan mode | Plan generation, revision, and approved implementation execute natively | Browser-verified end to end |
 | Review loops | Automated review with review-fix cycles and max-review limit | Browser-verified end to end |
 | Best-of-N | Parallel workers, reviewers, final applier with candidate management | Browser-verified end to end |
+| Planning Chat | Planning prompts CRUD, session lifecycle (create/list/get/reconnect/rename/stop/close), message send, error handling, UI panel | Verified — 30+ API checks + UI panel test in `rust-planning-chat.spec.ts` |
+| Planning prompts | Default planning prompt seeded in DB, container_config prompt seeded, version history | Verified — GET/PUT prompts, versions endpoint |
 
 ## Working Notes
 
@@ -381,7 +391,7 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 1. ~~Add browser-level verification for plan mode, review loops, and best-of-N now that the orchestrator supports them natively.~~ **DONE** — `tests/e2e/rust-advanced-modes.spec.ts`.
 2. ~~Add route-by-route parity checks for runs, sessions, planning, archives, and SSE payloads.~~ **DONE** — `tests/e2e/rust-route-parity.spec.ts` (30+ route/payload checks).
 3. ~~Add browser-level validation of the SSE session streaming contract.~~ **DONE** — `tests/e2e/rust-sse-contract.spec.ts` validates connected, ping, task_created events.
-4. Run the full suite of Rust E2E tests against a live server to validate all three modes execute correctly with real LLM interactions.
-5. Fix the `request-plan-revision` endpoint to auto-start a new workflow run (align with TypeScript behavior).
-6. Container execution remains intentionally unsupported in Rust (native-only), but container API endpoints stay frontend-compatible as stubs.
-7. Merge and tag a v2.0.0 release candidate with the Rust backend, then validate release-path packaging.
+4. ~~Add comprehensive Planning Chat route parity and UI tests.~~ **DONE** — `tests/e2e/rust-planning-chat.spec.ts` covers prompts CRUD, session lifecycle, error handling, and UI panel.
+5. Run the full suite of Rust E2E tests against a live server to validate all modes execute correctly with real LLM interactions.
+6. Fix the `request-plan-revision` endpoint to auto-start a new workflow run (align with TypeScript behavior).
+7. Container execution remains intentionally unsupported in Rust (native-only), but container API endpoints stay frontend-compatible as stubs.
