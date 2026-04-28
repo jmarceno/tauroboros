@@ -42,7 +42,6 @@ import {
   ContainersTab,
   ArchivedTasksTab,
   SelfHealReportsTab,
-  TabBar,
   // Modal components
   ApproveModal,
   BatchEditModal,
@@ -743,8 +742,7 @@ function App() {
       />
 
       <main class="main-content">
-        <TopBar />
-        <TabBar activeTab={tabStore.activeTab()} onTabChange={tabStore.setActiveTab} />
+        <TopBar activeTab={tabStore.activeTab()} onTabChange={tabStore.setActiveTab} />
 
         <Show when={tabStore.activeTab() === 'kanban'}>
           <KanbanBoard

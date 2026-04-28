@@ -417,4 +417,4 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 ## Next Actions
 
 1. Run a non-mock burn-in pass against real Pi models if you want post-parity confidence beyond deterministic contract coverage.
-2. Revisit native-only container stubs only if Rust execution scope expands beyond the current constraint set.
+2. Revisit native-only container stubs only if Rust execution scope expands beyond the current constraint set 
