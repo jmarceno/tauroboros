@@ -3,7 +3,7 @@
  * Ported from React to SolidJS
  */
 
-import { createSignal, createEffect, createMemo, batch, Show, For, onCleanup } from 'solid-js'
+import { createSignal, createEffect, createRenderEffect, createMemo, batch, Show, For } from 'solid-js'
 import { createQuery, useQueryClient } from '@tanstack/solid-query'
 import { ModalWrapper } from '@/components/common/ModalWrapper'
 import { HelpButton } from '@/components/common/HelpButton'
@@ -59,30 +59,6 @@ export function OptionsTab() {
   const [isSaving, setIsSaving] = createSignal(false)
   const [hasHydrated, setHasHydrated] = createSignal(false)
 
-  // Planning prompt state
-  const [planningPromptData, setPlanningPromptData] = createSignal<{
-    id: number
-    key: string
-    name: string
-    description: string
-    promptText: string
-    isActive: boolean
-    createdAt: number
-    updatedAt: number
-  } | null>(null)
-
-  const [editedPlanningPromptText, setEditedPlanningPromptText] = createSignal('')
-
-  const [isPlanningPromptLoading, setIsPlanningPromptLoading] = createSignal(true)
-  const [planningPromptError, setPlanningPromptError] = createSignal<string | null>(null)
-
-  // Code style default prompt — fetched from backend (prompt-catalog.json)
-  const [codeStyleDefault, setCodeStyleDefault] = createSignal('')
-
-  const hasPlanningPromptChanges = () => planningPromptData()
-    ? editedPlanningPromptText() !== planningPromptData()!.promptText
-    : false
-
   // Queries
   const optionsQuery = createQuery(() => ({
     queryKey: ['options'],
@@ -95,6 +71,49 @@ export function OptionsTab() {
     queryFn: () => runApiEffect(referenceApi.getBranches()),
     staleTime: 60000,
   }))
+
+  const planningPromptQuery = createQuery(() => ({
+    queryKey: ['planning', 'prompt'],
+    queryFn: () => runApiEffect(planningApi.getPrompt()),
+    staleTime: 30000,
+  }))
+
+  const codeStyleQuery = createQuery(() => ({
+    queryKey: ['prompts', 'code_style'],
+    queryFn: () => runApiEffect(promptsApi.getByKey('code_style')),
+    staleTime: 30000,
+  }))
+
+  const commitPromptQuery = createQuery(() => ({
+    queryKey: ['prompts', 'commit'],
+    queryFn: () => runApiEffect(promptsApi.getByKey('commit')),
+    staleTime: 30000,
+  }))
+
+  // Planning prompt state
+  const [editedPlanningPromptText, setEditedPlanningPromptText] = createSignal('')
+
+  const hasPlanningPromptChanges = () => planningPromptQuery.data
+    ? editedPlanningPromptText() !== planningPromptQuery.data.promptText
+    : false
+
+  // Code style default prompt — fetched from backend (prompt-catalog.json)
+  const codeStyleDefault = createMemo(() =>
+    codeStyleQuery.data?.templateText ?? ''
+  )
+
+  // Commit prompt default — fetched from backend (prompt-catalog.json)
+  const commitPromptDefault = createMemo(() =>
+    commitPromptQuery.data?.templateText ?? ''
+  )
+
+  // Initialize planning prompt editor text when query data arrives
+  createRenderEffect(() => {
+    const prompt = planningPromptQuery.data
+    if (prompt && !editedPlanningPromptText()) {
+      setEditedPlanningPromptText(prompt.promptText)
+    }
+  })
 
   // Reactive memos for query state (following tasksStore pattern)
   const opts = createMemo(() => optionsQuery.data)
@@ -131,7 +150,7 @@ export function OptionsTab() {
           reviewModel: currentOpts.reviewModel || '',
           repairModel: currentOpts.repairModel || '',
           command: currentOpts.command || '',
-          commitPrompt: currentOpts.commitPrompt || '',
+          commitPrompt: currentOpts.commitPrompt?.trim() ? currentOpts.commitPrompt : commitPromptDefault(),
           extraPrompt: currentOpts.extraPrompt || '',
           codeStylePrompt: currentOpts.codeStylePrompt?.trim() ? currentOpts.codeStylePrompt : codeStyleDefault(),
           parallelTasks: currentOpts.parallelTasks ?? 1,
@@ -176,50 +195,6 @@ export function OptionsTab() {
     processLoadedData(options, branches, error)
   })
 
-  // Load planning prompt data
-  createEffect(() => {
-    let cancelled = false
-    
-    const loadPlanningPrompt = async () => {
-      setIsPlanningPromptLoading(true)
-      setPlanningPromptError(null)
-      try {
-        const prompt = await runApiEffect(planningApi.getPrompt())
-        if (cancelled) return
-        setPlanningPromptData(prompt)
-        setEditedPlanningPromptText(prompt.promptText)
-      } catch (e) {
-        if (!cancelled) {
-          setPlanningPromptError(e instanceof Error ? e.message : 'Failed to load planning prompt')
-        }
-      } finally {
-        if (!cancelled) setIsPlanningPromptLoading(false)
-      }
-    }
-    
-    loadPlanningPrompt()
-    
-    // Fetch code style default prompt from backend
-    const loadCodeStyleDefault = async () => {
-      try {
-        const template = await runApiEffect(promptsApi.getByKey('code_style'))
-        if (!cancelled) {
-          setCodeStyleDefault(template.templateText)
-        }
-      } catch {
-        // If the template isn't seeded yet, fall back to empty
-        if (!cancelled) {
-          setCodeStyleDefault('')
-        }
-      }
-    }
-    loadCodeStyleDefault()
-    
-    onCleanup(() => {
-      cancelled = true
-    })
-  })
-
   const updateField = <K extends keyof Options>(key: K, value: Options[K]) => {
     setFormData(prev => ({ ...prev, [key]: value }))
   }
@@ -237,20 +212,20 @@ export function OptionsTab() {
       const optionsToSave: Partial<Options> = {
         ...persistableOptions,
         codeStylePrompt: formData().codeStylePrompt?.trim() ? formData().codeStylePrompt : codeStyleDefault(),
+        commitPrompt: formData().commitPrompt?.trim() ? formData().commitPrompt : commitPromptDefault(),
       }
       await runApiEffect(optionsApi.update(optionsToSave))
 
       // Also save planning prompt if it has changes
-      if (hasPlanningPromptChanges() && planningPromptData()) {
+      if (hasPlanningPromptChanges() && planningPromptQuery.data) {
         await runApiEffect(planningApi.updatePrompt({
-          key: planningPromptData()!.key,
-          name: planningPromptData()!.name,
-          description: planningPromptData()!.description,
+          key: planningPromptQuery.data.key,
+          name: planningPromptQuery.data.name,
+          description: planningPromptQuery.data.description,
           promptText: editedPlanningPromptText(),
         }))
         // Refresh local prompt data
-        const updated = await runApiEffect(planningApi.getPrompt())
-        setPlanningPromptData(updated)
+        await queryClient.invalidateQueries({ queryKey: ['planning', 'prompt'] })
       }
 
       await queryClient.invalidateQueries({ queryKey: ['options'] })
@@ -278,7 +253,7 @@ export function OptionsTab() {
           reviewModel: opts.reviewModel || '',
           repairModel: opts.repairModel || '',
           command: opts.command || '',
-          commitPrompt: opts.commitPrompt || '',
+          commitPrompt: opts.commitPrompt?.trim() ? opts.commitPrompt : commitPromptDefault(),
           extraPrompt: opts.extraPrompt || '',
           codeStylePrompt: opts.codeStylePrompt?.trim() ? opts.codeStylePrompt : codeStyleDefault(),
           parallelTasks: opts.parallelTasks ?? 1,
@@ -677,7 +652,7 @@ export function OptionsTab() {
             <label>Planning Assistant Prompt</label>
             <HelpButton tooltip="Customize the system prompt used by the planning chat agent. This defines how the planning assistant behaves and responds to requests." />
           </div>
-          <Show when={isPlanningPromptLoading()}>
+          <Show when={planningPromptQuery.isLoading}>
             <div class="flex flex-col items-center justify-center py-8 space-y-3">
               <svg class="w-6 h-6 animate-spin text-accent-primary" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
@@ -689,18 +664,18 @@ export function OptionsTab() {
             </div>
           </Show>
 
-          <Show when={planningPromptError()}>
+          <Show when={planningPromptQuery.error}>
             <div class="p-4 rounded bg-red-500/10 border border-red-500/30 text-red-400 mb-4">
               <div class="flex items-start gap-2">
                 <svg class="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span>{planningPromptError()}</span>
+                <span>{String(planningPromptQuery.error ?? '')}</span>
               </div>
             </div>
           </Show>
 
-          <Show when={!isPlanningPromptLoading() && !planningPromptError()}>
+          <Show when={!planningPromptQuery.isLoading && !planningPromptQuery.error}>
             <div class="space-y-4">
               <div>
                 <label class="block text-sm font-medium text-dark-text mb-1">System Prompt</label>
@@ -718,7 +693,7 @@ export function OptionsTab() {
               <div class="flex items-center justify-between">
                 <button
                   class="btn btn-sm"
-                  disabled={isPlanningPromptLoading()}
+                  disabled={planningPromptQuery.isLoading}
                   onClick={resetPlanningPromptToDefault}
                 >
                   Reset to Default

@@ -1792,35 +1792,42 @@ impl Orchestrator {
         let stop_mode = stop_mode_for_run(&run);
 
         if outcome.status == TaskStatus::Failed {
-            if let Some(mode) = stop_mode {
-                let (task_status, message) = match mode {
-                    StopMode::Graceful => (TaskStatus::Backlog, GRACEFUL_STOP_MESSAGE),
-                    StopMode::Destructive => (TaskStatus::Failed, DESTRUCTIVE_STOP_MESSAGE),
-                    StopMode::Failure => (
-                        TaskStatus::Failed,
-                        run.error_message
-                            .as_deref()
-                            .unwrap_or("Workflow halted after task failure"),
-                    ),
-                };
+            let (task_status, message) = match stop_mode {
+                Some(StopMode::Graceful) => (TaskStatus::Backlog, GRACEFUL_STOP_MESSAGE),
+                Some(StopMode::Destructive) => (TaskStatus::Failed, DESTRUCTIVE_STOP_MESSAGE),
+                Some(StopMode::Failure) => (
+                    TaskStatus::Failed,
+                    run.error_message
+                        .as_deref()
+                        .unwrap_or("Workflow halted after task failure"),
+                ),
+                None => (
+                    TaskStatus::Failed,
+                    outcome
+                        .error_message
+                        .as_deref()
+                        .unwrap_or("Task execution failed"),
+                ),
+            };
 
-                update_task(
-                    &self.db,
-                    &task_id,
-                    UpdateTaskInput {
-                        status: Some(task_status),
-                        error_message: Some(Some(message.to_string())),
-                        session_id: Some(None),
-                        session_url: Some(None),
-                        completed_at: Some(None),
-                        ..Default::default()
-                    },
-                )
-                .await?;
+            let mut task_update = UpdateTaskInput {
+                status: Some(task_status),
+                error_message: Some(Some(message.to_string())),
+                ..Default::default()
+            };
 
-                if let Some(updated_task) = get_task(&self.db, &task_id).await? {
-                    self.broadcast_task(&updated_task).await;
-                }
+            // Preserve session links on autonomous failures so the
+            // user can view session logs to debug what went wrong.
+            // Only clear session links for user-initiated stops.
+            if stop_mode.is_some() {
+                task_update.session_id = Some(None);
+                task_update.session_url = Some(None);
+            }
+
+            update_task(&self.db, &task_id, task_update).await?;
+
+            if let Some(updated_task) = get_task(&self.db, &task_id).await? {
+                self.broadcast_task(&updated_task).await;
             }
         }
 

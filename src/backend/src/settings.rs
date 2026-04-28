@@ -262,42 +262,40 @@ pub fn load_startup_settings() -> Result<StartupSettings, String> {
     );
 
     let settings_port = infrastructure_settings.workflow.server.port;
+    let env_port = parse_port_from_env()?;
 
     // Resolve port:
     // 1. SERVER_PORT env var takes precedence (0 means dynamic)
     // 2. settings.json port (0 means dynamic on first start)
     // 3. Otherwise find an available port dynamically
-    let port = match parse_port_from_env()? {
-        Some(env_port) if env_port > 0 => env_port,
+    let (port, should_persist) = match env_port {
+        Some(env_port) if env_port > 0 => {
+            // SERVER_PORT set to a specific port — persist to settings.json
+            // so subsequent starts (without env var) reuse this port.
+            (env_port, true)
+        }
         Some(_) => {
             // SERVER_PORT=0 explicitly requests dynamic assignment
             let port = find_available_port();
-            // Save so subsequent starts (without env var) reuse this port
-            save_port_to_settings(
-                &settings_dir.to_string_lossy(),
-                port,
-            )?;
-            port
+            save_port_to_settings(&settings_dir.to_string_lossy(), port)?;
+            (port, false) // already saved above
         }
-        None if settings_port > 0 => settings_port,
+        None if settings_port > 0 => {
+            // Existing settings have a port — reuse it
+            (settings_port, false)
+        }
         None => {
             // First start: no env var, settings has port 0 → find one
             let port = find_available_port();
-            save_port_to_settings(
-                &settings_dir.to_string_lossy(),
-                port,
-            )?;
-            port
+            save_port_to_settings(&settings_dir.to_string_lossy(), port)?;
+            (port, false) // already saved above
         }
     };
 
-    // Also persist if the settings file existed but had a different port
-    // (e.g. after port 0 was resolved, or env var changed it).
-    if settings_existed && port != settings_port {
-        save_port_to_settings(
-            &settings_dir.to_string_lossy(),
-            port,
-        )?;
+    // Persist if a SERVER_PORT override changed the port, or if this is a
+    // fresh environment where settings.json didn't exist before.
+    if should_persist && (!settings_existed || port != settings_port) {
+        save_port_to_settings(&settings_dir.to_string_lossy(), port)?;
     }
 
     let db_path = env::var("DATABASE_PATH")

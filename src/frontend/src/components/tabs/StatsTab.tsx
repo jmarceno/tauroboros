@@ -7,14 +7,14 @@ import { createSignal, createMemo, createEffect, onCleanup, For, Show } from 'so
 import { createQuery, useQueryClient } from '@tanstack/solid-query'
 import Chart from 'chart.js/auto'
 import { statsApi, runApiEffect } from '@/api'
-import type { HourlyUsage, DailyUsage } from '@/types'
+import type { HourlyUsage, DailyUsage, TaskStats } from '@/types'
 
 // Only 7d data is currently supported by the API
 type TimeRange = '7d'
 
 const EMPTY_USAGE = { totalTokens: 0, totalCost: 0, tokenChange: 0, costChange: 0 }
-const EMPTY_TASK_STATS = { completed: 0, failed: 0, averageReviews: 0 }
-const EMPTY_MODEL_USAGE = { plan: [], execution: [], review: [] }
+const EMPTY_TASK_STATS: TaskStats = { totalTasks: 0, completedTasks: 0, failedTasks: 0, pendingTasks: 0, byStatus: {}, completionRate: 0, averageExecutionTime: 0 }
+const EMPTY_MODEL_USAGE = { models: [] }
 const EMPTY_DAILY_USAGE: DailyUsage[] = []
 
 const formatNumber = (num: number): string => {
@@ -36,6 +36,9 @@ const formatDuration = (minutes: number): string => {
 
 const isHourlyUsage = (d: HourlyUsage | DailyUsage): d is HourlyUsage => 'hour' in d
 const isDailyUsage = (d: HourlyUsage | DailyUsage): d is DailyUsage => 'date' in d
+
+const getAvgReviews = (stats: TaskStats): number =>
+  'averageReviews' in stats ? (stats as TaskStats & { averageReviews: number }).averageReviews : 0
 
 export function StatsTab() {
   const queryClient = useQueryClient()
@@ -145,12 +148,10 @@ export function StatsTab() {
 
   const hasData = () =>
     (currentUsage().totalTokens > 0) ||
-    (taskStats().completed > 0) ||
-    (taskStats().failed > 0) ||
+    (taskStats().completedTasks > 0) ||
+    (taskStats().failedTasks > 0) ||
     (dailyUsage7d().length > 0) ||
-    (modelUsage().plan.length > 0) ||
-    (modelUsage().execution.length > 0) ||
-    (modelUsage().review.length > 0)
+    ((modelUsage().models?.length ?? 0) > 0)
 
   const loadAllStats = async () => {
     await queryClient.invalidateQueries({ queryKey: ['stats'] })
@@ -310,14 +311,15 @@ export function StatsTab() {
   // Create/Update model usage charts
   createEffect(() => {
     const usage = modelUsage()
+    const models = usage.models ?? []
     
     if (planChart) planChart.destroy()
     if (executionChart) executionChart.destroy()
     if (reviewChart) reviewChart.destroy()
     
-    planChart = createBarChart(planChartRef, usage.plan, 'Plan')
-    executionChart = createBarChart(executionChartRef, usage.execution, 'Execution')
-    reviewChart = createBarChart(reviewChartRef, usage.review, 'Review')
+    planChart = createBarChart(planChartRef, models, 'Model')
+    executionChart = createBarChart(executionChartRef, models, 'Model')
+    reviewChart = createBarChart(reviewChartRef, models, 'Model')
   })
 
   // Cleanup charts on unmount
@@ -399,8 +401,8 @@ export function StatsTab() {
               <div class="text-sm text-dark-text-muted" data-testid="cost-7d">
                 {formatCurrency(currentUsage().totalCost)}
               </div>
-              <div class={`text-xs mt-1 ${currentUsage().tokenChange >= 0 ? 'text-green-400' : 'text-red-400'}`} data-testid="change-7d">
-                {currentUsage().tokenChange >= 0 ? '↑' : '↓'} {Math.abs(currentUsage().tokenChange)}%
+              <div class={`text-xs mt-1 ${(currentUsage().tokenChange ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`} data-testid="change-7d">
+                {(currentUsage().tokenChange ?? 0) >= 0 ? '↑' : '↓'} {Math.abs(currentUsage().tokenChange ?? 0)}%
               </div>
             </div>
           </div>
@@ -418,7 +420,7 @@ export function StatsTab() {
                 <span class="text-sm text-dark-text-muted">Completed</span>
               </div>
               <div class="text-3xl font-semibold text-green-400" data-testid="completed-count">
-                {taskStats().completed}
+                {taskStats().completedTasks ?? 0}
               </div>
             </div>
             <div class="p-4 bg-dark-surface border border-dark-surface3 rounded-lg">
@@ -429,7 +431,7 @@ export function StatsTab() {
                 <span class="text-sm text-dark-text-muted">Failed Workflows</span>
               </div>
               <div class="text-3xl font-semibold text-red-400" data-testid="failed-count">
-                {taskStats().failed}
+                {taskStats().failedTasks ?? 0}
               </div>
             </div>
             <div class="p-4 bg-dark-surface border border-dark-surface3 rounded-lg">
@@ -440,7 +442,7 @@ export function StatsTab() {
                 <span class="text-sm text-dark-text-muted">Avg Reviews</span>
               </div>
               <div class="text-3xl font-semibold text-blue-400" data-testid="avg-reviews">
-                {taskStats().averageReviews.toFixed(1)}
+                {(getAvgReviews(taskStats())).toFixed(1)}
               </div>
             </div>
           </div>

@@ -162,6 +162,10 @@ async fn rocket() -> Rocket<Build> {
         planning_session_manager,
     ));
 
+    // Disable ANSI colors in Rocket's internal log output to prevent
+    // raw escape sequences (e.g. \x1b[34m) from appearing in log messages.
+    std::env::set_var("ROCKET_CLI_COLORS", "0");
+
     // Build Rocket instance
     let figment = rocket::Config::figment()
         .merge(("port", port))

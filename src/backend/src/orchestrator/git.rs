@@ -23,7 +23,8 @@ fn sanitize_for_git(value: &str) -> String {
         .replace(|character: char| character.is_whitespace(), "-")
         .chars()
         .map(|character| match character {
-            '*' | '?' | '"' | '~' | '^' | ':' | '\\' | '/' => '-',
+            '*' | '?' | '"' | '~' | '^' | ':' | '\\' | '/' | '[' | ']' | '<' | '>' | '@'
+            | '!' | '#' | '$' | '%' | '&' | '{' | '}' | '`' | '|' => '-',
             other => other,
         })
         .collect::<String>()
@@ -682,7 +683,105 @@ pub async fn run_shell_command(command: &str, cwd: &str) -> Result<(), ApiError>
 
 #[cfg(test)]
 mod tests {
+    use super::sanitize_for_git;
     use super::auto_commit_worktree;
+
+    #[test]
+    fn sanitize_removes_square_brackets() {
+        assert_eq!(sanitize_for_git("[test]-claude.md"), "test-claude.md");
+    }
+
+    #[test]
+    fn sanitize_removes_all_invalid_git_ref_chars() {
+        assert_eq!(
+            sanitize_for_git("* ? \" ~ ^ : \\ / [ ] < > @ ! # $ % & { } ` |"),
+            ""
+        );
+    }
+
+    #[test]
+    fn sanitize_replaces_whitespace_with_dash() {
+        assert_eq!(
+            sanitize_for_git("my task name here"),
+            "my-task-name-here"
+        );
+    }
+
+    #[test]
+    fn sanitize_handles_mixed_content() {
+        // parentheses are valid in git ref names, but ! is not
+        assert_eq!(
+            sanitize_for_git("  [BUGFIX] fix: login crash (urgent!)  "),
+            "bugfix-fix-login-crash-(urgent-)"
+        );
+    }
+
+    #[test]
+    fn sanitize_handles_tabs_and_newlines() {
+        assert_eq!(
+            sanitize_for_git("task\tname\nwith\rbreaks"),
+            "task-name-with-breaks"
+        );
+    }
+
+    #[test]
+    fn sanitize_handles_dots_correctly() {
+        // Dots are valid in git ref names in the middle
+        assert_eq!(
+            sanitize_for_git("my.feature.branch"),
+            "my.feature.branch"
+        );
+    }
+
+    #[test]
+    fn sanitize_handles_leading_trailing_dashes() {
+        // Leading/trailing dashes should be removed by the split-filter-join
+        assert_eq!(
+            sanitize_for_git("---hello---world---"),
+            "hello-world"
+        );
+    }
+
+    #[test]
+    fn sanitize_lowercases_result() {
+        assert_eq!(
+            sanitize_for_git("HELLO World"),
+            "hello-world"
+        );
+    }
+
+    #[test]
+    fn sanitize_empty_string() {
+        assert_eq!(sanitize_for_git(""), "");
+    }
+
+    #[test]
+    fn sanitize_only_invalid_chars() {
+        // All invalid chars should produce empty string
+        assert_eq!(sanitize_for_git("[*?\"~^:\\/<>@!#$%&{}`|]"), "");
+    }
+
+    #[test]
+    fn sanitize_keeps_valid_chars() {
+        assert_eq!(
+            sanitize_for_git("valid-branch.name_123"),
+            "valid-branch.name_123"
+        );
+    }
+
+    #[test]
+    fn sanitize_realistic_task_name_with_brackets() {
+        // This reproduces the exact bug: task name "[test]-claude.md"
+        let sanitized = sanitize_for_git("[test]-claude.md");
+        assert_eq!(sanitized, "test-claude.md");
+        // Verify the result is a valid git ref (no brackets)
+        assert!(!sanitized.contains('['));
+        assert!(!sanitized.contains(']'));
+        // Verify the branch can be used as a valid git reference
+        let refname = format!("refs/heads/{}", sanitized);
+        assert!(!refname.contains('['));
+        assert!(!refname.contains(']'));
+    }
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;

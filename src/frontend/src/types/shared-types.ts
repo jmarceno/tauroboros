@@ -399,10 +399,13 @@ export interface UsageStats {
 }
 
 export interface TaskStats {
-  total: number
-  done: number
-  failed: number
-  inProgress: number
+  totalTasks: number
+  completedTasks: number
+  failedTasks: number
+  pendingTasks: number
+  byStatus: Record<string, number>
+  completionRate: number
+  averageExecutionTime: number
 }
 
 export interface ModelUsageStats {

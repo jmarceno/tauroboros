@@ -268,9 +268,9 @@ fi
 
 # Build Rust backend if needed
 log_info "Building Rust backend..."
-if [[ $REBUILD -eq 1 ]] || [[ ! -f "$RUST_DIR/target/release/tauroboros-server" ]] || [[ $(find "$RUST_DIR/src" -newer "$RUST_DIR/target/release/tauroboros-server" 2>/dev/null | wc -l) -gt 0 ]]; then
+if [[ $REBUILD -eq 1 ]] || [[ ! -f "$RUST_DIR/target/release/tauroboros" ]] || [[ $(find "$RUST_DIR/src" -newer "$RUST_DIR/target/release/tauroboros" 2>/dev/null | wc -l) -gt 0 ]]; then
     log_info "Compiling Rust backend (this may take a while on first run)..."
-    local build_status=0
+    build_status=0
     (cd "$RUST_DIR" && cargo build --release 2>&1 | while read line; do
         echo -e "${CYAN}[BUILD]${NC} $line"
     done) || build_status=$?
@@ -292,7 +292,7 @@ else
     log_server "Starting Rust backend with dynamically assigned port..."
     unset SERVER_PORT
 fi
-"$RUST_DIR/target/release/tauroboros-server" &
+"$RUST_DIR/target/release/tauroboros" &
 RUST_PID=$!
 
 # Wait for Rust backend and discover the port if needed

@@ -63,10 +63,10 @@ struct RenameSessionRequest {
 
 #[get("/api/planning/prompt")]
 async fn get_planning_prompt(state: &State<AppStateType>) -> ApiResult<Json<PlanningPrompt>> {
-    // Get default planning prompt
+    // Get default planning prompt (seeded with key 'planning' from prompt-catalog.json)
     let prompt: Option<PlanningPrompt> = sqlx::query_as(
         r#"
-        SELECT * FROM planning_prompts WHERE key = 'default' AND is_active = 1 LIMIT 1
+        SELECT * FROM planning_prompts WHERE key = 'planning' AND is_active = 1 LIMIT 1
         "#,
     )
     .fetch_optional(&state.db)
