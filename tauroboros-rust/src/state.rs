@@ -5,6 +5,10 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+pub fn session_url_for(session_id: &str) -> String {
+    format!("/#session/{}", session_id)
+}
+
 /// Application state shared across all request handlers
 pub struct AppState {
     /// Database connection pool
@@ -53,10 +57,7 @@ impl AppState {
     /// Get the base URL for session links
     #[allow(dead_code)]
     pub fn session_url_for(&self, session_id: &str) -> String {
-        format!(
-            "http://localhost:{}/sessions/{}?mode=compact",
-            self.port, session_id
-        )
+        session_url_for(session_id)
     }
 }
 

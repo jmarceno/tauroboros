@@ -429,6 +429,21 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
 
     sqlx::query(
         r#"
+        INSERT OR IGNORE INTO planning_prompts (key, name, description, prompt_text, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("self_healing")
+    .bind("Self-Healing Diagnostics Prompt")
+    .bind("System prompt for Tauroboros bug investigation")
+    .bind("You are the Tauroboros bug hunter. Investigate if this task failure was caused by a bug in Tauroboros itself.\n\nInspect the Tauroboros source code, not the task worktree.\nAlways check effect-solutions for best practices if the bug involves Effect code.\nDo NOT suggest workflow repairs - only report Tauroboros bugs.\nIf no Tauroboros bug is found, clearly state it's an external issue.\n\nContext:\n- Run ID: {{run_id}}\n- Task ID: {{task_id}}\n- Task Name: {{task_name}}\n- Task Status: {{task_status}}\n- Run Status: {{run_status}}\n- Error Message: {{error_message}}\n- Has Other Active Tasks In Same Run: {{has_other_active_tasks}}\n- DB Path: {{db_path}}\n- TaurOboros Version: {{version}}\n- Is Compiled Binary: {{is_compiled}}\n- GitHub Repository: {{github_url}}\n- Source Mode: {{source_mode}}\n- Source Notes: {{source_notes}}\n\nDatabase Schema (JSON):\n{{schema_json}}\n\nYour mission:\n1) Examine the Tauroboros codebase for bugs that could cause this failure.\n2) Search ~/.local/share/effect-solutions/ for patterns if Effect code is involved.\n3) Identify if this is a Tauroboros bug or an external issue (user code, environment, etc.).\n4) Report findings in the required JSON format.\n\nReturn ONLY this JSON object shape:\n{\n  \"diagnosticsSummary\": \"What was investigated\",\n  \"isTauroborosBug\": true|false,\n  \"rootCause\": {\n    \"description\": \"What the bug is\",\n    \"affectedFiles\": [\"src/.../file.ts\"],\n    \"codeSnippet\": \"relevant code showing the bug\"\n  },\n  \"proposedSolution\": \"How to fix it\",\n  \"implementationPlan\": [\"step 1\", \"step 2\"],\n  \"confidence\": \"high|medium|low\",\n  \"externalFactors\": [\"list of non-Tauroboros causes if not a bug\"]\n}")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
         INSERT OR IGNORE INTO prompt_templates (
             key, name, description, template_text, variables_json, is_active, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
@@ -438,9 +453,9 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     .bind("Task Execution")
     .bind("Core implementation prompt for standard execution")
     .bind(
-        "EXECUTE END-TO-END. Do not ask follow-up questions unless blocked by: missing credentials, missing required external input, or an irreversible product decision. Make reasonable assumptions from the codebase.\n\n{{execution_intro}}\n\nTask:\n{{task.prompt}}\n\n{{additional_context_block}}\n\nImplementation requirements:\n- Make concrete code changes in this worktree.\n- Keep changes scoped to the task goals.\n- Validate your result with focused checks before finishing.\n- Report concise progress and outcomes.",
+        "EXECUTE END-TO-END. Do not ask follow-up questions unless blocked by: missing credentials, missing required external input, or an irreversible product decision. Make reasonable assumptions from the codebase.\n\n{{execution_intro}}\n\nTask:\n{{task.prompt}}\n\n{{approved_plan_block}}\n{{user_guidance_block}}\n{{additional_context_block}}\n\nImplementation requirements:\n- Make concrete code changes in this worktree.\n- Keep changes scoped to the task goals.\n- Validate your result with focused checks before finishing.\n- Report concise progress and outcomes.",
     )
-    .bind("[\"task\",\"execution_intro\",\"additional_context_block\"]")
+    .bind("[\"task\",\"execution_intro\",\"approved_plan_block\",\"user_guidance_block\",\"additional_context_block\"]")
     .bind(now)
     .bind(now)
     .execute(pool)
@@ -536,6 +551,120 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
         "Address the issues found during review and update the implementation.\n\nTask:\n{{task.prompt}}\n\nReview summary:\n{{review_summary}}\n\nGaps:\n{{review_gaps}}\n\nRequirements:\n- Fix all listed gaps completely.\n- Preserve existing correct behavior.\n- Keep the solution scoped and production-ready.",
     )
     .bind("[\"task\",\"review_summary\",\"review_gaps\"]")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO prompt_templates (
+            key, name, description, template_text, variables_json, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("repair")
+    .bind("Repair")
+    .bind("Deterministic workflow state repair analysis prompt.")
+    .bind(
+        "You repair workflow task states.\n\nAnalyze the task state, worktree git status, session history, and latest output. Choose what ACTUALLY happened and the right repair action.\n\nChoose exactly one action:\n- queue_implementation\n- restore_plan_approval\n- reset_backlog\n- mark_done\n- fail_task\n- continue_with_more_reviews\n\nDecision guidelines:\n- Prefer queue_implementation when a usable [plan] exists and worktree shows real code changes.\n- Prefer mark_done only when output and worktree both confirm completion.\n- Use restore_plan_approval when plan should return to human review.\n- Use reset_backlog when there are no meaningful changes and task should restart.\n- Use fail_task when state is invalid and should remain visible with actionable error.\n- Use continue_with_more_reviews when task is stuck only due to review limit and gaps seem fixable.\n\nCritical verification steps:\n1) Check worktree git status.\n2) Check session messages for where execution stopped.\n3) Check workflow session history patterns.\n4) Compare latest output claims with actual worktree changes.\n\nContext:\n{{repair_context}}\n\nYour FINAL action MUST be to call the emit_repair_decision tool with your decision. Do NOT output any text or JSON after calling the tool. Call emit_repair_decision with: action (one of the actions above), reason (why you chose this), errorMessage (only for fail_task).",
+    )
+    .bind("[\"task\",\"repair_context\"]")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO prompt_templates (
+            key, name, description, template_text, variables_json, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("code_style")
+    .bind("Code Style")
+    .bind("Code style enforcement agent prompt.")
+    .bind(
+        "You are a code style enforcement agent. Review the code in the that is changed or/and staged in this repo and apply fixes to ensure compliance.\n\nSTANDARD RULES:\n- Follow existing project conventions\n- Use consistent indentation (match existing files)\n- Remove trailing whitespace\n- Ensure consistent quote style\n- Add missing semicolons where required by the language\n- Fix obvious linting issues\n- Do not touch unchanged files.\n\nAPPROACH:\n1. First, read the relevant source files\n2. Identify any style violations\n3. Use the edit tool to fix all issues\n4. Confirm when complete\n\nIMPORTANT: You must actively use the edit tool to make changes. Do not just report issues - fix them.",
+    )
+    .bind("[]")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO prompt_templates (
+            key, name, description, template_text, variables_json, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("resume_task_continuation")
+    .bind("Resume Task Continuation")
+    .bind("Prompt to resume a task from where it left off.")
+    .bind(
+        "Continue from where you left off. You were in the middle of implementing a task. Review what you've done so far and continue with the remaining work.\n\nPrevious context: {{agent_output_snapshot}}",
+    )
+    .bind("[\"agent_output_snapshot\"]")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO prompt_templates (
+            key, name, description, template_text, variables_json, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("merge_conflict_repair")
+    .bind("Merge Conflict Repair")
+    .bind("Prompt to resolve merge conflicts during cherry-pick.")
+    .bind(
+        "A merge conflict occurred when merging branch '{{worktree_branch}}' into '{{target_branch}}'.\n\nGit output:\n{{merge_output}}\n\nYour task is to:\n1. Check the current git status to understand the conflicts\n2. Resolve all merge conflicts by choosing the appropriate changes (prefer the task branch changes when in doubt)\n3. Stage the resolved files\n4. Complete the merge by creating a merge commit\n5. Ensure the merge is successful\n\nRun git commands as needed to resolve the conflicts. After resolving, verify with 'git status' that there are no remaining conflicts.",
+    )
+    .bind("[\"worktree_branch\",\"target_branch\",\"merge_output\"]")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO prompt_templates (
+            key, name, description, template_text, variables_json, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("task_setup")
+    .bind("Task Setup")
+    .bind("Prompt to create kanban tasks from planning conversation.")
+    .bind(
+        "Please use the **workflow-task-setup** skill to create kanban tasks from our planning conversation.\n\n**Instructions:**\n1. Review the conversation history in this session to understand the implementation plan we discussed\n2. Use the workflow-task-setup skill to convert the plan into actionable TaurOboros kanban tasks\n3. Create appropriate tasks with proper dependencies, statuses, and configurations\n\n**API Access Information:**\n- The TaurOboros server is running on port: **{{server_port}}**\n- Base URL: http://localhost:{{server_port}}\n- Use the HTTP API endpoints to create tasks (POST /api/tasks)\n- Use the Task Groups API to organize related tasks (POST /api/task-groups)\n\n**Task Creation Guidelines:**\n- Create small, outcome-based tasks that can be completed independently\n- Set appropriate dependencies where one task truly blocks another\n- Use status \"backlog\" for runnable tasks\n- Include clear, actionable prompts for each task\n- Consider using plan-mode (planmode: true) for tasks that need approval before implementation\n\n**IMPORTANT - Create a Task Group:**\nIf the implementation plan involves multiple related tasks:\n1. Create ALL tasks first using POST /api/tasks\n2. Then create a **Task Group** using POST /api/task-groups with:\n   - \"name\": A descriptive name for the feature/project (e.g., \"Feature X\")\n   - \"color\": A hex color for visual identification (e.g., \"#6366f1\")\n   - \"taskIds\": Array of the created task IDs to add to the group\n3. Use POST /api/task-groups/:id/tasks to add tasks if the group was created without them\n\n**Group Creation Example:**\n```bash\n# Create tasks first\ncurl -X POST http://localhost:{{server_port}}/api/tasks -H \"Content-Type: application/json\" -d '{\"name\": \"Task 1\", \"prompt\": \"Do thing A\", \"status\": \"backlog\"}'\ncurl -X POST http://localhost:{{server_port}}/api/tasks -H \"Content-Type: application/json\" -d '{\"name\": \"Task 2\", \"prompt\": \"Do thing B\", \"status\": \"backlog\"}'\n\n# Create group with tasks\ncurl -X POST http://localhost:{{server_port}}/api/task-groups -H \"Content-Type: application/json\" -d '{\"name\": \"Feature X\", \"color\": \"#6366f1\", \"taskIds\": [\"task-id-1\", \"task-id-2\"]}'\n```\n\nThe group allows you to execute all related tasks together with a single click using the \"Start Group Workflow\" button.",
+    )
+    .bind("[\"server_port\"]")
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO prompt_templates (
+            key, name, description, template_text, variables_json, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        "#,
+    )
+    .bind("mock_classification")
+    .bind("Mock Classification")
+    .bind("Prompt to classify messages into categories for mock testing.")
+    .bind(
+        "Classify the following message into one of these categories: plan, execute, read, review, default\n\nMessage: {message}\n\nCategory (one word only):",
+    )
+    .bind("[\"message\"]")
     .bind(now)
     .bind(now)
     .execute(pool)

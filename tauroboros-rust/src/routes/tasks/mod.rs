@@ -10,10 +10,11 @@ use crate::db::queries::*;
 use crate::db::{CreateTaskInput, UpdateTaskInput};
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
-use crate::state::AppStateType;
+use crate::state::{session_url_for, AppStateType};
 use rocket::routes;
 use rocket::serde::json::{json, Json, Value};
 use rocket::State;
+use rocket::http::Status;
 use rocket::{delete, get, patch, post, put, Route};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -72,18 +73,18 @@ struct CreateAndWaitTaskRequest {
 // Helper Functions (pub(super) for sub-module access)
 // ============================================================================
 
-pub(crate) fn normalize_task_for_client(task: &Task, base_url: &str) -> Value {
+pub(crate) fn normalize_task_for_client(task: &Task, _base_url: &str) -> Value {
     let mut json = serde_json::to_value(task).unwrap_or_default();
     if let Some(session_id) = &task.session_id {
-        json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, session_id));
+        json["sessionUrl"] = json!(session_url_for(session_id));
     }
     json
 }
 
-pub(crate) fn normalize_task_run_for_client(run: &TaskRun, base_url: &str) -> Value {
+pub(crate) fn normalize_task_run_for_client(run: &TaskRun, _base_url: &str) -> Value {
     let mut json = serde_json::to_value(run).unwrap_or_default();
     if let Some(session_id) = &run.session_id {
-        json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, session_id));
+        json["sessionUrl"] = json!(session_url_for(session_id));
     }
     json
 }
@@ -173,7 +174,7 @@ async fn list_tasks(state: &State<AppStateType>) -> ApiResult<Json<Vec<Value>>> 
 async fn create_task(
     state: &State<AppStateType>,
     req: Json<CreateTaskRequest>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<(Status, Json<Value>)> {
     let base_url = format!("http://localhost:{}", state.port);
 
     let all_tasks = get_tasks(&state.db).await?;
@@ -205,9 +206,9 @@ async fn create_task(
             "Invalid dependencies auto-removed: {}",
             removed_deps.join(", ")
         ));
-        Ok(Json(response))
+        Ok((Status::Created, Json(response)))
     } else {
-        Ok(Json(normalized))
+        Ok((Status::Created, Json(normalized)))
     }
 }
 
@@ -542,38 +543,73 @@ async fn request_plan_revision(
         return Err(ApiError::bad_request("feedback is required"));
     }
 
+    let feedback = req.feedback.trim().to_string();
     let next_count = task.plan_revision_count + 1;
     let new_output = format!(
         "{}\n[user-revision-request]\n{}\n",
-        task.agent_output,
-        req.feedback.trim()
+        task.agent_output, feedback
     );
 
-    let update = UpdateTaskInput {
-        status: Some(TaskStatus::Backlog),
-        awaiting_plan_approval: Some(false),
-        execution_phase: Some(ExecutionPhase::PlanRevisionPending),
-        plan_revision_count: Some(next_count),
-        agent_output: Some(Some(new_output)),
-        ..Default::default()
-    };
+    // Retry loop: wait for active run to complete before starting the revision
+    let max_attempts = 24;
+    let delay_ms = std::time::Duration::from_millis(50);
+    let mut run: Option<WorkflowRun> = None;
 
-    let updated = update_task(&state.db, &id, update)
+    for attempt in 0..max_attempts {
+        let active_run = get_active_workflow_run_for_task(&state.db, &id).await?;
+        if active_run.is_some() && attempt < max_attempts - 1 {
+            tokio::time::sleep(delay_ms).await;
+            continue;
+        }
+
+        // Update task state once we have a clear slot
+        let update = UpdateTaskInput {
+            status: Some(TaskStatus::Backlog),
+            awaiting_plan_approval: Some(false),
+            execution_phase: Some(ExecutionPhase::PlanRevisionPending),
+            plan_revision_count: Some(next_count),
+            agent_output: Some(Some(new_output.clone())),
+            ..Default::default()
+        };
+
+        let updated = update_task(&state.db, &id, update)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Task not found"))?;
+
+        let hub = state.sse_hub.read().await;
+        let _ = hub
+            .broadcast(&WSMessage {
+                r#type: "plan_revision_requested".to_string(),
+                payload: json!({ "taskId": id }),
+            })
+            .await;
+        drop(hub);
+
+        let base_url = format!("http://localhost:{}", state.port);
+        broadcast_task_update(state, &updated, &base_url).await;
+
+        // Auto-start the revision run
+        if let Ok(new_run) = state.orchestrator.start_single(&id).await {
+            run = Some(new_run);
+        }
+        break;
+    }
+
+    let task_for_response = get_task(&state.db, &id)
         .await?
         .ok_or_else(|| ApiError::not_found("Task not found"))?;
 
-    let hub = state.sse_hub.read().await;
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "plan_revision_requested".to_string(),
-            payload: json!({ "taskId": id }),
-        })
-        .await;
-
     let base_url = format!("http://localhost:{}", state.port);
-    broadcast_task_update(state, &updated, &base_url).await;
 
-    Ok(Json(normalize_task_for_client(&updated, &base_url)))
+    if let Some(run) = run {
+        Ok(Json(json!({
+            "task": normalize_task_for_client(&task_for_response, &base_url),
+            "run": run,
+        })))
+    } else {
+        Err(ApiError::bad_request("Could not queue plan revision because a prior run is still active")
+            .with_code(ErrorCode::ExecutionOperationFailed))
+    }
 }
 
 #[post("/api/tasks/<id>/request-revision", data = "<req>")]
@@ -788,7 +824,7 @@ async fn move_to_group(
 async fn create_and_wait_task(
     state: &State<AppStateType>,
     req: Json<CreateAndWaitTaskRequest>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<(Status, Json<Value>)> {
     let base_url = format!("http://localhost:{}", state.port);
 
     let all_tasks = get_tasks(&state.db).await?;
@@ -826,25 +862,25 @@ async fn create_and_wait_task(
             TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stuck
         ) {
             let current_run = get_workflow_run(&state.db, &run.id).await?;
-            return Ok(Json(json!({
+            return Ok((Status::Created, Json(json!({
                 "task": normalize_task_for_client(&current_task, &base_url),
                 "run": current_run,
                 "completedAt": chrono::Utc::now().timestamp_millis(),
                 "durationMs": start.elapsed().as_millis() as u64,
                 "status": current_task.status,
-            })));
+            }))));
         }
 
         if start.elapsed().as_millis() as u64 >= timeout_ms {
             let stop_result = state.orchestrator.stop_run(&run.id, false).await?;
-            return Ok(Json(json!({
+            return Ok((Status::Created, Json(json!({
                 "error": "Timeout waiting for task completion",
                 "code": ErrorCode::ExecutionOperationFailed.as_str(),
                 "task": normalize_task_for_client(&current_task, &base_url),
                 "run": stop_result.run,
                 "timeoutMs": timeout_ms,
                 "elapsedMs": start.elapsed().as_millis() as u64,
-            })));
+            }))));
         }
     }
 }

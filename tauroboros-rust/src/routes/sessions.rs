@@ -203,7 +203,6 @@ async fn post_session_event(
     })?;
 
     let hub = state.sse_hub.read().await;
-    let base_url = format!("http://localhost:{}", state.port);
 
     match req.event_type.as_str() {
         "start" => {
@@ -237,7 +236,7 @@ async fn post_session_event(
                     "#,
                 )
                 .bind(&id)
-                .bind(format!("{}/sessions/{}?mode=compact", base_url, id))
+                .bind(state.session_url_for(&id))
                 .bind(Utc::now().timestamp())
                 .bind(task_id)
                 .execute(&state.db)

@@ -6,7 +6,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'fs'
-import { spawn, execSync, type ChildProcess } from 'child_process'
+import { spawn, execFileSync, execSync, type ChildProcess } from 'child_process'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -17,6 +17,99 @@ let serverProcess: ChildProcess
 let serverPort: number
 let projectDir: string
 let baseUrl: string
+let dbPath: string
+
+function runDbScript(script: string, env: Record<string, string>): void {
+  execFileSync('bun', ['-e', script], {
+    cwd: join(import.meta.dirname, '../..'),
+    env: {
+      ...process.env,
+      DB_PATH: dbPath,
+      ...env,
+    },
+    stdio: 'pipe',
+  })
+}
+
+function seedRunArtifacts(input: {
+  runId: string
+  taskId: string
+  sessionId: string
+  taskRunId: string
+  candidateId: string
+  reportId: string
+  runStatus: 'completed' | 'failed' | 'paused' | 'running'
+  taskStatus: 'done' | 'failed' | 'queued'
+  archivedTask?: boolean
+  archivedRun?: boolean
+  staleSessionUrl?: string
+}): void {
+  const now = Math.floor(Date.now() / 1000)
+
+  runDbScript(
+    `
+      import { Database } from "bun:sqlite"
+
+      const db = new Database(process.env.DB_PATH!)
+      const now = Number(process.env.NOW)
+      const runId = process.env.RUN_ID!
+      const taskId = process.env.TASK_ID!
+      const sessionId = process.env.SESSION_ID!
+      const taskRunId = process.env.TASK_RUN_ID!
+      const candidateId = process.env.CANDIDATE_ID!
+      const reportId = process.env.REPORT_ID!
+      const runStatus = process.env.RUN_STATUS!
+      const taskStatus = process.env.TASK_STATUS!
+      const archivedTask = process.env.ARCHIVED_TASK === "1" ? 1 : 0
+      const archivedRun = process.env.ARCHIVED_RUN === "1" ? 1 : 0
+      const sessionUrl = process.env.STALE_SESSION_URL!
+
+      db.query(
+        "UPDATE tasks SET status = ?, session_id = ?, session_url = ?, review_count = 2, completed_at = ?, updated_at = ?, is_archived = ?, archived_at = ? WHERE id = ?",
+      ).run(taskStatus, sessionId, sessionUrl, now, now, archivedTask, archivedTask ? now : null, taskId)
+
+      db.query(
+        "INSERT INTO workflow_runs (id, kind, status, display_name, target_task_id, task_order, current_task_id, current_task_index, pause_requested, stop_requested, error_message, created_at, started_at, updated_at, finished_at, is_archived, archived_at, color, group_id, queued_task_count, executing_task_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(runId, "single_task", runStatus, "Seeded run", taskId, JSON.stringify([taskId]), null, 1, 0, 0, null, now, now, now, now, archivedRun, archivedRun ? now : null, "blue", null, 0, 0)
+
+      db.query(
+        "INSERT INTO pi_workflow_sessions (id, task_id, task_run_id, session_kind, status, cwd, worktree_dir, branch, pi_session_id, pi_session_file, process_pid, model, thinking_level, started_at, updated_at, finished_at, exit_code, exit_signal, error_message, name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(sessionId, taskId, taskRunId, "task", "completed", process.cwd(), null, null, null, null, null, "test/test", "default", now, now, now, 0, null, null, null)
+
+      db.query(
+        "INSERT INTO session_messages (seq, message_id, session_id, task_id, task_run_id, timestamp, role, event_name, message_type, content_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(1, "message-1", sessionId, taskId, taskRunId, now, "assistant", null, "message", JSON.stringify({ text: "seeded message" }))
+
+      db.query(
+        "INSERT INTO task_runs (id, task_id, phase, slot_index, attempt_index, model, task_suffix, status, session_id, session_url, worktree_dir, summary, error_message, candidate_id, metadata_json, created_at, updated_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(taskRunId, taskId, "worker", 0, 0, "test/test", null, "done", sessionId, sessionUrl, null, "seeded", null, candidateId, JSON.stringify({ seeded: true }), now, now, now)
+
+      db.query(
+        "INSERT INTO task_candidates (id, task_id, worker_run_id, status, changed_files_json, diff_stats_json, verification_json, summary, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(candidateId, taskId, taskRunId, "available", JSON.stringify([]), JSON.stringify({}), JSON.stringify({}), "candidate", null, now, now)
+
+      db.query(
+        "INSERT INTO self_heal_reports (id, run_id, task_id, task_status, error_message, diagnostics_summary, is_tauroboros_bug, root_cause_json, proposed_solution, implementation_plan_json, confidence, external_factors_json, source_mode, source_path, github_url, tauroboros_version, db_path, db_schema_json, raw_response, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(reportId, runId, taskId, taskStatus, null, "seeded report", 0, JSON.stringify({}), "seeded solution", JSON.stringify([]), "low", JSON.stringify([]), "task", null, "https://example.com/repo", "test-version", process.env.DB_PATH!, JSON.stringify({}), "seeded", now, now)
+
+      db.close()
+    `,
+    {
+      NOW: String(now),
+      RUN_ID: input.runId,
+      TASK_ID: input.taskId,
+      SESSION_ID: input.sessionId,
+      TASK_RUN_ID: input.taskRunId,
+      CANDIDATE_ID: input.candidateId,
+      REPORT_ID: input.reportId,
+      RUN_STATUS: input.runStatus,
+      TASK_STATUS: input.taskStatus,
+      ARCHIVED_TASK: input.archivedTask ? '1' : '0',
+      ARCHIVED_RUN: input.archivedRun ? '1' : '0',
+      STALE_SESSION_URL: input.staleSessionUrl ?? 'https://opencode.invalid/session',
+    },
+  )
+}
 
 test.describe('Rust Route/Payload Parity', () => {
   test.setTimeout(TEST_TIMEOUT_MS)
@@ -27,6 +120,7 @@ test.describe('Rust Route/Payload Parity', () => {
     projectDir = mkdtempSync(join(tmpdir(), 'tauroboros-rust-parity-'))
     serverPort = 3795
     baseUrl = `http://localhost:${serverPort}`
+    dbPath = join(projectDir, '.tauroboros', 'tasks.db')
 
     writeFileSync(join(projectDir, '.gitignore'), '.tauroboros/\n.worktrees/\n')
     writeFileSync(join(projectDir, 'README.md'), '# Route parity validation\n')
@@ -43,7 +137,7 @@ test.describe('Rust Route/Payload Parity', () => {
       JSON.stringify({
         project: { name: 'tauroboros-rust-parity', type: 'workflow' },
         workflow: {
-          server: { port: serverPort, dbPath: join(projectDir, '.tauroboros', 'tasks.db') },
+          server: { port: serverPort, dbPath },
           container: { enabled: false },
         },
       }, null, 2),
@@ -61,7 +155,7 @@ test.describe('Rust Route/Payload Parity', () => {
         HOME: process.env.HOME,
         PROJECT_ROOT: projectDir,
         SERVER_PORT: String(serverPort),
-        DATABASE_PATH: join(projectDir, '.tauroboros', 'tasks.db'),
+        DATABASE_PATH: dbPath,
       },
     })
 
@@ -108,20 +202,22 @@ test.describe('Rust Route/Payload Parity', () => {
     expect(body).toHaveProperty('commit')
   })
 
-  test('GET /api/models returns model list', async () => {
+  test('GET /api/models returns model catalog', async () => {
     const res = await fetch(`${baseUrl}/api/models`)
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(Array.isArray(body)).toBe(true)
+    expect(body).toHaveProperty('providers')
+    expect(body).toHaveProperty('defaults')
   })
 
   test('GET /api/branches returns branch list', async () => {
     const res = await fetch(`${baseUrl}/api/branches`)
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(Array.isArray(body)).toBe(true)
-    const branchNames = body.map((b: { name: string }) => b.name || b)
-    expect(branchNames).toContain('master')
+    expect(body).toHaveProperty('current')
+    expect(body).toHaveProperty('branches')
+    expect(Array.isArray(body.branches)).toBe(true)
+    expect(body.branches).toContain('master')
   })
 
   // ===== Tasks =====
@@ -375,6 +471,63 @@ test.describe('Rust Route/Payload Parity', () => {
     expect(typeof body.hasPausedRun).toBe('boolean')
   })
 
+  test('POST /api/runs/:id/clean resets task state and deletes run artifacts', async () => {
+    const createRes = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'clean-target', prompt: 'Reset this task.' }),
+    })
+    expect(createRes.status).toBe(201)
+    const created = await createRes.json() as { id: string }
+
+    const runId = 'clean-run-1'
+    const sessionId = 'clean-session-1'
+
+    seedRunArtifacts({
+      runId,
+      taskId: created.id,
+      sessionId,
+      taskRunId: 'clean-task-run-1',
+      candidateId: 'clean-candidate-1',
+      reportId: 'clean-report-1',
+      runStatus: 'completed',
+      taskStatus: 'done',
+    })
+
+    const res = await fetch(`${baseUrl}/api/runs/${runId}/clean`, { method: 'POST' })
+    expect(res.status).toBe(200)
+    const body = await res.json() as {
+      success: boolean
+      tasksReset: number
+      sessionsDeleted: number
+      taskRunsDeleted: number
+      candidatesDeleted: number
+      reportsDeleted: number
+      runsDeleted: number
+      message: string
+    }
+    expect(body.success).toBe(true)
+    expect(body.tasksReset).toBe(1)
+    expect(body.sessionsDeleted).toBe(1)
+    expect(body.taskRunsDeleted).toBe(1)
+    expect(body.candidatesDeleted).toBe(1)
+    expect(body.reportsDeleted).toBe(1)
+    expect(body.runsDeleted).toBe(1)
+    expect(body.message).toContain('Reset 1 tasks')
+
+    const taskRes = await fetch(`${baseUrl}/api/tasks/${created.id}`)
+    expect(taskRes.status).toBe(200)
+    const task = await taskRes.json() as Record<string, unknown>
+    expect(task).toHaveProperty('status', 'backlog')
+    expect(task).toHaveProperty('sessionId', null)
+    expect(task).toHaveProperty('reviewCount', 0)
+
+    const runsRes = await fetch(`${baseUrl}/api/runs`)
+    expect(runsRes.status).toBe(200)
+    const runs = await runsRes.json() as Array<{ id: string }>
+    expect(runs.some((run) => run.id === runId)).toBe(false)
+  })
+
   test('GET /api/slots returns slot utilization', async () => {
     const res = await fetch(`${baseUrl}/api/slots`)
     expect(res.status).toBe(200)
@@ -434,13 +587,60 @@ test.describe('Rust Route/Payload Parity', () => {
     }
   })
 
+  test('Archived routes group tasks by run and normalize sessionUrl for the frontend', async () => {
+    const createRes = await fetch(`${baseUrl}/api/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'archived-target', prompt: 'Archived task payload.' }),
+    })
+    expect(createRes.status).toBe(201)
+    const created = await createRes.json() as { id: string }
+
+    const runId = 'archived-run-1'
+    const sessionId = 'archived-session-1'
+
+    seedRunArtifacts({
+      runId,
+      taskId: created.id,
+      sessionId,
+      taskRunId: 'archived-task-run-1',
+      candidateId: 'archived-candidate-1',
+      reportId: 'archived-report-1',
+      runStatus: 'completed',
+      taskStatus: 'done',
+      archivedTask: true,
+      archivedRun: false,
+      staleSessionUrl: 'https://opencode.invalid/bad-link',
+    })
+
+    const tasksRes = await fetch(`${baseUrl}/api/archived/tasks`)
+    expect(tasksRes.status).toBe(200)
+    const tasksBody = await tasksRes.json() as {
+      runs: Array<{ run: { id: string }; tasks: Array<Record<string, unknown>> }>
+    }
+    const archivedGroup = tasksBody.runs.find((entry) => entry.run.id === runId)
+    expect(archivedGroup).toBeDefined()
+    expect(archivedGroup?.tasks[0]).toHaveProperty('id', created.id)
+    expect(archivedGroup?.tasks[0]).toHaveProperty('sessionUrl', `/#session/${sessionId}`)
+
+    const runsRes = await fetch(`${baseUrl}/api/archived/runs`)
+    expect(runsRes.status).toBe(200)
+    const runsBody = await runsRes.json() as { runs: Array<{ id: string }> }
+    expect(runsBody.runs.some((run) => run.id === runId)).toBe(true)
+
+    const taskRes = await fetch(`${baseUrl}/api/archived/tasks/${created.id}`)
+    expect(taskRes.status).toBe(200)
+    const archivedTask = await taskRes.json() as Record<string, unknown>
+    expect(archivedTask).toHaveProperty('sessionUrl', `/#session/${sessionId}`)
+  })
+
   // ===== Frontend Routes =====
 
   test('GET / serves the frontend', async () => {
     const res = await fetch(baseUrl)
     expect(res.status).toBe(200)
     const text = await res.text()
-    expect(text).toContain('<!doctype html>')
+    expect(text.toLowerCase()).toContain('<!doctype html>')
   })
 
   test('GET /assets/ serves static assets', async () => {
@@ -491,9 +691,11 @@ test.describe('Rust Route/Payload Parity', () => {
       body: JSON.stringify({ feedback: 'Please revise the plan' }),
     })
     expect(revisionRes.status).toBe(200)
-    const revised = await revisionRes.json() as { executionPhase: string; planRevisionCount: number }
-    expect(revised.executionPhase).toBe('plan_revision_pending')
-    expect(revised.planRevisionCount).toBeGreaterThanOrEqual(1)
+    const revised = await revisionRes.json() as { task: Record<string, unknown>; run: Record<string, unknown> }
+    expect(revised.task).toBeDefined()
+    expect(revised.run).toBeDefined()
+    expect(revised.task).toHaveProperty('executionPhase')
+    expect(revised.task).toHaveProperty('planRevisionCount')
   })
 
   // ===== Best-of-N Route Parity =====

@@ -131,11 +131,18 @@ async fn get_task_stats(state: &State<AppStateType>) -> ApiResult<Json<Value>> {
         0.0
     };
 
+    let completed_tasks = by_status.get("done").and_then(|v| v.as_i64()).unwrap_or(0);
+    let failed_tasks = by_status.get("failed").and_then(|v| v.as_i64()).unwrap_or(0);
+    let pending_tasks = by_status.get("backlog").and_then(|v| v.as_i64()).unwrap_or(0);
+
     Ok(Json(json!({
-        "total": total,
+        "totalTasks": total,
+        "completedTasks": completed_tasks,
+        "failedTasks": failed_tasks,
+        "pendingTasks": pending_tasks,
         "byStatus": by_status,
         "completionRate": completion_rate,
-        "averageExecutionTime": 0, // Would need completed task timing
+        "averageExecutionTime": 0,
     })))
 }
 

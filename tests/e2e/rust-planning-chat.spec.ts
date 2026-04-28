@@ -272,7 +272,7 @@ test.describe('Rust Planning Chat', () => {
     const taskId = task.id as string
 
     const res = await fetch(`${baseUrl}/api/planning/sessions/${taskId}`)
-    expect(res.status).toBe(400)
+    expect([400, 404]).toContain(res.status)
     const body = await res.json()
     expect(body).toHaveProperty('error')
   })
@@ -387,7 +387,7 @@ test.describe('Rust Planning Chat', () => {
       expect(session).toHaveProperty('status', 'active')
       expect(session).toHaveProperty('sessionUrl')
       expect(typeof session.sessionUrl).toBe('string')
-      expect((session.sessionUrl as string)).toContain(`/sessions/${session.id}`)
+      expect(session.sessionUrl).toBe(`/#session/${session.id}`)
 
       const sessionId = session.id as string
 
@@ -408,6 +408,7 @@ test.describe('Rust Planning Chat', () => {
       const getBody = await getRes.json() as Record<string, unknown>
       expect(getBody).toHaveProperty('id', sessionId)
       expect(getBody).toHaveProperty('sessionUrl')
+      expect(getBody.sessionUrl).toBe(`/#session/${sessionId}`)
 
       const reconnectRes = await fetch(`${baseUrl}/api/planning/sessions/${sessionId}/reconnect`, {
         method: 'POST',

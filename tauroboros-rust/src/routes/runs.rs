@@ -144,14 +144,12 @@ async fn resume_run(state: &State<AppStateType>, id: String) -> ApiResult<Json<V
 }
 
 #[post("/api/runs/<id>/clean")]
-async fn clean_run_route(state: &State<AppStateType>, id: String) -> ApiResult<Json<Value>> {
-    let result = state.orchestrator.clean_run(&id, false).await?;
-    Ok(Json(json!({
-        "runId": id,
-        "killed": result.killed,
-        "cleaned": result.cleaned,
-        "message": "Run cleaned",
-    })))
+async fn clean_run_route(
+    state: &State<AppStateType>,
+    id: String,
+) -> ApiResult<Json<CleanRunResult>> {
+    let result = state.orchestrator.clean_run(&id).await?;
+    Ok(Json(result))
 }
 
 #[get("/api/runs/paused-state")]

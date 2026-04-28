@@ -13,8 +13,6 @@ use serde::Deserialize;
 struct CleanRunRequest {
     #[serde(rename = "runId")]
     run_id: String,
-    #[serde(rename = "destructive")]
-    destructive: Option<bool>,
 }
 
 #[derive(Debug, FromForm)]
@@ -76,6 +74,7 @@ async fn get_workflow_status(state: &State<AppStateType>) -> ApiResult<Json<Valu
     let has_running = has_running_workflows(&state.db).await?;
 
     Ok(Json(json!({
+        "active": has_running,
         "hasRunningWorkflows": has_running,
     })))
 }
@@ -162,18 +161,10 @@ async fn get_run_queue_status(state: &State<AppStateType>, id: String) -> ApiRes
 async fn clean_run(
     state: &State<AppStateType>,
     req: Json<CleanRunRequest>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Json<CleanRunResult>> {
     let run_id = &req.run_id;
-    let destructive = req.destructive.unwrap_or(false);
-
-    let result = state.orchestrator.clean_run(run_id, destructive).await?;
-    Ok(Json(json!({
-        "runId": run_id,
-        "destructive": destructive,
-        "killed": result.killed,
-        "cleaned": result.cleaned,
-        "message": "Run cleaned",
-    })))
+    let result = state.orchestrator.clean_run(run_id).await?;
+    Ok(Json(result))
 }
 
 #[get("/api/execution-graph?<query..>")]

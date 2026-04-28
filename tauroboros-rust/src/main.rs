@@ -85,7 +85,6 @@ async fn rocket() -> Rocket<Build> {
     let orchestrator = Orchestrator::new(
         db_pool.clone(),
         sse_hub_lock.clone(),
-        port,
         project_root.clone(),
         settings_dir.clone(),
     );

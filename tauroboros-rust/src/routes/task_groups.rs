@@ -1,7 +1,8 @@
 use crate::db::queries::*;
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
-use crate::state::AppStateType;
+use crate::state::{session_url_for, AppStateType};
+use rocket::http::Status;
 use rocket::routes;
 use rocket::serde::json::{json, Json, Value};
 use rocket::State;
@@ -129,7 +130,7 @@ async fn list_groups(state: &State<AppStateType>) -> ApiResult<Json<Vec<TaskGrou
 async fn create_group(
     state: &State<AppStateType>,
     req: Json<CreateGroupRequest>,
-) -> ApiResult<Json<TaskGroup>> {
+) -> ApiResult<(Status, Json<TaskGroup>)> {
     // Validate name
     if let Err(e) = validate_group_name(&req.name) {
         return Err(ApiError::bad_request(e).with_code(ErrorCode::InvalidRequestBody));
@@ -192,7 +193,7 @@ async fn create_group(
     .await?;
     broadcast_group_created(state, &group).await;
 
-    Ok(Json(group))
+    Ok((Status::Created, Json(group)))
 }
 
 #[get("/api/task-groups/<id>")]
@@ -202,14 +203,12 @@ async fn get_group(state: &State<AppStateType>, id: String) -> ApiResult<Json<Va
     })?;
 
     // Fetch tasks with full details
-    let base_url = format!("http://localhost:{}", state.port);
     let mut tasks = Vec::new();
     for task_id in &group.task_ids {
         if let Ok(Some(t)) = get_task(&state.db, task_id).await {
             let mut json = serde_json::to_value(&t).unwrap_or_default();
             if let Some(ref session_id) = t.session_id {
-                json["sessionUrl"] =
-                    json!(format!("{}/sessions/{}?mode=compact", base_url, session_id));
+                json["sessionUrl"] = json!(session_url_for(session_id));
             }
             tasks.push(json);
         }

@@ -1,8 +1,9 @@
 use crate::db::queries::*;
 use crate::error::{ApiError, ApiResult, ErrorCode};
 use crate::models::*;
-use crate::state::AppStateType;
+use crate::state::{session_url_for, AppStateType};
 use chrono::Utc;
+use rocket::http::Status;
 use rocket::routes;
 use rocket::serde::json::{json, Json, Value};
 use rocket::State;
@@ -233,12 +234,11 @@ async fn list_planning_sessions(state: &State<AppStateType>) -> ApiResult<Json<V
     .await
     .map_err(crate::error::ApiError::Database)?;
 
-    let base_url = format!("http://localhost:{}", state.port);
     let with_urls: Vec<Value> = sessions
         .iter()
         .map(|s| {
             let mut json = serde_json::to_value(s).unwrap_or_default();
-            json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, s.id));
+            json["sessionUrl"] = json!(session_url_for(&s.id));
             json
         })
         .collect();
@@ -260,12 +260,11 @@ async fn list_active_planning_sessions(state: &State<AppStateType>) -> ApiResult
     .await
     .map_err(crate::error::ApiError::Database)?;
 
-    let base_url = format!("http://localhost:{}", state.port);
     let with_urls: Vec<Value> = sessions
         .iter()
         .map(|s| {
             let mut json = serde_json::to_value(s).unwrap_or_default();
-            json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, s.id));
+            json["sessionUrl"] = json!(session_url_for(&s.id));
             json
         })
         .collect();
@@ -277,7 +276,7 @@ async fn list_active_planning_sessions(state: &State<AppStateType>) -> ApiResult
 async fn create_planning_session(
     state: &State<AppStateType>,
     req: Json<CreatePlanningSessionRequest>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<(Status, Json<Value>)> {
     let now = Utc::now().timestamp();
     let id = uuid::Uuid::new_v4().to_string();
 
@@ -370,24 +369,22 @@ async fn create_planning_session(
         let model = req.model.as_deref().unwrap_or("default");
         let model_to_use = if model == "default" {
             let opts = crate::db::queries::get_options(&state.db).await?;
-            opts.plan_model.clone()
+            if opts.plan_model.is_empty() {
+                "openai/gpt-4o".to_string()
+            } else {
+                opts.plan_model.clone()
+            }
         } else {
             model.to_string()
         };
 
-        if model_to_use != "default" {
-            let _ = sqlx::query("UPDATE pi_workflow_sessions SET model = ? WHERE id = ?")
-                .bind(&model_to_use)
-                .bind(&id)
-                .execute(&state.db)
-                .await;
-        }
+        let _ = sqlx::query("UPDATE pi_workflow_sessions SET model = ? WHERE id = ?")
+            .bind(&model_to_use)
+            .bind(&id)
+            .execute(&state.db)
+            .await;
 
-        let actual_model = if model_to_use == "default" {
-            "openai/gpt-4o".to_string()
-        } else {
-            model_to_use
-        };
+        let actual_model = model_to_use;
 
         state
             .planning_session_manager
@@ -396,10 +393,9 @@ async fn create_planning_session(
     }
 
     let hub = state.sse_hub.read().await;
-    let base_url = format!("http://localhost:{}", state.port);
 
     let mut json = serde_json::to_value(&session_with_file).unwrap_or_default();
-    json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, id));
+    json["sessionUrl"] = json!(session_url_for(&id));
 
     let _ = hub
         .broadcast(&WSMessage {
@@ -408,7 +404,7 @@ async fn create_planning_session(
         })
         .await;
 
-    Ok(Json(json))
+    Ok((Status::Created, Json(json)))
 }
 
 #[post("/api/planning/sessions/<id>/messages", data = "<req>")]
@@ -461,9 +457,8 @@ async fn reconnect_planning_session(
     }
 
     if state.planning_session_manager.has_active_session(&id).await {
-        let base_url = format!("http://localhost:{}", state.port);
         let mut json = serde_json::to_value(&session).unwrap_or_default();
-        json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, id));
+        json["sessionUrl"] = json!(session_url_for(&id));
         return Ok(Json(json));
     }
 
@@ -521,10 +516,9 @@ async fn reconnect_planning_session(
         .ok_or_else(|| ApiError::internal("Failed to update session"))?;
 
     let hub = state.sse_hub.read().await;
-    let base_url = format!("http://localhost:{}", state.port);
 
     let mut json = serde_json::to_value(&updated).unwrap_or_default();
-    json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, id));
+    json["sessionUrl"] = json!(session_url_for(&id));
 
     let _ = hub
         .broadcast(&WSMessage {
@@ -761,9 +755,8 @@ async fn get_planning_session(state: &State<AppStateType>, id: String) -> ApiRes
             .with_code(ErrorCode::NotAPlanningSession));
     }
 
-    let base_url = format!("http://localhost:{}", state.port);
     let mut json = serde_json::to_value(&session).unwrap_or_default();
-    json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, id));
+    json["sessionUrl"] = json!(session_url_for(&id));
 
     Ok(Json(json))
 }
@@ -830,13 +823,12 @@ async fn update_planning_session(
         })
         .await;
 
-    let base_url = format!("http://localhost:{}", state.port);
     let updated = get_workflow_session(&state.db, &id)
         .await?
         .ok_or_else(|| ApiError::internal("Failed to update session"))?;
 
     let mut json = serde_json::to_value(&updated).unwrap_or_default();
-    json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, id));
+    json["sessionUrl"] = json!(session_url_for(&id));
 
     Ok(Json(json))
 }
@@ -876,13 +868,12 @@ async fn close_planning_session(state: &State<AppStateType>, id: String) -> ApiR
 
     state.planning_session_manager.close_session(&id).await?;
 
-    let base_url = format!("http://localhost:{}", state.port);
     let updated = get_workflow_session(&state.db, &id)
         .await?
         .ok_or_else(|| ApiError::internal("Failed to update session"))?;
 
     let mut json = serde_json::to_value(&updated).unwrap_or_default();
-    json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, id));
+    json["sessionUrl"] = json!(session_url_for(&id));
 
     Ok(Json(json))
 }
@@ -994,14 +985,13 @@ async fn rename_planning_session(
     .await;
 
     let hub = state.sse_hub.read().await;
-    let base_url = format!("http://localhost:{}", state.port);
 
     let updated = get_workflow_session(&state.db, &id)
         .await?
         .ok_or_else(|| ApiError::internal("Failed to update session"))?;
 
     let mut json = serde_json::to_value(&updated).unwrap_or_default();
-    json["sessionUrl"] = json!(format!("{}/sessions/{}?mode=compact", base_url, id));
+    json["sessionUrl"] = json!(session_url_for(&id));
 
     let _ = hub
         .broadcast(&WSMessage {

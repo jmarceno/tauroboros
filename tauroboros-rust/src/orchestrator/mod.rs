@@ -16,14 +16,15 @@ use crate::db::runtime::{
 };
 use crate::error::{ApiError, ErrorCode};
 use crate::models::{
-    AuditLevel, ExecutionPhase, ExecutionStrategy, Options, PiSessionKind, PiSessionStatus,
-    RunPhase, RunStatus, Task, TaskGroupStatus, TaskStatus, UpdateTaskInput, WSMessage,
-    WorkflowRun, WorkflowRunKind, WorkflowRunStatus,
+    AuditLevel, BestOfNSubstage, CleanRunResult, ExecutionPhase, ExecutionStrategy, Options,
+    PiSessionKind, PiSessionStatus, RunPhase, RunStatus, SelfHealStatus, Task,
+    TaskGroupStatus, TaskStatus, UpdateTaskInput, WSMessage, WorkflowRun, WorkflowRunKind,
+    WorkflowRunStatus,
 };
 use crate::sse::hub::SseHub;
 use rocket::serde::json::json;
 use serde_json::Value;
-use sqlx::SqlitePool;
+use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::Path;
@@ -63,7 +64,7 @@ struct RuntimeState {
 }
 
 #[derive(Debug, Clone)]
-pub struct CleanRunResult {
+pub struct RunStopResult {
     pub run: WorkflowRun,
     pub killed: i32,
     pub cleaned: i32,
@@ -73,7 +74,6 @@ pub struct CleanRunResult {
 pub struct Orchestrator {
     db: SqlitePool,
     sse_hub: Arc<RwLock<SseHub>>,
-    port: u16,
     project_root: String,
     settings_dir: String,
     runtime: Arc<Mutex<RuntimeState>>,
@@ -84,14 +84,12 @@ impl Orchestrator {
     pub fn new(
         db: SqlitePool,
         sse_hub: Arc<RwLock<SseHub>>,
-        port: u16,
         project_root: String,
         settings_dir: String,
     ) -> Self {
         Self {
             db,
             sse_hub,
-            port,
             project_root,
             settings_dir,
             runtime: Arc::new(Mutex::new(RuntimeState::default())),
@@ -428,7 +426,7 @@ impl Orchestrator {
         &self,
         run_id: &str,
         destructive: bool,
-    ) -> Result<CleanRunResult, ApiError> {
+    ) -> Result<RunStopResult, ApiError> {
         let run = self.reload_run(run_id).await?;
         if !matches!(
             run.status,
@@ -489,66 +487,207 @@ impl Orchestrator {
             .await;
 
         let run = self.reload_run(run_id).await?;
-        Ok(CleanRunResult {
+        Ok(RunStopResult {
             run,
             killed,
             cleaned: 0,
         })
     }
 
-    pub async fn clean_run(
-        &self,
-        run_id: &str,
-        destructive: bool,
-    ) -> Result<CleanRunResult, ApiError> {
+    pub async fn clean_run(&self, run_id: &str) -> Result<CleanRunResult, ApiError> {
         let run = self.reload_run(run_id).await?;
-        let killed = if matches!(
+        if matches!(
             run.status,
             WorkflowRunStatus::Queued
                 | WorkflowRunStatus::Running
                 | WorkflowRunStatus::Paused
                 | WorkflowRunStatus::Stopping
         ) {
-            self.stop_run(run_id, destructive).await?.killed
-        } else {
-            0
-        };
+            return Err(ApiError::internal(format!(
+                "Cannot clean an active workflow run (status: {}). Stop the run first.",
+                serde_json::to_value(run.status)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .unwrap_or_else(|| "unknown".to_string())
+            ))
+            .with_code(ErrorCode::ExecutionOperationFailed));
+        }
 
-        let run = self.reload_run(run_id).await?;
-        let mut cleaned = 0;
-        for task_id in run.task_order_vec()? {
-            let Some(task) = get_task(&self.db, &task_id).await? else {
-                continue;
-            };
-            let Some(worktree_dir) = task.worktree_dir.clone() else {
-                continue;
-            };
+        let task_ids = run.task_order_vec()?;
+        let mut tasks = Vec::with_capacity(task_ids.len());
+        for task_id in &task_ids {
+            let task = get_task(&self.db, task_id).await?.ok_or_else(|| {
+                ApiError::internal(format!("Task {} not found in run {}", task_id, run_id))
+                    .with_code(ErrorCode::TaskNotFound)
+            })?;
+            tasks.push(task);
+        }
 
-            if Path::new(&worktree_dir).exists() {
-                remove_worktree(&self.project_root, &worktree_dir).await?;
-                cleaned += 1;
-            }
-
-            if destructive {
-                update_task(
-                    &self.db,
-                    &task_id,
-                    UpdateTaskInput {
-                        worktree_dir: Some(None),
-                        ..Default::default()
-                    },
-                )
-                .await?;
+        for task in &tasks {
+            if let Some(worktree_dir) = &task.worktree_dir {
+                if Path::new(worktree_dir).exists() {
+                    remove_worktree(&self.project_root, worktree_dir).await?;
+                }
             }
         }
+
+        let sessions_deleted = if task_ids.is_empty() {
+            0
+        } else {
+            let mut delete_messages = QueryBuilder::<Sqlite>::new(
+                "DELETE FROM session_messages WHERE session_id IN (SELECT id FROM pi_workflow_sessions WHERE task_id IN (",
+            );
+            {
+                let mut separated = delete_messages.separated(", ");
+                for task_id in &task_ids {
+                    separated.push_bind(task_id);
+                }
+            }
+            delete_messages.push(") )");
+            delete_messages
+                .build()
+                .execute(&self.db)
+                .await
+                .map_err(ApiError::Database)?;
+
+            let mut delete_sessions =
+                QueryBuilder::<Sqlite>::new("DELETE FROM pi_workflow_sessions WHERE task_id IN (");
+            {
+                let mut separated = delete_sessions.separated(", ");
+                for task_id in &task_ids {
+                    separated.push_bind(task_id);
+                }
+            }
+            delete_sessions.push(")");
+            delete_sessions
+                .build()
+                .execute(&self.db)
+                .await
+                .map_err(ApiError::Database)?
+                .rows_affected() as i32
+        };
+
+        let task_runs_deleted = if task_ids.is_empty() {
+            0
+        } else {
+            let mut query = QueryBuilder::<Sqlite>::new("DELETE FROM task_runs WHERE task_id IN (");
+            {
+                let mut separated = query.separated(", ");
+                for task_id in &task_ids {
+                    separated.push_bind(task_id);
+                }
+            }
+            query.push(")");
+            query
+                .build()
+                .execute(&self.db)
+                .await
+                .map_err(ApiError::Database)?
+                .rows_affected() as i32
+        };
+
+        let candidates_deleted = if task_ids.is_empty() {
+            0
+        } else {
+            let mut query =
+                QueryBuilder::<Sqlite>::new("DELETE FROM task_candidates WHERE task_id IN (");
+            {
+                let mut separated = query.separated(", ");
+                for task_id in &task_ids {
+                    separated.push_bind(task_id);
+                }
+            }
+            query.push(")");
+            query
+                .build()
+                .execute(&self.db)
+                .await
+                .map_err(ApiError::Database)?
+                .rows_affected() as i32
+        };
+
+        let reports_deleted = if task_ids.is_empty() {
+            0
+        } else {
+            let mut query =
+                QueryBuilder::<Sqlite>::new("DELETE FROM self_heal_reports WHERE task_id IN (");
+            {
+                let mut separated = query.separated(", ");
+                for task_id in &task_ids {
+                    separated.push_bind(task_id);
+                }
+            }
+            query.push(")");
+            query
+                .build()
+                .execute(&self.db)
+                .await
+                .map_err(ApiError::Database)?
+                .rows_affected() as i32
+        };
+
+        let mut tasks_reset = 0;
+        for task_id in &task_ids {
+            update_task(
+                &self.db,
+                task_id,
+                UpdateTaskInput {
+                    status: Some(TaskStatus::Backlog),
+                    execution_phase: Some(ExecutionPhase::NotStarted),
+                    error_message: Some(None),
+                    agent_output: Some(Some(String::new())),
+                    worktree_dir: Some(None),
+                    session_id: Some(None),
+                    session_url: Some(None),
+                    completed_at: Some(None),
+                    self_heal_status: Some(SelfHealStatus::Idle),
+                    self_heal_message: Some(None),
+                    self_heal_report_id: Some(None),
+                    review_count: Some(0),
+                    json_parse_retry_count: Some(0),
+                    plan_revision_count: Some(0),
+                    awaiting_plan_approval: Some(false),
+                    review_activity: Some(Some("idle".to_string())),
+                    best_of_n_substage: Some(BestOfNSubstage::Idle),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            if let Some(updated_task) = get_task(&self.db, task_id).await? {
+                self.broadcast_task(&updated_task).await;
+                tasks_reset += 1;
+            }
+        }
+
+        let runs_deleted = sqlx::query("DELETE FROM workflow_runs WHERE id = ?")
+            .bind(run_id)
+            .execute(&self.db)
+            .await
+            .map_err(ApiError::Database)?
+            .rows_affected() as i32;
 
         self.broadcast("run_cleaned", json!({ "runId": run_id }))
             .await;
 
+        let message = if tasks_reset == 0 {
+            "No tasks to clean".to_string()
+        } else {
+            format!(
+                "Reset {} tasks, deleted {} sessions, {} task runs, {} candidates, {} reports. Ready to restart.",
+                tasks_reset, sessions_deleted, task_runs_deleted, candidates_deleted, reports_deleted
+            )
+        };
+
         Ok(CleanRunResult {
-            run: self.reload_run(run_id).await?,
-            killed,
-            cleaned,
+            success: true,
+            tasks_reset,
+            sessions_deleted,
+            task_runs_deleted,
+            candidates_deleted,
+            reports_deleted,
+            runs_deleted,
+            message,
         })
     }
 
@@ -1850,10 +1989,7 @@ impl Orchestrator {
     }
 
     fn session_url_for(&self, session_id: &str) -> String {
-        format!(
-            "http://localhost:{}/sessions/{}?mode=compact",
-            self.port, session_id
-        )
+        crate::state::session_url_for(session_id)
     }
 
     fn pi_session_file_for(&self, session_id: &str) -> String {

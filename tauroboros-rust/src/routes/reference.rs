@@ -106,7 +106,7 @@ fn load_model_catalog_from_path(path: &Path) -> Result<ModelCatalog, ApiError> {
 #[get("/healthz")]
 async fn healthz() -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "ok": true,
+        "status": "ok",
     }))
 }
 
@@ -118,9 +118,11 @@ async fn get_models(state: &State<AppStateType>) -> ApiResult<Json<ModelCatalog>
         }
     }
 
-    Err(ApiError::internal(
-        "No model catalog file found in .tauroboros/agent/models.json or ~/.pi/agent/models.json",
-    ))
+    Ok(Json(ModelCatalog {
+        providers: vec![],
+        defaults: std::collections::HashMap::new(),
+        warning: Some("No model catalog file found. Create .tauroboros/agent/models.json or ~/.pi/agent/models.json.".to_string()),
+    }))
 }
 
 #[get("/api/version")]

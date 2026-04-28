@@ -1,7 +1,7 @@
 ---
 title: Rust Backend Feature Parity Plan
 status: in_progress
-updated_at: 2026-04-27
+updated_at: 2026-04-28
 owner: github-copilot
 scope:
   target: tauroboros-rust
@@ -182,19 +182,15 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 ### Confirmed High-Risk Gaps
 
-- Planning session parity still needs deeper behavioral verification, but request/response naming, sessionUrl payload alignment, and prompt version persistence are now aligned.
-- Run lifecycle parity still needs deeper behavioral verification around stop, force-stop, clean, and broader state-transition semantics, but standard queue-status, pause/resume, stale/archive, and dependency progression are now browser-verified.
-- Global and per-session SSE contract still needs event-by-event validation against the frontend stores.
-- Advanced execution modes still fail explicitly in Rust instead of matching TypeScript behavior.
+- Run lifecycle parity still needs deeper behavioral verification around stop, force-stop, pause/resume ordering, and broader state-transition semantics, but standard queue-status, per-run paused-state, clean-run payload shape, stale/archive, and dependency progression are now browser-verified.
+- Single-binary packaging is implemented but still needs explicit release-path validation.
+- Best-of-N manual candidate selection exists at the API level but still needs browser-level verification of the user-driven selection flow.
 
 ### Areas To Verify Before Editing Deeper Runtime Behavior
 
-- Exact JSON response envelope compatibility for every frontend API method.
-- Exact option field coverage between TypeScript and Rust persistence layers.
-- SSE event names and payload shapes emitted from Rust versus TypeScript.
-- Archived-task and archived-run payload normalization.
-- Version payload shape and model/branch discovery payloads.
-- Native-mode container endpoint behavior expected by the frontend when containers are unavailable.
+- Stop/force-stop edge cases such as double-stop and force-stop during pause.
+- Packaging validation of the embedded-frontend release binary.
+- Manual best-of-N candidate selection behavior through the frontend.
 
 ## Implementation Strategy
 
@@ -303,20 +299,27 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
   - Plan mode routes (approve-plan requires plan mode, request-plan-revision sets correct phase)
   - Task groups CRUD (create, list, get, update, add tasks, delete)
   - Options (get with expected camelCase fields, put updates)
-  - Run routes (list, paused-state, slot utilization)
+  - Run routes (list, paused-state, clean-run reset/delete contract, slot utilization)
   - Session routes (404 for missing session)
   - Stats routes (duration returns integer, tasks returns stats object)
   - Workflow status
   - Container endpoints accessible in native mode
+  - Archived routes group tasks by run and expose frontend-safe `sessionUrl` values
   - Frontend routes serve HTML
   - Best-of-N task creation with valid config, summary endpoint, candidates endpoint
   - Error handling (404 for unknown task, 400 for invalid body)
 
+- **Audit-driven contract closure completed**:
+  - Verified that the plan note about `request-plan-revision` was stale — Rust already auto-started the revision workflow run, matching TypeScript.
+  - Aligned all Rust `sessionUrl` payloads with the frontend hash-route contract (`/#session/:id`) instead of the legacy direct-session path format.
+  - Replaced the Rust `POST /api/runs/:id/clean` placeholder cleanup behavior with the TypeScript contract: reset tasks to backlog, delete workflow sessions/messages, task runs, candidates, self-heal reports, and delete the workflow run.
+  - Normalized archived-task and archived-run payloads so `/api/archived/tasks`, `/api/archived/tasks/:taskId`, and `/api/archived/runs` now match the TypeScript grouping behavior.
+  - Re-ran focused validation after the parity patch: `cargo test` passes and the focused Playwright parity suite passes with **60/60** tests.
+
 ## Residual Gaps
 
-- Run stop, force-stop, clean, and paused-state semantics still need direct comparison against the TypeScript backend for edge cases (double-stop, force-stop during pause, etc.).
-- Planning session Pi integration is fully implemented but the `request-plan-revision` endpoint in Rust does NOT automatically start a new workflow run like the TypeScript backend does. The TypeScript `request-plan-revision` creates a new run after updating the task, but the Rust version only updates task state. The frontend calls `start` separately, so this is a non-blocking behavioral difference rather than a breaking one.
-- Some of the original prompts have not being migrated yet (original prompts location: `src/prompts/prompt-catalog.json` → `repair`, `resumeTaskContinuation`, `mergeConflictRepair`, `mockClassification`). Need to be migrated too, as ANY other prompt.
+- Run stop, force-stop, and paused-state semantics still need direct comparison against the TypeScript backend for edge cases (double-stop, force-stop during pause, resume after partial stop, etc.).
+- Packaging is implemented but still needs an explicit end-to-end release-path validation of the single embedded binary.
 - Best-of-N `select-candidate` route exists but the orchestrator auto-selects during its final-applier phase (selects first candidate on success). Manual candidate selection flow through the UI has not been browser-verified. Agent selection of best model needs to be implemented.
 - Container execution remains intentionally unsupported in Rust (native-only), but container API endpoints stay frontend-compatible as stubs.
 
@@ -368,8 +371,8 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 
 | Area | Check | Status |
 | --- | --- | --- |
-| Route parity | Frontend API methods all resolve against Rust | Verified — 30+ route/payload parity tests pass |
-| Payload parity | Request and response JSON shapes match TS | Verified — plan mode, best-of-n, standard task field shapes all match |
+| Route parity | Frontend API methods all resolve against Rust | Verified — focused route/payload parity suite passes |
+| Payload parity | Request and response JSON shapes match TS | Verified — plan mode, best-of-n, clean-run, archived payloads, and sessionUrl shapes all match |
 | SSE parity | Event names and payloads match TS expectations | Verified — connected, ping, task_created, correct content-type |
 | Native-only behavior | Container UI remains functional without backend container support | Partially verified — endpoints respond 200 |
 | Packaging | Single Rust binary serves backend and Solid frontend | Implemented, release-path verification still pending |
@@ -377,7 +380,7 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 | Plan mode | Plan generation, revision, and approved implementation execute natively | Browser-verified end to end |
 | Review loops | Automated review with review-fix cycles and max-review limit | Browser-verified end to end |
 | Best-of-N | Parallel workers, reviewers, final applier with candidate management | Browser-verified end to end |
-| Planning Chat | Planning prompts CRUD, session lifecycle (create/list/get/reconnect/rename/stop/close), message send, error handling, UI panel | Verified — 30+ API checks + UI panel test in `rust-planning-chat.spec.ts` |
+| Planning Chat | Planning prompts CRUD, session lifecycle (create/list/get/reconnect/rename/stop/close), message send, error handling, UI panel | Verified — focused parity suite passes with frontend hash-route `sessionUrl` alignment |
 | Planning prompts | Default planning prompt seeded in DB, container_config prompt seeded, version history | Verified — GET/PUT prompts, versions endpoint |
 
 ## Working Notes
@@ -393,5 +396,6 @@ Bring the Rust backend to feature parity with the TypeScript backend, excluding 
 3. ~~Add browser-level validation of the SSE session streaming contract.~~ **DONE** — `tests/e2e/rust-sse-contract.spec.ts` validates connected, ping, task_created events.
 4. ~~Add comprehensive Planning Chat route parity and UI tests.~~ **DONE** — `tests/e2e/rust-planning-chat.spec.ts` covers prompts CRUD, session lifecycle, error handling, and UI panel.
 5. Run the full suite of Rust E2E tests against a live server to validate all modes execute correctly with real LLM interactions.
-6. Fix the `request-plan-revision` endpoint to auto-start a new workflow run (align with TypeScript behavior).
-7. Container execution remains intentionally unsupported in Rust (native-only), but container API endpoints stay frontend-compatible as stubs.
+6. Add targeted edge-case coverage for run stop/force-stop/pause-resume semantics and align any remaining behavioral mismatches.
+7. Validate the single-binary embedded-frontend release path end to end.
+8. Browser-verify manual best-of-N candidate selection and final-applier selection behavior.

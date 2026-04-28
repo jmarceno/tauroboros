@@ -852,6 +852,19 @@ pub struct PausedState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CleanRunResult {
+    pub success: bool,
+    pub tasks_reset: i32,
+    pub sessions_deleted: i32,
+    pub task_runs_deleted: i32,
+    pub candidates_deleted: i32,
+    pub reports_deleted: i32,
+    pub runs_deleted: i32,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContainerStatus {
     pub enabled: bool,
     pub available: bool,
