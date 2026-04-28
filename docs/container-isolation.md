@@ -1,3 +1,5 @@
+# Only Available in the old TS Backend
+
 # Container Isolation for Pi Agents
 
 This document describes the Podman-based container isolation implementation for tauroboros.

@@ -1,63 +1,156 @@
-This is a TypeScript project using **Bun** for the backend runtime and Solid JS for frontend.
+This is a **Rust** project using the **Rocket** web framework for the backend and **Solid JS** for the frontend.
 
-This codebase is pure Effect and everything must follow Effects best practices.
+The Rust backend is the **primary** implementation. The TypeScript/Bun backend (`src/backend-ts/`) is **deprecated** and will be removed in a future release. Do not write new code for it.
+
+This codebase uses Rust idioms throughout: `thiserror` for error types, `serde` for serialization, `sqlx` for database access, and `rocket` for HTTP serving.
 
 The "TaurOboros" project is an AI-powered workflow orchestration system that:
 - Uses Pi AI agents via RPC protocol for task execution
 - Features a kanban-style task board (template, backlog, executing, review, done)
 - Implements advanced AI execution modes (Plan Mode, Review Loops, Best-of-N)
 - Provides isolation through Git Worktree and optional container isolation
-- Offers real-time updates, session logging, and execution graph visualization
-- Combines Bun backend with Solid JS + Tailwind CSS kanban frontend
+- Offers real-time updates (SSE), session logging, and execution graph visualization
+- Combines Rust Rocket backend with Solid JS + Tailwind CSS kanban frontend
 
 ## Quick Start
 
 ```bash
-# Install dependencies (Bun)
-bun install
+# Build and run in development mode (Rust backend + Solid JS frontend)
+./start-rust-dev.sh
 
-# Setup skills and verify
-bun run setup
+# Or with explicit port
+SERVER_PORT=3789 ./start-rust-dev.sh
 
-# Start the server (backend + kanban UI)
-bun run start
-
-# Or start in development mode with auto-reload
-bun run dev
+# Force rebuild
+./start-rust-dev.sh --rebuild
 ```
 
-### Generated Files (DO NOT COMMIT)
+## Project Layout
 
-Two files are auto-generated and in `.gitignore`:
-- `src/backend-ts/server/generated-assets.ts` — embeds kanban UI, skills, config, and docker files
-- `src/backend-ts/server/version.ts` — git commit hash and version info
+```
+tauroboros/
+├── src/
+│   ├── backend/                  # Rust backend (PRIMARY)
+│   │   ├── Cargo.toml
+│   │   ├── build.rs              # Builds frontend when embedded-frontend feature is on
+│   │   ├── rust-toolchain.toml   # Rust stable, rustfmt + clippy
+│   │   └── src/
+│   │       ├── main.rs           # Entry point - Rocket server setup
+│   │       ├── error.rs          # ApiError enum + ApiResult<T> type
+│   │       ├── models.rs         # Data models (Task, TaskRun, etc.)
+│   │       ├── state.rs          # AppState shared via Rocket managed state
+│   │       ├── settings.rs       # Settings loading from .tauroboros/settings.json
+│   │       ├── cors.rs           # CORS fairing
+│   │       ├── audit.rs          # Audit logging
+│   │       ├── embedded_resources.rs # Embeds skills/extensions via include_dir
+│   │       ├── db/
+│   │       │   ├── mod.rs        # Pool creation, migrations, schema
+│   │       │   ├── queries.rs    # SQL query functions
+│   │       │   └── runtime.rs    # Runtime DB operations
+│   │       ├── routes/           # API route handlers
+│   │       │   ├── mod.rs        # Route aggregation
+│   │       │   ├── tasks/        # Task CRUD + sub-resources
+│   │       │   ├── sessions.rs
+│   │       │   ├── task_groups.rs
+│   │       │   ├── planning.rs
+│   │       │   ├── workflow.rs
+│   │       │   ├── execution.rs
+│   │       │   ├── options.rs
+│   │       │   ├── runs.rs
+│   │       │   ├── stats.rs
+│   │       │   ├── prompts.rs
+│   │       │   ├── containers.rs
+│   │       │   ├── archived.rs
+│   │       │   ├── reference.rs  # Models, version, branches
+│   │       │   ├── sse.rs        # SSE endpoint
+│   │       │   └── frontend.rs   # Static file serving (SPA fallback)
+│   │       ├── orchestrator/     # Workflow orchestration
+│   │       │   ├── mod.rs
+│   │       │   ├── pi.rs         # Pi AI agent integration
+│   │       │   ├── plan_mode.rs
+│   │       │   ├── review.rs
+│   │       │   ├── best_of_n.rs
+│   │       │   ├── planning_session.rs
+│   │       │   └── git.rs        # Git worktree operations
+│   │       └── sse/
+│   │           ├── mod.rs
+│   │           └── hub.rs        # Broadcast hub for real-time SSE updates
+│   ├── frontend/                 # Solid JS kanban UI
+│   │   ├── package.json
+│   │   ├── vite.config.ts
+│   │   ├── index.html
+│   │   └── src/
+│   │       ├── index.tsx
+│   │       ├── App.tsx
+│   │       ├── api/              # API client functions
+│   │       ├── components/       # UI components (board, chat, modals, etc.)
+│   │       ├── stores/           # Solid JS state management
+│   │       ├── styles/
+│   │       └── utils/
+│   └── backend-ts/               # DEPRECATED - TypeScript/Bun backend
+├── skills/                        # Pi agent skills
+├── extensions/                    # Pi agent extensions
+├── .tauroboros/                   # Local settings & DB
+├── start-rust-dev.sh              # Development launcher (recommended)
+└── scripts/                       # Utility scripts
+```
 
-They are regenerated automatically via `predev`/`pretest` hooks:
+## Architecture
+
+- **Rust (Rocket) backend** serves the REST API on a configurable port (default 3789)
+- **Solid JS frontend** is served either embedded in the binary (`embedded-frontend` feature) or from `dist/` during development
+- **SQLite database** via `sqlx` with WAL mode at `.tauroboros/tasks.db`
+- **SSE** (Server-Sent Events) for real-time UI updates
+- **Pi AI agents** communicate via RPC protocol through the orchestrator
+
+## Development
+
+### Running in dev mode
+
 ```bash
-bun run dev        # predev regenerates both
-bun test           # pretest regenerates both
-bun run compile    # compile regenerates both explicitly
+# Recommended: uses start-rust-dev.sh which handles both Rust + frontend
+./start-rust-dev.sh
+
+# Manual split terminal approach:
+# Terminal 1: Rust backend
+cd src/backend && cargo build --release && ./target/release/tauroboros
+
+# Terminal 2: Solid JS frontend dev server
+cd src/frontend && npm run dev
 ```
 
-Never commit these files — they are always generated before the commands that need them.
+The Vite dev server proxies `/api` and `/sse` requests to the Rust backend.
 
-Server auto-assigns an available port on first start. The assigned port is saved to `.tauroboros/settings.json` and reused for subsequent runs.
+### Building for production
 
-### Port Configuration
+```bash
+# Build frontend
+cd src/frontend && npm ci && npm run build
 
-The server uses **dynamic port assignment by default** (port 0), which allows running multiple projects simultaneously without port conflicts.
+# Build Rust backend with embedded frontend
+cd src/backend && cargo build --release --features embedded-frontend
 
-**How it works:**
-1. First start: Server auto-assigns an available port (e.g., 49234)
-2. Port is saved to `.tauroboros/settings.json` for persistence
-3. Subsequent starts: Uses the saved port from settings
+# Run the standalone binary
+./src/backend/target/release/tauroboros
+```
 
-**Settings file** (`.tauroboros/settings.json`):
+### Frontend Tech Stack
+- **Framework**: Solid JS
+- **Styling**: Tailwind CSS (custom dark theme with slate/indigo colors)
+- **Build Tool**: Vite
+- **Package Manager**: npm
+- **Search**: Fuse.js for fuzzy model search
+- **Diagrams**: Mermaid for execution graph visualization
+
+### Settings & Port Configuration
+
+Settings are loaded from `.tauroboros/settings.json`:
+
 ```json
 {
   "workflow": {
     "server": {
-      "port": 49234,
+      "port": 3789,
       "dbPath": ".tauroboros/tasks.db"
     }
   }
@@ -65,152 +158,63 @@ The server uses **dynamic port assignment by default** (port 0), which allows ru
 ```
 
 **Environment variables**:
-- `SERVER_PORT` - Override the port from settings (0 for auto-assign)
-- `DEV_PORT` - Vite dev server port (default: 5173)
-
-**Running multiple projects:**
-```bash
-# Terminal 1 - Project A (auto-assigns port 49234)
-bun run start
-
-# Terminal 2 - Project B (auto-assigns port 49235)
-cd /path/to/project-b && bun run start
-
-# Both projects run simultaneously on different ports!
-```
-
-**Development mode:**
-```bash
-# Dev mode requires explicit backend port (dynamic port not supported)
-SERVER_PORT=3789 bun run dev
-```
-
-## Kanban UI Architecture
-
-The kanban UI has been migrated from vanilla JS/Alpine.js/Shoelace to Solid JS + Tailwind CSS + Vite.
-
-
-### Tech Stack
-- **Framework**: Solid JS with Composition API
-- **Styling**: Tailwind CSS (custom dark theme with slate/indigo colors)
-- **Build Tool**: Vite
-- **Package Manager**: npm (for kanban-Solid JS subdirectory)
-- **Search**: Fuse.js for fuzzy model search
-- **UI Components**: Custom components (no heavy UI library)
-
-
-**Kanban Frontend (handled automatically by root scripts):**
-```bash
-# The root scripts handle kanban building internally using npm
-bun run kanban:dev      # Dev mode with hot reload
-bun run kanban:build    # Production build
-```
+- `SERVER_PORT` - Override port (default: 3789)
+- `DATABASE_PATH` - Override database path
+- `DEV_PORT` - Vite dev server port (default: 5173/5174)
 
 ### Testing
+
 ```bash
-# Unit tests
-bun test
+# Rust unit tests
+cd src/backend && cargo test
 
 # E2E tests (requires server running)
 bun run test:e2e
 
 # E2E with UI mode
 bun run test:e2e:ui
-
-# Compile binary validation
-bun run compile:test      # Runs comprehensive tests on compiled binary
 ```
 
+## Error Handling
 
-## Binary Compilation
+This project uses strict, explicit error handling:
 
-The application can be compiled into a single executable binary using Bun's `--compile` feature.
+```rust
+// All handlers return ApiResult<T>
+pub type ApiResult<T> = Result<T, ApiError>;
 
-### Usage
-
-```bash
-# Compile (generates binary + validates)
-bun run compile
-
-# Manual compilation steps
-bun run scripts/compile.ts
-
-# Just validate an existing binary
-bun run scripts/test-binary.ts
-
-# Run the binary
-./tauroboros
-SERVER_PORT=3790 ./tauroboros
+// ApiError variants cover all cases - no fallbacks
+pub enum ApiError {
+    BadRequest { message: String, code: ErrorCode },
+    NotFound { message: String, code: ErrorCode },
+    Conflict { message: String, code: ErrorCode },
+    InternalError { message: String, code: ErrorCode, cause: Option<Box<dyn std::error::Error>> },
+    ServiceUnavailable { message: String, code: ErrorCode },
+    Database(sqlx::Error),
+    Serialization(serde_json::Error),
+}
 ```
 
-### Install Script
+### Code Conventions
 
-One-command compile and install:
+- **NEVER add fallbacks** - all conditions and cases must be explicit
+- If a condition or case is not handled, return an explicit `ApiError` with the appropriate `ErrorCode`
+- Every route handler returns `ApiResult<T>` - no implicit error swallowing
+- Use `thiserror` derive macros for all error types
+- Use `serde` for all serialization/deserialization
+- Use `sqlx` typed queries for database access
 
-```bash
-# Compile and install to ~/.local/bin (user-local, default)
-./scripts/install.sh
+## Pre-existing errors
 
-# Compile and install to /usr/local/bin (system-wide, requires sudo)
-./scripts/install.sh --global
+You must always fix errors you find, it does not matter if they were introduced by your changes or not. We are a team and we work on all the issues together.
 
-# Skip compilation (install existing binary)
-./scripts/install.sh --skip-compile
-
-# Remove installed binary
-./scripts/install.sh --remove
-
-# Remove from global location
-./scripts/install.sh --global --remove
-```
-
-The install script will:
-1. Build the frontend (refreshing all assets)
-2. Generate embedded assets
-3. Compile the Bun binary
-4. Install to the target directory
-
-<!-- effect-solutions:start -->
-## Effect Best Practices
-
-**IMPORTANT:** Always consult effect-solutions before writing Effect code.
-
-1. Run `effect-solutions list` to see available guides
-2. Run `effect-solutions show <topic>...` for relevant patterns (supports multiple topics)
-3. Search `~/.local/share/effect-solutions/effect` for real implementations
-
-Topics: quick-start, project-setup, tsconfig, basics, services-and-layers, data-modeling, error-handling, config, testing, cli.
-
-Never guess at Effect patterns - check the guide first.
-When migrating something to Effect, completely replace the old way, do not leave code paths or legacy support.
-
-### Effect Architecture Reference
-
-See `docs/EFFECT_ARCHITECTURE.md` for:
-- Service definition patterns (`Context.GenericTag`)
-- Error handling (`Schema.TaggedError`)
-- Resource management (`Effect.acquireRelease`)
-- Layer composition
-- Logging patterns
-- Migration examples
-
-### Effect Migration Status
-
-Current migration progress is tracked in:
-- `plans/effect-full-migration-plan.md` - Full migration plan
-- `scripts/verify-migration.ts` - Verification script
-
-Run verification:
-```bash
-bun run scripts/verify-migration.ts
-```
-<!-- effect-solutions:end -->
-
-# How you must behave
 ## CSS
-  When dealing with CSS changes, always get the computed CSS with playwright and never trust visual identification.
+
+When dealing with CSS changes, always get the computed CSS with Playwright and never trust visual identification.
+
 ## Storage
-  This project always prioritize storing data on the database, loose json files are rare exceptions that MUST have manual user approval.
+
+This project always prioritizes storing data on the database. Loose JSON files are rare exceptions that MUST have manual user approval.
 
 ## Test and Errors
   Errors must be fixed, even if your changes did not cause them, you must fix any errors you find.
@@ -221,6 +225,3 @@ bun run scripts/verify-migration.ts
 
 ## Pre-existing errors
   You must always fix errors you find, it does not matter if were introduced by your changes or not. We are a team and we work on all the issues together.
-
-## Effect
-Always follow effect best practices

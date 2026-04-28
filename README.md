@@ -39,33 +39,33 @@ TaurOboros is an agent orchestration system, that uses a Kanban style board to v
 ## Quick Start
 
 ### Prerequisites
-- [Bun](https://bun.sh/) runtime (for development and building)
+- [Rust](https://rustup.rs/) toolchain (stable, for backend compilation)
+- [npm](https://nodejs.org/) (for building the Solid JS frontend)
 - Git repository (project must be in a git repo)
 - Pi AI agent binary (for AI execution)
 
 ### Installation
 
 #### Option 1 - Download Binary from release
-Download the Bun compiled binary from the releases page and run it from inside your project directory. (It must be a inited Git repo for workflows to be able to start)
+Download the Rust-compiled binary from the releases page and run it from inside your project directory. (It must be a initialized Git repo for workflows to be able to start)
 
 ```bash
-# Install dependencies (Bun for backend)
-./path/to/exec/tauroroboros
-
+./path/to/tauroboros
 ```
 
-#### Option 2 - Clone, Compile, Install (scripts/install.sh)
+#### Option 2 - Clone, Build from source
 
 ```bash
 # Clone the repo
 git clone https://github.com/jmarceno/tauroboros.git
 
-# One command to compile and install
-./scripts/install.sh
-# With options
-./scripts/install.sh --global        # System-wide install
-./scripts/install.sh --skip-compile  # Skip compilation
-./scripts/install.sh --remove        # Uninstall
+# Build frontend
+cd src/frontend && npm ci && npm run build && cd ../..
+
+# Build Rust backend with embedded frontend
+cd src/backend && cargo build --release --features embedded-frontend
+
+# The binary is at src/backend/target/release/tauroboros
 ```
 ## Running
 
@@ -78,33 +78,33 @@ If you prefer just copy the binary to the project directory and execute directly
 ### Running the Dev server from project repo
 
 ```bash
-# Start the server (backend + kanban UI)
-bun run start
+# Recommended: starts both Rust backend and Solid frontend with hot reload
+./start-rust-dev.sh
 
-# Or run in development mode with auto-reload
-bun run dev
+# Or with explicit port
+SERVER_PORT=3789 ./start-rust-dev.sh
 ```
 
-The server will start on port `3789` by default (configurable in `.pi/settings.json`). Open `http://localhost:3789` in your browser.
+The server will start on port `3789` by default (configurable in `.tauroboros/settings.json`). Open `http://localhost:5173` in your browser (Vite dev server proxies API requests to the Rust backend).
 
-**Note:** The kanban frontend (Vue app in `src/kanban-vue/`) has its own package.json and uses npm. The root Bun scripts (`bun run start`, `bun run build`) automatically handle building the frontend for you.
+**Note:** The kanban frontend (Solid JS app in `src/frontend/`) has its own `package.json` and uses npm. The `start-rust-dev.sh` script automatically handles building and running both the Rust backend and the Solid frontend dev server.
 
-### How to Compile from the project directory (Standalone Distribution)
+### How to Build for Production (Standalone Distribution)
 
-You can compile the entire application into a single executable binary for easy distribution:
+You can build the entire application into a single embedded binary:
 
 ```bash
-# Compile into a single binary (~66 MB)
-bun run compile
+# Build frontend
+cd src/frontend && npm ci && npm run build && cd ../..
 
-# The binary is created as ./tauroboros
-./tauroboros
+# Build Rust backend with embedded frontend
+cd src/backend && cargo build --release --features embedded-frontend
+
+# The binary is at src/backend/target/release/tauroboros
+./src/backend/target/release/tauroboros
 
 # Run on a custom port
-SERVER_PORT=3790 ./tauroboros
-
-# Validate the compiled binary works correctly
-bun run compile:test
+SERVER_PORT=3790 ./src/backend/target/release/tauroboros
 ```
 
 ### Basic Usage
@@ -124,13 +124,13 @@ For enhanced security and isolation, run AI agents inside Podman containers:
 ./scripts/setup-e2e-tests.sh
 
 # 2. Verify setup
-bun run container:verify
+./scripts/setup-e2e-tests.sh  # also builds the pi-agent image
 
-# 3. Enable container mode by editing .pi/settings.json:
+# 3. Enable container mode by editing .tauroboros/settings.json:
 # Set workflow.container.enabled to true
 
 # 4. Run as normal - agents now run in isolated containers
-bun run src/backend-ts/index.ts
+./start-rust-dev.sh  # or run the compiled binary directly
 ```
 
 This process will be done automatically to you if you have Podman installed the first time you run Tauroboros in project directory.
@@ -154,52 +154,43 @@ systemctl --user start podman.socket
 
 ## Available Commands
 
-All commands use **Bun** (the kanban frontend build uses npm internally, handled automatically):
+The Rust backend is built with **Cargo** and the Solid JS frontend uses **npm**:
 
 ```bash
-# Start server (production)
-bun run start
+# Development mode (Rust backend + Solid frontend with hot reload)
+./start-rust-dev.sh
 
-# Development mode with auto-reload
-bun run dev
+# Development mode with explicit port
+SERVER_PORT=3789 ./start-rust-dev.sh
 
-# Build everything (backend + kanban frontend)
-bun run build
+# Build production binary with embedded frontend
+cd src/backend && cargo build --release --features embedded-frontend
 
-# Compile to single binary (standalone distribution)
-bun run compile             # Create ./tauroboros binary
-bun run compile:test        # Validate compiled binary
+# Run the compiled binary
+./src/backend/target/release/tauroboros
 
-# Run unit tests
-bun test
+# Run unit tests (Rust)
+cd src/backend && cargo test
 
-# Run tests with coverage
-bun test --coverage
+# Build frontend only (for dev without embedded-frontend)
+cd src/frontend && npm run build
 
-# Run E2E tests (requires server running)
-bun run test:e2e
-bun run test:e2e:ui       # With UI mode
-bun run test:e2e:real     # Real container workflow test
+# Run frontend dev server separately (proxy to Rust backend on port 3789)
+cd src/frontend && npm run dev
 
-# Kanban frontend (uses npm internally)
-bun run kanban:dev        # Dev mode with hot reload
-bun run kanban:build      # Production build
-
-# Skills management
+# Skills management (requires Bun for scripts)
 bun run skills:install    # Sync skills to .pi/skills
 bun run skills:verify     # Verify Pi setup
 bun run setup             # Install + verify
 
 # Container setup (optional Podman isolation)
-bun run container:setup      # Install Podman and build image
-bun run container:verify     # Check container runtime setup
-bun run container:build      # Build pi-agent container image
-bun run container:cleanup    # Remove container configuration
+./scripts/setup-e2e-tests.sh      # Install Podman and build image
+bun run container:build           # Build pi-agent container image
 ```
 
 ## Configuration
 
-All infrastructure-level configuration is stored in `.pi/settings.json`. This file is created automatically when you run `bun run setup` and comes pre-populated with sensible defaults.
+All infrastructure-level configuration is stored in `.tauroboros/settings.json`. The Rust backend loads this file at startup, falling back to sensible defaults if it doesn't exist.
 
 ### Settings.json Structure
 
@@ -284,18 +275,19 @@ Each task can be configured with:
 - Skills are file-based and synced into `.pi/skills/`
 
 ### Architecture Pattern
-The application uses an **Effect-first** architecture:
+The application uses a **Rust-first** architecture:
 
-- **Effect Services**: All async operations return `Effect.Effect<T, E>` values
-- **Layer Composition**: Application assembly uses `Layer` from the Effect library
-- **Tagged Errors**: Domain errors use `Schema.TaggedError` for typed failure handling
-- **Scoped Resources**: Long-lived resources use `Effect.acquireRelease` for lifecycle management
-- **Structured Logging**: All logging uses `Effect.log*` for observability
+- **Rocket Web Framework**: All HTTP serving uses Rocket's typed request handlers and managed state
+- **ApiResult Pattern**: All handlers return `ApiResult<T> = Result<T, ApiError>` with explicit error variants
+- **Typed Errors**: Domain errors use the `ApiError` enum with `thiserror` derive, ensuring every failure path is explicit
+- **Managed State**: Shared application state (`AppState`) is passed via Rocket's `State` managed state
+- **Structured Logging**: All logging uses the `tracing` crate with env-filter support
+- **SSE Real-time Updates**: Server-Sent Events via a broadcast hub (`SseHub`) for real-time UI updates
 
-**Runtime Boundaries**: Effects are only executed at approved boundaries:
-- Backend entrypoint (`src/backend-ts/index.ts`)
-- Bun HTTP adapter (`src/backend-ts/server/router.ts`)
-- Frontend UI boundary (`src/frontend/src/api/client.ts`)
+**Runtime Boundaries**: Rocket manages the async runtime via tokio:
+- Backend entrypoint (`src/backend/src/main.rs`)
+- Rocket route handlers (`src/backend/src/routes/`)
+- Orchestrator services (`src/backend/src/orchestrator/`)
 - Test harness
 
 ### Database Schema
@@ -304,9 +296,8 @@ The system uses SQLite with tables for:
 - `workflow_runs` – Execution run tracking
 - `task_runs` – Individual task execution instances (for Best-of-N)
 - `task_candidates` – Candidate implementations from workers
-- `workflow_sessions` – AI session metadata
+- `pi_workflow_sessions` – AI session metadata
 - `session_messages` – Structured message logs
-- `session_io` – Raw I/O capture
 - `options` – Global configuration
 - `prompt_templates` – Database-backed prompt templates
 
@@ -321,63 +312,38 @@ The server exposes a comprehensive REST API:
 - `POST /api/stop` – Stop execution
 - `GET /api/execution-graph` – Dependency visualization
 - `GET /api/sessions/:id/messages` – Session message logs
-- WebSocket at `/ws` for real-time updates
+- `GET /sse` – Server-Sent Events for real-time updates
 
 ### Project Structure
 
 ```
 src/
-├── backend/              # Rust backend (Rocket + SQLite)
+├── backend/              # Rust backend (PRIMARY - Rocket + SQLite)
+│   ├── Cargo.toml
+│   ├── build.rs          # Builds frontend when embedded-frontend feature is on
 │   ├── src/
-│   │   ├── main.rs       # Entry point
-│   │   ├── routes/       # HTTP routes
-│   │   ├── orchestrator/ # Workflow orchestration
-│   │   └── db/           # Database layer
-│   └── Cargo.toml
-├── backend-ts/           # TypeScript backend (Bun + Effect)
-│   ├── index.ts          # Entry point (Effect runtime boundary)
-│   ├── server.ts         # HTTP server setup (Layer composition)
-│   ├── orchestrator.ts   # Workflow execution orchestration (Effect-native)
-│   ├── db.ts             # Database layer (Effect-based)
-│   ├── types.ts          # TypeScript type definitions
-│   ├── execution-plan.ts # Dependency resolution
-│   ├── task-state.ts     # Task state machine
-│   ├── server/           # HTTP server implementation
-│   │   ├── router.ts     # URL routing
-│   │   ├── server.ts     # Route handlers
-│   │   ├── route-interpreter.ts  # Central Effect route interpreter
-│   │   ├── websocket.ts  # WebSocket hub
-│   │   ├── types.ts      # Server types (Effect-based)
-│   │   └── routes/       # Route handlers (Effect-based)
-│   ├── runtime/          # Execution runtime (Effect-native)
-│   │   ├── session-manager.ts
-│   │   ├── planning-session.ts
-│   │   ├── pi-process.ts
-│   │   ├── container-pi-process.ts
-│   │   ├── container-manager.ts
-│   │   ├── container-image-manager.ts
-│   │   ├── global-scheduler.ts
-│   │   ├── worktree.ts
-│   │   ├── best-of-n.ts  # Best-of-N strategy
-│   │   ├── review-session.ts
-│   │   ├── smart-repair.ts
-│   │   └── self-healing.ts
-│   ├── shared/           # Shared utilities
-│   │   ├── errors.ts     # Domain errors (Schema.TaggedError)
-│   │   ├── logger.ts     # Logging service
-│   │   ├── services.ts   # Service tags (Context.GenericTag)
-│   │   └── error-codes.ts # Error codes
-│   ├── prompts/          # Prompt templates
-│   ├── db/               # Database migrations and types
-│   └── recovery/         # Startup recovery logic
+│   │   ├── main.rs       # Entry point - Rocket server setup
+│   │   ├── error.rs      # ApiError enum + ApiResult<T> type
+│   │   ├── models.rs     # Data models (Task, TaskRun, etc.)
+│   │   ├── state.rs      # AppState shared via Rocket managed state
+│   │   ├── settings.rs   # Settings loading from .tauroboros/settings.json
+│   │   ├── cors.rs       # CORS fairing
+│   │   ├── audit.rs      # Audit logging
+│   │   ├── embedded_resources.rs # Embeds skills/extensions via include_dir
+│   │   ├── db/           # Pool creation, migrations, schema
+│   │   ├── routes/       # HTTP route handlers
+│   │   └── orchestrator/ # Workflow orchestration (Pi RPC, git worktree)
+│   └── sse/              # SSE broadcast hub for real-time updates
+├── backend-ts/           # DEPRECATED - TypeScript/Bun backend
 └── frontend/             # Solid JS frontend (Vite + Tailwind)
     ├── package.json      # Frontend dependencies (npm)
-    ├── vite.config.ts
+    ├── vite.config.ts    # Proxies /api and /sse to Rust backend
     └── src/
+        ├── index.tsx
         ├── App.tsx
-        ├── api/          # Effect-based API client
-        ├── stores/       # Effect-based state management
-        └── components/
+        ├── api/          # REST API client
+        ├── stores/       # State management
+        └── components/   # Kanban board, chat, modals, etc.
 ```
 
 # Acknowledgements

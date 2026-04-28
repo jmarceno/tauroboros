@@ -8,11 +8,13 @@ This project keeps Pi skills local and reproducible inside `tauroboros/`.
 - Pi runtime location (generated): `.pi/skills/<skill-name>/SKILL.md`
 - Infrastructure config (tracked): `.tauroboros/settings.json`
 
-The runtime directory is generated from source. Core workflow behavior should not depend on global skill installation.
+The runtime directory is generated from source. The Rust backend embeds skills and extensions directly into the binary via `include_dir!` and extracts them to `.pi/` at startup (see `src/backend/src/embedded_resources.rs`).
+
+Core workflow behavior should not depend on global skill installation.
 
 ## Commands
 
-From `tauroboros/`:
+From `tauroboros/` (requires Bun for scripts):
 
 ```bash
 bun run skills:sync
@@ -48,7 +50,7 @@ Runs full reproducible setup (`skills:install` + `skills:verify`).
 1. Create `skills/<new-skill>/SKILL.md`.
 2. Include YAML frontmatter with at least `name` and `description`.
 3. Run `bun run skills:sync` (or `bun run skills:install`).
-4. Run `bun run skills:verify`.
+4. Rebuild the Rust backend so the new skill is embedded in the binary.
 
 ## Settings
 
@@ -67,5 +69,5 @@ This ensures Pi uses project-local skills and avoids global skill drift.
 
 - **"No skills found"**: ensure each skill folder contains `SKILL.md`.
 - **Settings validation failed**: check `.tauroboros/settings.json` fields and JSON syntax.
-- **Skill changes not visible**: rerun `bun run skills:install`.
+- **Skill changes not visible in Rust binary**: rebuild the backend (`cargo build`) — the Rust binary embeds skills at compile time via `include_dir!`.
 - **Permission errors writing `.pi/skills`**: ensure the workspace is writable.

@@ -1,298 +1,207 @@
-# Effect Architecture Guide
+# Rust Architecture Guide
 
-This document describes the Effect-first architecture patterns used in TaurOboros.
+This document describes the Rust-based architecture patterns used in TaurOboros.
 
 ## Overview
 
-TaurOboros uses a fully Effect-first architecture. This guide documents the patterns and rules for maintaining consistency.
+TaurOboros uses a Rust-first architecture with the Rocket web framework. This guide documents the patterns and rules for maintaining consistency.
 
 ## Core Principles
 
-### 1. Runtime Boundaries
+### 1. ApiResult Pattern
 
-Effects may only be executed at these approved runtime boundaries:
+All route handlers return `ApiResult<T>` — never implicitly swallow errors:
 
-- **Backend entrypoint** (`src/backend-ts/index.ts`) - Main application startup
-- **Bun HTTP adapter** (`src/backend-ts/server/server.ts`) - Request handling boundary
-- **WebSocket handlers** - Real-time event boundaries
-- **Frontend UI boundary** (`src/frontend/src/`) - User interaction handlers
-- **Test harness** (`tests/`) - Test execution boundary
+```rust
+pub type ApiResult<T> = Result<T, ApiError>;
 
-**Rule**: No other module may call `Effect.runPromise`, `Effect.runSync`, or similar execution functions.
+pub enum ApiError {
+    BadRequest { message: String, code: ErrorCode },
+    NotFound { message: String, code: ErrorCode },
+    Conflict { message: String, code: ErrorCode },
+    InternalError { message: String, code: ErrorCode, cause: Option<Box<dyn std::error::Error>> },
+    ServiceUnavailable { message: String, code: ErrorCode },
+    Database(sqlx::Error),
+    Serialization(serde_json::Error),
+}
+```
 
-### 2. Service Definition Pattern
+**Rule**: Every handler returns `ApiResult<T>`. Never use `Result<Json<T>, String>` or similar loose types.
 
-All services use `Context.GenericTag` for dependency injection:
+### 2. Error Code Pattern
 
-```typescript
-import { Context } from "effect"
+Every error variant carries an explicit `ErrorCode`:
 
-// Service interface
-export interface MyService {
-  readonly doSomething: (input: Input) => Effect.Effect<Output, MyServiceError>
+```rust
+let task = get_task(&state.db, &id)
+    .await?
+    .ok_or_else(|| ApiError::not_found("Task not found")
+        .with_code(ErrorCode::TaskNotFound))?;
+```
+
+**Rule**: Every `ApiError` must specify a code. Use the helper constructors (`.not_found()`, `.bad_request()`, `.conflict()`, `.internal()`) combined with `.with_code()` for precision.
+
+### 3. Managed State Pattern
+
+Shared state is passed via Rocket's `State<AppStateType>`:
+
+```rust
+// State is Arc<AppState> for thread safety
+pub type AppStateType = Arc<AppState>;
+
+pub struct AppState {
+    pub db: SqlitePool,
+    pub sse_hub: Arc<RwLock<SseHub>>,
+    pub port: u16,
+    pub project_root: String,
+    pub settings_dir: String,
+    pub orchestrator: Orchestrator,
+    pub planning_session_manager: PlanningSessionManager,
 }
 
-// Service tag
-export const MyService = Context.GenericTag<MyService>("MyService")
+// In a handler:
+#[get("/api/tasks")]
+async fn list_tasks(state: &State<AppStateType>) -> ApiResult<Json<Vec<Value>>> {
+    let tasks = get_tasks(&state.db).await?;
+    // ...
+}
 ```
 
-**Rule**: Do not use `Context.Service`. Stay on the current Effect dependency line.
+**Rule**: Never store state outside of the managed `AppState`. Use `State<AppStateType>` in all handlers that need shared state.
 
-### 3. Error Handling Pattern
+### 4. Database Pattern
 
-All domain errors use `Schema.TaggedError`:
+All database access uses `sqlx` typed queries:
 
-```typescript
-import { Schema } from "effect"
+```rust
+use sqlx::SqlitePool;
 
-export class MyServiceError extends Schema.TaggedError<MyServiceError>()(
-  "MyServiceError",
-  {
-    operation: Schema.String,
-    message: Schema.String,
-    cause: Schema.optional(Schema.Unknown),
-  }
-) {}
+pub async fn get_tasks(pool: &SqlitePool) -> Result<Vec<Task>, sqlx::Error> {
+    sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE is_archived = 0 ORDER BY idx")
+        .fetch_all(pool)
+        .await
+}
 ```
 
-**Rule**: Do not use `throw new Error` for normal domain failures. Only use exceptions for truly unexpected/defect scenarios.
+**Rule**: No raw string building for SQL queries. Use `sqlx::query` / `sqlx::query_as` with bind parameters (`?`).
 
-### 4. Resource Management Pattern
+### 5. SSE Broadcast Pattern
 
-All long-lived resources use `Effect.acquireRelease`:
+Real-time updates use the `SseHub` broadcast hub:
 
-```typescript
-import { Effect } from "effect"
-
-const resource = Effect.acquireRelease(
-  Effect.tryPromise({
-    try: () => acquireResource(),
-    catch: (cause) => new MyServiceError({ operation: "acquire", message: String(cause), cause }),
-  }),
-  (resource) => Effect.promise(() => releaseResource(resource))
-)
+```rust
+let hub = state.sse_hub.read().await;
+let _ = hub
+    .broadcast(&WSMessage {
+        r#type: "task_updated".to_string(),
+        payload: normalized,
+    })
+    .await;
 ```
 
-**Rule**: Never use manual `try/finally` for resource cleanup in Effect code.
+**Rule**: Always broadcast after state mutations. Use typed `WSMessage` structs — never raw JSON strings.
 
-### 5. Layer Composition Pattern
+### 6. Orchestrator Pattern
 
-Application composition uses Effect Layers:
+Workflow orchestration is handled by the `Orchestrator` struct:
 
-```typescript
-import { Layer, Effect } from "effect"
+```rust
+pub struct Orchestrator { /* ... */ }
 
-// Service layers
-const DatabaseLayer = Layer.effect(
-  DatabaseContext,
-  Effect.gen(function* () {
-    // Acquire database
-    return database
-  })
-)
-
-// Compose application
-const AppLayer = Layer.merge(DatabaseLayer, OtherServiceLayer)
-
-// Execute at boundary
-const program = Effect.gen(function* () {
-  const db = yield* DatabaseContext
-  // ... use db
-}).pipe(Effect.provide(AppLayer))
-
-// Only at runtime boundary:
-await Effect.runPromise(program)
+impl Orchestrator {
+    pub fn new(db: SqlitePool, sse_hub: ..., project_root: ..., settings_dir: ...) -> Self { }
+    pub async fn start_single(&self, task_id: &str) -> ApiResult<WorkflowRun> { }
+    pub async fn stop_run(&self, run_id: &str, pause: bool) -> ApiResult<StopResult> { }
+}
 ```
 
-**Rule**: No manual service graph construction outside of layer composition.
+**Rule**: All orchestration logic lives in `src/backend/src/orchestrator/`. Keep route handlers thin — delegate to the orchestrator for business logic.
 
-### 6. Logging Pattern
+### 7. Serialization Pattern
 
-All operational logging uses `Effect.log`:
+Use `serde` derive macros for all data models:
 
-```typescript
-import { Effect } from "effect"
+```rust
+use serde::{Deserialize, Serialize};
 
-const program = Effect.gen(function* () {
-  yield* Effect.logInfo("Processing task").pipe(
-    Effect.annotateLogs({ taskId: task.id, runId: run.id })
-  )
-})
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct Task {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+    pub status: TaskStatus,
+    // ...
+}
 ```
 
-**Rule**: No `console.log/error/warn` in application code. Only use console for debugging or in the entrypoint before Effect runtime is ready.
+**Rule**: Use `#[serde(rename_all = "camelCase")]` for API-facing types to keep the JavaScript JSON contract. Use snake_case for Rust-internal types.
 
-### 7. Error Matching Pattern
+## Module Organization
 
-Use typed error matching instead of string inspection:
+### Route Modules
 
-```typescript
-const program = Effect.gen(function* () {
-  const result = yield* someOperation.pipe(
-    Effect.catchTag("MyServiceError", (error) =>
-      Effect.succeed(fallbackResult)
-    ),
-    Effect.catchTag("DatabaseError", (error) =>
-      Effect.fail(new ApplicationError({ message: "Database unavailable" }))
-    )
-  )
-})
-```
+- `src/backend/src/routes/mod.rs` — Route aggregation
+- `src/backend/src/routes/tasks/` — Task CRUD + sub-resources (split by function)
+- `src/backend/src/routes/sessions.rs` — Session endpoints
+- `src/backend/src/routes/frontend.rs` — Static file serving (SPA fallback)
 
-**Rule**: Never inspect error messages for control flow.
+Each route module exports a `pub fn routes() -> Vec<Route>` function.
 
-## Module Categories
+### Database Modules
 
-### Backend Modules (Fully Migrated)
+- `src/backend/src/db/mod.rs` — Pool creation, migrations
+- `src/backend/src/db/queries.rs` — SQL query functions
+- `src/backend/src/db/runtime.rs` — Runtime operations
+- `src/backend/src/db/models.rs` — DB-specific model re-exports
 
-All backend modules follow the Effect-first architecture:
+### Orchestrator Modules
 
-- `src/backend-ts/shared/errors.ts` - Domain error definitions (Schema.TaggedError)
-- `src/backend-ts/shared/logger.ts` - Structured logging service
-- `src/backend-ts/shared/services.ts` - Service tags (Context.GenericTag)
-- `src/backend-ts/shared/error-codes.ts` - Error codes for API compatibility
-- `src/backend-ts/index.ts` - Backend entrypoint (runtime boundary)
-- `src/backend-ts/server.ts` - Server composition via layers
-- `src/backend-ts/server/server.ts` - HTTP server with scoped resources
-- `src/backend-ts/server/router.ts` - HTTP routing via Effect interpreters
-- `src/backend-ts/server/route-interpreter.ts` - Central route error handling
-- `src/backend-ts/server/routes/*.ts` - All route handlers (Effect-based)
-- `src/backend-ts/server/websocket.ts` - WebSocket hub with scoped ownership
-- `src/backend-ts/orchestrator.ts` - Main orchestration engine (Effect-native)
-- `src/backend-ts/db.ts` - Database with typed errors
-- `src/backend-ts/telegram.ts` - Telegram integration (Effect-based)
-- `src/backend-ts/runtime/planning-session.ts` - Planning sessions
-- `src/backend-ts/runtime/session-manager.ts` - Session management
-- `src/backend-ts/runtime/pi-process.ts` - Pi process management
-- `src/backend-ts/runtime/container-pi-process.ts` - Container process management
-- `src/backend-ts/runtime/container-manager.ts` - Container management
-- `src/backend-ts/runtime/container-image-manager.ts` - Container image management
-- `src/backend-ts/runtime/global-scheduler.ts` - Task scheduling
-- `src/backend-ts/runtime/best-of-n.ts` - Best-of-N execution
-- `src/backend-ts/runtime/review-session.ts` - Review sessions
-- `src/backend-ts/runtime/smart-repair.ts` - Smart repair service
-- `src/backend-ts/runtime/self-healing.ts` - Self-healing service
-- `src/backend-ts/runtime/codestyle-session.ts` - Code style sessions
-- `src/backend-ts/runtime/worktree.ts` - Git worktree operations
-
-### Frontend Modules (Fully Migrated)
-
-- `src/frontend/src/api/client.ts` - Effect-based HTTP client
-- `src/frontend/src/api/*.ts` - All API modules (Effect-based)
-- `src/frontend/src/stores/*.ts` - All stores (Effect-based)
-- `src/frontend/src/App.tsx` - Main app with Effect boundaries
+- `src/backend/src/orchestrator/mod.rs` — Orchestrator struct + startup sequence
+- `src/backend/src/orchestrator/pi.rs` — Pi AI agent RPC integration
+- `src/backend/src/orchestrator/plan_mode.rs` — Plan mode execution
+- `src/backend/src/orchestrator/review.rs` — Review loop execution
+- `src/backend/src/orchestrator/best_of_n.rs` — Best-of-N execution
+- `src/backend/src/orchestrator/planning_session.rs` — Interactive planning sessions
+- `src/backend/src/orchestrator/git.rs` — Git worktree operations
 
 ## Code Standards
 
 When adding new features or modifying existing code:
 
-- [ ] Use `Schema.TaggedError` for all domain errors
-- [ ] Return `Effect.Effect<T, E>` from all async operations
-- [ ] Use `Effect.gen` for sequential operations
-- [ ] Use `Effect.acquireRelease` for resource management
-- [ ] Use `Effect.log*` for operational logging
-- [ ] Use `Context.GenericTag` for services
-- [ ] Only call `Effect.run*` at runtime boundaries
-- [ ] Never use `throw new Error` for domain failures
-- [ ] Never use `console.log/error/warn` in application code
+- [ ] Return `ApiResult<T>` from all route handlers
+- [ ] Use explicit `ErrorCode` on every error
+- [ ] Use `serde::Deserialize` for request bodies, `serde::Serialize` for responses
+- [ ] Use `sqlx::query_as::<_, T>` for typed queries
+- [ ] Use `#[serde(rename_all = "camelCase")]` on API-facing types
+- [ ] Broadcast SSE events after state mutations
+- [ ] Keep route handlers thin; delegate to orchestrator for business logic
+- [ ] Never add fallbacks — every condition must be explicitly handled
+- [ ] Never use `unwrap()` or `expect()` in route handlers — return `ApiError` instead
 
 ## Verification
 
-Run the migration verification script:
+Run the Rust test suite:
 
 ```bash
-bun run scripts/verify-migration.ts
+cd src/backend && cargo test
 ```
 
-This checks:
-- No `throw new Error` for domain failures
-- No `console.log/error/warn` in application code
-- `Effect.run*` only at runtime boundaries
-- Proper use of Effect patterns
-
-Run the full test suite:
+Run clippy for linting:
 
 ```bash
-bun test tests/*.test.ts
-bun run test:effect-migration
+cd src/backend && cargo clippy
 ```
 
-## Common Migration Patterns
+Verify format:
 
-### Converting a Promise-based method
-
-**Before:**
-```typescript
-async function getUser(id: string): Promise<User> {
-  const user = await db.query("SELECT * FROM users WHERE id = ?", [id])
-  if (!user) {
-    throw new Error("User not found")
-  }
-  return user
-}
-```
-
-**After:**
-```typescript
-function getUser(id: string): Effect.Effect<User, DatabaseError> {
-  return Effect.gen(function* () {
-    const user = yield* Effect.tryPromise({
-      try: () => db.query("SELECT * FROM users WHERE id = ?", [id]),
-      catch: (cause) => new DatabaseError({ operation: "getUser", message: String(cause), cause }),
-    })
-    if (!user) {
-      return yield* new DatabaseError({
-        operation: "getUser",
-        message: `User ${id} not found`,
-      })
-    }
-    return user
-  })
-}
-```
-
-### Converting a class with async methods
-
-**Before:**
-```typescript
-class UserService {
-  constructor(private db: Database) {}
-
-  async createUser(name: string): Promise<User> {
-    return await this.db.insert({ name })
-  }
-}
-```
-
-**After:**
-```typescript
-import { Effect, Context } from "effect"
-
-export interface UserService {
-  readonly createUser: (name: string) => Effect.Effect<User, DatabaseError>
-}
-
-export const UserService = Context.GenericTag<UserService>("UserService")
-
-export const UserServiceLive = Layer.effect(
-  UserService,
-  Effect.gen(function* () {
-    const db = yield* DatabaseContext
-
-    return {
-      createUser: (name) => Effect.gen(function* () {
-        return yield* Effect.tryPromise({
-          try: () => db.insert({ name }),
-          catch: (cause) => new DatabaseError({ operation: "createUser", message: String(cause), cause }),
-        })
-      }),
-    }
-  })
-)
+```bash
+cd src/backend && cargo fmt --check
 ```
 
 ## Resources
 
-- Effect Documentation: https://effect.website
-- Effect GitHub: https://github.com/Effect-TS/effect
-- Migration guides in `~/.local/share/effect-solutions/effect`
+- Rocket Documentation: https://rocket.rs
+- SQLite/sqlx: https://github.com/launchbadge/sqlx
+- Serde: https://serde.rs
+- Thiserror: https://docs.rs/thiserror
