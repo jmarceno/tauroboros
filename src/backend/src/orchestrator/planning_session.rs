@@ -296,13 +296,17 @@ impl PlanningSessionManager {
                     .with_code(ErrorCode::SessionNotFound)
             })?;
 
-        active.shutdown_tx.send(true).ok();
+        if let Err(e) = active.shutdown_tx.send(true) {
+            tracing::debug!(session_id = %session_id, error = %e, "Failed to send shutdown signal to planning session");
+        }
 
         let mut child = active.child.lock().await;
-        let _ = child.kill().await;
+        if let Err(e) = child.kill().await {
+            tracing::debug!(session_id = %session_id, error = %e, "Failed to kill planning session process");
+        }
 
         let now = chrono::Utc::now().timestamp();
-        let _ = update_workflow_session_record(
+        update_workflow_session_record(
             &self.db,
             session_id,
             UpdateWorkflowSessionRecord {
@@ -317,23 +321,26 @@ impl PlanningSessionManager {
         self.sessions.lock().await.remove(session_id);
 
         let hub = self.sse_hub.read().await;
-        let _ = hub
-            .broadcast(&WSMessage {
-                r#type: "planning_session_stopped".to_string(),
-                payload: json!({ "id": session_id }),
-            })
-            .await;
+        hub.broadcast(&WSMessage {
+            r#type: "planning_session_stopped".to_string(),
+            payload: json!({ "id": session_id }),
+        })
+        .await;
 
         Ok(())
     }
 
     pub async fn close_session(&self, session_id: &str) -> Result<(), ApiError> {
         if let Some(active) = self.sessions.lock().await.remove(session_id) {
-            active.shutdown_tx.send(true).ok();
+            if let Err(e) = active.shutdown_tx.send(true) {
+                tracing::debug!(session_id = %session_id, error = %e, "Failed to send shutdown signal during close");
+            }
 
             {
                 let mut stdin = active.stdin.lock().await;
-                let _ = stdin.shutdown().await;
+                if let Err(e) = stdin.shutdown().await {
+                    tracing::debug!(session_id = %session_id, error = %e, "Failed to shutdown stdin during close");
+                }
             }
 
             let mut child = active.child.lock().await;
@@ -344,14 +351,18 @@ impl PlanningSessionManager {
                 }
                 Err(_) => {
                     warn!(session_id = %session_id, "Planning Pi process did not exit gracefully; killing");
-                    let _ = child.kill().await;
-                    let _ = child.wait().await;
+                    if let Err(e) = child.kill().await {
+                        tracing::debug!(session_id = %session_id, error = %e, "Failed to kill planning process");
+                    }
+                    if let Err(e) = child.wait().await {
+                        tracing::debug!(session_id = %session_id, error = %e, "Failed to wait for killed process");
+                    }
                 }
             }
         }
 
         let now = chrono::Utc::now().timestamp();
-        let _ = update_workflow_session_record(
+        update_workflow_session_record(
             &self.db,
             session_id,
             UpdateWorkflowSessionRecord {
@@ -363,7 +374,7 @@ impl PlanningSessionManager {
         .await?;
 
         let hub = self.sse_hub.read().await;
-        let _ = hub
+        hub
             .broadcast(&WSMessage {
                 r#type: "planning_session_closed".to_string(),
                 payload: json!({ "id": session_id }),

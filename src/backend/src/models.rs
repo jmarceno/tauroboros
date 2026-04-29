@@ -4,8 +4,17 @@ use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Map, Value};
 use sqlx::FromRow;
 
+/// Parse a JSON string into a Value, logging on parse failure.
+/// This is used by serializers where graceful degradation is preferred over hard errors.
 fn parse_json_value(raw: &str) -> Option<Value> {
-    serde_json::from_str::<Value>(raw).ok()
+    match serde_json::from_str::<Value>(raw) {
+        Ok(value) => Some(value),
+        Err(e) => {
+            // Only log at trace level as this is expected for malformed/empty data
+            tracing::trace!(error = %e, json_sample = %raw.chars().take(100).collect::<String>(), "Failed to parse JSON value");
+            None
+        }
+    }
 }
 
 fn serialize_json_array_or_empty<S>(raw: &Option<String>, serializer: S) -> Result<S::Ok, S::Error>

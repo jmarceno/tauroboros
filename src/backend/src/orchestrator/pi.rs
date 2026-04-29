@@ -749,17 +749,38 @@ where
 {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stream).lines();
+        let mut send_errors = 0;
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
-                    let _ = if stdout {
-                        tx.send(ProcessLine::Stdout(line))
+                    let process_line = if stdout {
+                        ProcessLine::Stdout(line)
                     } else {
-                        tx.send(ProcessLine::Stderr(line))
+                        ProcessLine::Stderr(line)
                     };
+                    if let Err(e) = tx.send(process_line) {
+                        send_errors += 1;
+                        if send_errors == 1 || send_errors % 100 == 0 {
+                            // Log first error and then every 100th to avoid spam
+                            tracing::debug!(
+                                stream_type = if stdout { "stdout" } else { "stderr" },
+                                error = %e,
+                                "Failed to send process line - receiver may have dropped"
+                            );
+                        }
+                        // Stop reading if receiver is gone
+                        break;
+                    }
                 }
                 Ok(None) => break,
-                Err(_) => break,
+                Err(e) => {
+                    tracing::debug!(
+                        stream_type = if stdout { "stdout" } else { "stderr" },
+                        error = %e,
+                        "Error reading from process stream"
+                    );
+                    break;
+                }
             }
         }
     });

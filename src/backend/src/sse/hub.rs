@@ -13,18 +13,41 @@ pub struct SseEvent {
 #[allow(dead_code)]
 impl SseEvent {
     pub fn new(event_type: impl Into<String>, data: impl Serialize) -> Self {
+        let event_type_str = event_type.into();
+        let data = match serde_json::to_value(data) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::error!(
+                    event_type = %event_type_str,
+                    error = %e,
+                    "Failed to serialize SSE event data"
+                );
+                serde_json::json!({ "error": "serialization_failed" })
+            }
+        };
         Self {
-            event_type: event_type.into(),
-            data: serde_json::to_value(data).unwrap_or_default(),
+            event_type: event_type_str,
+            data,
         }
     }
 
     /// Format as SSE message
     pub fn format(&self) -> String {
+        let data_str = match serde_json::to_string(&self.data) {
+            Ok(json) => json,
+            Err(e) => {
+                tracing::error!(
+                    event_type = %self.event_type,
+                    error = %e,
+                    "Failed to stringify SSE event data"
+                );
+                "{}".to_string()
+            }
+        };
         format!(
             "event: {}\ndata: {}\n\n",
             self.event_type,
-            serde_json::to_string(&self.data).unwrap_or_default()
+            data_str
         )
     }
 }
@@ -79,13 +102,29 @@ impl SseHub {
 
     /// Broadcast a message to all connections
     pub async fn broadcast(&self, message: &WSMessage) {
-        let event = SseEvent {
-            event_type: message.r#type.clone(),
-            data: serde_json::to_value(message).unwrap_or_default(),
+        let event = match serde_json::to_value(message) {
+            Ok(data) => SseEvent {
+                event_type: message.r#type.clone(),
+                data,
+            },
+            Err(e) => {
+                tracing::error!(
+                    event_type = %message.r#type,
+                    error = %e,
+                    "Failed to serialize message for SSE broadcast"
+                );
+                return;
+            }
         };
 
         for conn in self.connections.values() {
-            let _ = conn.sender.send(event.clone()).await;
+            if let Err(e) = conn.sender.send(event.clone()).await {
+                tracing::debug!(
+                    connection_id = %conn.id,
+                    error = %e,
+                    "Failed to send SSE event to connection - client may have disconnected"
+                );
+            }
         }
     }
 
@@ -93,7 +132,14 @@ impl SseHub {
     pub async fn broadcast_to_session(&self, session_id: &str, event: SseEvent) {
         for conn in self.connections.values() {
             if conn.session_id.as_ref() == Some(&session_id.to_string()) {
-                let _ = conn.sender.send(event.clone()).await;
+                if let Err(e) = conn.sender.send(event.clone()).await {
+                    tracing::debug!(
+                        connection_id = %conn.id,
+                        session_id = %session_id,
+                        error = %e,
+                        "Failed to send SSE event to session-specific connection"
+                    );
+                }
             }
         }
     }

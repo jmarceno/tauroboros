@@ -1847,7 +1847,13 @@ impl Orchestrator {
             self.mark_remaining_tasks_blocked(&run_id, &task_id, outcome.error_message.as_deref())
                 .await?;
             if remaining_active > 0 {
-                let _ = self.signal_stop_for_run(&run_id).await;
+                let signaled = self.signal_stop_for_run(&run_id).await;
+                if signaled == 0 {
+                    tracing::warn!(
+                        run_id = %run_id,
+                        "No active tasks found to signal stop after task failure"
+                    );
+                }
             }
         }
 
@@ -2157,8 +2163,25 @@ impl Orchestrator {
             }
         }
 
+        let mut failed_sends = 0;
         for sender in &stop_senders {
-            let _ = sender.send(true);
+            if let Err(e) = sender.send(true) {
+                failed_sends += 1;
+                tracing::warn!(
+                    run_id = %run_id,
+                    error = %e,
+                    "Failed to send stop signal to task"
+                );
+            }
+        }
+
+        if failed_sends > 0 {
+            tracing::warn!(
+                run_id = %run_id,
+                failed = failed_sends,
+                total = stop_senders.len(),
+                "Some stop signals failed to send"
+            );
         }
 
         stop_senders.len() as i32
@@ -2236,13 +2259,33 @@ impl Orchestrator {
     }
 
     async fn broadcast_task(&self, task: &Task) {
-        let payload = serde_json::to_value(task).unwrap_or_else(|_| json!({ "id": task.id }));
-        self.broadcast("task_updated", payload).await;
+        match serde_json::to_value(task) {
+            Ok(payload) => self.broadcast("task_updated", payload).await,
+            Err(e) => {
+                tracing::error!(
+                    task_id = %task.id,
+                    error = %e,
+                    "Failed to serialize task for broadcast - this is a bug"
+                );
+                // Fallback to minimal payload for recovery, but log the error
+                self.broadcast("task_updated", json!({ "id": task.id, "error": "serialization_failed" })).await;
+            }
+        }
     }
 
     async fn broadcast_run(&self, run: &WorkflowRun) {
-        let payload = serde_json::to_value(run).unwrap_or_else(|_| json!({ "id": run.id }));
-        self.broadcast("run_updated", payload).await;
+        match serde_json::to_value(run) {
+            Ok(payload) => self.broadcast("run_updated", payload).await,
+            Err(e) => {
+                tracing::error!(
+                    run_id = %run.id,
+                    error = %e,
+                    "Failed to serialize run for broadcast - this is a bug"
+                );
+                // Fallback to minimal payload for recovery, but log the error
+                self.broadcast("run_updated", json!({ "id": run.id, "error": "serialization_failed" })).await;
+            }
+        }
     }
 }
 
@@ -2505,7 +2548,18 @@ trait TaskJsonExt {
 impl TaskJsonExt for Task {
     fn requirements_vec(&self) -> Vec<String> {
         match self.requirements.as_deref() {
-            Some(raw) => serde_json::from_str::<Vec<String>>(raw).unwrap_or_default(),
+            Some(raw) => match serde_json::from_str::<Vec<String>>(raw) {
+                Ok(vec) => vec,
+                Err(e) => {
+                    tracing::error!(
+                        task_id = %self.id,
+                        requirements_json = %raw,
+                        error = %e,
+                        "Failed to parse task requirements JSON - returning empty requirements"
+                    );
+                    Vec::new()
+                }
+            },
             None => Vec::new(),
         }
     }

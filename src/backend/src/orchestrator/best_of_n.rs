@@ -64,14 +64,24 @@ impl Orchestrator {
         _slot_index: usize,
         stop_rx: watch::Receiver<bool>,
     ) -> Result<TaskOutcome, ApiError> {
-        let config = task
-            .best_of_n_config
-            .as_ref()
-            .and_then(|raw| serde_json::from_str::<BestOfNConfig>(raw).ok())
-            .ok_or_else(|| {
-                ApiError::internal("Task is best_of_n but has no valid config")
-                    .with_code(ErrorCode::ExecutionOperationFailed)
-            })?;
+        let config = match task.best_of_n_config.as_ref() {
+            Some(raw) => match serde_json::from_str::<BestOfNConfig>(raw) {
+                Ok(config) => config,
+                Err(e) => {
+                    return Err(ApiError::internal(format!(
+                        "Task is best_of_n but config JSON is invalid: {}",
+                        e
+                    ))
+                    .with_code(ErrorCode::ExecutionOperationFailed));
+                }
+            },
+            None => {
+                return Err(ApiError::internal(
+                    "Task is best_of_n but has no config set"
+                )
+                .with_code(ErrorCode::ExecutionOperationFailed));
+            }
+        };
 
         crate::db::queries::update_task(
             &self.db,

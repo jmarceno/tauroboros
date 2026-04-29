@@ -45,8 +45,11 @@ async fn rocket() -> Rocket<Build> {
 
     info!("Starting TaurOboros Rust server...");
 
-    // Load environment variables
-    dotenvy::dotenv().ok();
+    // Load environment variables - log but don't fail on dotenv errors
+    // (dotenv is optional, env vars may already be set)
+    if let Err(e) = dotenvy::dotenv() {
+        info!("No .env file found or failed to load it: {}", e);
+    }
 
     let startup_settings = load_startup_settings()
         .unwrap_or_else(|error| panic!("Failed to load startup settings: {error}"));
@@ -83,14 +86,60 @@ async fn rocket() -> Rocket<Build> {
         }
     };
 
-    // Run migrations
-    if let Err(e) = run_migrations(&db_pool).await {
-        warn!("Migration warning (may already exist): {}", e);
-    }
+    // Run migrations - this is critical for database schema correctness
+    run_migrations(&db_pool)
+        .await
+        .map_err(|e| {
+            panic!("Database migration failed: {}", e);
+        })
+        .expect("Migrations must succeed");
+    info!("Database migrations completed successfully");
 
     // Fix stale workflow runs that were left in a non-terminal state
-    if let Err(e) = fix_stale_workflow_runs(&db_pool).await {
-        warn!("Failed to fix stale workflow runs on startup: {}", e);
+    // This is a recovery operation that must be logged to audit database
+    match fix_stale_workflow_runs(&db_pool).await {
+        Ok(count) => {
+            if count > 0 {
+                info!("Fixed {} stale workflow run(s) on startup", count);
+                if let Err(e) = record_audit_event(
+                    &db_pool,
+                    CreateAuditEvent {
+                        level: AuditLevel::Warn,
+                        source: "startup",
+                        event_type: "stale_runs_fixed",
+                        message: format!("Auto-recovered {} stale workflow run(s) on startup", count),
+                        run_id: None,
+                        task_id: None,
+                        task_run_id: None,
+                        session_id: None,
+                        details: Some(json!({ "count": count })),
+                    },
+                )
+                .await
+                {
+                    warn!("Failed to write audit event for stale run fix: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            // Log to audit database and fail fast - stale runs indicate corruption
+            let _ = record_audit_event(
+                &db_pool,
+                CreateAuditEvent {
+                    level: AuditLevel::Error,
+                    source: "startup",
+                    event_type: "stale_run_fix_failed",
+                    message: format!("Failed to fix stale workflow runs on startup: {}", e),
+                    run_id: None,
+                    task_id: None,
+                    task_run_id: None,
+                    session_id: None,
+                    details: Some(json!({ "error": e.to_string() })),
+                },
+            )
+            .await;
+            panic!("Failed to fix stale workflow runs on startup: {}", e);
+        }
     }
 
     let bubblewrap_is_available = bubblewrap_available();

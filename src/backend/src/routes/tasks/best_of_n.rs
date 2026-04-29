@@ -129,19 +129,33 @@ pub(super) async fn select_candidate(
         } else {
             "rejected"
         };
-        update_task_candidate(&state.db, &candidate.id, new_status)
-            .await
-            .ok();
+        if let Err(e) = update_task_candidate(&state.db, &candidate.id, new_status).await {
+            tracing::warn!(
+                candidate_id = %candidate.id,
+                error = %e,
+                "Failed to update candidate status during selection"
+            );
+        }
     }
 
     let hub = state.sse_hub.read().await;
     for candidate in get_task_candidates(&state.db, &id).await? {
-        let _ = hub
-            .broadcast(&WSMessage {
-                r#type: "task_candidate_updated".to_string(),
-                payload: serde_json::to_value(&candidate).unwrap_or_default(),
-            })
-            .await;
+        let payload = match serde_json::to_value(&candidate) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::error!(
+                    candidate_id = %candidate.id,
+                    error = %e,
+                    "Failed to serialize candidate for broadcast"
+                );
+                json!({ "id": candidate.id, "error": "serialization_failed" })
+            }
+        };
+        hub.broadcast(&WSMessage {
+            r#type: "task_candidate_updated".to_string(),
+            payload,
+        })
+        .await;
     }
 
     Ok(Json(

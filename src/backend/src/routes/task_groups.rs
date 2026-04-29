@@ -54,32 +54,51 @@ fn validate_group_name(name: &str) -> Result<(), String> {
 
 async fn broadcast_group_created(state: &State<AppStateType>, group: &TaskGroup) {
     let hub = state.sse_hub.read().await;
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "task_group_created".to_string(),
-            payload: serde_json::to_value(group).unwrap_or_default(),
-        })
-        .await;
+    let payload = match serde_json::to_value(group) {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!(
+                group_id = %group.id,
+                error = %e,
+                "Failed to serialize group for broadcast"
+            );
+            json!({ "id": group.id, "error": "serialization_failed" })
+        }
+    };
+    hub.broadcast(&WSMessage {
+        r#type: "task_group_created".to_string(),
+        payload,
+    })
+    .await;
 }
 
 async fn broadcast_group_updated(state: &State<AppStateType>, group: &TaskGroup) {
     let hub = state.sse_hub.read().await;
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "task_group_updated".to_string(),
-            payload: serde_json::to_value(group).unwrap_or_default(),
-        })
-        .await;
+    let payload = match serde_json::to_value(group) {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!(
+                group_id = %group.id,
+                error = %e,
+                "Failed to serialize group for broadcast"
+            );
+            json!({ "id": group.id, "error": "serialization_failed" })
+        }
+    };
+    hub.broadcast(&WSMessage {
+        r#type: "task_group_updated".to_string(),
+        payload,
+    })
+    .await;
 }
 
 async fn broadcast_group_deleted(state: &State<AppStateType>, group_id: &str) {
     let hub = state.sse_hub.read().await;
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "task_group_deleted".to_string(),
-            payload: json!({ "id": group_id }),
-        })
-        .await;
+    hub.broadcast(&WSMessage {
+        r#type: "task_group_deleted".to_string(),
+        payload: json!({ "id": group_id }),
+    })
+    .await;
 }
 
 async fn broadcast_members_added(
@@ -89,16 +108,15 @@ async fn broadcast_members_added(
     count: i32,
 ) {
     let hub = state.sse_hub.read().await;
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "task_group_members_added".to_string(),
-            payload: json!({
-                "groupId": group_id,
-                "taskIds": task_ids,
-                "addedCount": count,
-            }),
-        })
-        .await;
+    hub.broadcast(&WSMessage {
+        r#type: "task_group_members_added".to_string(),
+        payload: json!({
+            "groupId": group_id,
+            "taskIds": task_ids,
+            "addedCount": count,
+        }),
+    })
+    .await;
 }
 
 async fn broadcast_members_removed(
@@ -108,16 +126,15 @@ async fn broadcast_members_removed(
     count: i32,
 ) {
     let hub = state.sse_hub.read().await;
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "task_group_members_removed".to_string(),
-            payload: json!({
-                "groupId": group_id,
-                "taskIds": task_ids,
-                "removedCount": count,
-            }),
-        })
-        .await;
+    hub.broadcast(&WSMessage {
+        r#type: "task_group_members_removed".to_string(),
+        payload: json!({
+            "groupId": group_id,
+            "taskIds": task_ids,
+            "removedCount": count,
+        }),
+    })
+    .await;
 }
 
 #[get("/api/task-groups")]

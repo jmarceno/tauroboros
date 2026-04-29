@@ -74,7 +74,21 @@ struct CreateAndWaitTaskRequest {
 // ============================================================================
 
 pub(crate) fn normalize_task_for_client(task: &Task, _base_url: &str) -> Value {
-    let mut json = serde_json::to_value(task).unwrap_or_default();
+    let mut json = match serde_json::to_value(task) {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!(
+                task_id = %task.id,
+                error = %e,
+                "Failed to serialize task for client - this is a bug"
+            );
+            json!({
+                "id": task.id,
+                "error": "serialization_failed",
+                "name": &task.name
+            })
+        }
+    };
     if let Some(session_id) = &task.session_id {
         json["sessionUrl"] = json!(session_url_for(session_id));
     }
@@ -82,7 +96,21 @@ pub(crate) fn normalize_task_for_client(task: &Task, _base_url: &str) -> Value {
 }
 
 pub(crate) fn normalize_task_run_for_client(run: &TaskRun, _base_url: &str) -> Value {
-    let mut json = serde_json::to_value(run).unwrap_or_default();
+    let mut json = match serde_json::to_value(run) {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!(
+                run_id = %run.id,
+                error = %e,
+                "Failed to serialize task run for client - this is a bug"
+            );
+            json!({
+                "id": run.id,
+                "error": "serialization_failed",
+                "taskId": &run.task_id
+            })
+        }
+    };
     if let Some(session_id) = &run.session_id {
         json["sessionUrl"] = json!(session_url_for(session_id));
     }
@@ -96,43 +124,39 @@ pub(super) async fn broadcast_task_update(
 ) {
     let hub = state.sse_hub.read().await;
     let normalized = normalize_task_for_client(task, base_url);
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "task_updated".to_string(),
-            payload: normalized,
-        })
-        .await;
+    hub.broadcast(&WSMessage {
+        r#type: "task_updated".to_string(),
+        payload: normalized,
+    })
+    .await;
 }
 
 async fn broadcast_task_created(state: &State<AppStateType>, task: &Task, base_url: &str) {
     let hub = state.sse_hub.read().await;
     let normalized = normalize_task_for_client(task, base_url);
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "task_created".to_string(),
-            payload: normalized,
-        })
-        .await;
+    hub.broadcast(&WSMessage {
+        r#type: "task_created".to_string(),
+        payload: normalized,
+    })
+    .await;
 }
 
 async fn broadcast_task_deleted(state: &State<AppStateType>, task_id: &str) {
     let hub = state.sse_hub.read().await;
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "task_deleted".to_string(),
-            payload: json!({ "id": task_id }),
-        })
-        .await;
+    hub.broadcast(&WSMessage {
+        r#type: "task_deleted".to_string(),
+        payload: json!({ "id": task_id }),
+    })
+    .await;
 }
 
 async fn broadcast_task_archived(state: &State<AppStateType>, task_id: &str) {
     let hub = state.sse_hub.read().await;
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "task_archived".to_string(),
-            payload: json!({ "id": task_id }),
-        })
-        .await;
+    hub.broadcast(&WSMessage {
+        r#type: "task_archived".to_string(),
+        payload: json!({ "id": task_id }),
+    })
+    .await;
 }
 
 async fn broadcast_group_event(
@@ -147,12 +171,11 @@ async fn broadcast_group_event(
     } else {
         json!({ "groupId": group_id })
     };
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: event_type.to_string(),
-            payload,
-        })
-        .await;
+    hub.broadcast(&WSMessage {
+        r#type: event_type.to_string(),
+        payload,
+    })
+    .await;
 }
 
 // ============================================================================
@@ -268,7 +291,14 @@ async fn update_task_route(
     if let Some(TaskStatus::Template) = input.status {
         if existing.group_id.is_some() {
             if let Some(ref group_id) = existing.group_id {
-                remove_task_from_group(&state.db, group_id, &id).await.ok();
+                if let Err(e) = remove_task_from_group(&state.db, group_id, &id).await {
+                    tracing::warn!(
+                        task_id = %id,
+                        group_id = %group_id,
+                        error = %e,
+                        "Failed to remove task from group when converting to template"
+                    );
+                }
                 broadcast_group_event(state, "group_task_removed", group_id, Some(&id)).await;
             }
             input.group_id = None;
@@ -298,7 +328,7 @@ async fn update_task_route(
                 }
 
                 if all_done && !group.task_ids.is_empty() {
-                    update_task_group(
+                    if let Err(e) = update_task_group(
                         &state.db,
                         group_id,
                         None,
@@ -306,7 +336,13 @@ async fn update_task_route(
                         Some(TaskGroupStatus::Completed),
                     )
                     .await
-                    .ok();
+                    {
+                        tracing::warn!(
+                            group_id = %group_id,
+                            error = %e,
+                            "Failed to mark group as completed when all tasks done"
+                        );
+                    }
                 }
             }
         }
@@ -351,12 +387,11 @@ async fn reorder_task_route(
     reorder_task(&state.db, &req.id, req.new_idx).await?;
 
     let hub = state.sse_hub.read().await;
-    let _ = hub
-        .broadcast(&WSMessage {
-            r#type: "task_reordered".to_string(),
-            payload: json!({}),
-        })
-        .await;
+    hub.broadcast(&WSMessage {
+        r#type: "task_reordered".to_string(),
+        payload: json!({}),
+    })
+    .await;
 
     Ok(Json(json!({ "ok": true })))
 }
@@ -372,11 +407,25 @@ async fn delete_done_tasks(state: &State<AppStateType>) -> ApiResult<Json<Value>
         let has_history = has_task_execution_history(&state.db, &task.id).await?;
 
         if has_history {
-            archive_task(&state.db, &task.id).await.ok();
+            if let Err(e) = archive_task(&state.db, &task.id).await {
+                tracing::warn!(
+                    task_id = %task.id,
+                    error = %e,
+                    "Failed to archive done task during bulk delete"
+                );
+                continue;
+            }
             broadcast_task_archived(state, &task.id).await;
             archived += 1;
         } else {
-            hard_delete_task(&state.db, &task.id).await.ok();
+            if let Err(e) = hard_delete_task(&state.db, &task.id).await {
+                tracing::warn!(
+                    task_id = %task.id,
+                    error = %e,
+                    "Failed to hard delete done task during bulk delete"
+                );
+                continue;
+            }
             broadcast_task_deleted(state, &task.id).await;
             deleted += 1;
         }
@@ -443,7 +492,7 @@ async fn get_task_last_update(state: &State<AppStateType>, id: String) -> ApiRes
         .await?
         .ok_or_else(|| ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound))?;
 
-    let last_update: Option<i64> = sqlx::query_scalar(
+    let last_update: Option<i64> = match sqlx::query_scalar(
         r#"
         SELECT MAX(timestamp) FROM session_messages
         WHERE task_id = ?
@@ -452,8 +501,17 @@ async fn get_task_last_update(state: &State<AppStateType>, id: String) -> ApiRes
     .bind(&id)
     .fetch_one(&state.db)
     .await
-    .ok()
-    .flatten();
+    {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::debug!(
+                task_id = %id,
+                error = %e,
+                "Failed to fetch last update timestamp (no messages likely)"
+            );
+            None
+        }
+    };
 
     Ok(Json(json!({
         "taskId": id,

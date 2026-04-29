@@ -60,9 +60,17 @@ async fn get_run_paused_state(state: &State<AppStateType>, id: String) -> ApiRes
         .ok_or_else(|| ApiError::not_found("Run not found").with_code(ErrorCode::RunNotFound))?;
 
     // Get sessions for tasks in this run
-    let task_order: Vec<String> =
-        serde_json::from_str(&run.task_order.clone().unwrap_or("[]".to_string()))
-            .unwrap_or_default();
+    let task_order_str = run.task_order.as_deref().unwrap_or("[]");
+    let task_order: Vec<String> = serde_json::from_str(task_order_str)
+        .map_err(|e| {
+            tracing::warn!(
+                run_id = %id,
+                task_order_json = %task_order_str,
+                error = %e,
+                "Failed to parse task_order JSON, using empty array"
+            );
+            ApiError::Serialization(e)
+        })?;
 
     let mut sessions = vec![];
     for task_id in task_order {

@@ -917,9 +917,17 @@ async fn get_planning_timeline(
                 "relativeTime": m.timestamp - session.started_at,
                 "role": m.role,
                 "messageType": m.message_type,
-                "summary": serde_json::from_str::<Value>(&m.content_json).ok()
-                    .and_then(|v| v.get("text").or_else(|| v.get("summary")).cloned())
-                    .unwrap_or_else(|| json!("")),
+                "summary": match serde_json::from_str::<Value>(&m.content_json) {
+                    Ok(value) => value.get("text").or_else(|| value.get("summary")).cloned().unwrap_or_else(|| json!("")),
+                    Err(e) => {
+                        tracing::debug!(
+                            message_id = m.id,
+                            error = %e,
+                            "Failed to parse message content_json for summary"
+                        );
+                        json!("")
+                    }
+                },
                 "hasToolCalls": m.tool_call_id.is_some(),
                 "hasEdits": m.edit_diff.is_some(),
                 "modelProvider": m.model_provider,

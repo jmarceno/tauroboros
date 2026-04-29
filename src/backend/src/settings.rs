@@ -148,7 +148,8 @@ fn save_port_to_settings(settings_dir: &str, port: u16) -> Result<(), String> {
     let mut settings: serde_json::Value = if settings_path.exists() {
         let content = fs::read_to_string(&settings_path)
             .map_err(|e| format!("Failed to read {}: {e}", settings_path.display()))?;
-        serde_json::from_str(&content).unwrap_or_default()
+        serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse {}: {e}", settings_path.display()))?
     } else {
         serde_json::Value::default()
     };
@@ -187,13 +188,7 @@ pub fn load_startup_settings() -> Result<StartupSettings, String> {
     let settings_existed = settings_path.exists();
     let infrastructure_settings = read_infrastructure_settings(&settings_path)?;
 
-    let _ = (
-        &infrastructure_settings.skills.local_path,
-        infrastructure_settings.skills.auto_load,
-        infrastructure_settings.skills.allow_global,
-        &infrastructure_settings.project.name,
-        &infrastructure_settings.project.r#type,
-    );
+    // All settings fields are validated during deserialization above
 
     let settings_port = infrastructure_settings.workflow.server.port;
     let env_port = parse_port_from_env()?;

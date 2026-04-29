@@ -13,7 +13,14 @@ pub use models::*;
 pub async fn create_pool(db_path: &str) -> Result<Pool<Sqlite>, sqlx::Error> {
     // Ensure directory exists
     if let Some(parent) = Path::new(db_path).parent() {
-        tokio::fs::create_dir_all(parent).await.ok();
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| {
+                sqlx::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to create database directory {}: {}", parent.display(), e)
+                ))
+            })?;
     }
 
     let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path))?

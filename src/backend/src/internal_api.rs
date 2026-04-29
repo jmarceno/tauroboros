@@ -66,7 +66,10 @@ fn parse_role(s: &str) -> MessageRole {
         "user" => MessageRole::User,
         "assistant" => MessageRole::Assistant,
         "tool" | "toolResult" => MessageRole::Tool,
-        _ => MessageRole::System,
+        unknown => {
+            tracing::warn!(role = %unknown, "Unknown message role received, using System");
+            MessageRole::System
+        }
     }
 }
 
@@ -80,7 +83,10 @@ fn parse_message_type(s: &str) -> MessageType {
         "step_finish" => MessageType::StepFinish,
         "thinking" => MessageType::Thinking,
         "error" | "session_error" => MessageType::SessionError,
-        _ => MessageType::SessionStatus,
+        unknown => {
+            tracing::warn!(message_type = %unknown, "Unknown message type received, using SessionStatus");
+            MessageType::SessionStatus
+        }
     }
 }
 
@@ -89,7 +95,12 @@ fn convert_incoming(msg: IncomingMessage) -> Result<SessionMessage, ApiError> {
     let role = parse_role(&msg.role);
     let message_type = parse_message_type(&msg.message_type);
 
-    let text = msg.text.unwrap_or_default();
+    // Log when text is missing as this may indicate incomplete message data
+    let text = msg.text.unwrap_or_else(|| {
+        tracing::debug!(session_id = %msg.session_id, "Incoming message has no text content");
+        String::new()
+    });
+    
     let mut content_map = serde_json::Map::new();
     content_map.insert("text".to_string(), Value::String(text.clone()));
     content_map.insert(
@@ -136,18 +147,28 @@ fn convert_incoming(msg: IncomingMessage) -> Result<SessionMessage, ApiError> {
         (None, None)
     };
 
+    // Generate message_id if not provided or empty
+    let message_id = msg.message_id
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            tracing::debug!(session_id = %msg.session_id, "Generating message_id for incoming message");
+            Uuid::new_v4().to_string()
+        });
+    
+    // Use provided timestamp or current time
+    let timestamp = msg.timestamp.unwrap_or_else(|| {
+        tracing::trace!(session_id = %msg.session_id, "Using current timestamp for incoming message");
+        now
+    });
+
     Ok(SessionMessage {
         id: 0,
         seq: 0,
-        message_id: Some(
-            msg.message_id
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| Uuid::new_v4().to_string()),
-        ),
+        message_id: Some(message_id),
         session_id: msg.session_id,
         task_id: msg.task_id,
         task_run_id: msg.task_run_id,
-        timestamp: msg.timestamp.unwrap_or(now),
+        timestamp,
         role,
         event_name: msg.event_name,
         message_type,
@@ -200,6 +221,7 @@ pub fn start_message_writer(
 
     tokio::spawn(async move {
         while let Some(mut message) = rx.recv().await {
+            // Fetch next sequence number - this must succeed for message ordering
             let seq: i32 = match sqlx::query_scalar::<_, Option<i32>>(
                 "SELECT MAX(seq) FROM session_messages WHERE session_id = ?",
             )
@@ -208,7 +230,14 @@ pub fn start_message_writer(
             .await
             {
                 Ok(current) => current.unwrap_or(0) + 1,
-                Err(_) => 1,
+                Err(e) => {
+                    warn!(
+                        session_id = %message.session_id,
+                        error = %e,
+                        "Failed to fetch max seq for session, defaulting to 1"
+                    );
+                    1
+                }
             };
             message.seq = seq;
 
@@ -220,8 +249,10 @@ pub fn start_message_writer(
                 Err(e) => {
                     warn!(
                         session_id = %message.session_id,
+                        message_id = ?message.message_id,
+                        seq = message.seq,
                         error = %e,
-                        "Failed to write session message via serialized writer"
+                        "Failed to write session message via serialized writer - message may be lost"
                     );
                 }
             }
