@@ -930,11 +930,30 @@ pub async fn get_options(pool: &Pool<Sqlite>) -> ApiResult<Options> {
         SELECT * FROM options WHERE id = 1
         "#,
     )
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)?;
 
-    Ok(options)
+    match options {
+        Some(opts) => Ok(opts),
+        None => {
+            sqlx::query("INSERT OR IGNORE INTO options (id) VALUES (1)")
+                .execute(pool)
+                .await
+                .map_err(ApiError::Database)?;
+
+            let options = sqlx::query_as::<_, Options>(
+                r#"
+                SELECT * FROM options WHERE id = 1
+                "#,
+            )
+            .fetch_one(pool)
+            .await
+            .map_err(ApiError::Database)?;
+
+            Ok(options)
+        }
+    }
 }
 
 // ============================================================================

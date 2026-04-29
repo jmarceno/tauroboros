@@ -114,7 +114,7 @@ async fn update_planning_prompt(
     state: &State<AppStateType>,
     req: Json<UpdatePlanningPromptRequest>,
 ) -> ApiResult<Json<PlanningPrompt>> {
-    let key = req.key.as_deref().unwrap_or("default");
+    let key = req.key.as_deref().unwrap_or("planning");
 
     let existing: Option<PlanningPrompt> = sqlx::query_as(
         r#"
@@ -295,9 +295,8 @@ async fn create_planning_session(
     let id = uuid::Uuid::new_v4().to_string();
 
     let session_kind = PiSessionKind::Planning;
-    let prompt_key = "default";
+    let prompt_key = "planning";
 
-    // Check prompt exists
     let prompt: Option<PlanningPrompt> =
         sqlx::query_as("SELECT * FROM planning_prompts WHERE key = ? AND is_active = 1 LIMIT 1")
             .bind(prompt_key)
@@ -305,10 +304,7 @@ async fn create_planning_session(
             .await
             .map_err(crate::error::ApiError::Database)?;
 
-    if prompt.is_none() {
-        return Err(ApiError::internal("Planning prompt not configured")
-            .with_code(ErrorCode::PlanningPromptNotConfigured));
-    }
+    let prompt_text = prompt.map(|p| p.prompt_text).unwrap_or_default();
 
     let session = PiWorkflowSession {
         id: id.clone(),
@@ -360,8 +356,6 @@ async fn create_planning_session(
     .execute(&state.db)
     .await
     .map_err(crate::error::ApiError::Database)?;
-
-    let prompt_text = prompt.unwrap().prompt_text;
 
     let mut session_with_file = session.clone();
     session_with_file.pi_session_file = Some(format!(".pi/sessions/{}.jsonl", id));
@@ -472,15 +466,12 @@ async fn reconnect_planning_session(
 
     let prompt: Option<PlanningPrompt> =
         sqlx::query_as("SELECT * FROM planning_prompts WHERE key = ? AND is_active = 1 LIMIT 1")
-            .bind("default")
+            .bind("planning")
             .fetch_optional(&state.db)
             .await
             .map_err(crate::error::ApiError::Database)?;
 
-    let prompt_text = prompt.map(|p| p.prompt_text).ok_or_else(|| {
-        ApiError::internal("Planning prompt not configured")
-            .with_code(ErrorCode::PlanningPromptNotConfigured)
-    })?;
+    let prompt_text = prompt.map(|p| p.prompt_text).unwrap_or_default();
 
     let model = req.model.as_deref().unwrap_or("default");
     let model_to_use = if model == "default" {
