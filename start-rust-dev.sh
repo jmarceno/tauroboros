@@ -330,6 +330,7 @@ except:
         cleanup
         exit 1
     fi
+    export SERVER_PORT="$RUST_PORT"
     if ! wait_for_service "$RUST_PORT" "Rust backend"; then
         log_error "Rust backend on port $RUST_PORT is not responding"
         cleanup
