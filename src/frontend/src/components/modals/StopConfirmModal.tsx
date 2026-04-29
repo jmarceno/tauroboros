@@ -49,7 +49,7 @@ export function StopConfirmModal(props: StopConfirmModalProps) {
                     onClick={props.onConfirmDestructive}
                   >
                     <div class="text-sm font-medium">STOP</div>
-                    <div class="text-xs">Kills containers</div>
+                    <div class="text-xs">Kills processes</div>
                     <div class="text-xs">Data loss risk</div>
                   </button>
                 </div>

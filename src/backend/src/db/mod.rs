@@ -76,7 +76,6 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
             review_activity TEXT NOT NULL DEFAULT 'idle',
             is_archived INTEGER NOT NULL DEFAULT 0,
             archived_at INTEGER,
-            container_image TEXT,
             additional_agent_access TEXT,
             code_style_review INTEGER NOT NULL DEFAULT 0,
             group_id TEXT,

@@ -86,7 +86,6 @@ export interface Task {
   reviewActivity: "idle" | "running"
   isArchived: boolean
   archivedAt: number | null
-  containerImage?: string
   additionalAgentAccess?: TaskPathGrant[]
   codeStyleReview: boolean
   groupId?: string
@@ -366,14 +365,6 @@ export interface PlanningPromptVersion {
   createdAt: number
 }
 
-export interface ContainerImage {
-  tag: string
-  createdAt: number
-  source: string
-  inUseByTasks: number
-  size?: string | null
-}
-
 export interface HourlyUsage {
   hour: string
   requests: number
@@ -481,7 +472,6 @@ export interface CreateTaskDTO {
   executionStrategy?: ExecutionStrategy
   bestOfNConfig?: BestOfNConfig | null
   maxReviewRunsOverride?: number | null
-  containerImage?: string
   groupId?: string
   additionalAgentAccess?: TaskPathGrant[]
 }

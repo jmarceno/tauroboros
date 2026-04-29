@@ -241,7 +241,6 @@ pub enum PiSessionKind {
     Plan,
     PlanRevision,
     Planning,
-    ContainerConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
@@ -435,7 +434,6 @@ pub struct Task {
     pub review_activity: String, // "idle" or "running"
     pub is_archived: bool,
     pub archived_at: Option<i64>,
-    pub container_image: Option<String>,
     #[serde(serialize_with = "serialize_json_array_or_empty")]
     pub additional_agent_access: Option<String>, // JSON array of TaskPathGrant
     pub code_style_review: bool,
@@ -775,7 +773,6 @@ pub struct CreateTaskInput {
     pub best_of_n_substage: Option<BestOfNSubstage>,
     pub skip_permission_asking: Option<bool>,
     pub max_review_runs_override: Option<i32>,
-    pub container_image: Option<String>,
     pub group_id: Option<String>,
     pub additional_agent_access: Option<Vec<TaskPathGrant>>,
 }
@@ -821,7 +818,6 @@ pub struct UpdateTaskInput {
     pub review_activity: Option<Option<String>>,
     pub is_archived: Option<bool>,
     pub archived_at: Option<Option<i64>>,
-    pub container_image: Option<Option<String>>,
     pub code_style_review: Option<bool>,
     pub additional_agent_access: Option<Option<Vec<TaskPathGrant>>>,
     pub group_id: Option<Option<String>>,
@@ -891,48 +887,6 @@ pub struct CleanRunResult {
     pub reports_deleted: i32,
     pub runs_deleted: i32,
     pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContainerStatus {
-    pub enabled: bool,
-    pub available: bool,
-    pub has_running_workflows: bool,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContainerProfile {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub image: String,
-    pub dockerfile_template: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContainerBuild {
-    pub id: i64,
-    pub status: String,
-    pub started_at: Option<i64>,
-    pub completed_at: Option<i64>,
-    pub packages_hash: Option<String>,
-    pub error_message: Option<String>,
-    pub image_tag: Option<String>,
-    pub logs: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContainerImage {
-    pub tag: String,
-    pub created_at: i64,
-    pub source: String,
-    pub in_use_by_tasks: i32,
-    pub size: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -10,7 +10,7 @@ import { ModelPicker } from '../common/ModelPicker'
 import { ThinkingLevelSelect } from '../common/ThinkingLevelSelect'
 import { HelpButton } from '../common/HelpButton'
 import { createTasksStore, createOptionsStore, createModelSearchStore, uiStore } from '@/stores'
-import { referenceApi, containersApi, optionsApi, runApiEffect } from '@/api'
+import { referenceApi, optionsApi, runApiEffect } from '@/api'
 
 const MarkdownEditor = lazy(async () => {
   const mod = await import('../common/MarkdownEditor')
@@ -59,10 +59,8 @@ export function TaskModal(props: TaskModalProps) {
   const [skipPermissionAsking, setSkipPermissionAsking] = createSignal(true)
   const [requirements, setRequirements] = createSignal<string[]>([])
   const [executionStrategy, setExecutionStrategy] = createSignal<ExecutionStrategy>('standard')
-  const [containerImage, setContainerImage] = createSignal('')
   const [additionalAgentAccess, setAdditionalAgentAccess] = createSignal<TaskPathGrant[]>([])
   const [availableBranches, setAvailableBranches] = createSignal<string[]>([])
-  const [availableImages, setAvailableImages] = createSignal<Array<{ tag: string }>>([])
   const [isLoading, setIsLoading] = createSignal(true)
   
   // Best-of-N state
@@ -135,7 +133,6 @@ export function TaskModal(props: TaskModalProps) {
     setSkipPermissionAsking(currentTask?.skipPermissionAsking ?? true)
     setRequirements(currentTask?.requirements ? [...currentTask.requirements] : [])
     setExecutionStrategy(currentTask?.executionStrategy ?? 'standard')
-    setContainerImage(currentTask?.containerImage ?? '')
     setAdditionalAgentAccess(currentTask?.additionalAgentAccess ? [...currentTask.additionalAgentAccess] : [])
 
     if (currentTask?.executionStrategy === 'best_of_n' && currentTask.bestOfNConfig) {
@@ -181,10 +178,6 @@ export function TaskModal(props: TaskModalProps) {
     // Load branches (with fallback to empty)
     const branchData = await runApiEffect(referenceApi.getBranches()).catch(() => ({ branches: [], current: null }))
     setAvailableBranches(branchData.branches || [])
-
-    // Load container images (with fallback to empty)
-    const imageData = await runApiEffect(containersApi.getImages()).catch(() => ({ images: [] }))
-    setAvailableImages(imageData.images || [])
 
     // Load options (with fallback)
     const latestOptions = await runApiEffect(optionsApi.get()).catch(() => null as Options | null)
@@ -316,7 +309,6 @@ export function TaskModal(props: TaskModalProps) {
         planThinkingLevel: planThinkingLevel(),
         executionThinkingLevel: executionThinkingLevel(),
         executionStrategy: executionStrategy(),
-        containerImage: containerImage() || undefined,
         additionalAgentAccess: sanitizedAdditionalAgentAccess.length > 0 ? sanitizedAdditionalAgentAccess : undefined,
       }
 
@@ -486,28 +478,6 @@ export function TaskModal(props: TaskModalProps) {
               <option value="standard">Standard</option>
               <option value="best_of_n">Best of N</option>
             </select>
-          </div>
-
-          {/* Container Image */}
-          <div class="form-group">
-            <div class="label-row">
-              <label>Container Image</label>
-              <HelpButton tooltip="Select the container image for this task. Uses system default if not specified." />
-            </div>
-            <select
-              class="form-select"
-              value={containerImage()}
-              onChange={(e) => setContainerImage(e.currentTarget.value)}
-              disabled={isViewOnly()}
-            >
-              <option value="">System Default</option>
-              <For each={availableImages()}>
-                {(img) => <option value={img.tag}>{img.tag}</option>}
-              </For>
-            </select>
-            <Show when={availableImages().length > 0}>
-              <div class="text-xs text-dark-text-muted mt-1">Build custom images in the Image Builder</div>
-            </Show>
           </div>
 
           {/* Additional Agent Access (Bubblewrap Grants) */}

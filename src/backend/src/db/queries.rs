@@ -106,9 +106,9 @@ pub async fn create_task_db(pool: &Pool<Sqlite>, input: CreateTaskInput) -> ApiR
             auto_deploy_condition, delete_worktree, requirements, agent_output,
             thinking_level, plan_thinking_level, execution_thinking_level,
             execution_strategy, best_of_n_config, best_of_n_substage,
-            skip_permission_asking, max_review_runs_override, container_image, additional_agent_access, group_id,
+            skip_permission_asking, max_review_runs_override, additional_agent_access, group_id,
             created_at, updated_at, self_heal_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
@@ -136,7 +136,6 @@ pub async fn create_task_db(pool: &Pool<Sqlite>, input: CreateTaskInput) -> ApiR
     .bind(input.best_of_n_substage.unwrap_or(BestOfNSubstage::Idle))
     .bind(input.skip_permission_asking.unwrap_or(false) as i32)
     .bind(input.max_review_runs_override)
-    .bind(&input.container_image)
     .bind(&additional_access_json)
     .bind(&input.group_id)
     .bind(now)
@@ -235,7 +234,6 @@ pub async fn update_task(
     update_field!(input.review_activity, "review_activity");
     update_field!(input.is_archived, "is_archived");
     update_field!(input.archived_at, "archived_at");
-    update_field!(input.container_image, "container_image");
     update_field!(input.code_style_review, "code_style_review");
 
     if let Some(grants) = input.additional_agent_access {

@@ -392,15 +392,6 @@ export function TaskCard(props: TaskCardProps) {
           </span>
         </Show>
 
-        <Show when={props.task.containerImage}>
-          <span
-            class="task-tag border-accent-info/30 text-accent-info"
-            title={`Container Image: ${props.task.containerImage}`}
-          >
-            🐳 {props.task.containerImage}
-          </span>
-        </Show>
-
         <Show when={props.task.status === 'template' && props.task.autoDeploy === true}>
           <span
             class="task-tag border-accent-success/30 text-accent-success"

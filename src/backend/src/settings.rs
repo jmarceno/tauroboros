@@ -39,7 +39,6 @@ struct ProjectSettings {
 #[serde(default)]
 struct WorkflowSettings {
     server: ServerSettings,
-    container: ContainerSettings,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -48,35 +47,6 @@ struct ServerSettings {
     port: u16,
     #[serde(rename = "dbPath")]
     db_path: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
-struct ContainerSettings {
-    enabled: bool,
-    #[serde(rename = "piBin")]
-    pi_bin: String,
-    #[serde(rename = "piArgs")]
-    pi_args: String,
-    image: String,
-    #[serde(rename = "imageSource")]
-    image_source: String,
-    #[serde(rename = "dockerfilePath")]
-    dockerfile_path: String,
-    #[serde(rename = "registryUrl")]
-    registry_url: Option<String>,
-    #[serde(rename = "autoPrepare")]
-    auto_prepare: bool,
-    #[serde(rename = "memoryMb")]
-    memory_mb: i32,
-    #[serde(rename = "cpuCount")]
-    cpu_count: i32,
-    #[serde(rename = "portRangeStart")]
-    port_range_start: i32,
-    #[serde(rename = "portRangeEnd")]
-    port_range_end: i32,
-    #[serde(rename = "mountPodmanSocket")]
-    mount_podman_socket: bool,
 }
 
 impl Default for SkillsSettings {
@@ -103,26 +73,6 @@ impl Default for ServerSettings {
         Self {
             port: 0, // 0 means "assign dynamically on first start"
             db_path: ".tauroboros/tasks.db".to_string(),
-        }
-    }
-}
-
-impl Default for ContainerSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            pi_bin: "pi".to_string(),
-            pi_args: "--mode rpc".to_string(),
-            image: "ghcr.io/pi-ai/pi-agent:latest".to_string(),
-            image_source: "dockerfile".to_string(),
-            dockerfile_path: "docker/pi-agent/Dockerfile".to_string(),
-            registry_url: None,
-            auto_prepare: true,
-            memory_mb: 512,
-            cpu_count: 1,
-            port_range_start: 30000,
-            port_range_end: 40000,
-            mount_podman_socket: false,
         }
     }
 }
@@ -243,22 +193,6 @@ pub fn load_startup_settings() -> Result<StartupSettings, String> {
         infrastructure_settings.skills.allow_global,
         &infrastructure_settings.project.name,
         &infrastructure_settings.project.r#type,
-        infrastructure_settings.workflow.container.enabled,
-        &infrastructure_settings.workflow.container.pi_bin,
-        &infrastructure_settings.workflow.container.pi_args,
-        &infrastructure_settings.workflow.container.image,
-        &infrastructure_settings.workflow.container.image_source,
-        &infrastructure_settings.workflow.container.dockerfile_path,
-        &infrastructure_settings.workflow.container.registry_url,
-        infrastructure_settings.workflow.container.auto_prepare,
-        infrastructure_settings.workflow.container.memory_mb,
-        infrastructure_settings.workflow.container.cpu_count,
-        infrastructure_settings.workflow.container.port_range_start,
-        infrastructure_settings.workflow.container.port_range_end,
-        infrastructure_settings
-            .workflow
-            .container
-            .mount_podman_socket,
     );
 
     let settings_port = infrastructure_settings.workflow.server.port;

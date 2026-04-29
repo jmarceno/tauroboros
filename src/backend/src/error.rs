@@ -52,18 +52,13 @@ pub enum ErrorCode {
     InvalidColor = 7003,
     InvalidTaskGroupStatus = 7004,
 
-    // Container errors (kept for compatibility but not used)
-    ContainerOperationFailed = 8000,
-    ProfileNotFound = 8001,
-
     // Isolation errors
     BubblewrapNotAvailable = 10000,
     InvalidPathGrant = 10001,
 
     // External dependency errors
     ExternalDependenciesBlocked = 9000,
-    InvalidContainerImages = 9001,
-    ContainerImageNotFound = 9002,
+
 }
 
 impl ErrorCode {
@@ -99,11 +94,7 @@ impl ErrorCode {
             ErrorCode::InvalidExecutionStrategy => "INVALID_EXECUTION_STRATEGY",
             ErrorCode::InvalidColor => "INVALID_COLOR",
             ErrorCode::InvalidTaskGroupStatus => "INVALID_TASK_GROUP_STATUS",
-            ErrorCode::ContainerOperationFailed => "CONTAINER_OPERATION_FAILED",
-            ErrorCode::ProfileNotFound => "PROFILE_NOT_FOUND",
             ErrorCode::ExternalDependenciesBlocked => "EXTERNAL_DEPENDENCIES_BLOCKED",
-            ErrorCode::InvalidContainerImages => "INVALID_CONTAINER_IMAGES",
-            ErrorCode::ContainerImageNotFound => "CONTAINER_IMAGE_NOT_FOUND",
             ErrorCode::BubblewrapNotAvailable => "BUBBLEWRAP_NOT_AVAILABLE",
             ErrorCode::InvalidPathGrant => "INVALID_PATH_GRANT",
         }

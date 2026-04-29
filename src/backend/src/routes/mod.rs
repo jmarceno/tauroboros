@@ -1,7 +1,6 @@
 use rocket::Route;
 
 pub mod archived;
-pub mod containers;
 pub mod execution;
 pub mod frontend;
 pub mod options;
@@ -58,9 +57,6 @@ pub fn routes() -> Vec<Route> {
 
     // Reference routes (models, version, branches)
     routes.extend(reference::routes());
-
-    // Container routes
-    routes.extend(containers::routes());
 
     // Frontend routes
     routes.extend(frontend::routes());

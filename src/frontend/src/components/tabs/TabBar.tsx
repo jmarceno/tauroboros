@@ -62,24 +62,6 @@ const OptionsIcon = () => (
   </svg>
 )
 
-const ContainersIcon = () => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    class="w-4 h-4"
-    aria-hidden="true"
-  >
-    <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
-    <path d="m3.3 7 8.7 5 8.7-5" />
-    <path d="M12 22V12" />
-  </svg>
-)
-
 const ArchivedIcon = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -135,7 +117,6 @@ const SelfHealIcon = () => (
 const TAB_DEFINITIONS: TabDefinition[] = [
   { id: 'kanban', label: 'Kanban', icon: KanbanIcon },
   { id: 'options', label: 'Options', icon: OptionsIcon },
-  { id: 'containers', label: 'Containers', icon: ContainersIcon },
   { id: 'archived', label: 'Archived', icon: ArchivedIcon },
   { id: 'stats', label: 'Stats', icon: StatsIcon },
   { id: 'self-heal', label: 'Self-Heal', icon: SelfHealIcon },

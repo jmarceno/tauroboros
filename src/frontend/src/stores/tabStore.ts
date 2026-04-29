@@ -5,7 +5,7 @@
 
 import { createSignal, createRoot } from 'solid-js'
 
-export type MainTabId = 'kanban' | 'options' | 'containers' | 'archived' | 'stats' | 'self-heal'
+export type MainTabId = 'kanban' | 'options' | 'archived' | 'stats' | 'self-heal'
 
 function createTabStore() {
   const [activeTab, setActiveTab] = createSignal<MainTabId>('kanban')

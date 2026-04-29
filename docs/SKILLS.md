@@ -61,8 +61,6 @@ Runs full reproducible setup (`skills:install` + `skills:verify`).
 - `skills.allowGlobal = false`
 - `workflow.server.port` - Server port
 - `workflow.server.dbPath` - Database location
-- `workflow.container.*` - Container isolation settings
-
 This ensures Pi uses project-local skills and avoids global skill drift.
 
 ## Troubleshooting

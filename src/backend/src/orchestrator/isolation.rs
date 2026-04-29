@@ -231,6 +231,7 @@ pub fn resolve_session_isolation(
     Ok(resolved)
 }
 
+#[allow(dead_code)]
 pub fn resolve_session_isolation_by_kind(
     session_kind: PiSessionKind,
     project_root: &str,
@@ -424,7 +425,6 @@ mod tests {
             review_activity: "idle".to_string(),
             is_archived: false,
             archived_at: None,
-            container_image: None,
             additional_agent_access,
             code_style_review: false,
             group_id: None,

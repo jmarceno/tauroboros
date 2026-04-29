@@ -233,8 +233,6 @@ impl Orchestrator {
                 .with_code(ErrorCode::ExecutionOperationFailed));
         }
 
-        self.ensure_supported_tasks(&selected)?;
-
         let run = self
             .create_run(
                 WorkflowRunKind::AllTasks,
@@ -258,8 +256,6 @@ impl Orchestrator {
             return Err(ApiError::internal("No tasks in backlog")
                 .with_code(ErrorCode::ExecutionOperationFailed));
         }
-
-        self.ensure_supported_tasks(&selected)?;
         let target = selected
             .iter()
             .find(|task| task.id == task_id)
@@ -357,7 +353,6 @@ impl Orchestrator {
             );
         }
 
-        self.ensure_supported_tasks(&runnable)?;
         let ordered = order_subset_by_dependencies(&runnable)?;
         let run = self
             .create_run(
@@ -968,23 +963,6 @@ impl Orchestrator {
         Ok(())
     }
 
-    fn ensure_supported_tasks(&self, tasks: &[Task]) -> Result<(), ApiError> {
-        for task in tasks {
-            if task
-                .container_image
-                .as_ref()
-                .is_some_and(|value| !value.trim().is_empty())
-            {
-                return Err(ApiError::internal(format!(
-                    "Task '{}' requires container image execution, but the Rust backend is native-only",
-                    task.name
-                ))
-                .with_code(ErrorCode::ContainerImageNotFound));
-            }
-        }
-        Ok(())
-    }
-
     fn schedule(&self) -> Pin<Box<dyn Future<Output = Result<(), ApiError>> + Send + '_>> {
         Box::pin(async move {
             let _guard = self.schedule_lock.clone().lock_owned().await;
@@ -1195,7 +1173,6 @@ impl Orchestrator {
             ApiError::not_found("Task not found").with_code(ErrorCode::TaskNotFound)
         })?;
         let options = get_options(&self.db).await?;
-        self.ensure_supported_tasks(std::slice::from_ref(&task))?;
 
         // Plan mode: skip execution when waiting for approval
         if task.awaiting_plan_approval {

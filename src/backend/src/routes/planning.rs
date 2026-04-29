@@ -26,7 +26,6 @@ struct CreatePlanningSessionRequest {
     cwd: Option<String>,
     model: Option<String>,
     thinking_level: Option<ThinkingLevel>,
-    session_kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -241,7 +240,7 @@ async fn list_planning_sessions(state: &State<AppStateType>) -> ApiResult<Json<V
     let sessions: Vec<PiWorkflowSession> = sqlx::query_as(
         r#"
         SELECT * FROM pi_workflow_sessions 
-        WHERE session_kind IN ('planning', 'container_config')
+        WHERE session_kind = 'planning'
         ORDER BY updated_at DESC
         "#,
     )
@@ -266,7 +265,7 @@ async fn list_active_planning_sessions(state: &State<AppStateType>) -> ApiResult
     let sessions: Vec<PiWorkflowSession> = sqlx::query_as(
         r#"
         SELECT * FROM pi_workflow_sessions 
-        WHERE session_kind IN ('planning', 'container_config')
+        WHERE session_kind = 'planning'
         AND status IN ('starting', 'active', 'paused')
         ORDER BY updated_at DESC
         "#,
@@ -295,16 +294,8 @@ async fn create_planning_session(
     let now = Utc::now().timestamp();
     let id = uuid::Uuid::new_v4().to_string();
 
-    let session_kind = match req.session_kind.as_deref() {
-        Some("container_config") => PiSessionKind::ContainerConfig,
-        _ => PiSessionKind::Planning,
-    };
-
-    let prompt_key = if session_kind == PiSessionKind::ContainerConfig {
-        "container_config"
-    } else {
-        "default"
-    };
+    let session_kind = PiSessionKind::Planning;
+    let prompt_key = "default";
 
     // Check prompt exists
     let prompt: Option<PlanningPrompt> =
@@ -384,8 +375,7 @@ async fn create_planning_session(
             .execute(&state.db)
             .await;
 
-    if session_kind == PiSessionKind::Planning {
-        let model = req.model.as_deref().unwrap_or("default");
+    let model = req.model.as_deref().unwrap_or("default");
         let model_to_use = if model == "default" {
             let opts = crate::db::queries::get_options(&state.db).await?;
             if opts.plan_model.is_empty() {
@@ -405,11 +395,10 @@ async fn create_planning_session(
 
         let actual_model = model_to_use;
 
-        state
-            .planning_session_manager
-            .create_session(&session_with_file, &prompt_text, &actual_model)
-            .await?;
-    }
+    state
+        .planning_session_manager
+        .create_session(&session_with_file, &prompt_text, &actual_model)
+        .await?;
 
     let hub = state.sse_hub.read().await;
 
@@ -438,7 +427,7 @@ async fn send_planning_message(
 
     if !matches!(
         session.session_kind,
-        PiSessionKind::Planning | PiSessionKind::ContainerConfig
+        PiSessionKind::Planning
     ) {
         return Err(ApiError::bad_request("Not a planning session")
             .with_code(ErrorCode::NotAPlanningSession));
@@ -469,7 +458,7 @@ async fn reconnect_planning_session(
 
     if !matches!(
         session.session_kind,
-        PiSessionKind::Planning | PiSessionKind::ContainerConfig
+        PiSessionKind::Planning
     ) {
         return Err(ApiError::bad_request("Not a planning session")
             .with_code(ErrorCode::NotAPlanningSession));
@@ -563,7 +552,7 @@ async fn change_session_model(
 
     if !matches!(
         session.session_kind,
-        PiSessionKind::Planning | PiSessionKind::ContainerConfig
+        PiSessionKind::Planning
     ) {
         return Err(ApiError::bad_request("Not a planning session")
             .with_code(ErrorCode::NotAPlanningSession));
@@ -648,7 +637,7 @@ async fn create_tasks_from_planning(
 
     if !matches!(
         session.session_kind,
-        PiSessionKind::Planning | PiSessionKind::ContainerConfig
+        PiSessionKind::Planning
     ) {
         return Err(ApiError::bad_request("Not a planning session")
             .with_code(ErrorCode::NotAPlanningSession));
@@ -717,7 +706,6 @@ async fn create_tasks_from_planning(
                 best_of_n_substage: None,
                 skip_permission_asking: None,
                 max_review_runs_override: None,
-                container_image: None,
                 group_id: None,
                 additional_agent_access: None,
             };
@@ -757,7 +745,7 @@ async fn get_planning_session(state: &State<AppStateType>, id: String) -> ApiRes
 
     if !matches!(
         session.session_kind,
-        PiSessionKind::Planning | PiSessionKind::ContainerConfig
+        PiSessionKind::Planning
     ) {
         return Err(ApiError::bad_request("Not a planning session")
             .with_code(ErrorCode::NotAPlanningSession));
@@ -781,7 +769,7 @@ async fn update_planning_session(
 
     if !matches!(
         session.session_kind,
-        PiSessionKind::Planning | PiSessionKind::ContainerConfig
+        PiSessionKind::Planning
     ) {
         return Err(ApiError::bad_request("Not a planning session")
             .with_code(ErrorCode::NotAPlanningSession));
@@ -849,7 +837,7 @@ async fn stop_planning_session(state: &State<AppStateType>, id: String) -> ApiRe
 
     if !matches!(
         session.session_kind,
-        PiSessionKind::Planning | PiSessionKind::ContainerConfig
+        PiSessionKind::Planning
     ) {
         return Err(ApiError::bad_request("Not a planning session")
             .with_code(ErrorCode::NotAPlanningSession));
@@ -868,7 +856,7 @@ async fn close_planning_session(state: &State<AppStateType>, id: String) -> ApiR
 
     if !matches!(
         session.session_kind,
-        PiSessionKind::Planning | PiSessionKind::ContainerConfig
+        PiSessionKind::Planning
     ) {
         return Err(ApiError::bad_request("Not a planning session")
             .with_code(ErrorCode::NotAPlanningSession));
@@ -899,7 +887,7 @@ async fn get_planning_messages(
 
     if !matches!(
         session.session_kind,
-        PiSessionKind::Planning | PiSessionKind::ContainerConfig
+        PiSessionKind::Planning
     ) {
         return Err(ApiError::bad_request("Not a planning session")
             .with_code(ErrorCode::NotAPlanningSession));
@@ -921,7 +909,7 @@ async fn get_planning_timeline(
 
     if !matches!(
         session.session_kind,
-        PiSessionKind::Planning | PiSessionKind::ContainerConfig
+        PiSessionKind::Planning
     ) {
         return Err(ApiError::bad_request("Not a planning session")
             .with_code(ErrorCode::NotAPlanningSession));
@@ -965,7 +953,7 @@ async fn rename_planning_session(
 
     if !matches!(
         session.session_kind,
-        PiSessionKind::Planning | PiSessionKind::ContainerConfig
+        PiSessionKind::Planning
     ) {
         return Err(ApiError::bad_request("Not a planning session")
             .with_code(ErrorCode::NotAPlanningSession));

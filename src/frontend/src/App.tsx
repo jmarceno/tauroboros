@@ -39,7 +39,6 @@ import {
   // Tab components
   OptionsTab,
   StatsTab,
-  ContainersTab,
   ArchivedTasksTab,
   SelfHealReportsTab,
   // Modal components
@@ -56,7 +55,7 @@ import {
   TaskSessionsModal,
   ChatContainer,
 } from '@/components'
-import { containersApi, optionsApi, runApiEffect, sleepMs } from '@/api'
+import { optionsApi, runApiEffect, sleepMs } from '@/api'
 
 import type { Task, TaskGroup, TaskStatus, WorkflowRun } from '@/types'
 import { runsApi } from '@/api/runs'
@@ -94,20 +93,10 @@ function App() {
   // Local state
   const [logPanelCollapsed, setLogPanelCollapsed] = createSignal(false)
   const [highlightedRunId, setHighlightedRunId] = createSignal<string | null>(null)
-  const [containerStatus, setContainerStatus] = createSignal<{ enabled: boolean; available: boolean; hasRunningWorkflows: boolean; message: string } | null>(null)
   const [cleanRunModalOpen, setCleanRunModalOpen] = createSignal(false)
   const [cleanRunModalRun, setCleanRunModalRun] = createSignal<WorkflowRun | null>(null)
   const [isCleaningRun, setIsCleaningRun] = createSignal(false)
   const [pendingGroupStart, setPendingGroupStart] = createSignal<string | null>(null)
-
-  // Load container status
-  const loadContainerStatus = async () => {
-    try {
-      setContainerStatus(await runApiEffect(containersApi.getStatus()))
-    } catch (e) {
-      setContainerStatus({ enabled: false, available: false, hasRunningWorkflows: false, message: `Failed to load status: ${e instanceof Error ? e.message : String(e)}` })
-    }
-  }
 
   // Drag & drop store with handler
   const dragDrop = createDragDropStore(async (taskId: string, target: string, action: DropAction) => {
@@ -234,7 +223,6 @@ function App() {
       runsStore.loadRuns(),
       tasksStore.loadTasks(),
       taskGroupsStore.loadGroups(),
-      loadContainerStatus(),
     ])
 
     try {
@@ -438,7 +426,7 @@ function App() {
       if (e.ctrlKey && e.key >= '1' && e.key <= '5') {
         e.preventDefault()
         const tabIndex = parseInt(e.key) - 1
-        const tabs = ['kanban', 'options', 'containers', 'archived', 'stats'] as const
+        const tabs = ['kanban', 'options', 'archived', 'stats'] as const
         tabStore.setActiveTab(tabs[tabIndex])
         return
       }
@@ -877,10 +865,6 @@ function App() {
           <OptionsTab />
         </Show>
 
-        <Show when={tabStore.activeTab() === 'containers'}>
-          <ContainersTab />
-        </Show>
-
         <Show when={tabStore.activeTab() === 'archived'}>
           <ArchivedTasksTab onOpenTaskSessions={(task) => uiStore.openModal('taskSessions', { taskId: task.id, task })} />
         </Show>
@@ -1103,12 +1087,12 @@ function App() {
             }
           }}
           onConfirmDestructive={async () => {
-            uiStore.showToast('STOPPING workflow - killing all containers...', 'info')
+            uiStore.showToast('STOPPING workflow...', 'info')
             const success = await workflowControl.confirmStop()
             if (success) {
               const result = workflowControl.lastResult()
               closeStopConfirmModal()
-              uiStore.showToast(`Workflow STOPPED. Killed ${result?.killed ?? 0} processes, deleted ${result?.cleaned ?? 0} containers.`, 'error')
+              uiStore.showToast(`Workflow STOPPED. Killed ${result?.killed ?? 0} processes.`, 'error')
               runsStore.loadRuns()
               tasksStore.loadTasks()
             } else {

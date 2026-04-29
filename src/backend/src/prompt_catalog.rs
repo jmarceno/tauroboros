@@ -162,10 +162,6 @@ mod tests {
         let keys: Vec<&str> = prompts.iter().map(|p| p.key.as_str()).collect();
         assert!(keys.contains(&"planning"), "Should contain planning prompt");
         assert!(
-            keys.contains(&"container_config"),
-            "Should contain container_config prompt"
-        );
-        assert!(
             keys.contains(&"self_healing"),
             "Should contain self_healing prompt"
         );
