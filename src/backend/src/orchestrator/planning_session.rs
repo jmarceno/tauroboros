@@ -7,7 +7,7 @@ use crate::models::{
     MessageRole, MessageType, PiSessionStatus, PiWorkflowSession, SessionMessage, ThinkingLevel,
     WSMessage,
 };
-use crate::orchestrator::pi::ensure_structured_output_extension;
+use crate::orchestrator::pi::ensure_pi_extensions;
 use crate::sse::hub::SseHub;
 use rocket::serde::json::json;
 use serde_json::Value;
@@ -18,18 +18,12 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, watch, Mutex, RwLock};
+use tokio::sync::{watch, Mutex, RwLock};
 use tokio::time::{timeout, Duration};
 use tracing::warn;
 use uuid::Uuid;
 
 const PROCESS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
-
-#[derive(Debug)]
-enum ProcessLine {
-    Stdout(String),
-    Stderr(String),
-}
 
 #[derive(Clone)]
 pub struct ActivePlanningSession {
@@ -67,7 +61,7 @@ impl PlanningSessionManager {
             ApiError::internal("Workflow session is missing piSessionFile")
                 .with_code(ErrorCode::ExecutionOperationFailed)
         })?;
-        let extension_path = ensure_structured_output_extension(&self.project_root).await?;
+        let extension_paths = ensure_pi_extensions(&self.project_root).await?;
 
         if let Some(parent) = Path::new(&session_file).parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|error| {
@@ -76,24 +70,32 @@ impl PlanningSessionManager {
             })?;
         }
 
+        let mut args = vec![
+            "--mode".to_string(),
+            "rpc".to_string(),
+            "--session".to_string(),
+            session_file.clone(),
+        ];
+        for ext_path in &extension_paths {
+            args.push("--extension".to_string());
+            args.push(ext_path.clone());
+        }
+        args.push("--system-prompt".to_string());
+        args.push(system_prompt.to_string());
+
         let mut command =
             Command::new(std::env::var("PI_BIN").unwrap_or_else(|_| "pi".to_string()));
         command
-            .args(vec![
-                "--mode".to_string(),
-                "rpc".to_string(),
-                "--session".to_string(),
-                session_file.clone(),
-                "--extension".to_string(),
-                extension_path,
-                "--system-prompt".to_string(),
-                system_prompt.to_string(),
-            ])
+            .args(args)
             .current_dir(&session.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .env("PI_CODING_AGENT", "true");
+            .env("PI_CODING_AGENT", "true")
+            .env("TAUROBOROS_PORT", std::env::var("SERVER_PORT").unwrap_or_else(|_| std::env::var("PORT").unwrap_or_else(|_| "3789".to_string())))
+            .env("TAUROBOROS_SESSION_ID", &session.id)
+            .env("TAUROBOROS_TASK_ID", session.task_id.as_deref().unwrap_or(""))
+            .env("TAUROBOROS_TASK_RUN_ID", session.task_run_id.as_deref().unwrap_or(""));
 
         let mut child = command.spawn().map_err(|error| {
             ApiError::internal(format!("Failed to start planning pi process: {}", error))
@@ -116,18 +118,17 @@ impl PlanningSessionManager {
             ApiError::internal("Failed to capture planning pi stdin")
                 .with_code(ErrorCode::ExecutionOperationFailed)
         })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            ApiError::internal("Failed to capture planning pi stdout")
-                .with_code(ErrorCode::ExecutionOperationFailed)
-        })?;
         let stderr = child.stderr.take().ok_or_else(|| {
             ApiError::internal("Failed to capture planning pi stderr")
                 .with_code(ErrorCode::ExecutionOperationFailed)
         })?;
 
-        let (tx, rx) = mpsc::unbounded_channel();
-        spawn_reader(stdout, tx.clone(), true);
-        spawn_reader(stderr, tx, false);
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                warn!(stderr = %line, "Planning Pi stderr");
+            }
+        });
 
         let (provider, model_id) = parse_model(model)?;
         send_rpc(
@@ -141,15 +142,7 @@ impl PlanningSessionManager {
         )
         .await?;
 
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-        tokio::spawn(event_processor(
-            self.db.clone(),
-            self.sse_hub.clone(),
-            session.id.clone(),
-            rx,
-            shutdown_rx,
-        ));
+        let (shutdown_tx, _shutdown_rx) = watch::channel(false);
 
         let active = Arc::new(ActivePlanningSession {
             session_id: session.id.clone(),
@@ -464,7 +457,7 @@ impl PlanningSessionManager {
                 .with_code(ErrorCode::ExecutionOperationFailed)
         })?;
 
-        let extension_path = ensure_structured_output_extension(&self.project_root).await?;
+        let extension_paths = ensure_pi_extensions(&self.project_root).await?;
 
         if let Some(parent) = Path::new(&session_file).parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|error| {
@@ -473,24 +466,32 @@ impl PlanningSessionManager {
             })?;
         }
 
+        let mut args = vec![
+            "--mode".to_string(),
+            "rpc".to_string(),
+            "--session".to_string(),
+            session_file,
+        ];
+        for ext_path in &extension_paths {
+            args.push("--extension".to_string());
+            args.push(ext_path.clone());
+        }
+        args.push("--system-prompt".to_string());
+        args.push(system_prompt.to_string());
+
         let mut command =
             Command::new(std::env::var("PI_BIN").unwrap_or_else(|_| "pi".to_string()));
         command
-            .args(vec![
-                "--mode".to_string(),
-                "rpc".to_string(),
-                "--session".to_string(),
-                session_file,
-                "--extension".to_string(),
-                extension_path,
-                "--system-prompt".to_string(),
-                system_prompt.to_string(),
-            ])
+            .args(args)
             .current_dir(&session.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .env("PI_CODING_AGENT", "true");
+            .env("PI_CODING_AGENT", "true")
+            .env("TAUROBOROS_PORT", std::env::var("SERVER_PORT").unwrap_or_else(|_| std::env::var("PORT").unwrap_or_else(|_| "3789".to_string())))
+            .env("TAUROBOROS_SESSION_ID", &session.id)
+            .env("TAUROBOROS_TASK_ID", session.task_id.as_deref().unwrap_or(""))
+            .env("TAUROBOROS_TASK_RUN_ID", session.task_run_id.as_deref().unwrap_or(""));
 
         let mut child = command.spawn().map_err(|error| {
             ApiError::internal(format!(
@@ -516,18 +517,17 @@ impl PlanningSessionManager {
             ApiError::internal("Failed to capture planning pi stdin during reconnect")
                 .with_code(ErrorCode::ExecutionOperationFailed)
         })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            ApiError::internal("Failed to capture planning pi stdout during reconnect")
-                .with_code(ErrorCode::ExecutionOperationFailed)
-        })?;
         let stderr = child.stderr.take().ok_or_else(|| {
             ApiError::internal("Failed to capture planning pi stderr during reconnect")
                 .with_code(ErrorCode::ExecutionOperationFailed)
         })?;
 
-        let (tx, rx) = mpsc::unbounded_channel();
-        spawn_reader(stdout, tx.clone(), true);
-        spawn_reader(stderr, tx, false);
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                warn!(stderr = %line, "Planning Pi stderr");
+            }
+        });
 
         let (provider, model_id) = parse_model(model)?;
         send_rpc(
@@ -541,15 +541,7 @@ impl PlanningSessionManager {
         )
         .await?;
 
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-        tokio::spawn(event_processor(
-            self.db.clone(),
-            self.sse_hub.clone(),
-            session_id.to_string(),
-            rx,
-            shutdown_rx,
-        ));
+        let (shutdown_tx, _shutdown_rx) = watch::channel(false);
 
         let active = Arc::new(ActivePlanningSession {
             session_id: session_id.to_string(),
@@ -584,246 +576,6 @@ impl PlanningSessionManager {
         for id in session_ids {
             let _ = self.stop_session(&id).await;
         }
-    }
-}
-
-async fn event_processor(
-    db: SqlitePool,
-    sse_hub: Arc<RwLock<SseHub>>,
-    session_id: String,
-    mut rx: mpsc::UnboundedReceiver<ProcessLine>,
-    shutdown_rx: watch::Receiver<bool>,
-) {
-    let mut shutdown_rx = shutdown_rx;
-    loop {
-        tokio::select! {
-            _ = shutdown_rx.changed() => {
-                if *shutdown_rx.borrow() {
-                    break;
-                }
-            }
-            maybe_line = rx.recv() => {
-                let line = match maybe_line {
-                    Some(line) => line,
-                    None => break,
-                };
-
-                match line {
-                    ProcessLine::Stdout(content) => {
-                        if let Ok(event) = serde_json::from_str::<Value>(&content) {
-                            let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
-                            if event_type == "response" {
-                                continue;
-                            }
-                            let seq = match get_next_session_message_seq(&db, &session_id).await {
-                                Ok(s) => s,
-                                Err(_) => continue,
-                            };
-                            let session = get_session_lightweight(&db, &session_id).await;
-                            let msg = match session {
-                                Some(ref session) => project_event_to_planning_message(session, seq, &event),
-                                None => continue,
-                            };
-                            if let Ok(msg) = msg {
-                                let created = create_session_message(&db, &msg).await;
-                                if let Ok(ref message) = created {
-                                    let hub = sse_hub.read().await;
-                                    let _ = hub.broadcast(&WSMessage {
-                                        r#type: "planning_session_message".to_string(),
-                                        payload: json!({
-                                            "sessionId": session_id,
-                                            "message": message,
-                                        }),
-                                    }).await;
-                                }
-                            }
-                        }
-                    }
-                    ProcessLine::Stderr(content) => {
-                        warn!(session_id = %session_id, stderr = %content, "Planning Pi stderr");
-                    }
-                }
-            }
-        }
-    }
-}
-
-async fn get_session_lightweight(
-    db: &SqlitePool,
-    session_id: &str,
-) -> Option<crate::models::PiWorkflowSession> {
-    sqlx::query_as("SELECT * FROM pi_workflow_sessions WHERE id = ?")
-        .bind(session_id)
-        .fetch_optional(db)
-        .await
-        .ok()?
-}
-
-fn project_event_to_planning_message(
-    session: &PiWorkflowSession,
-    seq: i32,
-    event: &Value,
-) -> Result<SessionMessage, ApiError> {
-    let event_obj = event.as_object().cloned().unwrap_or_default();
-    let assistant_event = event_obj
-        .get("assistantMessageEvent")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let message_obj = event_obj
-        .get("message")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-
-    let event_type = event_obj
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("session_status");
-    let assistant_type = assistant_event.get("type").and_then(Value::as_str);
-    let raw_role = message_obj
-        .get("role")
-        .and_then(Value::as_str)
-        .or_else(|| event_obj.get("role").and_then(Value::as_str));
-
-    let role = match raw_role {
-        Some("user") => MessageRole::User,
-        Some("assistant") => MessageRole::Assistant,
-        Some("tool") | Some("toolResult") => MessageRole::Tool,
-        Some("system") => MessageRole::System,
-        _ if event_type.starts_with("tool_execution") => MessageRole::Tool,
-        _ if event_type == "message_update" => MessageRole::Assistant,
-        _ => MessageRole::System,
-    };
-
-    let message_type = if let Some(assistant_type) = assistant_type {
-        if assistant_type.starts_with("thinking") {
-            MessageType::Thinking
-        } else if assistant_type.starts_with("toolcall") {
-            MessageType::ToolCall
-        } else if assistant_type.ends_with("_delta") || assistant_type.ends_with("_start") {
-            MessageType::MessagePart
-        } else if assistant_type == "text_complete" || assistant_type == "text" {
-            MessageType::AssistantResponse
-        } else {
-            MessageType::SessionStatus
-        }
-    } else {
-        match event_type {
-            "tool_execution_start" => MessageType::ToolCall,
-            "tool_execution_end" => MessageType::ToolResult,
-            "extension_ui_request" => MessageType::PermissionAsked,
-            "extension_ui_response" => MessageType::PermissionReplied,
-            "agent_start" | "turn_start" => MessageType::StepStart,
-            "agent_end" | "turn_end" => MessageType::StepFinish,
-            value if value.contains("error") => MessageType::SessionError,
-            _ => MessageType::SessionStatus,
-        }
-    };
-
-    let message_id = event_obj
-        .get("messageId")
-        .and_then(Value::as_str)
-        .or_else(|| assistant_event.get("messageId").and_then(Value::as_str))
-        .or_else(|| message_obj.get("id").and_then(Value::as_str))
-        .map(str::to_string)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-
-    let text = extract_text_fragment(event)
-        .or_else(|| {
-            event_obj
-                .get("text")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_default();
-
-    let mut content = serde_json::Map::new();
-    content.insert("text".to_string(), Value::String(text));
-    content.insert(
-        "eventType".to_string(),
-        Value::String(event_type.to_string()),
-    );
-    content.insert(
-        "assistantEventType".to_string(),
-        assistant_type
-            .map(|v| Value::String(v.to_string()))
-            .unwrap_or(Value::Null),
-    );
-    content.insert("rawEvent".to_string(), event.clone());
-
-    Ok(SessionMessage {
-        id: 0,
-        seq,
-        message_id: Some(message_id),
-        session_id: session.id.clone(),
-        task_id: session.task_id.clone(),
-        task_run_id: session.task_run_id.clone(),
-        timestamp: normalize_timestamp(event_obj.get("timestamp")),
-        role,
-        event_name: Some(match assistant_type {
-            Some(assistant_type) if event_type == "message_update" => {
-                format!("{}:{}", event_type, assistant_type)
-            }
-            _ => event_type.to_string(),
-        }),
-        message_type,
-        content_json: Value::Object(content).to_string(),
-        model_provider: event_obj
-            .get("provider")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        model_id: event_obj
-            .get("modelId")
-            .or_else(|| event_obj.get("model"))
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        agent_name: event_obj
-            .get("agentName")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        prompt_tokens: None,
-        completion_tokens: None,
-        cache_read_tokens: None,
-        cache_write_tokens: None,
-        total_tokens: None,
-        cost_json: None,
-        cost_total: None,
-        tool_call_id: event_obj
-            .get("toolCallId")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        tool_name: event_obj
-            .get("toolName")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        tool_args_json: event_obj.get("args").cloned().map(|v| v.to_string()),
-        tool_result_json: event_obj.get("result").cloned().map(|v| v.to_string()),
-        tool_status: None,
-        edit_diff: None,
-        edit_file_path: None,
-        session_status: Some("active".to_string()),
-        workflow_phase: Some("planning".to_string()),
-        raw_event_json: Some(event.to_string()),
-    })
-}
-
-fn extract_text_fragment(event: &Value) -> Option<String> {
-    let assistant = event.get("assistantMessageEvent")?;
-    if let Some(delta) = assistant.get("delta").and_then(Value::as_str) {
-        return Some(delta.to_string());
-    }
-    if let Some(text) = assistant.get("text").and_then(Value::as_str) {
-        return Some(text.to_string());
-    }
-    None
-}
-
-fn normalize_timestamp(value: Option<&Value>) -> i64 {
-    match value.and_then(Value::as_i64) {
-        Some(timestamp) if timestamp > 1_000_000_000_000 => timestamp / 1000,
-        Some(timestamp) => timestamp,
-        None => chrono::Utc::now().timestamp(),
     }
 }
 
@@ -867,24 +619,4 @@ async fn send_rpc(stdin: &mut tokio::process::ChildStdin, payload: &Value) -> Re
     Ok(())
 }
 
-fn spawn_reader<T>(stream: T, tx: mpsc::UnboundedSender<ProcessLine>, is_stdout: bool)
-where
-    T: tokio::io::AsyncRead + Unpin + Send + 'static,
-{
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(stream).lines();
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
-                    let _ = if is_stdout {
-                        tx.send(ProcessLine::Stdout(line))
-                    } else {
-                        tx.send(ProcessLine::Stderr(line))
-                    };
-                }
-                Ok(None) => break,
-                Err(_) => break,
-            }
-        }
-    });
-}
+

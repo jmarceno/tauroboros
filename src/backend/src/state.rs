@@ -1,3 +1,4 @@
+use crate::internal_api::MessageWriter;
 use crate::orchestrator::planning_session::PlanningSessionManager;
 use crate::orchestrator::Orchestrator;
 use crate::sse::hub::SseHub;
@@ -37,6 +38,9 @@ pub struct AppState {
 
     /// Planning session manager for interactive Pi sessions
     pub planning_session_manager: PlanningSessionManager,
+
+    /// Serialized session message writer (bypasses SQLite multi-writer limitations)
+    pub message_writer: MessageWriter,
 }
 
 impl AppState {
@@ -50,6 +54,7 @@ impl AppState {
         bubblewrap_startup_notice: Option<String>,
         orchestrator: Orchestrator,
         planning_session_manager: PlanningSessionManager,
+        message_writer: MessageWriter,
     ) -> Self {
         Self {
             db,
@@ -61,6 +66,7 @@ impl AppState {
             bubblewrap_startup_notice,
             orchestrator,
             planning_session_manager,
+            message_writer,
         }
     }
 

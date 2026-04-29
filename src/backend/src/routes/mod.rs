@@ -1,3 +1,4 @@
+use crate::internal_api;
 use rocket::Route;
 
 pub mod archived;
@@ -60,6 +61,9 @@ pub fn routes() -> Vec<Route> {
 
     // Frontend routes
     routes.extend(frontend::routes());
+
+    // Internal API routes (serialized session message writer)
+    routes.extend(internal_api::routes());
 
     routes
 }

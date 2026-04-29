@@ -140,6 +140,8 @@ export function createPlanningChatStore(sseStore: { on: (type: WSMessageType, ha
           ))
         })
 
+        loadSessionMessages(sessionId)
+
         return planningSession
       }).pipe(
         Effect.catchAll((error) =>
@@ -217,31 +219,80 @@ export function createPlanningChatStore(sseStore: { on: (type: WSMessageType, ha
     )
   }
 
+  const loadSessionMessages = async (frontendSessionId: string) => {
+    const chatSession = sessions().find(s => s.id === frontendSessionId)
+    if (!chatSession?.session?.id) return
+
+    const backendSessionId = chatSession.session.id
+    try {
+      const messages = await api.planningApi.getSessionMessages(backendSessionId, 1000)
+      const msgs = messages as unknown as SessionMessage[]
+      if (!msgs || msgs.length === 0) return
+
+      setSessions(prev => prev.map(s => {
+        if (s.id !== frontendSessionId) return s
+        const newMessages = msgs.filter(m => !s.messages.some(existing => messagesMatch(existing, m)))
+        if (newMessages.length === 0) return s
+
+        const merged = [...s.messages, ...newMessages]
+        merged.sort((a, b) => {
+          const sa = Number((a as unknown as { seq?: number }).seq || 0)
+          const sb = Number((b as unknown as { seq?: number }).seq || 0)
+          if (sa !== sb) return sa - sb
+          const ta = Number(a.timestamp || 0)
+          const tb = Number(b.timestamp || 0)
+          return ta !== tb ? ta - tb : 0
+        })
+        return { ...s, messages: merged }
+      }))
+    } catch {
+      // Silently ignore — messages will arrive via SSE
+    }
+  }
+
+  const getMessageText = (message: SessionMessage): string => {
+    const content = message.contentJson
+    if (!content) return ''
+    if (typeof content === 'string') {
+      try { return JSON.parse(content).text || '' } catch { return '' }
+    }
+    return typeof content.text === 'string' ? content.text.trim() : ''
+  }
+
+  const isMessageEmpty = (message: SessionMessage): boolean => {
+    const text = getMessageText(message)
+    if (text) return false
+    if (message.messageType === 'tool_call') return false
+    if (message.role === 'user') return false
+    return true
+  }
+
+  const messagesMatch = (a: SessionMessage, b: SessionMessage): boolean => {
+    // Match by messageId
+    if (a.messageId && b.messageId && a.messageId === b.messageId) return true
+    // Match by DB id (when both have non-zero ids)
+    if (a.id && b.id && a.id > 0 && b.id > 0 && a.id === b.id) return true
+    // Match user messages by text content + role within 30s window
+    if (a.role === 'user' && b.role === 'user') {
+      const timeDiff = Math.abs(Number(a.timestamp || 0) - Number(b.timestamp || 0))
+      if (timeDiff < 30 && getMessageText(a) === getMessageText(b)) return true
+    }
+    return false
+  }
+
   const addMessageToSession = (sessionId: string, message: SessionMessage) => {
     setSessions(prev => prev.map(s => {
       if (s.id !== sessionId) return s
 
-      const existingIdx = s.messages.findIndex(m =>
-        m.id === message.id ||
-        (m.messageId && m.messageId === message.messageId)
-      )
+      if (isMessageEmpty(message)) {
+        return s
+      }
+
+      // Find existing by any matching criterion
+      const existingIdx = s.messages.findIndex(m => messagesMatch(m, message))
 
       if (existingIdx >= 0) {
         return { ...s, messages: s.messages.map((m, i) => i === existingIdx ? message : m) }
-      }
-
-      if (message.role === 'user' && message.messageType === 'user_prompt') {
-        const messageText = (message.contentJson as { text?: string })?.text || ''
-        const optimisticIdx = s.messages.findIndex(m => {
-          if (m.role !== 'user' || m.messageType !== 'user_prompt') return false
-          const mText = (m.contentJson as { text?: string })?.text || ''
-          const timeDiff = Math.abs(Number(m.timestamp || 0) - Number(message.timestamp || 0))
-          return mText === messageText && timeDiff < 30
-        })
-
-        if (optimisticIdx >= 0) {
-          return { ...s, messages: s.messages.map((m, i) => i === optimisticIdx ? message : m) }
-        }
       }
 
       let newMessages = [...s.messages, message]
@@ -251,7 +302,7 @@ export function createPlanningChatStore(sseStore: { on: (type: WSMessageType, ha
         if (sa !== sb) return sa - sb
         const ta = Number(a.timestamp || 0)
         const tb = Number(b.timestamp || 0)
-        return ta !== tb ? ta - tb : Number(a.id || 0) - Number(b.id || 0)
+        return ta !== tb ? ta - tb : 0
       })
 
       return { ...s, messages: newMessages }
@@ -459,15 +510,17 @@ export function createPlanningChatStore(sseStore: { on: (type: WSMessageType, ha
       const reconnectedSession = yield* api.planningApi.reconnectSession(backendSessionId, { model, thinkingLevel })
 
       yield* Effect.sync(() => {
-        reconnectingSet.delete(sessionId)
-        setSessions(prev => prev.map(s =>
-          s.id === sessionId
-            ? { ...s, session: reconnectedSession, isLoading: false, isReconnecting: false }
-            : s
-        ))
-      })
+          reconnectingSet.delete(sessionId)
+          setSessions(prev => prev.map(s =>
+            s.id === sessionId
+              ? { ...s, session: reconnectedSession, isLoading: false, isReconnecting: false }
+              : s
+          ))
+        })
 
-      return reconnectedSession
+        loadSessionMessages(sessionId)
+
+        return reconnectedSession
     })
   }
 
@@ -593,11 +646,17 @@ export function createPlanningChatStore(sseStore: { on: (type: WSMessageType, ha
       handlePlanningSessionMessage({ sessionId, message })
     })
 
+    const unsubSessionMessage = sseStore.on('session_message', (data) => {
+      const { sessionId, message } = data as { sessionId: string; message: SessionMessage }
+      handleSessionMessage({ sessionId, message })
+    })
+
     return () => {
       unsubCreated()
       unsubUpdated()
       unsubClosed()
       unsubMessage()
+      unsubSessionMessage()
     }
   }
 
@@ -644,8 +703,15 @@ export function createPlanningChatStore(sseStore: { on: (type: WSMessageType, ha
             : s
         ))
       }
-      return // Don't add session_status messages to chat
+      return
     }
+
+    addMessageToSession(session.id, data.message)
+  }
+
+  const handleSessionMessage = (data: { sessionId: string; message: SessionMessage }) => {
+    const session = sessions().find(s => s.session?.id === data.sessionId)
+    if (!session) return
 
     addMessageToSession(session.id, data.message)
   }
@@ -675,6 +741,7 @@ export function createPlanningChatStore(sseStore: { on: (type: WSMessageType, ha
     closeSession,
     renameSession,
     addMessageToSession,
+    loadSessionMessages,
     sendMessage,
     createTasksFromChat,
     reconnectSession,
@@ -686,5 +753,6 @@ export function createPlanningChatStore(sseStore: { on: (type: WSMessageType, ha
     handlePlanningSessionUpdated,
     handlePlanningSessionClosed,
     handlePlanningSessionMessage,
+    handleSessionMessage,
   }
 }

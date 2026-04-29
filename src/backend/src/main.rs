@@ -8,6 +8,7 @@ mod cors;
 mod db;
 mod embedded_resources;
 mod error;
+mod internal_api;
 mod models;
 mod orchestrator;
 mod prompt_catalog;
@@ -21,6 +22,7 @@ use crate::cors::Cors;
 use crate::db::queries::get_options;
 use crate::db::{create_pool, run_migrations};
 use crate::embedded_resources::ensure_embedded_pi_resources;
+use crate::internal_api::start_message_writer;
 use crate::models::AuditLevel;
 use crate::orchestrator::planning_session::PlanningSessionManager;
 use crate::orchestrator::isolation::bubblewrap_available;
@@ -149,6 +151,9 @@ async fn rocket() -> Rocket<Build> {
     let planning_session_manager =
         PlanningSessionManager::new(db_pool.clone(), sse_hub_lock.clone(), project_root.clone());
 
+    // Start serialized message writer (single consumer to bypass SQLite multi-writer limitations)
+    let message_writer = start_message_writer(db_pool.clone(), sse_hub_lock.clone());
+
     // Create app state wrapped in Arc
     let app_state: AppStateType = Arc::new(AppState::new(
         db_pool,
@@ -160,6 +165,7 @@ async fn rocket() -> Rocket<Build> {
         bubblewrap_startup_notice,
         orchestrator,
         planning_session_manager,
+        message_writer,
     ));
 
     // Disable ANSI colors in Rocket's internal log output to prevent

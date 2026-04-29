@@ -117,7 +117,7 @@ impl SseHub {
         self.broadcast_to_session(session_id, event).await;
     }
 
-    /// Broadcast a session message
+    /// Broadcast a session message globally
     /// Frontend expects event name "session_message" with data format:
     /// {"type":"session_message","sessionId":"...","payload":{...}}
     pub async fn broadcast_message(&self, message: &crate::models::SessionMessage) {
@@ -130,7 +130,16 @@ impl SseHub {
             }),
         };
 
-        self.broadcast_to_session(&message.session_id, event).await;
+        // Broadcast globally so both global SSE (planning chat) and session-specific
+        // SSE (task sessions modal) connections receive the event.
+        self.broadcast_to_session(&message.session_id, event.clone()).await;
+        self.broadcast(&WSMessage {
+            r#type: "session_message".to_string(),
+            payload: serde_json::json!({
+                "sessionId": message.session_id,
+                "message": message,
+            }),
+        }).await;
     }
 }
 
@@ -143,7 +152,7 @@ impl Default for SseHub {
 #[cfg(test)]
 mod tests {
     use super::SseHub;
-    use crate::models::WSMessage;
+use crate::models::WSMessage;
     use serde_json::json;
 
     #[tokio::test]

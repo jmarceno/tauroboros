@@ -142,6 +142,9 @@ mod tests {
         assert!(project_root
             .join(".pi/extensions/pi-tools/structured-output.ts")
             .exists());
+        assert!(project_root
+            .join(".pi/extensions/pi-tools/session-logger.ts")
+            .exists());
 
         fs::remove_dir_all(&project_root).expect("remove temp project root");
     }
@@ -150,13 +153,15 @@ mod tests {
     async fn preserves_existing_skill_and_extension_files() {
         let project_root = unique_temp_dir("preserve-embedded-resources");
         let custom_skill = project_root.join(".pi/skills/task-debug/SKILL.md");
-        let custom_extension = project_root.join(".pi/extensions/pi-tools/structured-output.ts");
+        let custom_ext1 = project_root.join(".pi/extensions/pi-tools/structured-output.ts");
+        let custom_ext2 = project_root.join(".pi/extensions/pi-tools/session-logger.ts");
 
         fs::create_dir_all(custom_skill.parent().expect("skill parent")).expect("create skill dir");
-        fs::create_dir_all(custom_extension.parent().expect("extension parent"))
+        fs::create_dir_all(custom_ext1.parent().expect("extension parent"))
             .expect("create extension dir");
         fs::write(&custom_skill, "custom skill").expect("write custom skill");
-        fs::write(&custom_extension, "custom extension").expect("write custom extension");
+        fs::write(&custom_ext1, "custom extension 1").expect("write custom ext1");
+        fs::write(&custom_ext2, "custom extension 2").expect("write custom ext2");
 
         let summary = ensure_embedded_pi_resources(project_root.to_str().expect("project root to str"))
             .await
@@ -164,8 +169,12 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&custom_skill).expect("read custom skill"), "custom skill");
         assert_eq!(
-            fs::read_to_string(&custom_extension).expect("read custom extension"),
-            "custom extension"
+            fs::read_to_string(&custom_ext1).expect("read custom ext1"),
+            "custom extension 1"
+        );
+        assert_eq!(
+            fs::read_to_string(&custom_ext2).expect("read custom ext2"),
+            "custom extension 2"
         );
         assert!(summary.skills_extracted > 0);
         assert_eq!(summary.extensions_extracted, 0);
