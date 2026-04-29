@@ -301,11 +301,29 @@ pub fn resolve_full_tree_profile(
         }
     }
 
-    for dir in discover_bin_dirs() {
+    let bin_dirs = discover_bin_dirs();
+    for dir in &bin_dirs {
         grants.push(PathGrant {
-            path: dir,
+            path: dir.clone(),
             mode: PathAccessMode::Ro,
         });
+    }
+
+    // Also mount sibling lib/ directories for each bin dir so that
+    // symlinked executables like nvm-installed `pi` resolve correctly.
+    // The pi binary (pi -> ../lib/node_modules/.../cli.js) fails with
+    // "execvp pi: No such file or directory" when lib/ is not available.
+    for bin_dir in &bin_dirs {
+        if let Some(parent) = Path::new(bin_dir).parent() {
+            let lib_dir = parent.join("lib");
+            if lib_dir.exists() {
+                let lib_str = lib_dir.to_string_lossy().to_string();
+                grants.push(PathGrant {
+                    path: lib_str,
+                    mode: PathAccessMode::Ro,
+                });
+            }
+        }
     }
 
     for dir in system_lib_roots() {
@@ -757,5 +775,86 @@ mod tests {
         assert!(!ro_dir.join("blocked.txt").exists());
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_bubblewrap_pi_binary_starts() {
+        if !bubblewrap_available() {
+            return;
+        }
+
+        // Find the pi binary — skip test if not available
+        let pi_bin = match std::process::Command::new("which")
+            .arg("pi")
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                String::from_utf8_lossy(&output.stdout).trim().to_string()
+            }
+            _ => return, // pi not installed, skip
+        };
+
+        if pi_bin.is_empty() {
+            return;
+        }
+
+        // Resolve the real path (follow symlinks) to catch cases where
+        // bubblewrap only mounts bin/ but not lib/ (e.g. nvm symlinks).
+        let real_pi = std::fs::canonicalize(&pi_bin)
+            .expect("canonicalize pi path");
+
+        let project_root = std::env::temp_dir().join(format!(
+            "tauroboros-bwrap-pi-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&project_root).expect("create temp project root");
+
+        let spec = resolve_full_tree_profile(
+            project_root.to_str().expect("project root to str"),
+            None,
+        )
+        .expect("resolve full tree profile");
+
+        assert_eq!(spec.mode, SessionIsolationMode::Bubblewrap);
+
+        // Verify pi's real path is covered by at least one grant.
+        // This catches the nvm symlink scenario: pi -> ../lib/node_modules/.../cli.js
+        // where bin/ is mounted but lib/ (containing the actual file) is not.
+        let real_pi_str = real_pi.to_string_lossy().to_string();
+        let pi_covered = spec.grants.iter().any(|g| real_pi_str.starts_with(&g.path));
+        assert!(
+            pi_covered,
+            "pi binary at {} is NOT accessible inside bwrap sandbox! \
+             The resolve_full_tree_profile grants do not cover its real path. \
+             This means bubblewrap task sessions will fail with \
+             'bwrap: execvp pi: No such file or directory'. \
+             Available grants: {:?}",
+            real_pi_str,
+            spec.grants.iter().map(|g| &g.path).collect::<Vec<_>>()
+        );
+
+        // Run pi --version inside bwrap to confirm it actually starts
+        let (executable, args) = spec.spawn_plan(
+            "pi",
+            &["--version".to_string()],
+        );
+
+        let output = std::process::Command::new(&executable)
+            .args(&args)
+            .output()
+            .expect("run pi --version inside bwrap");
+
+        assert!(
+            output.status.success(),
+            "pi --version failed inside bubblewrap!\n\
+             stdout: {}\nstderr: {}\n\
+             executable: {}\nargs: {:?}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+            executable,
+            args,
+        );
+
+        let _ = std::fs::remove_dir_all(&project_root);
     }
 }

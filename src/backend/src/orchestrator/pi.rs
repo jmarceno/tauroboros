@@ -328,6 +328,39 @@ impl PiSessionExecutor {
         }
     }
 
+    /// Build a detailed error message from a crashed Pi process by
+    /// collecting its exit status and any stderr output. The caller
+    /// provides accumulated stderr lines and a descriptive context.
+    fn process_crash_error(
+        child: &mut Child,
+        stderr_lines: &[String],
+        context: &str,
+    ) -> String {
+        let exit_desc = match child.try_wait() {
+            Ok(Some(status)) => {
+                if let Some(code) = status.code() {
+                    format!("exit code {}", code)
+                } else {
+                    "terminated by signal".to_string()
+                }
+            }
+            Ok(None) => "still running (stream ended prematurely)".to_string(),
+            Err(_) => "unknown process state".to_string(),
+        };
+
+        let stderr_summary = if stderr_lines.is_empty() {
+            String::new()
+        } else {
+            let joined: String = stderr_lines.join(" | ");
+            format!(": {}", joined.trim())
+        };
+
+        format!(
+            "Pi process crashed ({}){}. Context: {}",
+            exit_desc, stderr_summary, context
+        )
+    }
+
     async fn wait_for_response(
         &self,
         session: &PiWorkflowSession,
@@ -339,16 +372,21 @@ impl PiSessionExecutor {
     ) -> Result<Value, ApiError> {
         let response_timeout = tokio::time::sleep(timeout_duration);
         tokio::pin!(response_timeout);
+        let mut stderr_buf: Vec<String> = Vec::new();
         loop {
             tokio::select! {
                 _ = &mut response_timeout => {
+                    let stderr_summary = stderr_buf.join(" | ");
+                    let mut msg = format!(
+                        "Timed out waiting for Pi RPC response {} for session {}",
+                        expected_id, session.id
+                    );
+                    if !stderr_summary.is_empty() {
+                        msg.push_str(&format!(" (stderr: {})", stderr_summary));
+                    }
                     return Err(
-                        ApiError::internal(format!(
-                            "Timed out waiting for Pi RPC response {} for session {}",
-                            expected_id,
-                            session.id
-                        ))
-                        .with_code(ErrorCode::ExecutionOperationFailed)
+                        ApiError::internal(msg)
+                            .with_code(ErrorCode::ExecutionOperationFailed)
                     );
                 }
                 changed = stop_rx.changed() => {
@@ -359,10 +397,20 @@ impl PiSessionExecutor {
                     }
                 }
                 maybe_line = rx.recv() => {
-                    let line = maybe_line.ok_or_else(|| {
-                        ApiError::internal(format!("pi process stream ended before response {}", expected_id))
-                            .with_code(ErrorCode::ExecutionOperationFailed)
-                    })?;
+                    let line = match maybe_line {
+                        Some(line) => line,
+                        None => {
+                            let detail = Self::process_crash_error(
+                                child,
+                                &stderr_buf,
+                                &format!("waiting for RPC response '{}' (session {})", expected_id, session.id),
+                            );
+                            return Err(
+                                ApiError::internal(detail)
+                                    .with_code(ErrorCode::ExecutionOperationFailed)
+                            );
+                        }
+                    };
 
                     match line {
                         ProcessLine::Stdout(content) => {
@@ -395,6 +443,7 @@ impl PiSessionExecutor {
                             }
                         }
                         ProcessLine::Stderr(content) => {
+                            stderr_buf.push(content.clone());
                             self.persist_stderr_message(session, &content).await?;
                         }
                     }
@@ -412,18 +461,23 @@ impl PiSessionExecutor {
     ) -> Result<PiPromptResult, ApiError> {
         let mut response_text = String::new();
         let mut events = Vec::new();
+        let mut stderr_buf: Vec<String> = Vec::new();
         let idle_timeout = tokio::time::sleep(PROMPT_IDLE_TIMEOUT);
         tokio::pin!(idle_timeout);
 
         loop {
             tokio::select! {
                 _ = &mut idle_timeout => {
+                    let stderr_summary = stderr_buf.join(" | ");
+                    let mut msg = format!(
+                        "Timed out waiting for agent_end for session {}", session.id
+                    );
+                    if !stderr_summary.is_empty() {
+                        msg.push_str(&format!(" (stderr: {})", stderr_summary));
+                    }
                     return Err(
-                        ApiError::internal(format!(
-                            "Timed out waiting for agent_end for session {}",
-                            session.id
-                        ))
-                        .with_code(ErrorCode::ExecutionOperationFailed)
+                        ApiError::internal(msg)
+                            .with_code(ErrorCode::ExecutionOperationFailed)
                     );
                 }
                 changed = stop_rx.changed() => {
@@ -436,10 +490,20 @@ impl PiSessionExecutor {
                     }
                 }
                 maybe_line = rx.recv() => {
-                    let line = maybe_line.ok_or_else(|| {
-                        ApiError::internal("pi process stream ended before agent_end")
-                            .with_code(ErrorCode::ExecutionOperationFailed)
-                    })?;
+                    let line = match maybe_line {
+                        Some(line) => line,
+                        None => {
+                            let detail = Self::process_crash_error(
+                                child,
+                                &stderr_buf,
+                                &format!("waiting for agent_end (session {})", session.id),
+                            );
+                            return Err(
+                                ApiError::internal(detail)
+                                    .with_code(ErrorCode::ExecutionOperationFailed)
+                            );
+                        }
+                    };
 
                     match line {
                         ProcessLine::Stdout(content) => {
@@ -466,6 +530,7 @@ impl PiSessionExecutor {
                             }
                         }
                         ProcessLine::Stderr(content) => {
+                            stderr_buf.push(content.clone());
                             self.persist_stderr_message(session, &content).await?;
                         }
                     }
