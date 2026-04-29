@@ -3,8 +3,7 @@ name = "tauroboros-server"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
-
-
+resolver = "2"
 
 [dependencies]
 # Web framework
@@ -34,9 +33,9 @@ anyhow = "1.0"
 # Environment variables
 dotenvy = "0.15"
 
-# Logging
+# Logging - without env-filter for faster compile
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt"] }
 
 # CORS
 rocket_cors = "0.6"
@@ -48,7 +47,32 @@ tokio-stream = "0.1"
 # Hashing (for packages)
 sha2 = "0.10"
 hex = "0.4"
-git2 = { version = "0.20", features = ["vendored-libgit2", "vendored-openssl"] }
+# Use system libgit2 instead of vendored for faster compile
+git2 = { version = "0.20" }
+
+[profile.dev]
+# Optimize for faster compilation while keeping some optimizations
+opt-level = 0
+# No debug info for fastest compilation (tradeoff: no backtraces)
+debug = false
+# Use split debuginfo for faster linking
+split-debuginfo = "unpacked"
+debug-assertions = true
+overflow-checks = true
+# More codegen units = more parallel compilation
+codegen-units = 256
+# Disable Link Time Optimization for faster builds
+lto = false
+# Use incremental compilation
+incremental = true
+# Use faster LLD linker
+linker = "ld.lld"
+
+# Optimize build scripts and proc-macros for faster compile
+[profile.dev.build-override]
+opt-level = 0
+codegen-units = 256
+debug = true
 
 [dev-dependencies]
 reqwest = { version = "0.11", features = ["json"] }

@@ -38,12 +38,9 @@ use tracing::{info, warn};
 /// Build and launch the Rocket server
 #[launch]
 async fn rocket() -> Rocket<Build> {
-    // Initialize tracing/logging
+    // Initialize tracing/logging (simplified, no env-filter for faster compile)
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
+        .with_max_level(tracing::Level::INFO)
         .init();
 
     info!("Starting TaurOboros Rust server...");
