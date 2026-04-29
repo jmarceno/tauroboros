@@ -1,16 +1,10 @@
+use include_dir::{include_dir, Dir};
 use rocket::http::ContentType;
 use rocket::routes;
 use rocket::{get, Route};
 use std::path::{Path, PathBuf};
 
-#[cfg(feature = "embedded-frontend")]
-use include_dir::{include_dir, Dir};
-
-#[cfg(feature = "embedded-frontend")]
-static FRONTEND_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../src/kanban-solid/dist");
-
-#[cfg(not(feature = "embedded-frontend"))]
-const FRONTEND_DIST_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/kanban-solid/dist");
+static FRONTEND_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../frontend/dist");
 
 fn content_type_for(path: &str) -> ContentType {
     Path::new(path)
@@ -20,20 +14,11 @@ fn content_type_for(path: &str) -> ContentType {
         .unwrap_or(ContentType::Binary)
 }
 
-#[cfg(feature = "embedded-frontend")]
 fn load_frontend_asset(path: &str) -> Option<(ContentType, Vec<u8>)> {
     FRONTEND_DIST.get_file(path).map(|file| {
         let bytes = file.contents().to_vec();
         (content_type_for(path), bytes)
     })
-}
-
-#[cfg(not(feature = "embedded-frontend"))]
-fn load_frontend_asset(path: &str) -> Option<(ContentType, Vec<u8>)> {
-    let absolute_path = Path::new(FRONTEND_DIST_DIR).join(path);
-    std::fs::read(&absolute_path)
-        .ok()
-        .map(|bytes| (content_type_for(path), bytes))
 }
 
 fn is_reserved_backend_path(path: &str) -> bool {

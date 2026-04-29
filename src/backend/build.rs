@@ -34,10 +34,6 @@ fn main() {
         prompts_path.display()
     );
 
-    if env::var_os("CARGO_FEATURE_EMBEDDED_FRONTEND").is_none() {
-        return;
-    }
-
     let status = Command::new("bun")
         .args(["run", "build"])
         .current_dir(&frontend_dir)
