@@ -293,9 +293,22 @@ pub async fn hard_delete_task(pool: &Pool<Sqlite>, task_id: &str) -> ApiResult<(
 pub async fn has_task_execution_history(pool: &Pool<Sqlite>, task_id: &str) -> ApiResult<bool> {
     let count: i64 = sqlx::query_scalar(
         r#"
-        SELECT COUNT(*) FROM task_runs WHERE task_id = ?
+        SELECT COUNT(*) FROM (
+            SELECT 1 FROM task_runs WHERE task_id = ?
+            UNION ALL
+            SELECT 1 FROM pi_workflow_sessions WHERE task_id = ?
+            UNION ALL
+            SELECT 1 FROM session_messages WHERE task_id = ?
+            UNION ALL
+            SELECT 1 FROM session_messages sm
+            INNER JOIN pi_workflow_sessions ws ON ws.id = sm.session_id
+            WHERE ws.task_id = ?
+        )
         "#,
     )
+    .bind(task_id)
+    .bind(task_id)
+    .bind(task_id)
     .bind(task_id)
     .fetch_one(pool)
     .await
