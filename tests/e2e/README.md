@@ -8,8 +8,6 @@ This project uses [@playwright/test](https://playwright.dev) for end-to-end test
 
 The suite now assumes:
 - SolidJS is the only supported kanban UI
-- E2E always runs with container mode enabled
-- E2E always runs against the mock LLM server
 - Assertions are made from user-visible behavior
 
 ## Running Tests
@@ -29,9 +27,7 @@ bun run test:e2e:headed
 ```
 
 ### Requirements
-- Podman installed
-- `pi-agent:latest` image available via `bun run container:setup`
-- Mock LLM server starts automatically during `tests/e2e/prepare.ts`
+- Rust backend running on the expected port
 
 ## Test Structure
 
@@ -39,11 +35,14 @@ bun run test:e2e:headed
 |-----------|-------------|
 | `basic-ui.spec.ts` | App shell, tabs, planning chat, task creation |
 | `confirmation-dialog.spec.ts` | Destructive action confirmation flows |
-| `container-builder.spec.ts` | Container image builder UI |
 | `drag-drop-code-style.spec.ts` | Workflow-managed code-style drop rules |
 | `options-modal.spec.ts` | Options persistence and task defaults |
 | `task-groups.spec.ts` | Multi-select group creation and panel behavior |
-| `workflow-control.spec.ts` | Start, pause, resume, and stop workflow controls |
+| `real-rust-workflow.spec.ts` | Real workflow execution against Rust backend |
+| `rust-planning-chat.spec.ts` | Planning chat session against Rust backend |
+| `rust-advanced-modes.spec.ts` | Best-of-N and Review Loop modes against Rust backend |
+| `rust-sse-contract.spec.ts` | SSE contract validation against Rust backend |
+| `rust-route-parity.spec.ts` | Route parity verification against Rust backend |
 
 ## Current Test Status
 
@@ -59,13 +58,9 @@ The kanban UI is now SolidJS-based. The current suite intentionally avoids legac
 ## Troubleshooting
 
 ### "Test environment not prepared"
-Run `bun run tests/e2e/prepare.ts` first
-
-### "Container infrastructure not available"
-Run `bun run container:setup` first
+Run the Rust backend binary directly or ensure a server is running on the expected port
 
 ### Server doesn't start
 Check that port 3000 is available
 
-### Mock server startup issues
-Check that port `9999` is available and that the mock LLM server dependencies can be installed.
+

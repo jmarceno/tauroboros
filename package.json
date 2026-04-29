@@ -1,52 +1,21 @@
 {
   "name": "tauroboros",
   "version": "0.1.0",
-  "description": "TaurOboros - AI-powered workflow orchestration system with container isolation",
+  "description": "TaurOboros - AI-powered workflow orchestration system",
   "type": "module",
   "scripts": {
-    "start": "bun run src/backend-ts/index.ts",
-    "prepare": "effect-language-service patch",
-    "predev": "bun run scripts/generate-version.ts && bun run scripts/generate-embedded-assets.ts",
-    "dev": "bun run --watch src/backend-ts/index.ts",
-    "build": "bun build --target=bun src/backend-ts/index.ts --outdir dist && bun run kanban:build",
-    "compile": "bun run scripts/compile.ts",
     "rust:bundle": "cd src/backend && cargo build --release",
-    "compile:test": "bun run scripts/test-binary.ts",
     "kanban:build": "cd src/frontend && bun install --no-save && bun run build",
-    "kanban:dev": "SERVER_PORT=3789 DEV_PORT=5174 bun run src/backend-ts/index.ts & sleep 3 && cd src/frontend && bun install --no-save && SERVER_PORT=3789 DEV_PORT=5174 bun run dev",
-    "pretest": "bun run scripts/generate-version.ts && bun run scripts/generate-embedded-assets.ts",
-    "test": "bun test --path-ignore-patterns='tests/e2e/**/*' tests/*.test.ts",
-    "test:e2e": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test",
-    "test:e2e:ui": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --ui",
-    "test:e2e:debug": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --debug",
-    "test:e2e:headed": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && USE_MOCK_LLM=true bunx playwright test --headed",
-    "test:e2e:real": "USE_MOCK_LLM=true bun run tests/e2e/prepare.ts && TEST_TYPE=real-workflow USE_MOCK_LLM=true bunx playwright test tests/e2e/real-workflow.spec.ts",
-    "test:effect-migration": "bun run scripts/verify-migration.ts && bun test tests/effect-http-boundary.test.ts tests/frontend-store-boundaries.test.ts",
+    "kanban:dev": "cd src/frontend && bun install --no-save && bun run dev",
+    "test:e2e": "bunx playwright test",
+    "test:e2e:ui": "bunx playwright test --ui",
+    "test:e2e:debug": "bunx playwright test --debug",
+    "test:e2e:headed": "bunx playwright test --headed",
     "skills:sync": "bun run scripts/sync-skills.ts",
     "skills:install": "bun run scripts/sync-skills.ts --clean",
-    "skills:verify": "bun run scripts/verify-setup.ts",
-    "setup": "bun run skills:install && bun run skills:verify",
-    "container:setup": "./scripts/setup-e2e-tests.sh",
-    "container:verify": "bun run scripts/verify-podman.ts",
-    "container:cleanup": "./scripts/cleanup-gvisor.sh",
-    "container:build": "podman build -t pi-agent:latest -f docker/pi-agent/Dockerfile .",
-    "mock-llm-server:build": "cd tests/mock-llm-server && npm install && npm run build",
-    "mock-llm-server:start": "cd tests/mock-llm-server && npm start",
-    "mock-llm-server:dev": "cd tests/mock-llm-server && npm run dev",
-    "test:e2e:mock": "bun run test:e2e",
-    "container:build:mock": "cd tests/mock-llm-server && podman build -t mock-llm-server:latest .",
-    "typecheck": "tsc --noEmit"
+    "test:e2e:mock": "bun run test:e2e"
   },
   "devDependencies": {
-    "@effect/language-service": "^0.85.1",
-    "@playwright/test": "^1.51.0",
-    "@types/bun": "latest",
-    "bun-types": "^1.3.11",
-    "typescript": "^6.0.3"
-  },
-  "dependencies": {
-    "@effect/platform": "^0.96.0",
-    "effect": "^3.21.1",
-    "solid-js": "^1.9.5"
+    "@playwright/test": "^1.51.0"
   }
 }
