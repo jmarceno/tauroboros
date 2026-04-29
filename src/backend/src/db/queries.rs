@@ -752,6 +752,33 @@ pub async fn has_running_workflows(pool: &Pool<Sqlite>) -> ApiResult<bool> {
     Ok(count > 0)
 }
 
+pub async fn fix_stale_workflow_runs(pool: &Pool<Sqlite>) -> ApiResult<usize> {
+    let now = Utc::now().timestamp();
+    let error_msg = "Server restarted while this run was in progress. Run has been marked as failed.";
+    let result = sqlx::query(
+        r#"
+        UPDATE workflow_runs SET
+            status = 'failed',
+            error_message = ?,
+            updated_at = ?,
+            finished_at = ?
+        WHERE status IN ('queued', 'running', 'paused', 'stopping')
+        "#,
+    )
+    .bind(error_msg)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    let count = result.rows_affected() as usize;
+    if count > 0 {
+        tracing::info!("Fixed {} stale workflow run(s) on startup", count);
+    }
+    Ok(count)
+}
+
 // ============================================================================
 // Session Queries
 // ============================================================================

@@ -19,7 +19,7 @@ mod state;
 
 use crate::audit::{record_audit_event, CreateAuditEvent};
 use crate::cors::Cors;
-use crate::db::queries::get_options;
+use crate::db::queries::{fix_stale_workflow_runs, get_options};
 use crate::db::{create_pool, run_migrations};
 use crate::embedded_resources::ensure_embedded_pi_resources;
 use crate::internal_api::start_message_writer;
@@ -89,6 +89,11 @@ async fn rocket() -> Rocket<Build> {
     // Run migrations
     if let Err(e) = run_migrations(&db_pool).await {
         warn!("Migration warning (may already exist): {}", e);
+    }
+
+    // Fix stale workflow runs that were left in a non-terminal state
+    if let Err(e) = fix_stale_workflow_runs(&db_pool).await {
+        warn!("Failed to fix stale workflow runs on startup: {}", e);
     }
 
     let bubblewrap_is_available = bubblewrap_available();
