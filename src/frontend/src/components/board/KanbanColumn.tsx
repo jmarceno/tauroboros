@@ -98,20 +98,6 @@ export function KanbanColumn(props: KanbanColumnProps) {
           <HelpButton tooltip={props.helpText} aria-label={`${props.title} column help`} />
         </div>
         <div class="flex items-center gap-2">
-          <select
-            class="text-xs bg-dark-input border border-dark-border rounded px-1.5 py-0.5 cursor-pointer outline-none"
-            value={props.currentSort}
-            onChange={(e) => props.onChangeSort(e.currentTarget.value as ColumnSortOption)}
-            title="Sort tasks"
-          >
-            <option value="manual">Manual</option>
-            <option value="name-asc">Name ↑</option>
-            <option value="name-desc">Name ↓</option>
-            <option value="created-asc">Created ↑</option>
-            <option value="created-desc">Created ↓</option>
-            <option value="updated-asc">Updated ↑</option>
-            <option value="updated-desc">Updated ↓</option>
-          </select>
           <span class="kanban-column-count">
             {taskCount()}
           </span>
