@@ -29,10 +29,7 @@ fn main() {
     println!("cargo:rerun-if-changed={}", extensions_dir.display());
 
     let prompts_path = manifest_dir.join("prompts/prompt-catalog.json");
-    println!(
-        "cargo:rerun-if-changed={}",
-        prompts_path.display()
-    );
+    println!("cargo:rerun-if-changed={}", prompts_path.display());
 
     let status = Command::new("bun")
         .args(["run", "build"])

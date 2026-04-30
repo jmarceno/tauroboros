@@ -32,7 +32,7 @@ tauroboros/
 ├── src/
 │   ├── backend/                  # Rust backend (PRIMARY)
 │   │   ├── Cargo.toml
-│   │   ├── build.rs              # Builds frontend when embedded-frontend feature is on
+│   │   ├── build.rs              # Builds frontend automatically on every Rust compile
 │   │   ├── prompts/              # SINGLE SOURCE OF TRUTH for all prompts
 │   │   │   └── prompt-catalog.json  # Shared between Rust backend and Solid frontend
 │   │   ├── rust-toolchain.toml   # Rust stable, rustfmt + clippy
@@ -101,7 +101,7 @@ tauroboros/
 ## Architecture
 
 - **Rust (Rocket) backend** serves the REST API on a configurable port (default 3789)
-- **Solid JS frontend** is served either embedded in the binary (`embedded-frontend` feature) or from `dist/` during development
+- **Solid JS frontend** is always embedded in the binary (automatically built on every Rust compile)
 - **SQLite database** via `sqlx` with WAL mode at `.tauroboros/tasks.db`
 - **SSE** (Server-Sent Events) for real-time UI updates
 - **Pi AI agents** communicate via RPC protocol through the orchestrator
@@ -127,11 +127,8 @@ The Vite dev server proxies `/api` and `/sse` requests to the Rust backend.
 ### Building for production
 
 ```bash
-# Build frontend
-cd src/frontend && npm ci && npm run build
-
-# Build Rust backend with embedded frontend
-cd src/backend && cargo build --release --features embedded-frontend
+# Build Rust backend (frontend is built automatically)
+cd src/backend && cargo build --release
 
 # Run the standalone binary
 ./src/backend/target/release/tauroboros

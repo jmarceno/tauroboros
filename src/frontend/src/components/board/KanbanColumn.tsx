@@ -76,6 +76,12 @@ export function KanbanColumn(props: KanbanColumnProps) {
 
   const taskCount = createMemo(() => props.tasks.length)
 
+  // Columns that should never rotate even when empty (templates and backlog are primary workspaces)
+  const neverRotateStatuses: TaskStatus[] = ['template', 'backlog']
+
+  // Check if column is empty (no task cards) and should rotate
+  const isEmpty = createMemo(() => props.tasks.length === 0 && !neverRotateStatuses.includes(props.status))
+
   // Group map for looking up task groups
   const groupMap = createMemo(() => {
     const groups = props.groups || []
@@ -84,9 +90,9 @@ export function KanbanColumn(props: KanbanColumnProps) {
 
   return (
     <div
-      class="kanban-column"
-      classList={{ 'drag-over': isDragOver() }}
+      class={`kanban-column ${isDragOver() ? 'drag-over' : ''} ${isEmpty() ? 'kanban-column-empty' : ''}`}
       data-status={props.status}
+      data-empty={isEmpty()}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}

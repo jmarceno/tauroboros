@@ -73,8 +73,9 @@ incremental = true
 
 # Optimize build scripts and proc-macros for faster compile
 [features]
-default = ["console"]
+default = ["console", "embedded-frontend"]
 console = ["dep:portable-pty", "dep:base64", "dep:rocket_ws"]
+embedded-frontend = []
 
 [profile.dev.build-override]
 opt-level = 0
