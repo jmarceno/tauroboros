@@ -6,7 +6,7 @@
 interface ModalWrapperProps {
   title: string
   onClose: () => void
-  size?: 'sm' | 'md' | 'lg' | 'xl'
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'full'
   children: JSX.Element
 }
 
@@ -16,6 +16,7 @@ export function ModalWrapper(props: ModalWrapperProps) {
     md: 'max-w-2xl',
     lg: 'max-w-4xl',
     xl: 'max-w-6xl',
+    full: 'max-w-90vw',
   }
 
   const handleClose = (e: MouseEvent) => {

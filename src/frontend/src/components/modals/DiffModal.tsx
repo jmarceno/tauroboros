@@ -1,4 +1,4 @@
-import { Show, For, createSignal, createEffect, onCleanup, onMount } from 'solid-js'
+import { Show, createSignal, createEffect, onCleanup, onMount } from 'solid-js'
 import { ModalWrapper } from '../common/ModalWrapper'
 import { tasksApi } from '@/api/tasks'
 import { runApiEffect } from '@/api'
@@ -52,6 +52,9 @@ export function DiffModal(props: DiffModalProps) {
 
   const renderDiff = (filePath: string) => {
     if (!diffContainerRef) return
+
+    // Clear previous instance by dropping the reference (cleanUp on close only)
+    fileDiffInstance = null
     diffContainerRef.innerHTML = ''
 
     const diff = diffs().find(d => d.filePath === filePath)
@@ -61,23 +64,19 @@ export function DiffModal(props: DiffModalProps) {
     }
 
     import('@pierre/diffs').then(({ FileDiff, parsePatchFiles }) => {
-      if (fileDiffInstance) {
-        fileDiffInstance.cleanUp()
-        fileDiffInstance = null
-      }
-
       const instance = new FileDiff({
-        diffStyle: 'unified',
+        theme: 'pierre-dark',
+        diffStyle: 'split',
         themeType: 'system',
         disableLineNumbers: false,
       })
 
       try {
-        const patch: any = parsePatchFiles(diff.diffContent)
-        const fileDiff = patch.files?.[0]
+        const patches = parsePatchFiles(diff.diffContent)
+        const fileDiff = patches?.[0]?.files?.[0]
         if (fileDiff) {
           instance.render({
-            fileContainer: diffContainerRef!,
+            containerWrapper: diffContainerRef!,
             fileDiff,
           })
         } else {
@@ -96,23 +95,32 @@ export function DiffModal(props: DiffModalProps) {
   const tryRenderFileTree = () => {
     if (!fileTreeRef || diffs().length === 0) return
 
-    import('@pierre/trees').then(({ FileTree, prepareFileTreeInput }) => {
+    import('@pierre/trees').then(({ FileTree }) => {
       if (fileTreeInstance) {
         fileTreeInstance.cleanUp()
         fileTreeInstance = null
       }
 
       const paths = diffs().map(d => d.filePath)
-      const prepared = prepareFileTreeInput(paths)
 
       const tree = new FileTree({
-        preparedInput: prepared,
+        paths,
         initialExpansion: 'open',
+        initialSelectedPaths: selectedFile() ? [selectedFile()!] : [],
+        onSelectionChange: (selectedPaths: readonly string[]) => {
+          if (selectedPaths.length > 0) {
+            setSelectedFile(selectedPaths[0])
+          }
+        },
       })
 
       tree.render({
         fileTreeContainer: fileTreeRef!,
       })
+
+      if (selectedFile()) {
+        tree.focusPath(selectedFile()!)
+      }
 
       fileTreeInstance = tree
     }).catch(() => {
@@ -123,8 +131,7 @@ export function DiffModal(props: DiffModalProps) {
   }
 
   createEffect(() => {
-    const currentDiffs = diffs()
-    if (currentDiffs.length > 0) {
+    if (diffs().length > 0) {
       tryRenderFileTree()
     }
   })
@@ -147,16 +154,18 @@ export function DiffModal(props: DiffModalProps) {
     }
   })
 
-  const fileList = () => diffs().map(d => d.filePath)
-
   return (
     <Show when={props.isOpen}>
-      <ModalWrapper title={`Diffs: ${props.taskName}`} onClose={props.onClose} size="xl">
-        <div class="flex gap-4">
-          <div class="w-64 flex-shrink-0">
+      <style>{`
+        diffs-container { display: block; }
+        .modal-overlay:has(.diff-grid) .modal { max-width: 90vw !important; width: 90vw !important; }
+      `}</style>
+      <ModalWrapper title={`Diffs: ${props.taskName}`} onClose={props.onClose}>
+        <div class="diff-grid" style="display: grid; grid-template-columns: 192px 1fr; gap: 1rem;">
+          <div>
             <div class="text-sm font-medium text-dark-text-secondary mb-2">Files</div>
             <Show
-              when={fileList().length > 0}
+              when={diffs().length > 0}
               fallback={
                 <div class="text-sm text-dark-text-muted">
                   <Show when={loading()} fallback="No diffs available">
@@ -168,24 +177,8 @@ export function DiffModal(props: DiffModalProps) {
               <div
                 ref={fileTreeRef}
                 class="border border-dark-border rounded bg-dark-surface2 overflow-auto"
-                style="max-height: 500px;"
+                style="height: 600px;"
               />
-              <div class="mt-2 space-y-0.5">
-                <For each={fileList()}>
-                  {(filePath) => (
-                    <button
-                      class={`w-full text-left px-2 py-1 text-xs rounded transition-colors ${
-                        selectedFile() === filePath
-                          ? 'bg-accent-primary/20 text-accent-primary'
-                          : 'text-dark-text-secondary hover:bg-dark-surface hover:text-dark-text'
-                      }`}
-                      onClick={() => setSelectedFile(filePath)}
-                    >
-                      {filePath}
-                    </button>
-                  )}
-                </For>
-              </div>
             </Show>
 
             <Show when={error()}>
@@ -193,7 +186,7 @@ export function DiffModal(props: DiffModalProps) {
             </Show>
           </div>
 
-          <div class="flex-1 min-w-0">
+          <div style="height: 600px; display: flex; flex-direction: column; min-width: 0;">
             <div class="text-sm font-medium text-dark-text-secondary mb-2">
               {selectedFile() || 'Select a file'}
             </div>
@@ -204,8 +197,7 @@ export function DiffModal(props: DiffModalProps) {
             </Show>
             <div
               ref={diffContainerRef}
-              class="border border-dark-border rounded bg-dark-surface2 overflow-auto"
-              style="min-height: 300px; max-height: 600px;"
+              style="flex: 1; overflow: auto;"
             />
           </div>
         </div>
