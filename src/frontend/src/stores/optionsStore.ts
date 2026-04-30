@@ -5,7 +5,6 @@
 
 import { createSignal, createMemo } from 'solid-js'
 import { createQuery, useQueryClient, createMutation } from '@tanstack/solid-query'
-import { Effect } from 'effect'
 import type { Options } from '@/types'
 import * as api from '@/api'
 
@@ -29,7 +28,7 @@ export function createOptionsStore() {
   const error = () => optionsQuery.error?.message || null
 
   // Actions
-  const loadOptions = () => runApi(Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.options })))
+  const loadOptions = () => Promise.resolve(queryClient.invalidateQueries({ queryKey: queryKeys.options })).then(() => undefined)
 
   // Mutations
   const updateOptionsMutation = createMutation(() => ({

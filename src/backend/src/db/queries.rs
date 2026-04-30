@@ -475,16 +475,18 @@ pub async fn create_task_group(
 
     // Add member tasks
     for (idx, task_id) in member_task_ids.iter().enumerate() {
+        add_task_to_group(pool, &id, task_id).await?;
+
         sqlx::query(
             r#"
-            INSERT INTO task_group_members (group_id, task_id, idx, added_at)
-            VALUES (?, ?, ?, ?)
+            UPDATE task_group_members SET idx = ?, added_at = ?
+            WHERE group_id = ? AND task_id = ?
             "#,
         )
-        .bind(&id)
-        .bind(task_id)
         .bind(idx as i32)
         .bind(now)
+        .bind(&id)
+        .bind(task_id)
         .execute(pool)
         .await
         .map_err(ApiError::Database)?;
@@ -549,6 +551,12 @@ pub async fn update_task_group(
 }
 
 pub async fn delete_task_group(pool: &Pool<Sqlite>, group_id: &str) -> ApiResult<bool> {
+    sqlx::query(r#"UPDATE tasks SET group_id = NULL WHERE group_id = ?"#)
+        .bind(group_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+
     // Delete members first
     sqlx::query(r#"DELETE FROM task_group_members WHERE group_id = ?"#)
         .bind(group_id)

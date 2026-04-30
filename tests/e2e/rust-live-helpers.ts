@@ -63,6 +63,34 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+async function postAssistantMessage(text) {
+  const port = process.env.TAUROBOROS_PORT
+  const sessionId = process.env.TAUROBOROS_SESSION_ID
+
+  if (!port || !sessionId) {
+    return
+  }
+
+  try {
+    await fetch('http://127.0.0.1:' + port + '/internal/session-messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'session_message',
+        sessionId,
+        taskId: process.env.TAUROBOROS_TASK_ID || null,
+        taskRunId: process.env.TAUROBOROS_TASK_RUN_ID || null,
+        messageId: 'msg-' + Date.now(),
+        role: 'assistant',
+        messageType: 'assistant_response',
+        eventName: 'assistant_message',
+        text,
+        content: { text },
+      }),
+    })
+  } catch {}
+}
+
 function commitIfDirty() {
   const status = execSync("git status --porcelain", {
     cwd: process.cwd(),
@@ -261,6 +289,7 @@ rl.on("line", async (line) => {
     await sleep(750)
 
     console.log(JSON.stringify({ id, type: "response", command: "prompt", success: true, data: {} }))
+    await postAssistantMessage(text)
     console.log(JSON.stringify({
       type: "message_update",
       assistantMessageEvent: {

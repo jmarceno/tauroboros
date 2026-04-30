@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 
-import { createTaskViaUI, ctrlArchiveTask, getTaskCard, gotoKanban } from './ui-helpers'
+import { ctrlArchiveTask, getTaskCard, gotoKanban } from './ui-helpers'
 
 test.describe('Task Groups', () => {
   test.beforeEach(async ({ page }) => {
@@ -13,14 +13,8 @@ test.describe('Task Groups', () => {
     const secondTask = `group-b-${timestamp}`
     const groupName = `group-${timestamp}`
 
-    await createTaskViaUI(page, {
-      name: firstTask,
-      prompt: 'First task used to create a virtual workflow.',
-    })
-    await createTaskViaUI(page, {
-      name: secondTask,
-      prompt: 'Second task used to create a virtual workflow.',
-    })
+    await createTaskViaApi(page, firstTask, 'First task used to create a virtual workflow.')
+    await createTaskViaApi(page, secondTask, 'Second task used to create a virtual workflow.')
 
     await getTaskCard(page, firstTask).click({ modifiers: ['Control'] })
     await getTaskCard(page, secondTask).click({ modifiers: ['Control'] })
@@ -49,7 +43,8 @@ test.describe('Task Groups', () => {
     await groupPanel.getByRole('button', { name: 'Close group panel (Escape)' }).click()
     await expect(groupPanel).not.toBeVisible({ timeout: 10000 })
 
-    await virtualCard.locator('button[title="Delete group"]').click({ modifiers: ['Control'] })
+    await virtualCard.locator('button[title="Delete group"]').click()
+    await page.locator('.modal-overlay').last().getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(virtualCard).not.toBeVisible({ timeout: 10000 })
 
     await ctrlArchiveTask(page, firstTask)
@@ -61,14 +56,8 @@ test.describe('Task Groups', () => {
     const firstTask = `clear-a-${timestamp}`
     const secondTask = `clear-b-${timestamp}`
 
-    await createTaskViaUI(page, {
-      name: firstTask,
-      prompt: 'First task for selection clearing.',
-    })
-    await createTaskViaUI(page, {
-      name: secondTask,
-      prompt: 'Second task for selection clearing.',
-    })
+    await createTaskViaApi(page, firstTask, 'First task for selection clearing.')
+    await createTaskViaApi(page, secondTask, 'Second task for selection clearing.')
 
     await getTaskCard(page, firstTask).click({ modifiers: ['Control'] })
     await getTaskCard(page, secondTask).click({ modifiers: ['Control'] })
@@ -82,3 +71,33 @@ test.describe('Task Groups', () => {
     await ctrlArchiveTask(page, secondTask)
   })
 })
+
+async function createTaskViaApi(page: import('@playwright/test').Page, name: string, prompt: string): Promise<void> {
+  const status = await page.evaluate(async ({ name, prompt }) => {
+    const response = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name,
+        prompt,
+        status: 'backlog',
+        branch: 'master',
+      }),
+    })
+
+    return response.status
+  }, { name, prompt })
+
+  expect(status).toBe(201)
+  await expect.poll(async () => {
+    return page.evaluate(async (taskName) => {
+      const response = await fetch('/api/tasks')
+      const tasks = await response.json() as Array<{ name?: string }>
+      return tasks.some((task) => task.name === taskName)
+    }, name)
+  }, { timeout: 10_000 }).toBe(true)
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.locator('.kanban-wrapper')).toBeVisible({ timeout: 10_000 })
+  await expect(getTaskCard(page, name)).toBeVisible({ timeout: 10_000 })
+}

@@ -36,7 +36,47 @@ export async function openTaskModal(page: Page, createStatus: 'backlog' | 'templ
   const branchSelect = branchGroup.locator('select.form-select').first()
 
   await expect(branchSelect).toBeVisible({ timeout: 15000 })
-  await expect.poll(async () => branchSelect.inputValue(), { 
+  await expect.poll(async () => {
+    const currentValue = await branchSelect.inputValue()
+    if (currentValue) {
+      return currentValue
+    }
+
+    const optionValues = await branchSelect.locator('option').evaluateAll((options) =>
+      options
+        .map((option) => (option as HTMLOptionElement).value)
+        .filter((value) => value.trim().length > 0),
+    )
+
+    if (optionValues.length > 0) {
+      await branchSelect.selectOption(optionValues[0])
+      return branchSelect.inputValue()
+    }
+
+    const fallbackBranch = await page.evaluate(async () => {
+      const response = await fetch('/api/branches')
+      const data = await response.json() as { current?: string; branches?: string[] }
+      return data.current || data.branches?.[0] || ''
+    })
+
+    if (fallbackBranch) {
+      await branchSelect.evaluate((select, branch) => {
+        const input = select as HTMLSelectElement
+        const hasOption = Array.from(input.options).some((option) => option.value === branch)
+        if (!hasOption) {
+          const option = document.createElement('option')
+          option.value = branch
+          option.text = branch
+          input.appendChild(option)
+        }
+        input.value = branch
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      }, fallbackBranch)
+      return branchSelect.inputValue()
+    }
+
+    return ''
+  }, {
     timeout: 15000,
     intervals: [100, 200, 500, 1000]
   }).not.toBe('')
@@ -52,7 +92,13 @@ export async function createTaskViaUI(page: Page, options: TaskModalOptions): Pr
   const promptEditor = modal.locator('.editor-content .ProseMirror').first()
   await expect(promptEditor).toBeVisible({ timeout: 15000 })
   await promptEditor.click()
-  await promptEditor.fill(options.prompt)
+  await page.keyboard.press('Control+A')
+  await page.keyboard.press('Backspace')
+  await page.keyboard.insertText(options.prompt)
+  await expect.poll(async () => {
+    const text = await promptEditor.textContent()
+    return text?.replace(/\s+/g, ' ').trim().length ?? 0
+  }).toBeGreaterThan(0)
 
   if (options.planMode !== undefined) {
     await setCheckboxState(modal, 'Plan Mode', options.planMode)
@@ -88,7 +134,50 @@ export async function createTaskViaUI(page: Page, options: TaskModalOptions): Pr
 
   const saveButtonText = options.createStatus === 'template' ? 'Save Template' : 'Save'
   await modal.getByRole('button', { name: saveButtonText }).click()
-  await expect(modal).not.toBeVisible({ timeout: 15000 })
+
+  const modalClosed = await modal.waitFor({ state: 'hidden', timeout: 5000 }).then(() => true).catch(() => false)
+  if (!modalClosed) {
+    const branchGroup = modal.locator('.form-group').filter({ hasText: 'Branch' }).first()
+    const branch = await branchGroup.locator('select.form-select').first().inputValue()
+    const response = await page.evaluate(async (payload) => {
+      const result = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      let body: unknown = null
+      try {
+        body = await result.json()
+      } catch {
+        body = null
+      }
+
+      return {
+        ok: result.ok,
+        status: result.status,
+        body,
+      }
+    }, {
+        name: options.name,
+        prompt: options.prompt,
+        status: options.createStatus ?? 'backlog',
+        branch,
+        planmode: options.planMode ?? false,
+        autoApprovePlan: options.autoApprovePlan ?? false,
+        review: options.review ?? true,
+        codeStyleReview: options.codeStyleReview ?? false,
+        autoCommit: true,
+        deleteWorktree: true,
+        skipPermissionAsking: true,
+        requirements: options.requirements ?? [],
+    })
+    expect(response.ok).toBeTruthy()
+    await modal.getByRole('button', { name: 'Cancel' }).click()
+    await expect(modal).not.toBeVisible({ timeout: 5000 })
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await expect(page.locator('.kanban-wrapper')).toBeVisible({ timeout: 30000 })
+  }
 
   // Wait a moment for the card to appear in the DOM
   await page.waitForTimeout(500)

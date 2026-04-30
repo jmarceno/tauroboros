@@ -190,8 +190,11 @@ test.describe('REAL Rust Workflow', () => {
     await expect(taskSessionsModal.locator('.badge').filter({ hasText: /^phase: worker$/ }).first()).toBeVisible({ timeout: 30_000 })
     await expect(taskSessionsModal.locator('.badge').filter({ hasText: /^slot: 1$/ }).first()).toBeVisible({ timeout: 30_000 })
     await expect(taskSessionsModal.locator('.badge').filter({ hasText: new RegExp(`^model: ${escapeRegExp(modelDefaults.modelValue)}$`) }).first()).toBeVisible({ timeout: 30_000 })
-    await expect(taskSessionsModal.getByText('No session messages yet.')).not.toBeVisible({ timeout: 30_000 })
-    await expect(taskSessionsModal.locator('.session-entry').first()).toBeVisible({ timeout: 30_000 })
+    await expect.poll(async () => taskSessionsModal.locator('.session-role').count(), {
+      timeout: 30_000,
+      intervals: [1000, 2000, 3000],
+    }).toBeGreaterThan(0)
+    await expect(taskSessionsModal.locator('.session-role').first()).toBeVisible({ timeout: 30_000 })
     await closeModal(page)
 
     await expect.poll(() => countWorktreeEntries(projectDir), { timeout: 30_000 }).toBe(0)

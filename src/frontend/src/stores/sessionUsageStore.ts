@@ -77,7 +77,10 @@ export function createSessionUsageStore() {
   const loadSessionUsageEffect = (sessionId: string, forceRefresh = false) =>
     Effect.gen(function* () {
       if (forceRefresh) {
-        yield* Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.sessions.usage(sessionId) }))
+        yield* Effect.tryPromise({
+          try: () => Promise.resolve(queryClient.invalidateQueries({ queryKey: queryKeys.sessions.usage(sessionId) })).then(() => undefined),
+          catch: (cause) => cause instanceof Error ? cause : new Error(String(cause)),
+        })
       }
 
       return yield* Effect.tryPromise({

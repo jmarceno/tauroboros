@@ -5,7 +5,6 @@
 
 import { createMemo } from 'solid-js'
 import { createQuery, useQueryClient, createMutation } from '@tanstack/solid-query'
-import { Effect } from 'effect'
 import type { WorkflowRun } from '@/types'
 import * as api from '@/api'
 
@@ -77,7 +76,7 @@ export function createRunsStore() {
   }
 
   // Actions
-  const loadRuns = () => runApi(Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.runs.lists() })))
+  const loadRuns = () => Promise.resolve(queryClient.invalidateQueries({ queryKey: queryKeys.runs.lists() })).then(() => undefined)
 
   const updateRunFromWebSocket = (run: WorkflowRun) => {
     queryClient.setQueryData(queryKeys.runs.lists(), (old: WorkflowRun[] | undefined) => {

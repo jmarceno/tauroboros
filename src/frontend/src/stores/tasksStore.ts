@@ -121,7 +121,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
 
   // Actions
   const invalidateTasksList = () =>
-    runApi(Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })))
+    Promise.resolve(queryClient.invalidateQueries({ queryKey: queryKeys.tasks.lists() })).then(() => undefined)
 
   const loadTasks = () => invalidateTasksList()
 
@@ -267,7 +267,7 @@ export function createTasksStore(columnSorts?: ColumnSortPreferences) {
   const refreshBonSummaries = (taskIds?: string[]) => {
     const targetIds = taskIds ?? bonTaskIds()
     if (targetIds.length > 0) {
-      return runApi(Effect.promise(() => queryClient.invalidateQueries({ queryKey: queryKeys.bonSummaries(targetIds) })))
+      return Promise.resolve(queryClient.invalidateQueries({ queryKey: queryKeys.bonSummaries(targetIds) })).then(() => undefined)
     }
 
     return Promise.resolve()

@@ -107,8 +107,22 @@ export function apiRequest<T>(
         return undefined as T
       }
 
-      return yield* Effect.tryPromise({
-        try: () => response.json() as Promise<T>,
+      const responseText = yield* Effect.tryPromise({
+        try: () => response.text(),
+        catch: (cause) => makeApiClientError(
+          path,
+          response.status,
+          'decode',
+          cause instanceof Error ? cause.message : String(cause),
+        ),
+      })
+
+      if (!responseText.trim()) {
+        return undefined as T
+      }
+
+      return yield* Effect.try({
+        try: () => JSON.parse(responseText) as T,
         catch: (cause) => makeApiClientError(
           path,
           response.status,
