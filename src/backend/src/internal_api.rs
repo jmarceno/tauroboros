@@ -65,6 +65,7 @@ fn parse_role(s: &str) -> MessageRole {
     match s {
         "user" => MessageRole::User,
         "assistant" => MessageRole::Assistant,
+        "system" => MessageRole::System,
         "tool" | "toolResult" => MessageRole::Tool,
         unknown => {
             tracing::warn!(role = %unknown, "Unknown message role received, using System");

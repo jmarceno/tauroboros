@@ -261,6 +261,33 @@ pub async fn update_task(
     get_task(pool, task_id).await
 }
 
+pub async fn claim_task_for_execution(
+    pool: &Pool<Sqlite>,
+    task_id: &str,
+) -> ApiResult<Option<Task>> {
+    let now = Utc::now().timestamp();
+    let result = sqlx::query(
+        r#"
+        UPDATE tasks
+        SET status = ?, error_message = NULL, completed_at = NULL, updated_at = ?
+        WHERE id = ? AND status = ? AND is_archived = 0
+        "#,
+    )
+    .bind(TaskStatus::Executing)
+    .bind(now)
+    .bind(task_id)
+    .bind(TaskStatus::Queued)
+    .execute(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    if result.rows_affected() == 0 {
+        return Ok(None);
+    }
+
+    get_task(pool, task_id).await
+}
+
 pub async fn archive_task(pool: &Pool<Sqlite>, task_id: &str) -> ApiResult<()> {
     let now = Utc::now().timestamp();
 
@@ -1442,5 +1469,53 @@ mod tests {
         assert_eq!(task.execution_strategy, ExecutionStrategy::Standard);
         assert!(!task.plan_mode);
         assert!(!task.review);
+    }
+
+    #[tokio::test]
+    async fn test_claim_task_for_execution_is_atomic() {
+        let pool = create_test_pool().await;
+
+        let input = CreateTaskInput {
+            id: Some("queued-task".to_string()),
+            name: "Queued Task".to_string(),
+            prompt: "Execute queued task".to_string(),
+            status: Some(TaskStatus::Queued),
+            branch: None,
+            plan_model: None,
+            execution_model: None,
+            plan_mode: None,
+            auto_approve_plan: None,
+            review: None,
+            code_style_review: None,
+            auto_commit: None,
+            auto_deploy: None,
+            auto_deploy_condition: None,
+            delete_worktree: None,
+            requirements: None,
+            thinking_level: None,
+            plan_thinking_level: None,
+            execution_thinking_level: None,
+            execution_strategy: None,
+            best_of_n_config: None,
+            best_of_n_substage: None,
+            skip_permission_asking: None,
+            max_review_runs_override: None,
+            group_id: None,
+            additional_agent_access: None,
+        };
+
+        create_task_db(&pool, input).await.unwrap();
+
+        let claimed = claim_task_for_execution(&pool, "queued-task")
+            .await
+            .unwrap()
+            .expect("task should be claimed");
+        assert_eq!(claimed.status, TaskStatus::Executing);
+        assert!(claimed.error_message.is_none());
+
+        let second_claim = claim_task_for_execution(&pool, "queued-task")
+            .await
+            .unwrap();
+        assert!(second_claim.is_none());
     }
 }

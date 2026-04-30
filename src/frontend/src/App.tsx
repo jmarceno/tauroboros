@@ -316,6 +316,20 @@ function App() {
       }
     })
 
+    // Task error handler — every autonomous task failure surfaces as toast + log entry
+    const unsubTaskError = sseStore.on('task_error', (payload) => {
+      const event = payload as {
+        taskId?: string
+        taskName?: string
+        error?: string
+        runId?: string
+      }
+      const name = event.taskName || event.taskId || 'Unknown task'
+      const msg = event.error || 'Task failed with no error message'
+      uiStore.showToast(`${name}: ${msg}`, 'error', 8000)
+      uiStore.addLog(`❌ ${name}: ${msg}`, 'error')
+    })
+
     // Setup planning chat SSE handlers
     const unsubPlanningHandlers = planningChatStore.setupSseHandlers()
 
@@ -328,6 +342,7 @@ function App() {
       unsubGroupUpdated()
       unsubSessionMessage()
       unsubSelfHeal()
+      unsubTaskError()
       unsubPlanningHandlers()
     })
   })

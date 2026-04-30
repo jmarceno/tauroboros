@@ -38,15 +38,22 @@ pub struct PlanningSessionManager {
     db: SqlitePool,
     sse_hub: Arc<RwLock<SseHub>>,
     project_root: String,
+    server_port: u16,
     sessions: Arc<Mutex<HashMap<String, Arc<ActivePlanningSession>>>>,
 }
 
 impl PlanningSessionManager {
-    pub fn new(db: SqlitePool, sse_hub: Arc<RwLock<SseHub>>, project_root: String) -> Self {
+    pub fn new(
+        db: SqlitePool,
+        sse_hub: Arc<RwLock<SseHub>>,
+        project_root: String,
+        server_port: u16,
+    ) -> Self {
         Self {
             db,
             sse_hub,
             project_root,
+            server_port,
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -92,7 +99,7 @@ impl PlanningSessionManager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env("PI_CODING_AGENT", "true")
-            .env("TAUROBOROS_PORT", std::env::var("SERVER_PORT").unwrap_or_else(|_| std::env::var("PORT").unwrap_or_else(|_| "3789".to_string())))
+            .env("TAUROBOROS_PORT", self.server_port.to_string())
             .env("TAUROBOROS_SESSION_ID", &session.id)
             .env("TAUROBOROS_TASK_ID", session.task_id.as_deref().unwrap_or(""))
             .env("TAUROBOROS_TASK_RUN_ID", session.task_run_id.as_deref().unwrap_or(""));
@@ -499,7 +506,7 @@ impl PlanningSessionManager {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env("PI_CODING_AGENT", "true")
-            .env("TAUROBOROS_PORT", std::env::var("SERVER_PORT").unwrap_or_else(|_| std::env::var("PORT").unwrap_or_else(|_| "3789".to_string())))
+            .env("TAUROBOROS_PORT", self.server_port.to_string())
             .env("TAUROBOROS_SESSION_ID", &session.id)
             .env("TAUROBOROS_TASK_ID", session.task_id.as_deref().unwrap_or(""))
             .env("TAUROBOROS_TASK_RUN_ID", session.task_run_id.as_deref().unwrap_or(""));

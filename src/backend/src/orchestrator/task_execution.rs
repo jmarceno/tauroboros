@@ -12,7 +12,8 @@ use crate::models::{
     RunPhase, RunStatus, TaskGroupStatus, TaskStatus, UpdateTaskInput, WorkflowRunStatus,
 };
 use crate::orchestrator::git::{
-    auto_commit_worktree, capture_worktree_diff, create_task_worktree, merge_and_cleanup_worktree,
+    auto_commit_worktree, capture_worktree_diff, capture_worktree_diff_from_head,
+    create_task_worktree, merge_and_cleanup_worktree,
     resolve_target_branch, run_shell_command, worktree_has_changes,
 };
 use crate::orchestrator::pi::{PiSessionExecutor};
@@ -389,6 +390,7 @@ impl Orchestrator {
             self.db.clone(),
             self.sse_hub.clone(),
             self.project_root.clone(),
+            self.server_port,
         );
 
         let response = executor
@@ -454,26 +456,35 @@ impl Orchestrator {
                     });
                 }
 
-                // Review loop for standard execution
-                if task.review || task.code_style_review {
-                    let review_passed = self
-                        .run_review_loop(
-                            &task,
-                            run_id,
-                            &options,
-                            &worktree,
-                            &target_branch,
-                            slot_index,
-                            stop_rx,
-                        )
-                        .await?;
-                    if !review_passed {
+                match self
+                    .run_post_execution_phases(
+                        &task,
+                        run_id,
+                        &options,
+                        &worktree,
+                        &target_branch,
+                        slot_index,
+                        stop_rx,
+                    )
+                    .await?
+                {
+                    super::review::PostExecutionPhaseOutcome::Passed => {}
+                    super::review::PostExecutionPhaseOutcome::ReviewFailed => {
                         return Ok(TaskOutcome {
                             status: TaskStatus::Stuck,
                             error_message: Some("Review loop failed".to_string()),
                         });
                     }
+                    super::review::PostExecutionPhaseOutcome::CodeStyleFailed => {
+                        return Ok(TaskOutcome {
+                            status: TaskStatus::Failed,
+                            error_message: Some("Code style review failed".to_string()),
+                        });
+                    }
                 }
+
+                // Capture diffs BEFORE auto-commit so working tree changes are visible
+                let captured_diffs_before_commit = capture_worktree_diff(&self.project_root, &worktree.directory).await?;
 
                 let committed = if task.auto_commit {
                     auto_commit_worktree(&worktree.directory, &task.name, &task.id).await?
@@ -481,7 +492,14 @@ impl Orchestrator {
                     false
                 };
 
-                let captured_diffs = capture_worktree_diff(&self.project_root, &worktree.directory).await?;
+                // If there were no uncommitted changes (because the review loop already
+                // committed everything), capture the diff from HEAD~1..HEAD instead.
+                let captured_diffs = if captured_diffs_before_commit.is_empty() && committed {
+                    capture_worktree_diff_from_head(&self.project_root, &worktree.directory).await?
+                } else {
+                    captured_diffs_before_commit
+                };
+
                 if !captured_diffs.is_empty() {
                     insert_task_diffs(
                         &self.db,
@@ -658,6 +676,31 @@ impl Orchestrator {
         self.refresh_run_counts(&run_id).await?;
 
         let run = self.reload_run(&run_id).await?;
+        let active_run_id = { self.runtime.lock().await.active_run_id.clone() };
+        if matches!(run.status, WorkflowRunStatus::Completed | WorkflowRunStatus::Failed)
+            && active_run_id.as_deref() != Some(run_id.as_str())
+        {
+            self.audit_warn(
+                "task.completion_ignored_after_finalization",
+                format!(
+                    "Ignored stale completion for task {} after run {} was already finalized",
+                    task_id, run_id
+                ),
+                Some(&run_id),
+                Some(&task_id),
+                None,
+                None,
+                json!({
+                    "slotIndex": slot_index,
+                    "remainingActiveTasks": remaining_active,
+                    "outcomeStatus": outcome.status,
+                    "outcomeError": outcome.error_message,
+                    "runStatus": run.status
+                }),
+            )
+            .await?;
+            return Ok(());
+        }
         let stop_mode = super::types::stop_mode_for_run(&run);
 
         if outcome.status == TaskStatus::Failed {
@@ -697,6 +740,21 @@ impl Orchestrator {
 
             if let Some(updated_task) = get_task(&self.db, &task_id).await? {
                 self.broadcast_task(&updated_task).await;
+
+                // Broadcast a dedicated task_error event so the UI can show
+                // a toast notification and log entry for every task failure.
+                if stop_mode.is_none() {
+                    self.broadcast(
+                        "task_error",
+                        json!({
+                            "taskId": updated_task.id,
+                            "taskName": updated_task.name,
+                            "error": message,
+                            "runId": run_id,
+                        }),
+                    )
+                    .await;
+                }
             }
         }
 
@@ -911,6 +969,11 @@ impl Orchestrator {
                 finished_at: Some(Some(chrono::Utc::now().timestamp())),
                 queued_task_count: Some(Some(0)),
                 executing_task_count: Some(Some(0)),
+                error_message: Some(if final_status == WorkflowRunStatus::Completed && stop_mode.is_none() {
+                    None
+                } else {
+                    run.error_message.clone()
+                }),
                 ..Default::default()
             },
         )

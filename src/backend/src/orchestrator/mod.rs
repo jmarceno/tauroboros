@@ -38,6 +38,7 @@ pub struct Orchestrator {
     pub(crate) settings_dir: String,
     pub(crate) runtime: Arc<Mutex<RuntimeState>>,
     pub(crate) schedule_lock: Arc<Mutex<()>>,
+    pub(crate) server_port: u16,
 }
 
 impl Orchestrator {
@@ -54,7 +55,13 @@ impl Orchestrator {
             settings_dir,
             runtime: Arc::new(Mutex::new(RuntimeState::default())),
             schedule_lock: Arc::new(Mutex::new(())),
+            server_port: 3789,
         }
+    }
+
+    pub fn with_port(mut self, port: u16) -> Self {
+        self.server_port = port;
+        self
     }
 
     pub async fn active_run(&self) -> Result<Option<WorkflowRun>, ApiError> {

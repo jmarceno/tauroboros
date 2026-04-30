@@ -52,7 +52,7 @@ test.describe('REAL Rust Workflow', () => {
   test.beforeAll(async () => {
     const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '../..')
     rustDir = join(repoRoot, 'src/backend')
-    projectDir = mkdtempSync(join(tmpdir(), 'src/backend-e2e-'))
+    projectDir = mkdtempSync(join(tmpdir(), 'tauroboros-backend-e2e-'))
     homeDir = join(projectDir, '.home')
     serverPort = 3792
 
@@ -84,7 +84,7 @@ test.describe('REAL Rust Workflow', () => {
     execSync('npm run build', { cwd: join(repoRoot, 'src/frontend'), stdio: 'pipe' })
     execSync('cargo build', { cwd: rustDir, stdio: 'pipe' })
 
-    serverProcess = spawn(join(rustDir, 'target', 'debug', 'tauroboros-server'), {
+    serverProcess = spawn(join(rustDir, 'target', 'debug', 'tauroboros'), {
       cwd: repoRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {

@@ -35,7 +35,7 @@ test.describe('Rust SSE Contract', () => {
   test.beforeAll(async () => {
     const repoRoot = join(import.meta.dirname, '../..')
     const rustDir = join(repoRoot, 'src/backend')
-    projectDir = mkdtempSync(join(tmpdir(), 'src/backend-sse-'))
+    projectDir = mkdtempSync(join(tmpdir(), 'tauroboros-backend-sse-'))
     serverPort = 3794
 
     writeFileSync(join(projectDir, '.gitignore'), '.tauroboros/\n.worktrees/\n')
@@ -61,7 +61,7 @@ test.describe('Rust SSE Contract', () => {
     execSync('npm run build', { cwd: join(repoRoot, 'src/frontend'), stdio: 'pipe' })
     execSync('cargo build', { cwd: rustDir, stdio: 'pipe' })
 
-    serverProcess = spawn(join(rustDir, 'target', 'debug', 'tauroboros-server'), {
+    serverProcess = spawn(join(rustDir, 'target', 'debug', 'tauroboros'), {
       cwd: repoRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {

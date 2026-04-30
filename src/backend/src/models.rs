@@ -90,6 +90,8 @@ pub enum TaskStatus {
     Queued,
     Executing,
     Review,
+    #[serde(rename = "code-style")]
+    #[sqlx(rename = "code_style")]
     CodeStyle,
     Done,
     Failed,
@@ -168,7 +170,7 @@ pub enum BestOfNSubstage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 #[sqlx(rename_all = "lowercase")]
 pub enum RunPhase {
     Worker,

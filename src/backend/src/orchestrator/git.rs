@@ -725,6 +725,70 @@ pub async fn capture_worktree_diff(base_directory: &str, worktree_dir: &str) -> 
     }).await
 }
 
+/// Capture the diff between HEAD~1 and HEAD in a worktree.
+/// This captures committed changes that would be invisible to
+/// diff_tree_to_workdir (which only sees uncommitted working tree changes).
+pub async fn capture_worktree_diff_from_head(
+    _base_directory: &str,
+    worktree_dir: &str,
+) -> Result<Vec<(String, String)>, ApiError> {
+    let worktree = worktree_dir.to_string();
+    run_git_blocking(move || {
+        let repository = Repository::open(&worktree)
+            .map_err(|e| git2_failure("Failed to open worktree for head-diff capture", e))?;
+
+        let head = repository.head()
+            .map_err(|e| git2_failure("Failed to get worktree HEAD", e))?;
+        let head_commit = head.peel_to_commit()
+            .map_err(|e| git2_failure("Failed to peel worktree HEAD to commit", e))?;
+        let head_tree = head_commit.tree()
+            .map_err(|e| git2_failure("Failed to get worktree HEAD tree", e))?;
+
+        // Find the parent commit (HEAD~1)
+        let parent_commit = match head_commit.parents().next() {
+            Some(parent) => parent,
+            None => return Ok(Vec::new()), // No parent — first commit, nothing to diff
+        };
+        let parent_tree = parent_commit.tree()
+            .map_err(|e| git2_failure("Failed to get parent tree", e))?;
+
+        let mut diff_opts = git2::DiffOptions::new();
+        diff_opts.ignore_submodules(true);
+        let git_diff = repository.diff_tree_to_tree(
+            Some(&parent_tree),
+            Some(&head_tree),
+            Some(&mut diff_opts),
+        ).map_err(|e| git2_failure("Failed to diff HEAD~1..HEAD", e))?;
+
+        let mut patch_data: Vec<(String, String)> = Vec::new();
+        let delta_count = git_diff.deltas().len();
+        for idx in 0..delta_count {
+            let delta = git_diff.deltas().nth(idx);
+            if let Some(d) = delta {
+                let file_path = d.new_file().path()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if file_path.is_empty() {
+                    continue;
+                }
+                let patch = git2::Patch::from_diff(&git_diff, idx)
+                    .map_err(|e| git2_failure("Failed to create patch from HEAD diff", e))?;
+                if let Some(mut p) = patch {
+                    let buf = p.to_buf()
+                        .map_err(|e| git2_failure("Failed to serialize HEAD diff patch", e))?;
+                    let text = std::str::from_utf8(&buf)
+                        .map_err(|e| git_failure(format!("Failed to decode HEAD diff patch as UTF-8: {e}")))?;
+                    if !text.trim().is_empty() {
+                        patch_data.push((file_path, text.to_string()));
+                    }
+                }
+            }
+        }
+
+        Ok(patch_data)
+    }).await
+}
+
 pub async fn run_shell_command(command: &str, cwd: &str) -> Result<(), ApiError> {
     let command_string = command.to_string();
     let cwd_string = cwd.to_string();

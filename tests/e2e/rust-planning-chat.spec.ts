@@ -23,7 +23,7 @@ test.describe('Rust Planning Chat', () => {
   test.beforeAll(async () => {
     const repoRoot = join(import.meta.dirname, '../..')
     const rustDir = join(repoRoot, 'src/backend')
-    projectDir = mkdtempSync(join(tmpdir(), 'src/backend-planning-'))
+    projectDir = mkdtempSync(join(tmpdir(), 'tauroboros-backend-planning-'))
     serverPort = 3797
     baseUrl = `http://localhost:${serverPort}`
 
@@ -50,7 +50,7 @@ test.describe('Rust Planning Chat', () => {
     execSync('npm run build', { cwd: join(repoRoot, 'src/frontend'), stdio: 'pipe' })
     execSync('cargo build', { cwd: rustDir, stdio: 'pipe' })
 
-    serverProcess = spawn(join(rustDir, 'target', 'debug', 'tauroboros-server'), {
+    serverProcess = spawn(join(rustDir, 'target', 'debug', 'tauroboros'), {
       cwd: repoRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {

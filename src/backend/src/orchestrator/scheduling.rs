@@ -1,7 +1,10 @@
 use super::extensions::{RunJsonExt, TaskJsonExt};
 use super::types::{ActiveTaskControl, SlotAssignment};
 use super::Orchestrator;
-use crate::db::queries::{get_options, get_task, get_tasks, get_workflow_run, update_task};
+use crate::db::queries::{
+    claim_task_for_execution, get_options, get_task, get_tasks, get_workflow_run,
+    update_task,
+};
 use crate::db::runtime::{
     update_workflow_run_record, UpdateWorkflowRunRecord,
 };
@@ -10,7 +13,7 @@ use crate::models::{
     Task, TaskStatus, UpdateTaskInput, WorkflowRun, WorkflowRunStatus,
 };
 use rocket::serde::json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use tokio::sync::watch;
@@ -88,12 +91,23 @@ impl Orchestrator {
             .into_iter()
             .map(|task| (task.id.clone(), task))
             .collect::<HashMap<_, _>>();
+        let active_task_ids = {
+            let runtime = self.runtime.lock().await;
+            runtime
+                .active_tasks
+                .keys()
+                .cloned()
+                .collect::<HashSet<_>>()
+        };
 
         for task_id in task_ids {
             let Some(task) = task_map.get(&task_id) else {
                 continue;
             };
             if task.status != TaskStatus::Queued {
+                continue;
+            }
+            if active_task_ids.contains(&task.id) {
                 continue;
             }
 
@@ -116,8 +130,11 @@ impl Orchestrator {
         run: &WorkflowRun,
         task: &Task,
     ) -> Result<(), ApiError> {
-        let slot_index = {
+        let (slot_index, stop_rx) = {
             let mut runtime = self.runtime.lock().await;
+            if runtime.active_tasks.contains_key(&task.id) {
+                return Ok(());
+            }
             let slot_index = runtime
                 .slots
                 .iter()
@@ -140,23 +157,34 @@ impl Orchestrator {
                 },
             );
 
-            let orchestrator = self.clone();
-            let run_id = run.id.clone();
-            let task_id = task.id.clone();
-            tokio::spawn(async move {
-                let outcome = orchestrator
-                    .execute_task(run_id.clone(), task_id.clone(), slot_index, stop_rx)
-                    .await;
-                if let Err(error) = orchestrator
-                    .handle_task_completion(run_id, task_id, slot_index, outcome)
-                    .await
-                {
-                    tracing::error!("failed to finalize task execution: {}", error);
-                }
-            });
-
-            slot_index
+            (slot_index, stop_rx)
         };
+
+        let Some(claimed_task) = claim_task_for_execution(&self.db, &task.id).await? else {
+            let mut runtime = self.runtime.lock().await;
+            runtime.active_tasks.remove(&task.id);
+            if let Some(slot) = runtime.slots.get_mut(slot_index) {
+                *slot = None;
+            }
+            return Ok(());
+        };
+
+        self.broadcast_task(&claimed_task).await;
+
+        let orchestrator = self.clone();
+        let run_id = run.id.clone();
+        let task_id = task.id.clone();
+        tokio::spawn(async move {
+            let outcome = orchestrator
+                .execute_task(run_id.clone(), task_id.clone(), slot_index, stop_rx)
+                .await;
+            if let Err(error) = orchestrator
+                .handle_task_completion(run_id, task_id, slot_index, outcome)
+                .await
+            {
+                tracing::error!("failed to finalize task execution: {}", error);
+            }
+        });
 
         if run.status == WorkflowRunStatus::Queued {
             let updated = update_workflow_run_record(

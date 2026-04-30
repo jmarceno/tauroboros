@@ -355,17 +355,18 @@ async fn post_session_event(
                 ),
             };
 
-            // Store message (simplified)
-            let _ = hub
-                .broadcast(&WSMessage {
-                    r#type: "session_message_created".to_string(),
-                    payload: serde_json::to_value(&message).unwrap_or_default(),
-                })
-                .await;
+            // Store message via serialized writer — this persists to the
+            // session_messages table AND broadcasts via SSE in one operation.
+            if let Err(e) = state.message_writer.send(message.clone()) {
+                tracing::error!(
+                    session_id = %id,
+                    error = %e,
+                    "Failed to persist message received at /api/pi/sessions/<id>/events"
+                );
+                return Err(e);
+            }
 
-            hub.broadcast_message(&message).await;
-
-            Ok(Json(json!({ "ok": true, "message": message })))
+            Ok(Json(json!({ "ok": true })))
         }
 
         "status" => {

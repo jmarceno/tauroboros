@@ -197,10 +197,11 @@ async fn rocket() -> Rocket<Build> {
         sse_hub_lock.clone(),
         project_root.clone(),
         settings_dir.clone(),
-    );
+    )
+    .with_port(port);
 
     let planning_session_manager =
-        PlanningSessionManager::new(db_pool.clone(), sse_hub_lock.clone(), project_root.clone());
+        PlanningSessionManager::new(db_pool.clone(), sse_hub_lock.clone(), project_root.clone(), port);
 
     // Start serialized message writer (single consumer to bypass SQLite multi-writer limitations)
     let message_writer = start_message_writer(db_pool.clone(), sse_hub_lock.clone());

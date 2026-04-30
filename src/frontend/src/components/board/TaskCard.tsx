@@ -447,18 +447,21 @@ export function TaskCard(props: TaskCardProps) {
             </svg>
           </button>
 
-          {/* Diff button */}
-          <Show when={shouldShowBadges() || props.task.status === 'backlog' || props.task.status === 'template'}>
-            <button
-              class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-info transition-colors"
-              title="View diffs"
-              onClick={(e) => { e.stopPropagation(); props.onViewDiff(); }}
-            >
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M4 16v4h4M20 8V4h-4M4 8V4h4M20 16v4h-4M8 12h8"/>
-              </svg>
-            </button>
-          </Show>
+          {/* Diff button — always visible, disabled when task has no execution data */}
+          <button
+            class="p-1 rounded transition-colors"
+            classList={{
+              'text-dark-text-secondary hover:text-accent-info hover:bg-dark-surface2': !(props.task.status === 'backlog' || props.task.status === 'template'),
+              'text-dark-surface3 cursor-not-allowed': props.task.status === 'backlog' || props.task.status === 'template',
+            }}
+            title={props.task.status === 'backlog' || props.task.status === 'template' ? 'No diffs available - execute the task first' : 'View diffs'}
+            disabled={props.task.status === 'backlog' || props.task.status === 'template'}
+            onClick={(e) => { e.stopPropagation(); if (props.task.status !== 'backlog' && props.task.status !== 'template') props.onViewDiff(); }}
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 16v4h4M20 8V4h-4M4 8V4h4M20 16v4h-4M8 12h8"/>
+            </svg>
+          </button>
 
           {/* Deploy button (template only) */}
           <Show when={props.task.status === 'template'}>

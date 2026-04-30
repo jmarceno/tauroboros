@@ -170,7 +170,7 @@ test.describe('Rust Route/Payload Parity', () => {
   test.beforeAll(async () => {
     const repoRoot = join(import.meta.dirname, '../..')
     const rustDir = join(repoRoot, 'src/backend')
-    projectDir = mkdtempSync(join(tmpdir(), 'src/backend-parity-'))
+    projectDir = mkdtempSync(join(tmpdir(), 'tauroboros-backend-parity-'))
     serverPort = 3795
     baseUrl = `http://localhost:${serverPort}`
     dbPath = join(projectDir, '.tauroboros', 'tasks.db')
@@ -199,7 +199,7 @@ test.describe('Rust Route/Payload Parity', () => {
     execSync('npm run build', { cwd: join(repoRoot, 'src/frontend'), stdio: 'pipe' })
     execSync('cargo build', { cwd: rustDir, stdio: 'pipe' })
 
-    serverProcess = spawn(join(rustDir, 'target', 'debug', 'tauroboros-server'), {
+    serverProcess = spawn(join(rustDir, 'target', 'debug', 'tauroboros'), {
       cwd: repoRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {

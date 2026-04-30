@@ -11,8 +11,8 @@ use crate::orchestrator::isolation::{self, ResolvedIsolationSpec};
 use crate::sse::hub::SseHub;
 use rocket::serde::json::json;
 use serde_json::Value;
-use std::io::ErrorKind;
 use sqlx::SqlitePool;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -49,6 +49,7 @@ pub struct PiSessionExecutor {
     db: SqlitePool,
     sse_hub: Arc<RwLock<SseHub>>,
     project_root: String,
+    server_port: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -58,11 +59,17 @@ pub struct PiPromptResult {
 }
 
 impl PiSessionExecutor {
-    pub fn new(db: SqlitePool, sse_hub: Arc<RwLock<SseHub>>, project_root: String) -> Self {
+    pub fn new(
+        db: SqlitePool,
+        sse_hub: Arc<RwLock<SseHub>>,
+        project_root: String,
+        server_port: u16,
+    ) -> Self {
         Self {
             db,
             sse_hub,
             project_root,
+            server_port,
         }
     }
 
@@ -150,7 +157,7 @@ impl PiSessionExecutor {
         )
         .await?;
 
-        let (mut child, mut stdin, mut rx) = match spawn_process(&session, &self.project_root).await
+        let (mut child, mut stdin, mut rx) = match spawn_process(&session, &self.project_root, self.server_port).await
         {
             Ok(process) => process,
             Err(error) => {
@@ -318,13 +325,14 @@ impl PiSessionExecutor {
         .await?;
 
         match result {
-            Ok(mut prompt_result) => {
-                prompt_result.response_text = prompt_result.response_text.trim().to_string();
+            Ok(prompt_result) => {
                 Ok(prompt_result)
             }
             Err(error) => Err(error),
         }
     }
+
+
 
 }
 
@@ -637,6 +645,7 @@ impl PiSessionExecutor {
 async fn spawn_process(
     session: &PiWorkflowSession,
     project_root: &str,
+    server_port: u16,
 ) -> Result<
     (
         Child,
@@ -673,7 +682,7 @@ async fn spawn_process(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env("PI_CODING_AGENT", "true")
-        .env("TAUROBOROS_PORT", std::env::var("SERVER_PORT").unwrap_or_else(|_| std::env::var("PORT").unwrap_or_else(|_| "3789".to_string())))
+        .env("TAUROBOROS_PORT", server_port.to_string())
         .env("TAUROBOROS_SESSION_ID", &session.id)
         .env(
             "TAUROBOROS_TASK_ID",

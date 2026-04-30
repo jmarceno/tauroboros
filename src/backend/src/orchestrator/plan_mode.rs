@@ -3,7 +3,8 @@ use crate::models::{
     ExecutionPhase, Options, PiSessionKind, PiWorkflowSession, Task, TaskStatus, UpdateTaskInput,
 };
 use crate::orchestrator::git::{
-    auto_commit_worktree, capture_worktree_diff, merge_and_cleanup_worktree, resolve_target_branch,
+    auto_commit_worktree, capture_worktree_diff, capture_worktree_diff_from_head,
+    merge_and_cleanup_worktree, resolve_target_branch,
     worktree_has_changes, WorktreeInfo,
 };
 use crate::orchestrator::isolation;
@@ -117,6 +118,7 @@ impl Orchestrator {
             self.db.clone(),
             self.sse_hub.clone(),
             self.project_root.clone(),
+            self.server_port,
         );
 
         match executor
@@ -262,10 +264,11 @@ impl Orchestrator {
             self.db.clone(),
             self.sse_hub.clone(),
             self.project_root.clone(),
+            self.server_port,
         );
 
         let result = executor
-            .run_prompt(session.clone(), &model, &prompt, stop_rx)
+            .run_prompt(session.clone(), &model, &prompt, stop_rx.clone())
             .await;
 
         match result {
@@ -301,12 +304,50 @@ impl Orchestrator {
                     Some(options.branch.as_str()),
                 )
                 .await?;
+
+                match self
+                    .run_post_execution_phases(
+                        task,
+                        run_id,
+                        options,
+                        worktree,
+                        &target_branch,
+                        0,
+                        stop_rx.clone(),
+                    )
+                    .await?
+                {
+                    super::review::PostExecutionPhaseOutcome::Passed => {}
+                    super::review::PostExecutionPhaseOutcome::ReviewFailed => {
+                        return Ok(TaskOutcome {
+                            status: TaskStatus::Stuck,
+                            error_message: Some("Review loop failed".to_string()),
+                        });
+                    }
+                    super::review::PostExecutionPhaseOutcome::CodeStyleFailed => {
+                        return Ok(TaskOutcome {
+                            status: TaskStatus::Failed,
+                            error_message: Some("Code style review failed".to_string()),
+                        });
+                    }
+                }
+
+                // Capture diffs BEFORE auto-commit so working tree changes are visible
+                let captured_diffs_before_commit = capture_worktree_diff(&self.project_root, &worktree.directory).await?;
                 let committed = if task.auto_commit {
                     auto_commit_worktree(&worktree.directory, &task.name, &task.id).await?
                 } else {
                     false
                 };
-                let captured_diffs = capture_worktree_diff(&self.project_root, &worktree.directory).await?;
+
+                // If there were no uncommitted changes (because auto-commit or review already
+                // committed everything), capture the diff from HEAD~1..HEAD instead.
+                let captured_diffs = if captured_diffs_before_commit.is_empty() && committed {
+                    capture_worktree_diff_from_head(&self.project_root, &worktree.directory).await?
+                } else {
+                    captured_diffs_before_commit
+                };
+
                 if !captured_diffs.is_empty() {
                     crate::db::queries::insert_task_diffs(
                         &self.db,

@@ -259,6 +259,7 @@ impl Orchestrator {
         let final_result = self
             .run_best_of_n_final_applier(
                 task,
+                run_id,
                 options,
                 &config,
                 &candidates,
@@ -268,19 +269,45 @@ impl Orchestrator {
             )
             .await;
 
-        // Clean up applier worktree
-        let _ = merge_and_cleanup_worktree(
-            &self.project_root,
-            &applier_worktree.directory,
-            &applier_worktree.branch,
-            &target_branch,
-            true,
-            &format!("Best-of-n {} ({})", task.name, task.id),
-        )
-        .await;
-
         match final_result {
             Ok(_) => {
+                match self
+                    .run_post_execution_phases(
+                        task,
+                        run_id,
+                        options,
+                        &applier_worktree,
+                        &target_branch,
+                        0,
+                        stop_rx,
+                    )
+                    .await?
+                {
+                    super::review::PostExecutionPhaseOutcome::Passed => {}
+                    super::review::PostExecutionPhaseOutcome::ReviewFailed => {
+                        return Ok(TaskOutcome {
+                            status: TaskStatus::Stuck,
+                            error_message: Some("Review loop failed".to_string()),
+                        });
+                    }
+                    super::review::PostExecutionPhaseOutcome::CodeStyleFailed => {
+                        return Ok(TaskOutcome {
+                            status: TaskStatus::Failed,
+                            error_message: Some("Code style review failed".to_string()),
+                        });
+                    }
+                }
+
+                let _ = merge_and_cleanup_worktree(
+                    &self.project_root,
+                    &applier_worktree.directory,
+                    &applier_worktree.branch,
+                    &target_branch,
+                    true,
+                    &format!("Best-of-n {} ({})", task.name, task.id),
+                )
+                .await;
+
                 self.apply_candidate_selection(&candidates, &aggregated_review)
                     .await?;
 
@@ -302,10 +329,22 @@ impl Orchestrator {
                     error_message: None,
                 })
             }
-            Err(error) => Ok(TaskOutcome {
-                status: TaskStatus::Failed,
-                error_message: Some(error.to_string()),
-            }),
+            Err(error) => {
+                let _ = merge_and_cleanup_worktree(
+                    &self.project_root,
+                    &applier_worktree.directory,
+                    &applier_worktree.branch,
+                    &target_branch,
+                    true,
+                    &format!("Best-of-n {} ({})", task.name, task.id),
+                )
+                .await;
+
+                Ok(TaskOutcome {
+                    status: TaskStatus::Failed,
+                    error_message: Some(error.to_string()),
+                })
+            }
         }
     }
 
@@ -430,6 +469,7 @@ impl Orchestrator {
                 self.db.clone(),
                 self.sse_hub.clone(),
                 self.project_root.clone(),
+                self.server_port,
             );
 
             let run_result = executor
@@ -607,6 +647,7 @@ impl Orchestrator {
                 self.db.clone(),
                 self.sse_hub.clone(),
                 self.project_root.clone(),
+                self.server_port,
             );
 
             let result = executor
@@ -664,6 +705,7 @@ impl Orchestrator {
     async fn run_best_of_n_final_applier(
         &self,
         task: &Task,
+        _run_id: &str,
         options: &Options,
         config: &BestOfNConfig,
         candidates: &[crate::db::models::TaskCandidate],
@@ -814,6 +856,7 @@ impl Orchestrator {
             self.db.clone(),
             self.sse_hub.clone(),
             self.project_root.clone(),
+            self.server_port,
         );
 
         let result = executor

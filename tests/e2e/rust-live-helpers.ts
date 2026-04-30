@@ -224,13 +224,14 @@ rl.on("line", async (line) => {
         result: { details: vote },
       }))
       text = JSON.stringify(vote)
-    } else if (prompt.toLowerCase().includes('review')) {
+    } else if (prompt.includes('emit_best_of_n_vote')) {
       const vote = {
         status: 'pass',
-        summary: 'Looks good.',
-        bestCandidateIds: ['candidate-1'],
+        summary: 'Candidate 0 is the best option.',
+        bestCandidateIds: ['candidate-0'],
         gaps: [],
         recommendedFinalStrategy: 'pick_best',
+        recommendedPrompt: '',
       }
       console.log(JSON.stringify({
         type: 'tool_execution_end',
@@ -238,6 +239,21 @@ rl.on("line", async (line) => {
         result: { details: vote },
       }))
       text = JSON.stringify(vote)
+    } else if (prompt.toLowerCase().includes('code style')) {
+      text = 'Applied requested code style fixes.'
+    } else if (prompt.toLowerCase().includes('review')) {
+      const reviewResult = {
+        status: 'pass',
+        summary: 'Looks good.',
+        gaps: [],
+        recommendedPrompt: '',
+      }
+      console.log(JSON.stringify({
+        type: 'tool_execution_end',
+        toolName: 'emit_review_result',
+        result: { details: reviewResult },
+      }))
+      text = JSON.stringify(reviewResult)
     } else {
       text = writePromptResult(prompt)
     }
