@@ -3,7 +3,8 @@
  * Ported from React to SolidJS - Full feature parity
  */
 
-import { createMemo } from 'solid-js'
+import { Show, createSignal, onCleanup } from 'solid-js'
+import { Portal } from 'solid-js/web'
 import type { ControlState } from '@/types'
 import { createVersionStore } from '@/stores'
 
@@ -36,8 +37,41 @@ export function Sidebar(props: SidebarProps) {
   const isRunning = () => props.consumedSlots > 0
   const freeSlots = () => props.parallelTasks - props.consumedSlots
 
+  const [collapsed, setCollapsed] = createSignal(false)
+  const [tooltipText, setTooltipText] = createSignal<string | null>(null)
+  const [tooltipPos, setTooltipPos] = createSignal<{ top: number; left: number }>({ top: 0, left: 0 })
+
+  const updateTooltipPos = (btn: Element) => {
+    const rect = btn.getBoundingClientRect()
+    setTooltipPos({
+      top: rect.top + rect.height / 2,
+      left: rect.right + 8,
+    })
+  }
+
+  const handleMouseOver = (e: MouseEvent) => {
+    if (!collapsed()) return
+    const btn = (e.target as Element).closest('[data-tooltip]')
+    if (!btn) return
+    setTooltipText(btn.getAttribute('data-tooltip'))
+    updateTooltipPos(btn)
+    window.addEventListener('scroll', () => updateTooltipPos(btn), true)
+    window.addEventListener('resize', () => updateTooltipPos(btn))
+  }
+
+  const handleMouseOut = (e: MouseEvent) => {
+    const related = e.relatedTarget as Element | null
+    const btn = (e.target as Element).closest('[data-tooltip]')
+    if (btn && related && btn.contains(related)) return
+    setTooltipText(null)
+  }
+
+  onCleanup(() => {
+    setTooltipText(null)
+  })
+
   return (
-    <aside class="sidebar">
+    <aside class={`sidebar${collapsed() ? ' collapsed' : ''}`}>
       <div class="sidebar-header">
         <div class="flex items-center gap-2">
           <div class="w-7 h-7 bg-accent-primary rounded-md flex items-center justify-center flex-shrink-0">
@@ -48,9 +82,32 @@ export function Sidebar(props: SidebarProps) {
           </div>
           <span class="sidebar-title text-sm font-bold text-accent-primary whitespace-nowrap">TaurOboros</span>
         </div>
+        <button
+          class="toggle-btn"
+          onClick={() => setCollapsed(!collapsed())}
+          title={collapsed() ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d={collapsed() ? 'M9 18l6-6-6-6' : 'M15 18l-6-6 6-6'} />
+          </svg>
+        </button>
       </div>
 
-      <div class="sidebar-content overflow-y-auto">
+      <div class="sidebar-content overflow-y-auto" onMouseOver={handleMouseOver} onMouseOut={handleMouseOut}>
+        <Show when={collapsed() && tooltipText()}>
+          <Portal>
+            <span
+              class="tooltip"
+              style={{
+                top: `${tooltipPos().top}px`,
+                left: `${tooltipPos().left}px`,
+                transform: 'translateY(-50%)',
+              }}
+            >
+              {tooltipText()}
+            </span>
+          </Portal>
+        </Show>
         <div class="sidebar-section">
           <div class="sidebar-section-title">Overview ({props.totalTasks ?? 0})</div>
           <div class="grid grid-cols-2 gap-2">
@@ -81,6 +138,7 @@ export function Sidebar(props: SidebarProps) {
               class={`sidebar-btn primary ${isRunning() || props.controlState === 'paused' || props.isControlLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
               disabled={isRunning() || props.controlState === 'paused' || props.isControlLoading}
               onClick={props.onToggleExecution}
+              data-tooltip="Start Workflow"
             >
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
@@ -93,6 +151,7 @@ export function Sidebar(props: SidebarProps) {
               class={`sidebar-btn warning ${!props.canPause || !isRunning() || props.isControlLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
               disabled={!props.canPause || !isRunning() || props.isControlLoading}
               onClick={() => props.activeRunId && props.onPauseExecution(props.activeRunId)}
+              data-tooltip="Pause"
             >
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="6" y="6" width="4" height="12" rx="1"/>
@@ -105,6 +164,7 @@ export function Sidebar(props: SidebarProps) {
               class={`sidebar-btn primary ${!props.canResume || (props.controlState !== 'paused' && !props.isPaused) || props.isControlLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
               disabled={!props.canResume || (props.controlState !== 'paused' && !props.isPaused) || props.isControlLoading}
               onClick={() => props.activeRunId && props.onResumeExecution(props.activeRunId)}
+              data-tooltip="Resume"
             >
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
@@ -117,6 +177,7 @@ export function Sidebar(props: SidebarProps) {
               class={`sidebar-btn danger ${!props.canStop || (!isRunning() && props.controlState !== 'paused' && !props.isPaused) || props.isControlLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
               disabled={!props.canStop || (!isRunning() && props.controlState !== 'paused' && !props.isPaused) || props.isControlLoading}
               onClick={() => props.onStopExecution('destructive')}
+              data-tooltip="Stop"
             >
               <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="6" y="6" width="12" height="12" rx="2"/>
@@ -125,28 +186,28 @@ export function Sidebar(props: SidebarProps) {
             </button>
           </div>
 
-          <button class="sidebar-btn" onClick={props.onOpenTemplateModal}>
+          <button class="sidebar-btn" onClick={props.onOpenTemplateModal} data-tooltip="New Template">
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
             </svg>
             <span class="sidebar-label">New Template</span>
           </button>
 
-          <button class="sidebar-btn" onClick={props.onOpenTaskModal}>
+          <button class="sidebar-btn" onClick={props.onOpenTaskModal} data-tooltip="New Task">
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 4v16m8-8H4"/>
             </svg>
             <span class="sidebar-label">New Task</span>
           </button>
 
-          <button class="sidebar-btn" onClick={props.onArchiveAllDone}>
+          <button class="sidebar-btn" onClick={props.onArchiveAllDone} data-tooltip="Archive Done">
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
             </svg>
             <span class="sidebar-label">Archive Done</span>
           </button>
 
-          <button class="sidebar-btn" onClick={props.onTogglePlanningChat}>
+          <button class="sidebar-btn" onClick={props.onTogglePlanningChat} data-tooltip="Planning Chat">
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
