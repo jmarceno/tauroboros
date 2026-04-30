@@ -74,6 +74,10 @@ const config: UserConfig = {
         target: `ws://localhost:${SERVER_PORT}`,
         ws: true,
       },
+      "/console": {
+        target: `ws://localhost:${SERVER_PORT}`,
+        ws: true,
+      },
     },
   },
 }

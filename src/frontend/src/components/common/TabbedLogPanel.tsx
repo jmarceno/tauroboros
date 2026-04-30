@@ -3,9 +3,12 @@
  * Ported from React to SolidJS - Full feature parity
  */
 
-import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from 'solid-js'
+import { createSignal, createMemo, createEffect, onMount, onCleanup, For, Show, lazy } from 'solid-js'
 import type { LogEntry, WorkflowRun } from '@/types'
 import { runApiEffect, runsApi } from '@/api'
+
+// Lazy load Console component for the bottom panel
+const ConsolePanel = lazy(() => import('./ConsolePanel'))
 
 type RunQueueStatus = {
   runId: string
@@ -44,7 +47,7 @@ interface TabbedLogPanelProps {
 }
 
 export function TabbedLogPanel(props: TabbedLogPanelProps) {
-  const [activeTab, setActiveTab] = createSignal<'runs' | 'logs'>('runs')
+  const [activeTab, setActiveTab] = createSignal<'runs' | 'logs' | 'console'>('runs')
   const [panelHeight, setPanelHeight] = createSignal(DEFAULT_PANEL_HEIGHT)
   const [isResizing, setIsResizing] = createSignal(false)
   const [queueStateByRunId, setQueueStateByRunId] = createSignal<Record<string, RunQueueState>>({})
@@ -259,6 +262,29 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
                 </Show>
               </span>
             </button>
+            <button
+              class="px-3 py-1.5 rounded-md text-[11px] font-semibold uppercase tracking-wider transition-all flex items-center gap-1.5"
+              classList={{
+                'bg-dark-surface2 text-accent-primary': activeTab() === 'console',
+                'text-dark-text-secondary hover:text-dark-text hover:bg-dark-surface2/50': activeTab() !== 'console'
+              }}
+              onClick={() => setActiveTab('console')}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="w-3.5 h-3.5"
+              >
+                <polyline points="4 17 10 11 4 5" />
+                <line x1="12" x2="20" y1="19" y2="19" />
+              </svg>
+              Console
+            </button>
           </div>
           <button
             class="bg-transparent border-0 text-dark-text-secondary cursor-pointer p-1 hover:text-dark-text"
@@ -439,6 +465,13 @@ export function TabbedLogPanel(props: TabbedLogPanelProps) {
                   <div class="text-dark-text-muted italic text-center py-4">No events yet...</div>
                 </Show>
               </div>
+            </div>
+          </Show>
+
+          {/* Console Tab */}
+          <Show when={activeTab() === 'console'}>
+            <div class="flex-1 flex flex-col overflow-hidden bg-[#0d1117]">
+              <ConsolePanel />
             </div>
           </Show>
         </div>

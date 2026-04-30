@@ -426,7 +426,7 @@ function App() {
       if (e.ctrlKey && e.key >= '1' && e.key <= '5') {
         e.preventDefault()
         const tabIndex = parseInt(e.key) - 1
-        const tabs = ['kanban', 'options', 'archived', 'stats'] as const
+        const tabs = ['kanban', 'options', 'archived', 'stats', 'self-heal'] as const
         tabStore.setActiveTab(tabs[tabIndex])
         return
       }
@@ -876,6 +876,8 @@ function App() {
         <Show when={tabStore.activeTab() === 'self-heal'}>
           <SelfHealReportsTab />
         </Show>
+
+
 
         <TabbedLogPanel
           collapsed={logPanelCollapsed()}

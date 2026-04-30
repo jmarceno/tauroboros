@@ -27,6 +27,7 @@ export { StatsTab } from './tabs/StatsTab'
 export { ArchivedTasksTab } from './tabs/ArchivedTasksTab'
 export { SelfHealReportsTab } from './tabs/SelfHealReportsTab'
 
+
 // Chat Components
 export { ChatContainer } from './chat/ChatContainer'
 export { ChatMessage } from './chat/ChatMessage'

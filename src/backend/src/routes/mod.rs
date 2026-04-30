@@ -2,6 +2,7 @@ use crate::internal_api;
 use rocket::Route;
 
 pub mod archived;
+pub mod console;
 pub mod execution;
 pub mod frontend;
 pub mod options;
@@ -64,6 +65,10 @@ pub fn routes() -> Vec<Route> {
 
     // Internal API routes (serialized session message writer)
     routes.extend(internal_api::routes());
+
+    // Console WebSocket routes (only if console feature is enabled)
+    #[cfg(feature = "console")]
+    routes.extend(console::routes());
 
     routes
 }

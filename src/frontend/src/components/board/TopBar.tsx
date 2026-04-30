@@ -223,7 +223,7 @@ export function TopBar(props: TopBarProps) {
           Chat
         </span>
         <span class="flex items-center gap-1">
-          <kbd class="font-mono text-dark-text font-bold border border-dark-border rounded px-1 bg-dark-surface2">Ctrl+1-4</kbd>
+          <kbd class="font-mono text-dark-text font-bold border border-dark-border rounded px-1 bg-dark-surface2">Ctrl+1-5</kbd>
           Tabs
         </span>
         <span class="flex items-center gap-1">

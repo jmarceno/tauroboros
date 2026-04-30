@@ -47,6 +47,11 @@ tokio-stream = "0.1"
 # Hashing (for packages)
 sha2 = "0.10"
 hex = "0.4"
+
+# PTY for interactive console
+portable-pty = { version = "0.8", optional = true }
+base64 = { version = "0.22", optional = true }
+rocket_ws = { version = "0.1", optional = true }
 # Use system libgit2 instead of vendored for faster compile
 git2 = { version = "0.20" }
 
@@ -67,6 +72,10 @@ lto = false
 incremental = true
 
 # Optimize build scripts and proc-macros for faster compile
+[features]
+default = ["console"]
+console = ["dep:portable-pty", "dep:base64", "dep:rocket_ws"]
+
 [profile.dev.build-override]
 opt-level = 0
 codegen-units = 256
