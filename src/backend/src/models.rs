@@ -948,3 +948,23 @@ pub struct ArchivedRunWithTasks {
     pub run: WorkflowRun,
     pub tasks: Vec<Task>,
 }
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDiff {
+    pub id: i64,
+    pub task_id: String,
+    pub run_id: Option<String>,
+    pub capture_phase: String,
+    pub file_path: String,
+    pub diff_content: String,
+    pub captured_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDiffsResponse {
+    pub task_id: String,
+    pub diffs: Vec<TaskDiff>,
+    pub has_changes: bool,
+}

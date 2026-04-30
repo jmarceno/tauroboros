@@ -15,6 +15,7 @@ import type {
   ReviewStatus,
   Session,
   SessionUsageRollup,
+  TaskDiffsResponse,
 } from "@/types"
 
 export const tasksApi = {
@@ -66,6 +67,9 @@ export const tasksApi = {
 
   abortBestOfN: (taskId: string, reason: string) =>
     apiClient.post(`/api/tasks/${taskId}/best-of-n/abort`, { reason }),
+
+  getTaskDiffs: (id: string) =>
+    apiClient.get<TaskDiffsResponse>(`/api/tasks/${id}/diffs`),
 
   getArchived: () =>
     apiClient.get<{ runs: { run: import("@/types").WorkflowRun; tasks: Task[] }[] }>("/api/archived/tasks"),

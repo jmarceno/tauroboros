@@ -51,6 +51,7 @@ interface KanbanColumnProps {
   onArchiveAllDone: () => void
   onViewRuns: (id: string) => void
   onContinueReviews: (id: string) => void
+  onViewDiff: (id: string) => void
   children?: JSX.Element
 }
 
@@ -153,6 +154,7 @@ export function KanbanColumn(props: KanbanColumnProps) {
                 onArchive={(e) => props.onArchiveTask(task.id, e)}
                 onViewRuns={() => props.onViewRuns(task.id)}
                 onContinueReviews={() => props.onContinueReviews(task.id)}
+                onViewDiff={() => props.onViewDiff(task.id)}
               />
             )
           }}

@@ -1,7 +1,7 @@
 use super::extensions::RunJsonExt;
 use super::types::{StopMode, TaskOutcome, GRACEFUL_STOP_MESSAGE, DESTRUCTIVE_STOP_MESSAGE};
 use super::Orchestrator;
-use crate::db::queries::{get_options, get_task, get_task_runs, update_task, update_task_group};
+use crate::db::queries::{get_options, get_task, get_task_runs, insert_task_diffs, update_task, update_task_group};
 use crate::db::runtime::{
     create_task_run_record, create_workflow_session_record, update_task_run_record, update_workflow_run_record,
     CreateTaskRunRecord, CreateWorkflowSessionRecord, UpdateTaskRunRecord, UpdateWorkflowRunRecord,
@@ -12,8 +12,8 @@ use crate::models::{
     RunPhase, RunStatus, TaskGroupStatus, TaskStatus, UpdateTaskInput, WorkflowRunStatus,
 };
 use crate::orchestrator::git::{
-    auto_commit_worktree, create_task_worktree, merge_and_cleanup_worktree, resolve_target_branch,
-    run_shell_command, worktree_has_changes,
+    auto_commit_worktree, capture_worktree_diff, create_task_worktree, merge_and_cleanup_worktree,
+    resolve_target_branch, run_shell_command, worktree_has_changes,
 };
 use crate::orchestrator::pi::{PiSessionExecutor};
 use crate::orchestrator::prompts::{render_execution_prompt, resolve_execution_model};
@@ -480,6 +480,18 @@ impl Orchestrator {
                 } else {
                     false
                 };
+
+                let captured_diffs = capture_worktree_diff(&self.project_root, &worktree.directory).await?;
+                if !captured_diffs.is_empty() {
+                    insert_task_diffs(
+                        &self.db,
+                        &task.id,
+                        Some(run_id),
+                        "execution",
+                        &captured_diffs,
+                    )
+                    .await?;
+                }
 
                 let final_worktree_dir = if task.delete_worktree {
                     merge_and_cleanup_worktree(

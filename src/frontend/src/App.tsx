@@ -53,6 +53,7 @@ import {
   StartSingleModal,
   StopConfirmModal,
   TaskSessionsModal,
+  DiffModal,
   ChatContainer,
 } from '@/components'
 import { optionsApi, runApiEffect, sleepMs } from '@/api'
@@ -97,6 +98,8 @@ function App() {
   const [cleanRunModalRun, setCleanRunModalRun] = createSignal<WorkflowRun | null>(null)
   const [isCleaningRun, setIsCleaningRun] = createSignal(false)
   const [pendingGroupStart, setPendingGroupStart] = createSignal<string | null>(null)
+  const [diffTaskId, setDiffTaskId] = createSignal<string | null>(null)
+  const [diffTaskName, setDiffTaskName] = createSignal<string>('')
 
   // Drag & drop store with handler
   const dragDrop = createDragDropStore(async (taskId: string, target: string, action: DropAction) => {
@@ -835,6 +838,11 @@ function App() {
             }}
             onViewRuns={(id) => uiStore.openModal('bestOfNDetail', { taskId: id })}
             onContinueReviews={(id) => tasksStore.repairTask(id, 'continue_with_more_reviews')}
+            onViewDiff={(id) => {
+              const task = tasksStore.getTaskById(id)
+              setDiffTaskId(id)
+              setDiffTaskName(task?.name || 'Unknown')
+            }}
             onChangeColumnSort={(status, sort) => {
               const newSorts = { ...(optionsStore.options()?.columnSorts || {}), [status]: sort }
               optionsStore.updateOptions({ columnSorts: newSorts })
@@ -1119,6 +1127,14 @@ function App() {
         isLoading={isCleaningRun()}
         onConfirm={handleConfirmCleanRun}
         onCancel={handleCloseCleanRunModal}
+      />
+
+      {/* Diff Modal */}
+      <DiffModal
+        isOpen={diffTaskId() !== null}
+        taskId={diffTaskId() || ''}
+        taskName={diffTaskName()}
+        onClose={() => setDiffTaskId(null)}
       />
 
       {/* Chat Container */}

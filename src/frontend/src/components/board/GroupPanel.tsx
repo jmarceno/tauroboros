@@ -33,6 +33,7 @@ interface GroupPanelProps {
   onArchiveTask: (id: string, event?: MouseEvent) => void
   onViewRuns: (id: string) => void
   onContinueReviews: (id: string) => void
+  onViewDiff: (id: string) => void
   onDeleteGroup: () => void
   onRenameGroup?: (groupId: string, newName: string) => Promise<void>
   dragDrop: ReturnType<typeof createDragDropStore>
@@ -494,6 +495,7 @@ export function GroupPanel(props: GroupPanelProps) {
                   onArchive={(e) => props.onArchiveTask(task.id, e)}
                   onViewRuns={() => props.onViewRuns(task.id)}
                   onContinueReviews={() => props.onContinueReviews(task.id)}
+                  onViewDiff={() => props.onViewDiff(task.id)}
                 />
               )}
             </For>

@@ -43,6 +43,7 @@ interface TaskCardProps {
   onArchive: (e: MouseEvent) => void
   onViewRuns: () => void
   onContinueReviews: () => void
+  onViewDiff: () => void
 }
 
 function getUpdateAgeClass(timestamp: number): string {
@@ -445,6 +446,19 @@ export function TaskCard(props: TaskCardProps) {
               <path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
             </svg>
           </button>
+
+          {/* Diff button */}
+          <Show when={shouldShowBadges() || props.task.status === 'backlog' || props.task.status === 'template'}>
+            <button
+              class="p-1 rounded hover:bg-dark-surface2 text-dark-text-secondary hover:text-accent-info transition-colors"
+              title="View diffs"
+              onClick={(e) => { e.stopPropagation(); props.onViewDiff(); }}
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 16v4h4M20 8V4h-4M4 8V4h4M20 16v4h-4M8 12h8"/>
+              </svg>
+            </button>
+          </Show>
 
           {/* Deploy button (template only) */}
           <Show when={props.task.status === 'template'}>

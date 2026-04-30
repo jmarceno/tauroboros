@@ -496,5 +496,25 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS task_diffs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            run_id TEXT,
+            capture_phase TEXT NOT NULL DEFAULT 'execution',
+            file_path TEXT NOT NULL,
+            diff_content TEXT NOT NULL,
+            captured_at INTEGER NOT NULL
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_task_diffs_task_id ON task_diffs(task_id)")
+        .execute(pool)
+        .await?;
+
     Ok(())
 }

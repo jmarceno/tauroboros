@@ -320,6 +320,22 @@ export interface BranchList {
   branches: string[]
 }
 
+export interface TaskDiff {
+  id: number
+  taskId: string
+  runId: string | null
+  capturePhase: string
+  filePath: string
+  diffContent: string
+  capturedAt: number
+}
+
+export interface TaskDiffsResponse {
+  taskId: string
+  diffs: TaskDiff[]
+  hasChanges: boolean
+}
+
 export interface ReviewStatus {
   taskId: string
   reviewCount: number

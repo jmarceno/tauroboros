@@ -108,7 +108,7 @@ pub async fn create_task_db(pool: &Pool<Sqlite>, input: CreateTaskInput) -> ApiR
             execution_strategy, best_of_n_config, best_of_n_substage,
             skip_permission_asking, max_review_runs_override, additional_agent_access, group_id,
             created_at, updated_at, self_heal_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&id)
@@ -1133,14 +1133,59 @@ pub async fn get_task_runs_by_phase(
     Ok(runs)
 }
 
+pub async fn get_task_diffs(
+    pool: &Pool<Sqlite>,
+    task_id: &str,
+) -> ApiResult<Vec<TaskDiff>> {
+    let diffs = sqlx::query_as::<_, TaskDiff>(
+        r#"
+        SELECT * FROM task_diffs WHERE task_id = ? ORDER BY captured_at ASC, file_path ASC
+        "#,
+    )
+    .bind(task_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+
+    Ok(diffs)
+}
+
+pub async fn insert_task_diffs(
+    pool: &Pool<Sqlite>,
+    task_id: &str,
+    run_id: Option<&str>,
+    capture_phase: &str,
+    diffs: &[(String, String)],
+) -> ApiResult<()> {
+    let now = Utc::now().timestamp();
+    for (file_path, diff_content) in diffs {
+        sqlx::query(
+            r#"
+            INSERT INTO task_diffs (task_id, run_id, capture_phase, file_path, diff_content, captured_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(task_id)
+        .bind(run_id)
+        .bind(capture_phase)
+        .bind(file_path)
+        .bind(diff_content)
+        .bind(now)
+        .execute(pool)
+        .await
+        .map_err(ApiError::Database)?;
+    }
+    Ok(())
+}
+
 pub async fn create_task_candidate(
     pool: &Pool<Sqlite>,
     task_id: &str,
     worker_run_id: &str,
-    summary: Option<&str>,
     changed_files_json: Option<&str>,
     diff_stats_json: Option<&str>,
     verification_json: Option<&str>,
+    summary: Option<&str>,
 ) -> ApiResult<TaskCandidate> {
     let now = Utc::now().timestamp();
     let id = uuid::Uuid::new_v4().to_string();
@@ -1177,4 +1222,225 @@ pub async fn create_task_candidate(
     .map_err(ApiError::Database)?;
 
     Ok(candidate)
+}
+
+// ============================================================================
+// Regression Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    /// Create an in-memory SQLite pool with just the tasks table.
+    async fn create_test_pool() -> Pool<Sqlite> {
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .create_if_missing(true);
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+
+        // Create the tasks table (full schema matching production)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                idx INTEGER NOT NULL DEFAULT 0,
+                prompt TEXT NOT NULL,
+                branch TEXT,
+                plan_model TEXT,
+                execution_model TEXT,
+                planmode INTEGER NOT NULL DEFAULT 0,
+                auto_approve_plan INTEGER NOT NULL DEFAULT 0,
+                review INTEGER NOT NULL DEFAULT 0,
+                auto_commit INTEGER NOT NULL DEFAULT 0,
+                auto_deploy INTEGER NOT NULL DEFAULT 0,
+                auto_deploy_condition TEXT,
+                delete_worktree INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'backlog',
+                requirements TEXT,
+                agent_output TEXT NOT NULL DEFAULT '',
+                review_count INTEGER NOT NULL DEFAULT 0,
+                json_parse_retry_count INTEGER NOT NULL DEFAULT 0,
+                session_id TEXT,
+                session_url TEXT,
+                worktree_dir TEXT,
+                error_message TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                thinking_level TEXT NOT NULL DEFAULT 'default',
+                plan_thinking_level TEXT NOT NULL DEFAULT 'default',
+                execution_thinking_level TEXT NOT NULL DEFAULT 'default',
+                execution_phase TEXT NOT NULL DEFAULT 'not_started',
+                awaiting_plan_approval INTEGER NOT NULL DEFAULT 0,
+                plan_revision_count INTEGER NOT NULL DEFAULT 0,
+                execution_strategy TEXT NOT NULL DEFAULT 'standard',
+                best_of_n_config TEXT,
+                best_of_n_substage TEXT NOT NULL DEFAULT 'idle',
+                skip_permission_asking INTEGER NOT NULL DEFAULT 0,
+                max_review_runs_override INTEGER,
+                smart_repair_hints TEXT,
+                review_activity TEXT NOT NULL DEFAULT 'idle',
+                is_archived INTEGER NOT NULL DEFAULT 0,
+                archived_at INTEGER,
+                additional_agent_access TEXT,
+                code_style_review INTEGER NOT NULL DEFAULT 0,
+                group_id TEXT,
+                self_heal_status TEXT NOT NULL DEFAULT 'idle',
+                self_heal_message TEXT,
+                self_heal_report_id TEXT
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        pool
+    }
+
+    #[tokio::test]
+    async fn test_create_task_minimal() {
+        let pool = create_test_pool().await;
+
+        let input = CreateTaskInput {
+            id: None,
+            name: "Test Task".to_string(),
+            prompt: "Do the thing".to_string(),
+            status: None,
+            branch: None,
+            plan_model: None,
+            execution_model: None,
+            plan_mode: None,
+            auto_approve_plan: None,
+            review: None,
+            code_style_review: None,
+            auto_commit: None,
+            auto_deploy: None,
+            auto_deploy_condition: None,
+            delete_worktree: None,
+            requirements: None,
+            thinking_level: None,
+            plan_thinking_level: None,
+            execution_thinking_level: None,
+            execution_strategy: None,
+            best_of_n_config: None,
+            best_of_n_substage: None,
+            skip_permission_asking: None,
+            max_review_runs_override: None,
+            group_id: None,
+            additional_agent_access: None,
+        };
+
+        let task = create_task_db(&pool, input).await.unwrap();
+        assert_eq!(task.name, "Test Task");
+        assert_eq!(task.prompt, "Do the thing");
+        assert_eq!(task.status, TaskStatus::Backlog);
+        assert_eq!(task.agent_output, "");
+    }
+
+    #[tokio::test]
+    async fn test_create_task_all_fields() {
+        let pool = create_test_pool().await;
+
+        let input = CreateTaskInput {
+            id: Some("my-task".to_string()),
+            name: "Full Task".to_string(),
+            prompt: "Execute full".to_string(),
+            status: Some(TaskStatus::Backlog),
+            branch: Some("feature-branch".to_string()),
+            plan_model: Some("gpt-4".to_string()),
+            execution_model: Some("gpt-4-turbo".to_string()),
+            plan_mode: Some(true),
+            auto_approve_plan: Some(true),
+            review: Some(true),
+            code_style_review: Some(true),
+            auto_commit: Some(true),
+            auto_deploy: Some(true),
+            auto_deploy_condition: Some(AutoDeployCondition::WorkflowDone),
+            delete_worktree: Some(true),
+            requirements: Some(vec![]),
+            thinking_level: Some(ThinkingLevel::High),
+            plan_thinking_level: Some(ThinkingLevel::High),
+            execution_thinking_level: Some(ThinkingLevel::Default),
+            execution_strategy: Some(ExecutionStrategy::BestOfN),
+            best_of_n_config: Some(BestOfNConfig {
+                workers: vec![],
+                reviewers: vec![],
+                final_applier: BestOfNFinalApplier {
+                    model: "gpt-4".to_string(),
+                    task_suffix: None,
+                },
+                selection_mode: SelectionMode::PickBest,
+                min_successful_workers: 1,
+                verification_command: None,
+            }),
+            best_of_n_substage: Some(BestOfNSubstage::Idle),
+            skip_permission_asking: Some(true),
+            max_review_runs_override: Some(5),
+            group_id: None,
+            additional_agent_access: None,
+        };
+
+        let task = create_task_db(&pool, input).await.unwrap();
+        assert_eq!(task.id, "my-task");
+        assert_eq!(task.name, "Full Task");
+        assert_eq!(task.status, TaskStatus::Backlog);
+        assert!(task.plan_mode);
+        assert!(task.auto_approve_plan);
+        assert!(task.review);
+        assert!(task.code_style_review);
+        assert!(task.auto_commit);
+        assert!(task.auto_deploy);
+        assert!(!task.is_archived);
+        assert_eq!(task.execution_strategy, ExecutionStrategy::BestOfN);
+    }
+
+    #[tokio::test]
+    async fn test_create_task_default_status() {
+        let pool = create_test_pool().await;
+
+        let input = CreateTaskInput {
+            id: None,
+            name: "Default Status".to_string(),
+            prompt: "Test".to_string(),
+            status: None,
+            branch: None,
+            plan_model: None,
+            execution_model: None,
+            plan_mode: None,
+            auto_approve_plan: None,
+            review: None,
+            code_style_review: None,
+            auto_commit: None,
+            auto_deploy: None,
+            auto_deploy_condition: None,
+            delete_worktree: None,
+            requirements: None,
+            thinking_level: None,
+            plan_thinking_level: None,
+            execution_thinking_level: None,
+            execution_strategy: None,
+            best_of_n_config: None,
+            best_of_n_substage: None,
+            skip_permission_asking: None,
+            max_review_runs_override: None,
+            group_id: None,
+            additional_agent_access: None,
+        };
+
+        let task = create_task_db(&pool, input).await.unwrap();
+        assert_eq!(task.status, TaskStatus::Backlog);
+        assert_eq!(task.execution_strategy, ExecutionStrategy::Standard);
+        assert!(!task.plan_mode);
+        assert!(!task.review);
+    }
 }

@@ -3,8 +3,8 @@ use crate::models::{
     ExecutionPhase, Options, PiSessionKind, PiWorkflowSession, Task, TaskStatus, UpdateTaskInput,
 };
 use crate::orchestrator::git::{
-    auto_commit_worktree, merge_and_cleanup_worktree, resolve_target_branch, worktree_has_changes,
-    WorktreeInfo,
+    auto_commit_worktree, capture_worktree_diff, merge_and_cleanup_worktree, resolve_target_branch,
+    worktree_has_changes, WorktreeInfo,
 };
 use crate::orchestrator::isolation;
 use crate::orchestrator::pi::PiSessionExecutor;
@@ -306,6 +306,17 @@ impl Orchestrator {
                 } else {
                     false
                 };
+                let captured_diffs = capture_worktree_diff(&self.project_root, &worktree.directory).await?;
+                if !captured_diffs.is_empty() {
+                    crate::db::queries::insert_task_diffs(
+                        &self.db,
+                        &task.id,
+                        Some(run_id),
+                        "plan_mode",
+                        &captured_diffs,
+                    )
+                    .await?;
+                }
                 let final_worktree_dir = if task.delete_worktree {
                     merge_and_cleanup_worktree(
                         &self.project_root,

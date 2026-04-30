@@ -33,6 +33,7 @@ interface DoneGroupCardProps {
   onArchiveTask: (id: string, event?: MouseEvent) => void
   onViewRuns: (id: string) => void
   onContinueReviews: (id: string) => void
+  onViewDiff: (id: string) => void
 }
 
 export function DoneGroupCard(props: DoneGroupCardProps) {
@@ -127,6 +128,7 @@ export function DoneGroupCard(props: DoneGroupCardProps) {
                 onArchive={(e) => props.onArchiveTask(task.id, e)}
                 onViewRuns={() => props.onViewRuns(task.id)}
                 onContinueReviews={() => props.onContinueReviews(task.id)}
+                onViewDiff={() => props.onViewDiff(task.id)}
               />
             )}
           </For>

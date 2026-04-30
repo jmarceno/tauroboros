@@ -4,6 +4,7 @@
 // TypeScript contract.
 
 pub mod best_of_n;
+pub mod diff;
 pub mod repair;
 
 use crate::db::queries::*;
@@ -979,5 +980,6 @@ pub fn routes() -> Vec<Route> {
         best_of_n::abort_best_of_n,
         repair::repair_task,
         repair::get_self_heal_reports,
+        diff::get_task_diffs_route,
     ]
 }

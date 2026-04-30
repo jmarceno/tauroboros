@@ -47,6 +47,7 @@ interface KanbanBoardProps {
   onArchiveAllDone: () => void
   onViewRuns: (id: string) => void
   onContinueReviews: (id: string) => void
+  onViewDiff: (id: string) => void
   onChangeColumnSort: (status: string, sort: string) => void
   onVirtualCardClick?: (groupId: string) => void
   onDeleteGroup?: (groupId: string) => void
@@ -251,6 +252,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
                 onArchiveAllDone={props.onArchiveAllDone}
                 onViewRuns={props.onViewRuns}
                 onContinueReviews={props.onContinueReviews}
+                onViewDiff={props.onViewDiff}
               >
                 {column.status === 'backlog' && activeGroups().length > 0 && (
                   <div class="virtual-cards-section">
@@ -309,6 +311,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
                           onArchiveTask={props.onArchiveTask}
                           onViewRuns={props.onViewRuns}
                           onContinueReviews={props.onContinueReviews}
+                          onViewDiff={props.onViewDiff}
                         />
                       ))}
                     </div>
@@ -341,6 +344,7 @@ export function KanbanBoard(props: KanbanBoardProps) {
                   onArchiveTask={props.onArchiveTask}
                   onViewRuns={props.onViewRuns}
                   onContinueReviews={props.onContinueReviews}
+                  onViewDiff={props.onViewDiff}
                   onDeleteGroup={() => props.onDeleteGroup?.(activeGroup()!.id)}
                   onRenameGroup={props.onRenameGroup}
                   dragDrop={props.dragDrop}

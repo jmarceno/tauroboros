@@ -643,6 +643,88 @@ pub async fn remove_worktree(base_directory: &str, worktree_dir: &str) -> Result
     run_git_blocking(move || remove_worktree_sync(&base_directory, &worktree_dir)).await
 }
 
+pub async fn capture_worktree_diff(base_directory: &str, worktree_dir: &str) -> Result<Vec<(String, String)>, ApiError> {
+    let base = base_directory.to_string();
+    let worktree = worktree_dir.to_string();
+    run_git_blocking(move || {
+        let repository = Repository::open(&worktree)
+            .map_err(|e| git2_failure("Failed to open worktree for diff capture", e))?;
+
+        let mut status_options = StatusOptions::new();
+        status_options.include_untracked(true).recurse_untracked_dirs(true);
+        let statuses = repository.statuses(Some(&mut status_options))
+            .map_err(|e| git2_failure("Failed to get worktree status for diff capture", e))?;
+
+        if statuses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let base_repo = Repository::open(&base)
+            .map_err(|e| git2_failure("Failed to open base repository for diff capture", e))?;
+
+        let head = repository.head()
+            .map_err(|e| git2_failure("Failed to get worktree HEAD", e))?;
+        let head_commit = head.peel_to_commit()
+            .map_err(|e| git2_failure("Failed to peel worktree HEAD to commit", e))?;
+        let _head_tree = head_commit.tree()
+            .map_err(|e| git2_failure("Failed to get worktree HEAD tree", e))?;
+
+        let branch_name = head.shorthand()
+            .ok_or_else(|| git_failure("Failed to get branch name"))?;
+        let base_branch = base_repo.find_branch(branch_name, git2::BranchType::Local);
+        let base_tree = if let Ok(branch) = base_branch {
+            let commit = branch.get().peel_to_commit()
+                .map_err(|e| git2_failure("Failed to peel base branch to commit", e))?;
+            Some(commit.tree()
+                .map_err(|e| git2_failure("Failed to get base branch tree", e))?)
+        } else {
+            let parent = head_commit.parents().next();
+            if let Some(parent_commit) = parent {
+                Some(parent_commit.tree()
+                    .map_err(|e| git2_failure("Failed to get parent tree", e))?)
+            } else {
+                None
+            }
+        };
+
+        let mut diffs: Vec<(String, String)> = Vec::new();
+        if let Some(ref base) = base_tree {
+            let mut diff_opts = git2::DiffOptions::new();
+            diff_opts.ignore_submodules(true);
+            let git_diff = repository.diff_tree_to_workdir(Some(base), Some(&mut diff_opts))
+                .map_err(|e| git2_failure("Failed to diff worktree", e))?;
+
+            let mut patch_data: Vec<(String, String)> = Vec::new();
+            let delta_count = git_diff.deltas().len();
+            for idx in 0..delta_count {
+                let delta = git_diff.deltas().nth(idx);
+                if let Some(d) = delta {
+                    let file_path = d.new_file().path()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    if file_path.is_empty() {
+                        continue;
+                    }
+                    let patch = git2::Patch::from_diff(&git_diff, idx)
+                        .map_err(|e| git2_failure("Failed to create patch from diff", e))?;
+                    if let Some(mut p) = patch {
+                        let buf = p.to_buf()
+                            .map_err(|e| git2_failure("Failed to serialize patch", e))?;
+                        let text = std::str::from_utf8(&buf)
+                            .map_err(|e| git_failure(format!("Failed to decode patch as UTF-8: {e}")))?;
+                        if !text.trim().is_empty() {
+                            patch_data.push((file_path, text.to_string()));
+                        }
+                    }
+                }
+            }
+            diffs = patch_data;
+        }
+
+        Ok(diffs)
+    }).await
+}
+
 pub async fn run_shell_command(command: &str, cwd: &str) -> Result<(), ApiError> {
     let command_string = command.to_string();
     let cwd_string = cwd.to_string();
