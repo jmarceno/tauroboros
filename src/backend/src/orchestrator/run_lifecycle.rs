@@ -1,26 +1,21 @@
 use super::extensions::{RunJsonExt, TaskJsonExt};
 use super::task_selection::{order_subset_by_dependencies, resolve_single_task_chain, select_all_runnable_tasks};
-use super::types::{RunStopResult, StopMode, GRACEFUL_STOP_MESSAGE, DESTRUCTIVE_STOP_MESSAGE};
+use super::types::{RunStopResult, GRACEFUL_STOP_MESSAGE, DESTRUCTIVE_STOP_MESSAGE};
 use super::Orchestrator;
-use crate::audit::{record_audit_event, CreateAuditEvent};
-use crate::db::queries::{get_task, get_task_group, get_tasks, get_workflow_run, update_task, update_task_group};
+use crate::db::queries::{get_task, get_task_group, get_tasks, get_workflow_run, update_task};
 use crate::db::runtime::{
     create_workflow_run_record, update_workflow_run_record, CreateWorkflowRunRecord,
     UpdateWorkflowRunRecord,
 };
 use crate::error::{ApiError, ErrorCode};
 use crate::models::{
-    AuditLevel, Task, TaskGroupStatus, TaskStatus, UpdateTaskInput, WorkflowRun, WorkflowRunKind,
+    Task, TaskStatus, UpdateTaskInput, WorkflowRun, WorkflowRunKind,
     WorkflowRunStatus,
 };
-use crate::sse::hub::SseHub;
 use rocket::serde::json::json;
-use serde_json::Value;
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
 
 impl Orchestrator {
     pub async fn start_all(&self) -> Result<WorkflowRun, ApiError> {

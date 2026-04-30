@@ -16,8 +16,7 @@ pub async fn create_pool(db_path: &str) -> Result<Pool<Sqlite>, sqlx::Error> {
         tokio::fs::create_dir_all(parent)
             .await
             .map_err(|e| {
-                sqlx::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                sqlx::Error::Io(std::io::Error::other(
                     format!("Failed to create database directory {}: {}", parent.display(), e)
                 ))
             })?;

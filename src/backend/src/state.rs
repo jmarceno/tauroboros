@@ -44,6 +44,7 @@ pub struct AppState {
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         db: SqlitePool,
         sse_hub: Arc<RwLock<SseHub>>,

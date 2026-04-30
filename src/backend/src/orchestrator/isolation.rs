@@ -24,9 +24,8 @@ const ALWAYS_RO_FILES: &[&str] = &[
 ];
 
 fn expand_tilde(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
+    if let Some(remainder) = path.strip_prefix("~/") {
         if let Some(home) = env::var_os("HOME") {
-            let remainder = &path[2..];
             return PathBuf::from(home).join(remainder);
         }
     }
@@ -166,8 +165,8 @@ impl ResolvedIsolationSpec {
         args.push("--setenv".to_string());
         args.push("HOME".to_string());
         args.push({
-            let home = env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-            home
+            
+            env::var("HOME").unwrap_or_else(|_| "/root".to_string())
         });
 
         args.push("--setenv".to_string());

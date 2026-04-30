@@ -1,4 +1,3 @@
-use crate::db::queries::get_options;
 use crate::db::runtime::get_prompt_template;
 use crate::error::{ApiError, ErrorCode};
 use crate::models::{Options, Task};

@@ -660,6 +660,7 @@ impl Orchestrator {
         Ok(results)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_best_of_n_final_applier(
         &self,
         task: &Task,

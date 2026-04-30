@@ -9,14 +9,11 @@ use crate::error::{ApiError, ErrorCode};
 use crate::models::{
     Task, TaskStatus, UpdateTaskInput, WorkflowRun, WorkflowRunStatus,
 };
-use crate::sse::hub::SseHub;
 use rocket::serde::json::json;
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
-use tokio::sync::{watch, Mutex, RwLock};
+use tokio::sync::watch;
 
 impl Orchestrator {
     pub(crate) fn schedule(

@@ -1,7 +1,6 @@
-use super::extensions::{RunJsonExt, TaskJsonExt};
+use super::extensions::RunJsonExt;
 use super::types::{StopMode, TaskOutcome, GRACEFUL_STOP_MESSAGE, DESTRUCTIVE_STOP_MESSAGE};
 use super::Orchestrator;
-use crate::audit::{record_audit_event, CreateAuditEvent};
 use crate::db::queries::{get_options, get_task, get_task_runs, update_task, update_task_group};
 use crate::db::runtime::{
     create_task_run_record, create_workflow_session_record, update_task_run_record, update_workflow_run_record,
@@ -9,8 +8,8 @@ use crate::db::runtime::{
 };
 use crate::error::{ApiError, ErrorCode};
 use crate::models::{
-    AuditLevel, BestOfNSubstage, ExecutionPhase, ExecutionStrategy, Options, PiSessionKind, PiSessionStatus,
-    RunPhase, RunStatus, Task, TaskGroupStatus, TaskStatus, UpdateTaskInput, WorkflowRun, WorkflowRunStatus,
+    AuditLevel, ExecutionPhase, ExecutionStrategy, PiSessionKind, PiSessionStatus,
+    RunPhase, RunStatus, TaskGroupStatus, TaskStatus, UpdateTaskInput, WorkflowRunStatus,
 };
 use crate::orchestrator::git::{
     auto_commit_worktree, create_task_worktree, merge_and_cleanup_worktree, resolve_target_branch,
@@ -18,12 +17,8 @@ use crate::orchestrator::git::{
 };
 use crate::orchestrator::pi::{PiSessionExecutor};
 use crate::orchestrator::prompts::{render_execution_prompt, resolve_execution_model};
-use crate::sse::hub::SseHub;
 use rocket::serde::json::json;
-use sqlx::SqlitePool;
-use std::path::Path;
-use std::sync::Arc;
-use tokio::sync::{watch, Mutex, RwLock};
+use tokio::sync::watch;
 use uuid::Uuid;
 
 impl Orchestrator {
