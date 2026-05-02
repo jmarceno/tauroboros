@@ -618,6 +618,17 @@ impl PiSessionExecutor {
                             let event_type = parsed.get("type").and_then(Value::as_str);
                             events.push(parsed.clone());
                             if event_type == Some("agent_end") {
+                                // Check if the AI encountered an error (e.g., connection error)
+                                // before treating this as a successful completion
+                                if let Some(ai_error) = find_ai_error(&events) {
+                                    return Err(
+                                        ApiError::internal(format!(
+                                            "AI model error during session {}: {}",
+                                            session.id, ai_error
+                                        ))
+                                        .with_code(ErrorCode::ExecutionOperationFailed)
+                                    );
+                                }
                                 return Ok(PiPromptResult {
                                     response_text,
                                     events,
@@ -923,6 +934,26 @@ fn extract_text_fragment(event: &Value) -> Option<String> {
     None
 }
 
+/// Extract AI error information from assistant message events.
+/// Returns Some(error_message) if the AI encountered an error (e.g., connection error).
+fn extract_ai_error(event: &Value) -> Option<String> {
+    let assistant = event.get("assistantMessageEvent")?;
+    let stop_reason = assistant.get("stopReason").and_then(Value::as_str)?;
+    if stop_reason == "error" {
+        let error_message = assistant
+            .get("errorMessage")
+            .and_then(Value::as_str)
+            .unwrap_or("AI model encountered an error");
+        return Some(error_message.to_string());
+    }
+    None
+}
+
+/// Check if any collected events indicate an AI error and return the error message.
+fn find_ai_error(events: &[Value]) -> Option<String> {
+    events.iter().find_map(extract_ai_error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{build_pi_args, ensure_pi_extensions};
@@ -1011,5 +1042,126 @@ mod tests {
         assert_eq!(preserved_logger, "custom logger");
 
         fs::remove_dir_all(&project_root).expect("remove temp project root");
+    }
+
+    #[test]
+    fn extract_ai_error_detects_connection_error() {
+        use serde_json::json;
+
+        let event_with_error = json!({
+            "type": "message",
+            "assistantMessageEvent": {
+                "role": "assistant",
+                "content": [],
+                "stopReason": "error",
+                "errorMessage": "Connection error."
+            }
+        });
+
+        let result = super::extract_ai_error(&event_with_error);
+        assert_eq!(result, Some("Connection error.".to_string()));
+    }
+
+    #[test]
+    fn extract_ai_error_returns_none_for_successful_completion() {
+        use serde_json::json;
+
+        let event_success = json!({
+            "type": "message",
+            "assistantMessageEvent": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Task completed successfully"}],
+                "stopReason": "stop"
+            }
+        });
+
+        let result = super::extract_ai_error(&event_success);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn extract_ai_error_returns_none_for_non_assistant_events() {
+        use serde_json::json;
+
+        let non_assistant_event = json!({
+            "type": "tool_execution_end",
+            "toolName": "emit_review_result"
+        });
+
+        let result = super::extract_ai_error(&non_assistant_event);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn extract_ai_error_uses_default_message_when_error_message_missing() {
+        use serde_json::json;
+
+        let event_with_error_no_message = json!({
+            "type": "message",
+            "assistantMessageEvent": {
+                "role": "assistant",
+                "content": [],
+                "stopReason": "error"
+            }
+        });
+
+        let result = super::extract_ai_error(&event_with_error_no_message);
+        assert_eq!(result, Some("AI model encountered an error".to_string()));
+    }
+
+    #[test]
+    fn find_ai_error_detects_error_in_event_list() {
+        use serde_json::json;
+
+        let events = vec![
+            json!({
+                "type": "agent_start"
+            }),
+            json!({
+                "type": "message",
+                "assistantMessageEvent": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Working on task..."}],
+                    "stopReason": "stop"
+                }
+            }),
+            json!({
+                "type": "message",
+                "assistantMessageEvent": {
+                    "role": "assistant",
+                    "content": [],
+                    "stopReason": "error",
+                    "errorMessage": "Connection error."
+                }
+            }),
+        ];
+
+        let result = super::find_ai_error(&events);
+        assert_eq!(result, Some("Connection error.".to_string()));
+    }
+
+    #[test]
+    fn find_ai_error_returns_none_when_no_errors() {
+        use serde_json::json;
+
+        let events = vec![
+            json!({
+                "type": "agent_start"
+            }),
+            json!({
+                "type": "message",
+                "assistantMessageEvent": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Task completed successfully"}],
+                    "stopReason": "stop"
+                }
+            }),
+            json!({
+                "type": "agent_end"
+            }),
+        ];
+
+        let result = super::find_ai_error(&events);
+        assert_eq!(result, None);
     }
 }

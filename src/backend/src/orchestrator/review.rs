@@ -809,7 +809,7 @@ fn parse_review_result(response_text: &str, events: &[Value]) -> Result<ReviewRe
     let trimmed = response_text.trim();
     if trimmed.is_empty() {
         return Err(
-            ApiError::internal("Review session completed without any structured result or text")
+            ApiError::internal("Review session produced no output - this may indicate an AI model error (e.g., connection failure) or the agent failed to call emit_review_result")
                 .with_code(ErrorCode::ExecutionOperationFailed),
         );
     }

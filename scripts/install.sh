@@ -222,11 +222,7 @@ if [[ -x "$TARGET_PATH" ]]; then
   echo ""
   echo -e "${BLUE}Location:${NC} ${TARGET_PATH}"
 
-  # Try to get version
-  if command -v "$BINARY_NAME" &>/dev/null || [[ ":$PATH:" == *":${INSTALL_DIR}:"* ]]; then
-    echo -e "${BLUE}Version:${NC}"
-    "$TARGET_PATH" --help 2>/dev/null | head -1 || echo "  (run with --help for details)"
-  fi
+  echo -e "${BLUE}Version:${NC}  (run '${BINARY_NAME} --version' after adding to PATH)"
 
   echo ""
   check_path
