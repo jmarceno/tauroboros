@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
 # TaurOboros Install Script
-# Compiles and installs the binary to a bin directory in PATH
+# Compiles the Rust backend (with embedded Solid frontend) and installs
+# the binary to a bin directory in PATH.
 #
 # Usage:
 #   ./scripts/install.sh              # Compile and install to ~/.local/bin
 #   ./scripts/install.sh --global     # Compile and install to /usr/local/bin
 #   ./scripts/install.sh --remove     # Remove from install location
 #   ./scripts/install.sh --global --remove  # Remove from global location
-#   ./scripts/install.sh --skip-compile    # Skip compilation (install existing binary)
+#   ./scripts/install.sh --skip-compile    # Skip compilation (install existing build)
 #
 
 set -euo pipefail
@@ -22,7 +23,8 @@ NC='\033[0m' # No Color
 
 # Configuration
 BINARY_NAME="tauroboros"
-SOURCE_BINARY="./${BINARY_NAME}"
+RUST_DIR="src/backend"
+SOURCE_BINARY="${RUST_DIR}/target/release/${BINARY_NAME}"
 USER_BIN="${HOME}/.local/bin"
 GLOBAL_BIN="/usr/local/bin"
 
@@ -30,7 +32,6 @@ GLOBAL_BIN="/usr/local/bin"
 INSTALL_GLOBAL=false
 REMOVE_MODE=false
 SKIP_COMPILE=false
-RUST_MODE=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -46,10 +47,6 @@ while [[ $# -gt 0 ]]; do
       SKIP_COMPILE=true
       shift
       ;;
-    --rust)
-      RUST_MODE=true
-      shift
-      ;;
     --help|-h)
       echo "Usage: $0 [OPTIONS]"
       echo ""
@@ -57,10 +54,14 @@ while [[ $# -gt 0 ]]; do
       echo "  --global         Install to /usr/local/bin (requires sudo)"
       echo "  --remove         Remove the binary from install location"
       echo "  --skip-compile   Skip compilation (install existing binary)"
-      echo "  --rust           Compile and install Rust version (rust backend + frontend)"
       echo "  --help, -h       Show this help message"
       echo ""
       echo "Default (no flags): Compile and install to ~/.local/bin"
+      echo ""
+      echo "Prerequisites:"
+      echo "  cargo       (https://rustup.rs) - Rust build toolchain"
+      echo "  bun         (https://bun.sh)    - Build runner for the embedded frontend"
+      echo "  npm         (from Node.js)      - Frontend dependency management"
       exit 0
       ;;
     *)
@@ -84,88 +85,70 @@ TARGET_PATH="${INSTALL_DIR}/${BINARY_NAME}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Compile function
+# Resolve absolute paths
+ABSOLUTE_RUST_DIR="${PROJECT_ROOT}/${RUST_DIR}"
+ABSOLUTE_SOURCE_BINARY="${PROJECT_ROOT}/${SOURCE_BINARY}"
+
+# Compile the Rust backend (frontend is built automatically via build.rs)
 compile_project() {
-  echo -e "${BLUE}🔨 Compiling TaurOboros...${NC}"
-  echo ""
-  
-  cd "$PROJECT_ROOT"
-  
-  # Check if bun is available
-  if ! command -v bun &>/dev/null; then
-    echo -e "${RED}Error: Bun is not installed or not in PATH${NC}"
-    echo "Please install Bun first: https://bun.sh"
-    exit 1
-  fi
-  
-  # Run the compile script
-  if ! bun run scripts/compile.ts; then
-    echo -e "${RED}Compilation failed${NC}"
-    exit 1
-  fi
-  
-  echo ""
-  echo -e "${GREEN}✓ Compilation successful${NC}"
-  echo ""
-}
-
-# Rust compile function
-compile_rust_project() {
-  echo -e "${BLUE}🔨 Compiling TaurOboros (Rust version)...${NC}"
+  echo -e "${BLUE}🔨 Compiling TaurOboros (Rust backend + embedded frontend)...${NC}"
   echo ""
 
   cd "$PROJECT_ROOT"
 
-  # Check if cargo is available
+  # Check prerequisites
   if ! command -v cargo &>/dev/null; then
     echo -e "${RED}Error: Cargo is not installed or not in PATH${NC}"
     echo "Please install Rust first: https://rustup.rs"
     exit 1
   fi
 
-  # Check if bun is available (needed for frontend build)
   if ! command -v bun &>/dev/null; then
     echo -e "${RED}Error: Bun is not installed or not in PATH${NC}"
-    echo "Bun is required to build the frontend assets."
+    echo "Bun is required to build the embedded frontend (build.rs uses 'bun run build')."
     echo "Please install Bun first: https://bun.sh"
     exit 1
   fi
 
-  RUST_DIR="$PROJECT_ROOT/src/backend"
-  RUST_BINARY="$RUST_DIR/target/release/tauroboros"
+  if ! command -v npm &>/dev/null; then
+    echo -e "${RED}Error: npm is not installed or not in PATH${NC}"
+    echo "npm is required for frontend dependency installation."
+    echo "Please install Node.js: https://nodejs.org"
+    exit 1
+  fi
+
+  # Ensure frontend dependencies are installed (needed by build.rs)
+  FRONTEND_DIR="${PROJECT_ROOT}/src/frontend"
+  if [[ ! -d "${FRONTEND_DIR}/node_modules" ]]; then
+    echo -e "${YELLOW}Frontend dependencies not found. Installing...${NC}"
+    (cd "$FRONTEND_DIR" && npm install) || {
+      echo -e "${RED}Failed to install frontend dependencies${NC}"
+      exit 1
+    }
+    echo -e "${GREEN}✓ Frontend dependencies installed${NC}"
+  fi
 
   # Build Rust backend with embedded frontend
   echo -e "${BLUE}Building Rust backend (this may take a while)...${NC}"
-  if ! (cd "$RUST_DIR" && cargo build --release --features embedded-frontend); then
+  if ! (cd "$ABSOLUTE_RUST_DIR" && cargo build --release); then
     echo -e "${RED}Rust compilation failed${NC}"
     exit 1
   fi
 
-  # Copy binary to project root
-  echo -e "${BLUE}Copying binary to project root...${NC}"
-  if ! cp "$RUST_BINARY" "$PROJECT_ROOT/tauroboros"; then
-    echo -e "${RED}Failed to copy binary from ${RUST_BINARY}${NC}"
-    exit 1
-  fi
-
   echo ""
-  echo -e "${GREEN}✓ Rust compilation successful${NC}"
+  echo -e "${GREEN}✓ Compilation successful${NC}"
   echo ""
 }
 
 # Compile if not skipping (and not in remove mode)
 if [[ "$REMOVE_MODE" == false && "$SKIP_COMPILE" == false ]]; then
-  if [[ "$RUST_MODE" == true ]]; then
-    compile_rust_project
-  else
-    compile_project
-  fi
+  compile_project
 fi
 
 # Check if source binary exists (only for install mode)
-if [[ "$REMOVE_MODE" == false && ! -f "$SOURCE_BINARY" ]]; then
-  echo -e "${RED}Error: Compiled binary not found: ${SOURCE_BINARY}${NC}"
-  echo "Compilation may have failed or the binary is in a different location."
+if [[ "$REMOVE_MODE" == false && ! -f "$ABSOLUTE_SOURCE_BINARY" ]]; then
+  echo -e "${RED}Error: Compiled binary not found: ${ABSOLUTE_SOURCE_BINARY}${NC}"
+  echo "Compilation may have failed or did not produce the expected binary."
   exit 1
 fi
 
@@ -218,7 +201,7 @@ echo -e "${BLUE}Installing ${BINARY_NAME} to ${INSTALL_DIR}...${NC}"
 
 if [[ "$INSTALL_GLOBAL" == true ]]; then
   # Global install requires sudo
-  if ! sudo cp "$SOURCE_BINARY" "$TARGET_PATH"; then
+  if ! sudo cp "$ABSOLUTE_SOURCE_BINARY" "$TARGET_PATH"; then
     echo -e "${RED}Failed to install to ${INSTALL_DIR}${NC}"
     echo "Make sure you have sudo privileges"
     exit 1
@@ -226,7 +209,7 @@ if [[ "$INSTALL_GLOBAL" == true ]]; then
   sudo chmod +x "$TARGET_PATH"
 else
   # User-local install
-  if ! cp "$SOURCE_BINARY" "$TARGET_PATH"; then
+  if ! cp "$ABSOLUTE_SOURCE_BINARY" "$TARGET_PATH"; then
     echo -e "${RED}Failed to install to ${INSTALL_DIR}${NC}"
     exit 1
   fi
@@ -238,13 +221,13 @@ if [[ -x "$TARGET_PATH" ]]; then
   echo -e "${GREEN}✓ ${BINARY_NAME} installed successfully${NC}"
   echo ""
   echo -e "${BLUE}Location:${NC} ${TARGET_PATH}"
-  
+
   # Try to get version
   if command -v "$BINARY_NAME" &>/dev/null || [[ ":$PATH:" == *":${INSTALL_DIR}:"* ]]; then
     echo -e "${BLUE}Version:${NC}"
     "$TARGET_PATH" --help 2>/dev/null | head -1 || echo "  (run with --help for details)"
   fi
-  
+
   echo ""
   check_path
   echo ""
